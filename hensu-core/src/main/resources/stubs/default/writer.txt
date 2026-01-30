@@ -1,0 +1,15 @@
+Here is my response about {{topic}}:
+
+This is a comprehensive analysis of the topic. The content includes:
+1. Introduction to the subject matter
+2. Key points and analysis
+3. Supporting evidence and examples
+4. Conclusion with recommendations
+
+The analysis demonstrates thorough research and consideration of multiple perspectives.
+
+{
+  "score": 85,
+  "confidence": "high",
+  "topics_covered": ["introduction", "analysis", "examples", "conclusion"]
+}

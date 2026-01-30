@@ -1,0 +1,20 @@
+## Content Review
+
+### Assessment
+
+After careful review, this content requires significant revision:
+
+**Issues Found:**
+1. Insufficient depth - points are stated but not developed
+2. Missing concrete examples - no real-world cases cited
+3. Weak structure - lacks clear flow and transitions
+4. No supporting evidence - claims are unsubstantiated
+
+**Quality Score:** Below acceptable threshold
+
+{
+  "score": 38,
+  "recommendation": "Major revision required. Address: 1) Add detailed analysis for each point, 2) Include at least 2 specific examples with data, 3) Restructure with clear sections and transitions, 4) Add citations or references for claims",
+  "approved": false,
+  "requires_revision": true
+}

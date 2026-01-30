@@ -1,0 +1,18 @@
+## Review Assessment
+
+I have reviewed the content and found significant issues:
+
+**Critical Issues:**
+- Lacks sufficient detail and depth
+- Missing concrete examples
+- Structure could be improved
+
+**Recommendation:**
+The content does not meet quality standards and requires revision.
+
+{
+  "score": 35,
+  "recommendation": "Revise the content with: 1) More specific examples, 2) Better structure with clear sections, 3) Include supporting data or references.",
+  "approved": false,
+  "requires_backtrack": true
+}

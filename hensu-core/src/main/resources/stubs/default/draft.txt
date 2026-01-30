@@ -1,0 +1,29 @@
+## Article: {{topic}}
+
+### Introduction
+This article explores the key aspects of {{topic}}, providing insights and analysis.
+
+### Main Points
+
+1. **First Key Point**
+   Understanding the fundamentals is essential. This forms the foundation for all subsequent discussion.
+
+2. **Second Key Point**
+   Practical applications demonstrate real-world relevance. Case studies show successful implementations.
+
+3. **Third Key Point**
+   Future implications suggest continued evolution. The field is rapidly advancing.
+
+### Examples
+- Example A: Industry leader implementation
+- Example B: Academic research validation
+- Example C: Community adoption patterns
+
+### Conclusion
+The analysis demonstrates the importance of {{topic}}. Key takeaways include continued monitoring and strategic planning.
+
+{
+  "score": 82,
+  "recommendation": "",
+  "confidence": "high"
+}

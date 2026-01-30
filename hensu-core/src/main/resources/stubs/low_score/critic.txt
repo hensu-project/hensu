@@ -1,0 +1,6 @@
+{
+  "score": 45,
+  "reasoning": "Content lacks depth and structure. Needs significant revision.",
+  "feedback": "The draft requires more detail, better organization, and concrete examples.",
+  "recommendation": "Rewrite with focus on clarity and completeness"
+}

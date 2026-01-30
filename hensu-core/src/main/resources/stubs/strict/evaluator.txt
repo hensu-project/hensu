@@ -1,0 +1,4 @@
+{
+  "score": 45,
+  "reasoning": "Strict evaluation: The content shows multiple deficiencies. Missing required sections, insufficient depth of analysis, and lack of concrete examples. Significant revision needed to meet quality standards."
+}

@@ -1,0 +1,6 @@
+{
+  "score": 55,
+  "reasoning": "Content shows improvement but still below threshold. Needs another revision pass.",
+  "feedback": "Better structure now, but still missing key details and examples.",
+  "recommendation": "Continue refining - focus on adding supporting evidence"
+}

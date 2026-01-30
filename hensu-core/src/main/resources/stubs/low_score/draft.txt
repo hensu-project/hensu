@@ -1,0 +1,13 @@
+## Brief Notes on {{topic}}
+
+Some thoughts on {{topic}}:
+- It's an interesting topic
+- More research needed
+- Could be important
+
+{
+  "score": 48,
+  "recommendation": "The draft is too superficial. To improve: 1) Add a proper introduction explaining the topic's significance, 2) Develop each point with specific examples and evidence, 3) Include quantitative data where applicable, 4) Write a compelling conclusion with actionable takeaways",
+  "confidence": "low",
+  "issues": ["lacks_depth", "no_examples", "weak_structure"]
+}
