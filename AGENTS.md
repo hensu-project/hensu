@@ -54,7 +54,6 @@ The core module design principle is **zero external dependencies** - all AI prov
 hensu-core                    # Core workflow engine + Kotlin DSL (pure Java/Kotlin, no AI deps)
 hensu-cli                     # Quarkus-based CLI (PicoCLI)
 hensu-langchain4j-adapter     # LangChain4j integration (Claude, GPT, Gemini, DeepSeek)
-hensu-quarkus-extension       # Quarkus integration (stub)
 ```
 
 **Dependency flow**: `cli → core ← langchain4j-adapter`
