@@ -1,6 +1,14 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides project-specific instructions for AI coding agents.
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [DSL Reference](docs/dsl-reference.md) | Complete Kotlin DSL syntax and examples |
+| [Developer Guide](docs/developer-guide.md) | Architecture, API usage, engine extensions |
+| [Javadoc Guide](docs/javadoc-guide.md) | Documentation standards |
 
 ## Build Commands
 
@@ -46,7 +54,6 @@ The core module design principle is **zero external dependencies** - all AI prov
 hensu-core                    # Core workflow engine + Kotlin DSL (pure Java/Kotlin, no AI deps)
 hensu-cli                     # Quarkus-based CLI (PicoCLI)
 hensu-langchain4j-adapter     # LangChain4j integration (Claude, GPT, Gemini, DeepSeek)
-hensu-quarkus-extension       # Quarkus integration (stub)
 ```
 
 **Dependency flow**: `cli → core ← langchain4j-adapter`
