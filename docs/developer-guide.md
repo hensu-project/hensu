@@ -27,7 +27,6 @@ hensu-parent/
 ├── hensu-core                    # Core workflow engine (NO AI dependencies)
 ├── hensu-cli                     # Quarkus-based CLI (PicoCLI)
 ├── hensu-langchain4j-adapter     # LangChain4j integration (Claude, GPT, Gemini)
-├── hensu-quarkus-extension       # Quarkus integration (stub)
 └── hensu-openrouter-adapter      # OpenRouter integration (future)
 ```
 
