@@ -1,0 +1,4 @@
+{
+  "score": 42,
+  "reasoning": "The content fails to adequately address the criterion. Key issues include: 1) Insufficient depth of analysis, 2) Missing supporting examples, 3) Weak logical flow between sections. The work requires significant revision to meet quality standards."
+}

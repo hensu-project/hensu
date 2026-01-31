@@ -1,0 +1,22 @@
+  #!/usr/bin/env bash
+#
+# Hensu CLI launcher
+# Usage: ./hensu <command> [options]
+#
+# Examples:
+#   ./hensu run workflow.kt
+#   ./hensu validate workflow.kt
+#   ./hensu visualize workflow.kt
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+JAR_PATH="$SCRIPT_DIR/hensu-cli/build/quarkus-app/quarkus-run.jar"
+
+if [[ ! -f "$JAR_PATH" ]]; then
+    echo "Hensu CLI not built. Building now..."
+    "$SCRIPT_DIR/gradlew" hensu-cli:build -x test --quiet
+fi
+
+exec java -jar "$JAR_PATH" "$@"

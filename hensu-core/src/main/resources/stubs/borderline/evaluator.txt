@@ -1,0 +1,4 @@
+{
+  "score": 70,
+  "reasoning": "Borderline evaluation: The content meets minimum requirements but sits at the threshold. Key points are addressed but could use more depth. Structure is adequate but could be improved for better flow."
+}

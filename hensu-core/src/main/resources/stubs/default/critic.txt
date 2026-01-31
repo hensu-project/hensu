@@ -1,0 +1,5 @@
+{
+  "score": 78,
+  "reasoning": "The content demonstrates good structure and clarity. Minor improvements possible but meets quality standards.",
+  "feedback": "Well-written with clear points. Consider adding more specific examples."
+}
