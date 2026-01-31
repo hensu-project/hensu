@@ -23,4 +23,3 @@ dependencies {
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("org.mockito:mockito-junit-jupiter:5.15.2")
 }
-
