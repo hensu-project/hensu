@@ -1,6 +1,14 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides project-specific instructions for AI coding agents.
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [DSL Reference](docs/dsl-reference.md) | Complete Kotlin DSL syntax and examples |
+| [Developer Guide](docs/developer-guide.md) | Architecture, API usage, engine extensions |
+| [Javadoc Guide](docs/javadoc-guide.md) | Documentation standards |
 
 ## Build Commands
 

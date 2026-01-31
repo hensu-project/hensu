@@ -1,4 +1,4 @@
-# Hensu - The Open Source Agentic Workflow Engine
+# Hensu - The Agentic Workflow Engine
 
 Self-hosted. Developer-friendly. Enterprise-ready.
 Build complex AI agent workflows with code.
@@ -6,6 +6,8 @@ No vendor lock-in. No "Contact Sales."
 
 ## Key Features
 
+- **No-Code Workflow Configuration** - Define workflows using a simple Kotlin DSL without modifying the codebase
+- **Extensible Node System** - Create custom nodes to extend workflow capabilities when needed
 - **Complex Workflows** - Undirected flows, loops, forks, parallel execution, consensus-based decisions
 - **Rubric-Driven Quality Gates** - Evaluate outputs against defined criteria with score-based routing
 - **Human Review Integration** - Optional or required review at any workflow step
@@ -90,12 +92,12 @@ fun myWorkflow() = workflow("ContentPipeline") {
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [DSL Reference](docs/dsl-reference.md) | Complete Kotlin DSL syntax and examples |
-| [Developer Guide](docs/developer-guide.md) | Architecture, API usage, adapter development |
-| [Javadoc Guide](docs/javadoc-guide.md) | Documentation standards |
-| [CLAUDE.md](CLAUDE.md) | Claude Code project instructions |
+| Document | Description                                                      |
+|----------|------------------------------------------------------------------|
+| [DSL Reference](docs/dsl-reference.md) | Complete Kotlin DSL syntax and examples                          |
+| [Developer Guide](docs/developer-guide.md) | Architecture, API usage, engine extensions                       |
+| [Javadoc Guide](docs/javadoc-guide.md) | Documentation standards                                          |
+| [AGENTS.md](AGENTS.md) | Coding agent project instructions                                |
 | [Pommel](https://github.com/dbinky/Pommel) | Local-first semantic code search for AI coding agents (optional) |
 
 ## Architecture
@@ -150,11 +152,7 @@ See [Developer Guide](docs/developer-guide.md) for architecture details and adap
 
 ## Using with Claude Code
 
-This repository includes a `CLAUDE.md` file with project-specific instructions for [Claude Code](https://claude.ai/code). Claude Code automatically reads this file to understand the codebase structure, build commands, and coding conventions.
-
-### Using AGENTS.md Instead
-
-If you prefer to use `AGENTS.md` (for compatibility with other AI coding tools or team conventions), you can override Claude Code's default behavior:
+Claude Code reads `CLAUDE.md` by default. To use `AGENTS.md` instead, configure the `agentInstructionsFile` setting:
 
 **Option 1: Global setting (all projects)**
 
@@ -176,12 +174,12 @@ Create `.claude/settings.json` in your project root:
 }
 ```
 
-Then rename or copy `CLAUDE.md` to `AGENTS.md`:
-
-```bash
-mv CLAUDE.md AGENTS.md
-# or
-cp CLAUDE.md AGENTS.md
-```
-
 Claude Code will now read `AGENTS.md` instead of `CLAUDE.md` for project instructions.
+
+## Pommel - Semantic Code Search (Optional)
+
+[Pommel](https://github.com/dbinky/Pommel) is a local-first semantic code search tool designed for AI coding agents. It provides semantic matches with significantly fewer tokens than grep-based searching.
+
+This is an optional tool. If you don't need semantic search capabilities, remove the Pommel section from `AGENTS.md`.
+
+For installation and setup instructions, see the [Pommel GitHub repository](https://github.com/dbinky/Pommel).
