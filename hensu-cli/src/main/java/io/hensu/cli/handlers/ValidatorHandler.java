@@ -12,16 +12,26 @@ import java.util.Map;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
-/// Validator handler - validates fields based on config.
+/// Generic node handler for validating context field values against constraints.
 ///
-/// Config options:
+/// Performs declarative validation with multiple rule types. Returns failure result
+/// with detailed error messages if validation fails.
 ///
-/// - **field** - Field name to validate (default: "input")
-/// - **required** - Whether field is required (default: false)
-/// - **minLength** - Minimum string length
-/// - **maxLength** - Maximum string length
-/// - **pattern** - Regex pattern to match
-/// - **errorMessage** - Custom error message for pattern mismatch
+/// ### Config Options
+/// | Key | Type | Default | Description |
+/// |-----|------|---------|-------------|
+/// | `field` | String | `"input"` | Field name to validate |
+/// | `required` | Boolean | `false` | Fail if field is null/blank |
+/// | `minLength` | Number | - | Minimum string length |
+/// | `maxLength` | Number | - | Maximum string length |
+/// | `pattern` | String | - | Regex pattern to match |
+/// | `errorMessage` | String | `"Invalid format"` | Custom message for pattern mismatch |
+///
+/// ### Result
+/// - **Success**: Returns validation passed message with metadata
+/// - **Failure**: Returns semicolon-separated list of validation errors
+///
+/// @see GenericNodeHandler
 @ApplicationScoped
 public class ValidatorHandler implements GenericNodeHandler {
 
