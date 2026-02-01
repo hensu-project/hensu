@@ -20,17 +20,26 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
-/// CLI implementation of ActionExecutor.
+/// CLI implementation of {@link ActionExecutor} for mid-workflow actions.
 ///
-/// ### Handles actions:
+/// ### Supported Actions
+/// - **Notify** - Logs messages to console with channel prefix
+/// - **Execute** - Runs shell commands from {@link CommandRegistry}
+/// - **HttpCall** - Makes HTTP requests with template-resolved parameters
 ///
-/// - **Notify** - Logs messages to console
-/// - **Execute** - Runs commands from CommandRegistry (loaded from commands.yaml)
-/// - **HttpCall** - Makes HTTP requests to configured endpoints
+/// ### Security Model
+/// Execute commands are **not** specified in the workflow DSL. They are loaded from a
+/// `commands.yaml` file in the working directory to prevent command injection attacks.
+/// Only pre-defined command IDs can be referenced in workflows.
 ///
+/// ### Template Resolution
+/// All action parameters support `{variable}` placeholder syntax, resolved from workflow context.
 ///
-/// ### Security: Execute commands are not specified in the workflow DSL. They are loaded from a
-/// `commands.yaml` file to prevent command injection.
+/// @implNote Thread-safe for action execution. CommandRegistry loading should be done
+/// before parallel execution begins.
+///
+/// @see io.hensu.core.execution.action.Action
+/// @see io.hensu.core.execution.action.CommandRegistry
 @ApplicationScoped
 public class CLIActionExecutor implements ActionExecutor {
 
