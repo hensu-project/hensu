@@ -1,9 +1,8 @@
 package io.hensu.cli.commands;
 
-import static io.hensu.cli.util.CliColors.*;
-
+import io.hensu.cli.execution.VerboseExecutionListenerFactory;
+import io.hensu.cli.ui.AnsiStyles;
 import io.hensu.core.HensuEnvironment;
-import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.result.ExecutionResult;
@@ -20,6 +19,24 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
+/// CLI command for executing workflows with agent orchestration.
+///
+/// Loads and executes a workflow, optionally with verbose output showing agent
+/// inputs/outputs and interactive human review mode for manual approval/backtracking.
+///
+/// ### Usage
+/// ```bash
+/// hensu run [-d <working-dir>] [-v] [-i] [--no-color] [-c <context>] <workflow-name>
+/// ```
+///
+/// ### Options
+/// - `-v, --verbose` - Show agent inputs and outputs during execution
+/// - `-i, --interactive` - Enable human review checkpoints with backtracking
+/// - `-c, --context` - Provide initial context as JSON string or file path
+/// - `--no-color` - Disable ANSI color output
+///
+/// @see io.hensu.core.execution.WorkflowExecutor
+/// @see io.hensu.cli.review.CLIReviewManager
 @Command(name = "run", description = "Run a workflow")
 class WorkflowRunCommand extends WorkflowCommand {
 
@@ -35,11 +52,6 @@ class WorkflowRunCommand extends WorkflowCommand {
     private String contextInput;
 
     @Option(
-            names = {"-w", "--watch"},
-            description = "Watch mode for development")
-    private boolean watch = false;
-
-    @Option(
             names = {"-v", "--verbose"},
             description = "Show agent inputs and outputs")
     private boolean verbose = false;
@@ -49,10 +61,19 @@ class WorkflowRunCommand extends WorkflowCommand {
             description = "Enable interactive human review mode with manual backtracking")
     private boolean interactive = false;
 
+    @Option(
+            names = {"--no-color"},
+            description = "Disable colored output",
+            negatable = true)
+    private boolean color = true;
+
     @Inject private HensuEnvironment environment;
+    @Inject private VerboseExecutionListenerFactory listenerFactory;
 
     @Override
     protected void execute() {
+        AnsiStyles styles = AnsiStyles.of(color);
+
         try {
             // Set interactive mode system property for CLIReviewManager
             if (interactive) {
@@ -62,20 +83,27 @@ class WorkflowRunCommand extends WorkflowCommand {
             Workflow workflow = getWorkflow(workflowName);
 
             System.out.printf(
-                    "%n%s %sWorkflow loaded: %s%s%n",
-                    successMark(), BOLD, workflow.getMetadata().getName(), NC);
+                    "%n%s %s%n",
+                    styles.checkmark(),
+                    styles.bold("Workflow loaded: " + workflow.getMetadata().getName()));
             System.out.printf(
-                    "%s  Agents: %d %s Nodes: %d%s%n%n",
-                    GRAY, workflow.getAgents().size(), bullet(), workflow.getNodes().size(), NC);
+                    "%s%n%n",
+                    styles.gray(
+                            "  Agents: "
+                                    + workflow.getAgents().size()
+                                    + " "
+                                    + styles.bullet()
+                                    + " Nodes: "
+                                    + workflow.getNodes().size()));
 
             Map<String, Object> context = loadContext(contextInput);
 
-            System.out.printf("%s  Starting workflow execution...%s%n", GRAY, NC);
+            System.out.println(styles.gray("  Starting workflow execution..."));
             if (verbose) {
-                System.out.printf("%s  (verbose mode enabled)%s%n", GRAY, NC);
+                System.out.println(styles.gray("  (verbose mode enabled)"));
             }
             if (interactive) {
-                System.out.printf("%s  (interactive review mode enabled)%s%n", GRAY, NC);
+                System.out.println(styles.gray("  (interactive review mode enabled)"));
             }
             System.out.println();
 
@@ -85,25 +113,24 @@ class WorkflowRunCommand extends WorkflowCommand {
             WorkflowExecutor workflowExecutor = environment.getWorkflowExecutor();
 
             // Create listener for verbose output
-            ExecutionListener listener = verbose ? createVerboseListener() : ExecutionListener.NOOP;
+            ExecutionListener listener =
+                    verbose ? listenerFactory.create(workflow, color) : ExecutionListener.NOOP;
             ExecutionResult result = workflowExecutor.execute(workflow, context, listener);
 
             if (result instanceof ExecutionResult.Completed completed) {
                 System.out.printf(
-                        "%n%s %sWorkflow completed successfully!%s%n", successMark(), BOLD, NC);
+                        "%n%s %s%n",
+                        styles.checkmark(), styles.bold("Workflow completed successfully!"));
                 System.out.printf(
-                        "%s  Status: %s%s %s Steps: %d %s Backtracks: %d%s%n",
-                        GRAY,
-                        NC,
-                        success(completed.getExitStatus().toString()),
-                        bullet(),
+                        "  Status: %s %s Steps: %d %s Backtracks: %d%n",
+                        styles.success(completed.getExitStatus().toString()),
+                        styles.bullet(),
                         completed.getFinalState().getHistory().getSteps().size(),
-                        bullet(),
-                        completed.getFinalState().getHistory().getBacktracks().size(),
-                        NC);
+                        styles.bullet(),
+                        completed.getFinalState().getHistory().getBacktracks().size());
 
                 if (!completed.getFinalState().getHistory().getBacktracks().isEmpty()) {
-                    System.out.printf("%n%s  Backtrack Summary:%s%n", BOLD, NC);
+                    System.out.printf("%n%s%n", styles.bold("  Backtrack Summary:"));
                     completed
                             .getFinalState()
                             .getHistory()
@@ -111,24 +138,27 @@ class WorkflowRunCommand extends WorkflowCommand {
                             .forEach(
                                     bt ->
                                             System.out.printf(
-                                                    "%s  %s%s %s %s%s %s(%s)%s%n",
-                                                    GRAY,
-                                                    NC,
-                                                    bold(bt.getFrom()),
-                                                    arrow(),
-                                                    bold(bt.getTo()),
-                                                    GRAY,
-                                                    bt.getType(),
-                                                    bt.getReason(),
-                                                    NC));
+                                                    "  %s %s %s %s%n",
+                                                    styles.bold(bt.getFrom()),
+                                                    styles.arrow(),
+                                                    styles.bold(bt.getTo()),
+                                                    styles.gray(
+                                                            bt.getType()
+                                                                    + "("
+                                                                    + bt.getReason()
+                                                                    + ")")));
                 }
             } else if (result instanceof ExecutionResult.Rejected rejected) {
-                System.out.printf("%n%s %sWorkflow rejected!%s%n", failMark(), BOLD, NC);
-                System.out.printf("%s  Reason: %s%s%n", GRAY, NC, rejected.getReason());
+                System.out.printf(
+                        "%n%s %s%n", styles.crossmark(), styles.bold("Workflow rejected!"));
+                System.out.printf("  Reason: %s%n", rejected.getReason());
             }
         } catch (Exception e) {
             System.err.printf(
-                    "%s %sWorkflow execution failed:%s %s%n", failMark(), BOLD, NC, e.getMessage());
+                    "%s %s %s%n",
+                    styles.crossmark(),
+                    styles.bold("Workflow execution failed:"),
+                    e.getMessage());
             e.printStackTrace();
         }
     }
@@ -210,58 +240,5 @@ class WorkflowRunCommand extends WorkflowCommand {
         }
 
         return result;
-    }
-
-    /// Creates a listener that prints agent inputs and outputs to stdout.
-    private ExecutionListener createVerboseListener() {
-        return new ExecutionListener() {
-            @Override
-            public void onAgentStart(String nodeId, String agentId, String prompt) {
-                System.out.println(separatorTop());
-                System.out.printf(
-                        "  %s*%s %sINPUT%s %s[%s]%s %s %s%s%n",
-                        BLUE, NC, BOLD, NC, GRAY, nodeId, NC, arrow(), agentId, NC);
-                System.out.println(separatorMid());
-                printIndented(prompt, false);
-                System.out.println(separatorBottom());
-                System.out.println();
-            }
-
-            @Override
-            public void onAgentComplete(String nodeId, String agentId, AgentResponse response) {
-                System.out.println(separatorTop());
-                String statusColor = response.isSuccess() ? GREEN : RED;
-                String status = statusColor + "OK" + NC;
-                String leftArrow = statusColor + "←" + NC;
-                System.out.printf(
-                        "  %s*%s %sOUTPUT%s %s[%s]%s %s %s%s (%s)%n",
-                        statusColor,
-                        NC,
-                        BOLD,
-                        NC,
-                        GRAY,
-                        nodeId,
-                        NC,
-                        leftArrow,
-                        agentId,
-                        NC,
-                        status);
-                System.out.println(separatorMid());
-                printIndented(response.getOutput(), true);
-                System.out.println(separatorBottom());
-                System.out.println();
-            }
-
-            private void printIndented(String text, boolean isOutput) {
-                if (text == null || text.isEmpty()) {
-                    System.out.printf("  %s(empty)%s%n", GRAY, NC);
-                    return;
-                }
-                for (String line : text.split("\n")) {
-                    String textColor = isOutput ? "" : GRAY;
-                    System.out.printf("  %s%s%s%n", textColor, line, NC);
-                }
-            }
-        };
     }
 }

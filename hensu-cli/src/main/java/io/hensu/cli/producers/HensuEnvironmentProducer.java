@@ -16,18 +16,27 @@ import java.util.Properties;
 import java.util.logging.Logger;
 import org.eclipse.microprofile.config.Config;
 
-/// CDI producer for Hensu components. Credentials are discovered from:
+/// CDI producer for the Hensu runtime environment and its dependencies.
 ///
-/// - **Environment variables** matching patterns: *_API_KEY, *_KEY, *_SECRET, *_TOKEN
-/// - **Application properties** under `hensu.credentials.*`.
+/// Wires together the core execution components: workflow executor, action executor,
+/// review handler, and generic node handlers discovered via CDI.
+///
+/// ### Credential Discovery
+/// Credentials are loaded from (in priority order):
+/// 1. **Application properties** under `hensu.credentials.*`
 /// Example `hensu.credentials.ANTHROPIC_API_KEY=`
+/// 2. **Environment variables** matching patterns: `*_API_KEY`, `*_KEY`, `*_SECRET`, `*_TOKEN`
 ///
-/// ### Properties take precedence over environment variables.
+/// ### Configuration Properties
+/// | Property | Type | Default | Description |
+/// |----------|------|---------|-------------|
+/// | `hensu.credentials.*` | String | - | API keys and secrets |
+/// | `hensu.stub.enabled` | Boolean | `false` | Enable stub mode for testing |
+/// | `hensu.review.interactive` | Boolean | `false` | Enable human review prompts |
 ///
-/// ### Human review mode can be enabled via:
-///
-/// - **Property**: hensu.review.interactive=true
-/// - **System property**: -Dhensu.review.interactive=true
+/// @implNote Application-scoped singleton. Thread-safe after initialization.
+/// @see io.hensu.core.HensuEnvironment
+/// @see CLIReviewManager
 @ApplicationScoped
 public class HensuEnvironmentProducer {
 
@@ -41,6 +50,12 @@ public class HensuEnvironmentProducer {
 
     @Inject CLIActionExecutor actionExecutor;
 
+    /// Produces the Hensu runtime environment for CDI injection.
+    ///
+    /// Configures virtual threads, loads credentials from properties, sets up the CLI action
+    /// executor and review handler, then registers all discovered generic node handlers.
+    ///
+    /// @return configured environment singleton, never null
     @Produces
     @ApplicationScoped
     public HensuEnvironment hensuEnvironment() {
@@ -102,6 +117,9 @@ public class HensuEnvironmentProducer {
         return properties;
     }
 
+    /// Cleanup callback invoked when the application shuts down.
+    ///
+    /// Closes the HensuEnvironment to release resources (thread pools, connections).
     @PreDestroy
     public void cleanup() {
         if (hensuEnvironment != null) {

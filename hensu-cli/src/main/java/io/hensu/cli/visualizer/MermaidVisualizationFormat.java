@@ -6,8 +6,27 @@ import io.hensu.core.workflow.node.*;
 import io.hensu.core.workflow.transition.*;
 import jakarta.enterprise.context.ApplicationScoped;
 
-/// Mermaid diagram format visualization for workflows. Output can be rendered in Markdown or at
-/// mermaid.live
+/// Mermaid diagram format visualization for workflows.
+///
+/// Generates Mermaid flowchart syntax wrapped in Markdown code blocks. Output can be rendered
+/// in GitHub/GitLab Markdown, documentation tools, or at [mermaid.live](https://mermaid.live).
+///
+/// ### Node Shape Mapping
+/// - **StandardNode**: Rectangle with agent label
+/// - **EndNode**: Stadium shape with exit status
+/// - **LoopNode**: Diamond shape
+/// - **ParallelNode**: Double rectangle
+/// - **ForkNode**: Asymmetric shape (flag)
+/// - **JoinNode**: Parallelogram
+/// - **GenericNode**: Hexagon with executor type
+/// - **ActionNode**: Trapezoid
+///
+/// ### Edge Styles
+/// - **Solid arrow** (`-->`) - success transitions
+/// - **Dashed arrow** (`-.->`) - failure/break transitions with labels
+///
+/// @implNote Thread-safe. Stateless rendering.
+/// @see TextVisualizationFormat for ASCII output
 @ApplicationScoped
 public class MermaidVisualizationFormat implements VisualizationFormat {
 

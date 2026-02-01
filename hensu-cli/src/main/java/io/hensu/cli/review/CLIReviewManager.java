@@ -1,7 +1,6 @@
 package io.hensu.cli.review;
 
-import static io.hensu.cli.util.CliColors.*;
-
+import io.hensu.cli.ui.AnsiStyles;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionStep;
@@ -25,19 +24,33 @@ import java.util.Scanner;
 
 /// CLI-based human review handler for interactive workflow checkpoints.
 ///
-/// Supports: - Approve and continue - Manual backtracking to any previous step - Workflow
-/// rejection - View detailed output - View execution history
+/// Provides a terminal-based interface for human-in-the-loop workflow review with support for:
+/// - **Approve** - Continue workflow execution
+/// - **Backtrack** - Return to any previous step with optional prompt editing
+/// - **Reject** - Terminate workflow with a reason
+/// - **View** - Inspect detailed output and execution history
 ///
-/// When interactive mode is disabled (hensu.review.interactive=false), automatically approves
-/// all review requests without prompting.
+/// ### Enabling Interactive Mode
+/// Set the system property `hensu.review.interactive=true` to enable prompts.
+/// When disabled (default), all reviews are automatically approved.
+///
+/// ### Prompt Editing
+/// During backtrack, users can edit prompts using their `$EDITOR` (defaults to vim).
+/// The editor displays available context variables and ignores comment lines starting with `#`.
+///
+/// @implNote **Not thread-safe**. Designed for single-threaded CLI usage.
+/// Reads from Scanner, writes to PrintStream.
+///
+/// @see io.hensu.core.review.ReviewHandler
+/// @see io.hensu.core.review.ReviewDecision
 public class CLIReviewManager implements ReviewHandler {
 
-    /// System property to enable/disable interactive mode at runtime.
+    /// System property key to enable/disable interactive mode at runtime.
     public static final String INTERACTIVE_PROPERTY = "hensu.review.interactive";
 
     private final Scanner scanner;
     private final PrintStream out;
-    private final boolean useColor;
+    private final AnsiStyles styles;
 
     public CLIReviewManager() {
         this(new Scanner(System.in), System.out, true);
@@ -46,7 +59,7 @@ public class CLIReviewManager implements ReviewHandler {
     public CLIReviewManager(Scanner scanner, PrintStream out, boolean useColor) {
         this.scanner = scanner;
         this.out = out;
-        this.useColor = useColor;
+        this.styles = AnsiStyles.of(useColor);
     }
 
     /// Check if interactive mode is enabled via system property.
@@ -85,7 +98,7 @@ public class CLIReviewManager implements ReviewHandler {
                             return backtrackDecision;
                         }
                     } else {
-                        println(color("Backtracking is not allowed for this step.", YELLOW));
+                        println(styles.warn("Backtracking is not allowed for this step."));
                     }
                 }
                 case "R" -> {
@@ -94,57 +107,56 @@ public class CLIReviewManager implements ReviewHandler {
                 case "V" -> displayDetailedOutput(result);
                 case "H" -> displayHistory(history, node.getId());
                 case "?" -> displayHelp();
-                default -> println(color("Invalid option. Press ? for help.", YELLOW));
+                default -> println(styles.warn("Invalid option. Press ? for help."));
             }
         }
     }
 
     private void displayReviewHeader(Node node, NodeResult result, HensuState state) {
         println("");
-        println(color(separatorTop(), DIM));
-        println(color(center("HUMAN REVIEW CHECKPOINT", 62), BOLD));
-        println(color(separatorBottom(), DIM));
+        println(styles.separatorTop());
+        println(styles.bold(styles.center("HUMAN REVIEW CHECKPOINT", 62)));
+        println(styles.separatorBottom());
         println("");
 
         // Node info
-        println(color("Step: ", BOLD) + node.getId());
-        println(color("Status: ", BOLD) + formatStatus(result.getStatus()));
+        println(styles.bold("Step: ") + node.getId());
+        println(styles.bold("Status: ") + formatStatus(result.getStatus()));
 
         // Rubric score if available
         RubricEvaluation rubricEval = state.getRubricEvaluation();
         if (rubricEval != null) {
-            String scoreColor = rubricEval.isPassed() ? GREEN : RED;
             String passStatus = rubricEval.isPassed() ? "PASSED" : "FAILED";
             println(
-                    color("Rubric Score: ", BOLD)
-                            + color(
+                    styles.bold("Rubric Score: ")
+                            + styles.successOrError(
                                     String.format(
                                             "%.0f/100 (%s)", rubricEval.getScore(), passStatus),
-                                    scoreColor));
+                                    rubricEval.isPassed()));
         }
 
         println("");
 
         // Output preview (truncated)
-        println(color("Output Preview:", BOLD));
-        println(color("-".repeat(62), DIM));
+        println(styles.bold("Output Preview:"));
+        println(styles.dim("-".repeat(62)));
         String output = result.getOutput() != null ? result.getOutput().toString() : "(no output)";
         String preview = output.length() > 500 ? output.substring(0, 500) + "..." : output;
         println(preview);
-        println(color("-".repeat(62), DIM));
+        println(styles.dim("-".repeat(62)));
         println("");
     }
 
     private void displayMenu(ReviewConfig config) {
-        println(color("Review Options:", BOLD));
-        println("  [A] " + color("Approve", GREEN) + " and continue");
+        println(styles.bold("Review Options:"));
+        println("  [A] " + styles.success("Approve") + " and continue");
         if (config.isAllowBacktrack()) {
-            println("  [B] " + color("Backtrack", YELLOW) + " to a previous step");
+            println("  [B] " + styles.warn("Backtrack") + " to a previous step");
         }
         println("  [R] Reject and end workflow");
-        println(color("  [V] View detailed output", GRAY));
-        println(color("  [H] View execution history", GRAY));
-        println(color("  [?] Help", GRAY));
+        println(styles.gray("  [V] View detailed output"));
+        println(styles.gray("  [H] View execution history"));
+        println(styles.gray("  [?] Help"));
         print("\n> ");
     }
 
@@ -153,7 +165,7 @@ public class CLIReviewManager implements ReviewHandler {
         List<ExecutionStep> steps = history.getSteps();
 
         if (steps.size() <= 1) {
-            println(color("No previous steps available to backtrack to.", YELLOW));
+            println(styles.warn("No previous steps available to backtrack to."));
             return null;
         }
 
@@ -161,9 +173,9 @@ public class CLIReviewManager implements ReviewHandler {
         List<ExecutionStep> validSteps = new ArrayList<>(steps.subList(0, steps.size() - 1));
 
         println("");
-        println(color(separatorTop(), DIM));
-        println(color(center("SELECT BACKTRACK TARGET", 62), BOLD));
-        println(color(separatorBottom(), DIM));
+        println(styles.separatorTop());
+        println(styles.bold(styles.center("SELECT BACKTRACK TARGET", 62)));
+        println(styles.separatorBottom());
         println("");
 
         // Display available steps (newest first for easier selection)
@@ -171,9 +183,9 @@ public class CLIReviewManager implements ReviewHandler {
             ExecutionStep step = validSteps.get(i);
             int displayNum = validSteps.size() - i;
             String status =
-                    step.getResult().getStatus() == ResultStatus.SUCCESS
-                            ? color("OK", GREEN)
-                            : color("FAIL", RED);
+                    styles.successOrError(
+                            step.getResult().getStatus() == ResultStatus.SUCCESS ? "OK" : "FAIL",
+                            step.getResult().getStatus() == ResultStatus.SUCCESS);
             println(String.format("  [%d] %s (%s)", displayNum, step.getNodeId(), status));
         }
 
@@ -191,7 +203,7 @@ public class CLIReviewManager implements ReviewHandler {
             }
 
             if (choice < 1 || choice > validSteps.size()) {
-                println(color("Invalid choice. Please select a number from the list.", RED));
+                println(styles.error("Invalid choice. Please select a number from the list."));
                 return null;
             }
 
@@ -219,18 +231,18 @@ public class CLIReviewManager implements ReviewHandler {
                                         : null);
                 editedPrompt = editPromptWithVim(targetNodeId, state, optionalPrompt.orElse(""));
                 if (editedPrompt != null) {
-                    println(color("Prompt updated.", GREEN));
+                    println(styles.success("Prompt updated."));
                 } else {
-                    println(color("Prompt editing canceled or failed.", YELLOW));
+                    println(styles.warn("Prompt editing canceled or failed."));
                 }
             }
 
-            println(color("\nBacktracking to: " + targetNodeId, YELLOW));
+            println(styles.warn("\nBacktracking to: " + targetNodeId));
 
             return new ReviewDecision.Backtrack(targetNodeId, state, reason, editedPrompt);
 
         } catch (NumberFormatException e) {
-            println(color("Please enter a valid number.", RED));
+            println(styles.error("Please enter a valid number."));
             return null;
         }
     }
@@ -298,7 +310,7 @@ public class CLIReviewManager implements ReviewHandler {
             int exitCode = process.waitFor();
 
             if (exitCode != 0) {
-                println(color("Editor exited with error code: " + exitCode, RED));
+                println(styles.error("Editor exited with error code: " + exitCode));
                 Files.deleteIfExists(tempFile);
                 return null;
             }
@@ -319,19 +331,19 @@ public class CLIReviewManager implements ReviewHandler {
             return result.isEmpty() ? null : result;
 
         } catch (IOException | InterruptedException e) {
-            println(color("Error editing prompt: " + e.getMessage(), RED));
+            println(styles.error("Error editing prompt: " + e.getMessage()));
             return null;
         }
     }
 
     private ReviewDecision handleReject() {
         println("");
-        println(color("Rejecting workflow...", RED));
+        println(styles.error("Rejecting workflow..."));
         print("Reason for rejection (required): ");
 
         String reason = readInput();
         while (reason.isBlank()) {
-            println(color("Reason is required for rejection.", YELLOW));
+            println(styles.warn("Reason is required for rejection."));
             print("Reason for rejection: ");
             reason = readInput();
         }
@@ -341,20 +353,20 @@ public class CLIReviewManager implements ReviewHandler {
 
     private void displayDetailedOutput(NodeResult result) {
         println("");
-        println(color(separatorTop(), DIM));
-        println(color(center("DETAILED OUTPUT", 62), BOLD));
-        println(color(separatorBottom(), DIM));
+        println(styles.separatorTop());
+        println(styles.bold(styles.center("DETAILED OUTPUT", 62)));
+        println(styles.separatorBottom());
         println("");
 
         if (result.getOutput() != null) {
             println(result.getOutput().toString());
         } else {
-            println(color("(no output)", GRAY));
+            println(styles.gray("(no output)"));
         }
 
         if (!result.getMetadata().isEmpty()) {
             println("");
-            println(color("Metadata:", BOLD));
+            println(styles.bold("Metadata:"));
             result.getMetadata().forEach((key, value) -> println("  " + key + ": " + value));
         }
 
@@ -365,32 +377,32 @@ public class CLIReviewManager implements ReviewHandler {
 
     private void displayHistory(ExecutionHistory history, String currentNodeId) {
         println("");
-        println(color(separatorTop(), DIM));
-        println(color(center("EXECUTION HISTORY", 62), BOLD));
-        println(color(separatorBottom(), DIM));
+        println(styles.separatorTop());
+        println(styles.bold(styles.center("EXECUTION HISTORY", 62)));
+        println(styles.separatorBottom());
         println("");
 
         List<ExecutionStep> steps = history.getSteps();
         for (int i = 0; i < steps.size(); i++) {
             ExecutionStep step = steps.get(i);
             boolean isCurrent = step.getNodeId().equals(currentNodeId);
-            String marker = isCurrent ? color("->", GREEN) : "  ";
+            String marker = isCurrent ? styles.success("->") : "  ";
             String status =
-                    step.getResult().getStatus() == ResultStatus.SUCCESS
-                            ? color("OK", GREEN)
-                            : color("FAIL", RED);
+                    styles.successOrError(
+                            step.getResult().getStatus() == ResultStatus.SUCCESS ? "OK" : "FAIL",
+                            step.getResult().getStatus() == ResultStatus.SUCCESS);
             String timestamp = step.getTimestamp() != null ? step.getTimestamp().toString() : "";
 
             println(
                     String.format(
                             "%s %2d. %-30s [%s] %s",
-                            marker, i + 1, step.getNodeId(), status, color(timestamp, GRAY)));
+                            marker, i + 1, step.getNodeId(), status, styles.gray(timestamp)));
         }
 
         // Display backtrack events if any
         if (!history.getBacktracks().isEmpty()) {
             println("");
-            println(color("Backtrack Events:", YELLOW));
+            println(styles.warn("Backtrack Events:"));
             history.getBacktracks()
                     .forEach(
                             bt ->
@@ -411,11 +423,11 @@ public class CLIReviewManager implements ReviewHandler {
 
     private void displayHelp() {
         println("");
-        println(color(separatorTop(), DIM));
-        println(color(center("REVIEW HELP", 62), BOLD));
-        println(color(separatorBottom(), DIM));
+        println(styles.separatorTop());
+        println(styles.bold(styles.center("REVIEW HELP", 62)));
+        println(styles.separatorBottom());
         println("");
-        println(color("Commands:", BOLD));
+        println(styles.bold("Commands:"));
         println("  A - Approve the current step and continue workflow execution");
         println("  B - Backtrack to a previous step (if allowed)");
         println("      Useful when you want to re-run a step with different inputs");
@@ -424,12 +436,12 @@ public class CLIReviewManager implements ReviewHandler {
         println("  H - View the execution history of all completed steps");
         println("  ? - Display this help message");
         println("");
-        println(color("Backtracking:", BOLD));
+        println(styles.bold("Backtracking:"));
         println("  When backtracking, workflow execution will resume from the");
         println("  selected step. The current state context is preserved, allowing");
         println("  the re-executed step to potentially produce different output.");
         println("");
-        println(color("Prompt Editing:", BOLD));
+        println(styles.bold("Prompt Editing:"));
         println("  After selecting a backtrack target, you can optionally edit the");
         println("  prompt using your $EDITOR (defaults to vim). The editor shows:");
         println("  - Available context variables and their current values");
@@ -442,26 +454,11 @@ public class CLIReviewManager implements ReviewHandler {
 
     private String formatStatus(ResultStatus status) {
         return switch (status) {
-            case SUCCESS -> color("SUCCESS", GREEN);
-            case FAILURE -> color("FAILURE", RED);
-            case PENDING -> color("PENDING", YELLOW);
-            case END -> color("END", BLUE);
+            case SUCCESS -> styles.success("SUCCESS");
+            case FAILURE -> styles.error("FAILURE");
+            case PENDING -> styles.warn("PENDING");
+            case END -> styles.accent("END");
         };
-    }
-
-    private String color(String text, String color) {
-        if (!useColor) {
-            return text;
-        }
-        return color + text + NC;
-    }
-
-    private String center(String text, int width) {
-        if (text.length() >= width) {
-            return text;
-        }
-        int padding = (width - text.length()) / 2;
-        return " ".repeat(padding) + text + " ".repeat(width - text.length() - padding);
     }
 
     private void println(String text) {
