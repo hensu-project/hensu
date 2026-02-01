@@ -1,12 +1,11 @@
 # Hensu - The Agentic Workflow Engine
 
-Self-hosted. Developer-friendly. Enterprise-ready.
-Build complex AI agent workflows with code.
-No vendor lock-in. No "Contact Sales."
+Orchestrate AI agents with simple DSL configuration.                          
+Self-hosted. Developer-friendly. Zero lock-in.
 
 ## Key Features
 
-- **No-Code Workflow Configuration** - Define workflows using a simple Kotlin DSL without modifying the codebase
+- **Declarative Workflow Configuration** - Define workflows declaratively with an intuitive Kotlin DSL
 - **Extensible Node System** - Create custom nodes to extend workflow capabilities when needed
 - **Complex Workflows** - Undirected flows, loops, forks, parallel execution, consensus-based decisions
 - **Rubric-Driven Quality Gates** - Evaluate outputs against defined criteria with score-based routing
