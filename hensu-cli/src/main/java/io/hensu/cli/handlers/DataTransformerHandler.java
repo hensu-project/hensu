@@ -9,16 +9,26 @@ import java.util.List;
 import java.util.Map;
 import java.util.logging.Logger;
 
-/// Data transformer handler - applies transformations to string fields.
+/// Generic node handler for applying string transformations to context fields.
 ///
-/// ### Config options:
+/// Reads a value from context, applies a chain of transformations, and stores the
+/// result back to context for subsequent nodes.
 ///
-/// - **inputField** - Source field name (default: "input")
-/// - **outputField** - Target field name (default: "output")
-/// - **operations** - List of operations: trim, lowercase, uppercase, normalize
+/// ### Config Options
+/// | Key | Type | Default | Description |
+/// |-----|------|---------|-------------|
+/// | `inputField` | String | `"input"` | Source field name in context |
+/// | `outputField` | String | `"output"` | Target field name in context |
+/// | `operations` | List&lt;String&gt; | `[]` | Transformations to apply in order |
 ///
+/// ### Supported Operations
+/// - `trim` - Remove leading/trailing whitespace
+/// - `lowercase` - Convert to lowercase
+/// - `uppercase` - Convert to uppercase
+/// - `normalize` - Collapse multiple spaces to single space
 ///
-/// ### The transformed value is stored in context under outputField.
+/// @apiNote Side effect: Modifies workflow context by storing result in `outputField`.
+/// @see GenericNodeHandler
 @ApplicationScoped
 public class DataTransformerHandler implements GenericNodeHandler {
 
