@@ -52,8 +52,7 @@ public class TextVisualizationFormat implements VisualizationFormat {
         sb.append(
                 String.format(
                         "%s %s%n",
-                        styles.bold("Workflow:"),
-                        styles.accent(workflow.getMetadata().getName())));
+                        styles.bold("Workflow:"), styles.accent(workflow.getMetadata().getName())));
         sb.append(styles.gray("─".repeat(50))).append(System.lineSeparator());
         sb.append(System.lineSeparator());
 
@@ -165,8 +164,7 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                 "%s%s  Branches: %s%n",
                                 indent,
                                 styles.boxMid(),
-                                styles.accent(
-                                        String.valueOf(parallelNode.getBranches().length))));
+                                styles.accent(String.valueOf(parallelNode.getBranches().length))));
                 for (Branch branch : parallelNode.getBranches()) {
                     sb.append(
                             String.format(
@@ -201,10 +199,7 @@ public class TextVisualizationFormat implements VisualizationFormat {
                     sb.append(
                             String.format(
                                     "%s%s    %s %s%n",
-                                    indent,
-                                    styles.boxMid(),
-                                    styles.bullet(),
-                                    styles.bold(target)));
+                                    indent, styles.boxMid(), styles.bullet(), styles.bold(target)));
                 }
                 sb.append(
                         String.format(
@@ -222,8 +217,7 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                 "%s%s  Awaiting: %s fork(s)%n",
                                 indent,
                                 styles.boxMid(),
-                                styles.accent(
-                                        String.valueOf(joinNode.getAwaitTargets().size()))));
+                                styles.accent(String.valueOf(joinNode.getAwaitTargets().size()))));
                 for (String target : joinNode.getAwaitTargets()) {
                     sb.append(
                             String.format(
@@ -258,8 +252,7 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                     "%s%s  Config: %s entries%n",
                                     indent,
                                     styles.boxMid(),
-                                    styles.accent(
-                                            String.valueOf(genericNode.getConfig().size()))));
+                                    styles.accent(String.valueOf(genericNode.getConfig().size()))));
                 }
                 if (genericNode.getRubricId() != null) {
                     sb.append(

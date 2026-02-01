@@ -156,9 +156,7 @@ class WorkflowRunCommand extends WorkflowCommand {
         } catch (Exception e) {
             System.err.printf(
                     "%s %s %s%n",
-                    styles.crossmark(),
-                    styles.bold("Workflow execution failed:"),
-                    e.getMessage());
+                    styles.crossmark(), styles.bold("Workflow execution failed:"), e.getMessage());
             e.printStackTrace();
         }
     }
