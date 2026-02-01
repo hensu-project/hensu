@@ -38,13 +38,14 @@ This file provides project-specific instructions for AI coding agents.
 Hensu is a modular AI workflow engine built on Java 25 with Kotlin DSL support.
 
 Key features:
-- Complex workflow creation with undirected flows, loops, forks, parallel execution
-- Intelligent phase transitions with score-based routing
-- Phase-based backtracking to any available previous step
-- Rubric-driven quality gates
-- Human or automatic review at phase boundaries
-- Consensus-based parallel step execution
-- Time-travel debugging with rubric-triggered auto-correction
+- Declarative Workflow Configuration - Define workflows declaratively with an intuitive Kotlin DSL
+- Extensible Node System - Create custom nodes to extend workflow capabilities when needed
+- Complex Workflows - Undirected flows, loops, forks, parallel execution, consensus-based decisions
+- Rubric-Driven Quality Gates - Evaluate outputs against defined criteria with score-based routing
+- Human Review Integration - Optional or required review at any workflow step
+- Multi-Provider Support - Claude, GPT, Gemini, DeepSeek via pluggable adapters
+- Time-Travel Debugging - Execution history with backtracking support
+- Zero Lock-In - Self-hosted, pure code, no proprietary formats
 
 The core module design principle is **zero external dependencies** - all AI provider integrations happen through Java's ServiceLoader (SPI) pattern.
 
