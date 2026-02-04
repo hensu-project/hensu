@@ -31,7 +31,7 @@ public final class InMemoryWorkflowStateRepository implements WorkflowStateRepos
         Objects.requireNonNull(tenantId, "tenantId must not be null");
         Objects.requireNonNull(snapshot, "snapshot must not be null");
 
-        storage.computeIfAbsent(tenantId, k -> new ConcurrentHashMap<>())
+        storage.computeIfAbsent(tenantId, _ -> new ConcurrentHashMap<>())
                 .put(snapshot.executionId(), snapshot);
     }
 

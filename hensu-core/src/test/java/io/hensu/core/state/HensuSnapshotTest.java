@@ -183,7 +183,7 @@ class HensuSnapshotTest {
         @Test
         void shouldThrowWhenPlanSnapshotIsNullInOverload() {
             HensuState state = createTestState();
-            assertThatThrownBy(() -> HensuSnapshot.from(state, (PlanSnapshot) null, "reason"))
+            assertThatThrownBy(() -> HensuSnapshot.from(state, null, "reason"))
                     .isInstanceOf(NullPointerException.class);
         }
     }

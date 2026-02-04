@@ -80,7 +80,7 @@ class McpToolDiscoveryTest {
     class DiscoverToolsWithExplicitEndpoint {
 
         @Test
-        void shouldDiscoverToolsFromEndpoint() throws Exception {
+        void shouldDiscoverToolsFromEndpoint() {
             var mcpTool = new McpConnection.McpToolDescriptor("read_file", "Read a file", Map.of());
 
             when(connectionPool.get("http://mcp.local")).thenReturn(connection);
@@ -93,7 +93,7 @@ class McpToolDiscoveryTest {
         }
 
         @Test
-        void shouldCacheToolDiscoveryResults() throws Exception {
+        void shouldCacheToolDiscoveryResults() {
             var mcpTool = new McpConnection.McpToolDescriptor("tool", "desc", Map.of());
 
             when(connectionPool.get("http://mcp.local")).thenReturn(connection);
@@ -108,7 +108,7 @@ class McpToolDiscoveryTest {
         }
 
         @Test
-        void shouldRefetchAfterCacheInvalidation() throws Exception {
+        void shouldRefetchAfterCacheInvalidation() {
             var mcpTool = new McpConnection.McpToolDescriptor("tool", "desc", Map.of());
 
             when(connectionPool.get("http://mcp.local")).thenReturn(connection);
@@ -212,7 +212,7 @@ class McpToolDiscoveryTest {
     class CacheManagement {
 
         @Test
-        void shouldReportCacheSize() throws Exception {
+        void shouldReportCacheSize() {
             var mcpTool = new McpConnection.McpToolDescriptor("tool", "desc", Map.of());
 
             when(connectionPool.get("http://endpoint1")).thenReturn(connection);
@@ -229,7 +229,7 @@ class McpToolDiscoveryTest {
         }
 
         @Test
-        void shouldInvalidateAllCaches() throws Exception {
+        void shouldInvalidateAllCaches() {
             var mcpTool = new McpConnection.McpToolDescriptor("tool", "desc", Map.of());
 
             when(connectionPool.get("http://endpoint1")).thenReturn(connection);

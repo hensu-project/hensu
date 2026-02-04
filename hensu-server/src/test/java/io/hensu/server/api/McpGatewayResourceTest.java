@@ -70,7 +70,7 @@ class McpGatewayResourceTest {
             subscriber.awaitCompletion();
 
             assertThat(subscriber.getItems()).hasSize(2);
-            assertThat(subscriber.getItems().get(0)).contains("ping");
+            assertThat(subscriber.getItems().getFirst()).contains("ping");
         }
     }
 

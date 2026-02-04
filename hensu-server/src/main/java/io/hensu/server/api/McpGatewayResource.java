@@ -104,7 +104,7 @@ public class McpGatewayResource {
                 .invoke(() -> LOG.debugv("SSE stream started for: {0}", clientId))
                 .onTermination()
                 .invoke(
-                        (t, c) -> {
+                        (t, _) -> {
                             if (t != null) {
                                 LOG.warnv(t, "SSE stream error for: {0}", clientId);
                             } else {

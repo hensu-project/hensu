@@ -109,7 +109,7 @@ class McpSidecarTest {
         }
 
         @Test
-        void shouldUseEmptyArgumentsWhenNotProvided() throws Exception {
+        void shouldUseEmptyArgumentsWhenNotProvided() {
             TenantInfo tenant = TenantInfo.withMcp("tenant-1", "http://mcp.local:8080");
             Map<String, Object> payload = Map.of("tool", "list");
 

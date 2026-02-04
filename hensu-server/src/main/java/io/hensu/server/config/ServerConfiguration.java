@@ -7,7 +7,6 @@ import io.hensu.core.agent.AgentNotFoundException;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.execution.WorkflowExecutor;
-import io.hensu.core.execution.action.Action;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.DefaultNodeExecutorRegistry;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
@@ -111,12 +110,9 @@ public class ServerConfiguration {
     @Singleton
     public ActionExecutor actionExecutor() {
         // Stub action executor until MCP integration is configured
-        return new ActionExecutor() {
-            @Override
-            public ActionResult execute(Action action, Map<String, Object> context) {
-                LOG.warnv("Action execution not configured: {0}", action);
-                return ActionResult.failure("Action executor not configured");
-            }
+        return (action, _) -> {
+            LOG.warnv("Action execution not configured: {0}", action);
+            return ActionExecutor.ActionResult.failure("Action executor not configured");
         };
     }
 

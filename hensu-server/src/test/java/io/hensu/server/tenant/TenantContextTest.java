@@ -86,11 +86,7 @@ class TenantContextTest {
             TenantInfo tenant = TenantInfo.simple("tenant-1");
             AtomicReference<String> captured = new AtomicReference<>();
 
-            TenantContext.runAs(
-                    tenant,
-                    () -> {
-                        captured.set(TenantContext.current().tenantId());
-                    });
+            TenantContext.runAs(tenant, () -> captured.set(TenantContext.current().tenantId()));
 
             assertThat(captured.get()).isEqualTo("tenant-1");
         }
@@ -110,30 +106,30 @@ class TenantContextTest {
 
             Thread t1 =
                     new Thread(
-                            () -> {
-                                TenantContext.runAs(
-                                        tenant1,
-                                        () -> {
-                                            try {
-                                                Thread.sleep(50);
-                                            } catch (InterruptedException e) {
-                                                Thread.currentThread().interrupt();
-                                            }
-                                            thread1Result.set(TenantContext.current().tenantId());
-                                            latch.countDown();
-                                        });
-                            });
+                            () ->
+                                    TenantContext.runAs(
+                                            tenant1,
+                                            () -> {
+                                                try {
+                                                    Thread.sleep(50);
+                                                } catch (InterruptedException e) {
+                                                    Thread.currentThread().interrupt();
+                                                }
+                                                thread1Result.set(
+                                                        TenantContext.current().tenantId());
+                                                latch.countDown();
+                                            }));
 
             Thread t2 =
                     new Thread(
-                            () -> {
-                                TenantContext.runAs(
-                                        tenant2,
-                                        () -> {
-                                            thread2Result.set(TenantContext.current().tenantId());
-                                            latch.countDown();
-                                        });
-                            });
+                            () ->
+                                    TenantContext.runAs(
+                                            tenant2,
+                                            () -> {
+                                                thread2Result.set(
+                                                        TenantContext.current().tenantId());
+                                                latch.countDown();
+                                            }));
 
             t1.start();
             t2.start();

@@ -60,7 +60,7 @@ class ExecutionEventBroadcasterTest {
 
             subscriber.awaitItems(1);
             assertThat(subscriber.getItems()).hasSize(1);
-            assertThat(subscriber.getItems().get(0).type()).isEqualTo("execution.started");
+            assertThat(subscriber.getItems().getFirst().type()).isEqualTo("execution.started");
         }
 
         @Test
@@ -151,7 +151,7 @@ class ExecutionEventBroadcasterTest {
             broadcaster.onEvent(PlanEvent.PlanCreated.now(plan));
 
             subscriber.awaitItems(1);
-            ExecutionEvent event = subscriber.getItems().get(0);
+            ExecutionEvent event = subscriber.getItems().getFirst();
             assertThat(event.type()).isEqualTo("plan.created");
             assertThat(event).isInstanceOf(ExecutionEvent.PlanCreated.class);
 
@@ -174,7 +174,7 @@ class ExecutionEventBroadcasterTest {
             broadcaster.onEvent(PlanEvent.StepStarted.now("plan-1", step));
 
             subscriber.awaitItems(1);
-            ExecutionEvent event = subscriber.getItems().get(0);
+            ExecutionEvent event = subscriber.getItems().getFirst();
             assertThat(event.type()).isEqualTo("step.started");
 
             ExecutionEvent.StepStarted started = (ExecutionEvent.StepStarted) event;
@@ -198,7 +198,7 @@ class ExecutionEventBroadcasterTest {
             broadcaster.onEvent(PlanEvent.StepCompleted.now("plan-1", result));
 
             subscriber.awaitItems(1);
-            ExecutionEvent event = subscriber.getItems().get(0);
+            ExecutionEvent event = subscriber.getItems().getFirst();
             assertThat(event.type()).isEqualTo("step.completed");
 
             ExecutionEvent.StepCompleted completed = (ExecutionEvent.StepCompleted) event;
@@ -220,7 +220,7 @@ class ExecutionEventBroadcasterTest {
             broadcaster.onEvent(PlanEvent.PlanCompleted.success("plan-1", "Final output"));
 
             subscriber.awaitItems(1);
-            ExecutionEvent event = subscriber.getItems().get(0);
+            ExecutionEvent event = subscriber.getItems().getFirst();
             assertThat(event.type()).isEqualTo("plan.completed");
 
             ExecutionEvent.PlanCompleted completed = (ExecutionEvent.PlanCompleted) event;
@@ -243,7 +243,7 @@ class ExecutionEventBroadcasterTest {
             broadcaster.onEvent(PlanEvent.PlanCompleted.success("plan-1", "Done"));
 
             subscriber.awaitItems(1);
-            assertThat(subscriber.getItems().get(0).executionId()).isEqualTo("exec-1");
+            assertThat(subscriber.getItems().getFirst().executionId()).isEqualTo("exec-1");
         }
     }
 
