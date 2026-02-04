@@ -77,7 +77,7 @@ class WorkflowExecutorTest {
         Map<String, Object> context = new HashMap<>();
         context.put("input", "test data");
 
-        AgentResponse successResponse = AgentResponse.success("Agent output");
+        AgentResponse successResponse = AgentResponse.TextResponse.of("Agent output");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any())).thenReturn(successResponse);
 
@@ -96,7 +96,7 @@ class WorkflowExecutorTest {
         Workflow workflow = createWorkflowWithMissingNode();
         Map<String, Object> context = new HashMap<>();
 
-        AgentResponse successResponse = AgentResponse.success("Agent output");
+        AgentResponse successResponse = AgentResponse.TextResponse.of("Agent output");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any())).thenReturn(successResponse);
 
@@ -128,7 +128,7 @@ class WorkflowExecutorTest {
         context.put("topic", "artificial intelligence");
         context.put("style", "formal");
 
-        AgentResponse successResponse = AgentResponse.success("Generated content");
+        AgentResponse successResponse = AgentResponse.TextResponse.of("Generated content");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(eq("Write about artificial intelligence in formal style"), any()))
                 .thenReturn(successResponse);
@@ -146,7 +146,7 @@ class WorkflowExecutorTest {
         Workflow workflow = createMultiStepWorkflow();
         Map<String, Object> context = new HashMap<>();
 
-        AgentResponse successResponse = AgentResponse.success("Agent output");
+        AgentResponse successResponse = AgentResponse.TextResponse.of("Agent output");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any())).thenReturn(successResponse);
 
@@ -165,7 +165,7 @@ class WorkflowExecutorTest {
         Workflow workflow = createWorkflowWithFailureTransition();
         Map<String, Object> context = new HashMap<>();
 
-        AgentResponse failureResponse = AgentResponse.failure(new RuntimeException("Agent error"));
+        AgentResponse failureResponse = AgentResponse.Error.of("Agent error");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any())).thenReturn(failureResponse);
 
@@ -184,7 +184,7 @@ class WorkflowExecutorTest {
         Workflow workflow = createWorkflowWithFailureEnd();
         Map<String, Object> context = new HashMap<>();
 
-        AgentResponse successResponse = AgentResponse.success("Agent output");
+        AgentResponse successResponse = AgentResponse.TextResponse.of("Agent output");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any())).thenReturn(successResponse);
 
@@ -203,7 +203,7 @@ class WorkflowExecutorTest {
         Workflow workflow = createWorkflowWithNoTransition();
         Map<String, Object> context = new HashMap<>();
 
-        AgentResponse successResponse = AgentResponse.success("Agent output");
+        AgentResponse successResponse = AgentResponse.TextResponse.of("Agent output");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any())).thenReturn(successResponse);
 
@@ -219,7 +219,7 @@ class WorkflowExecutorTest {
         Workflow workflow = createWorkflowWithNullPrompt();
         Map<String, Object> context = new HashMap<>();
 
-        AgentResponse successResponse = AgentResponse.success("Agent output");
+        AgentResponse successResponse = AgentResponse.TextResponse.of("Agent output");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(eq(""), any())).thenReturn(successResponse);
 
@@ -246,10 +246,11 @@ class WorkflowExecutorTest {
                 "capital": "Tbilisi"
             }
             """;
-        AgentResponse step1Response = AgentResponse.success(jsonOutput);
+        AgentResponse step1Response = AgentResponse.TextResponse.of(jsonOutput);
 
         // Step 2: Uses extracted parameters
-        AgentResponse step2Response = AgentResponse.success("Final output using extracted params");
+        AgentResponse step2Response =
+                AgentResponse.TextResponse.of("Final output using extracted params");
 
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any())).thenReturn(step1Response).thenReturn(step2Response);
@@ -279,8 +280,9 @@ class WorkflowExecutorTest {
                 """
             {"country": "Georgia", "language": "Georgian"}
             """;
-        AgentResponse step1Response = AgentResponse.success(jsonOutput);
-        AgentResponse step2Response = AgentResponse.success("Article about Georgia in Georgian");
+        AgentResponse step1Response = AgentResponse.TextResponse.of(jsonOutput);
+        AgentResponse step2Response =
+                AgentResponse.TextResponse.of("Article about Georgia in Georgian");
 
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any())).thenReturn(step1Response).thenReturn(step2Response);

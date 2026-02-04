@@ -1,4 +1,4 @@
-package io.hensu.core.exception;
+package io.hensu.core.execution.executor;
 
 import java.io.Serial;
 

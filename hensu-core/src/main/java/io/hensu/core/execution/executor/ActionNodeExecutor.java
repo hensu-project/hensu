@@ -5,10 +5,8 @@ import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.action.ActionExecutor.ActionResult;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuState;
-import io.hensu.core.template.TemplateResolver;
 import io.hensu.core.workflow.node.ActionNode;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Map;
 import java.util.logging.Logger;
 
 /// Executes action nodes, processing actions and continuing workflow execution.
@@ -32,19 +30,15 @@ public class ActionNodeExecutor implements NodeExecutor<ActionNode> {
     @Override
     public NodeResult execute(ActionNode node, ExecutionContext context) {
         HensuState state = context.getState();
-        TemplateResolver templateResolver = context.getTemplateResolver();
         ActionExecutor actionExecutor = context.getActionExecutor();
 
         logger.info("Executing action node: " + node.getId());
 
-        // TODO Contents of collection 'results' are updated, but never queried
-        List<ActionResult> results = new ArrayList<>();
         boolean allSucceeded = true;
 
         for (Action action : node.getActions()) {
             if (actionExecutor != null) {
                 ActionResult result = actionExecutor.execute(action, state.getContext());
-                results.add(result);
 
                 if (result.success()) {
                     logger.info("Action executed: " + result.message());
@@ -54,41 +48,31 @@ public class ActionNodeExecutor implements NodeExecutor<ActionNode> {
                 }
             } else {
                 // Fallback: just log the actions
-                executeWithLogging(action, templateResolver, state);
+                executeWithLogging(action);
             }
         }
 
         // Return success or failure based on action results
         if (allSucceeded) {
-            return NodeResult.success("Actions completed", null);
+            return NodeResult.success("Actions completed", Map.of());
         } else {
-            return new NodeResult(ResultStatus.FAILURE, "One or more actions failed", null);
+            return new NodeResult(ResultStatus.FAILURE, "One or more actions failed", Map.of());
         }
     }
 
     /// Fallback execution that just logs actions (for environments without ActionExecutor).
-    private void executeWithLogging(
-            Action action, TemplateResolver templateResolver, HensuState state) {
+    private void executeWithLogging(Action action) {
         switch (action) {
-            case Action.Notify notify -> {
-                String message = templateResolver.resolve(notify.getMessage(), state.getContext());
-                logger.info("[NOTIFY:" + notify.getChannel() + "] " + message);
-            }
+            case Action.Send send ->
+                    logger.info(
+                            "[SEND] Would invoke handler: "
+                                    + send.getHandlerId()
+                                    + " (ActionExecutor not configured)");
             case Action.Execute execute ->
                     logger.info(
                             "[EXECUTE] Would run command ID: "
                                     + execute.getCommandId()
                                     + " (ActionExecutor not configured)");
-            case Action.HttpCall httpCall -> {
-                String endpoint =
-                        templateResolver.resolve(httpCall.getEndpoint(), state.getContext());
-                logger.info(
-                        "[HTTP] Would call: "
-                                + httpCall.getMethod()
-                                + " "
-                                + endpoint
-                                + " (ActionExecutor not configured)");
-            }
         }
     }
 }

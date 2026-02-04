@@ -146,9 +146,27 @@ public final class HensuState {
         return toBuilder().history(newHistory).retryCount(retryCount + 1).build();
     }
 
-    /// Create snapshot for checkpointing.
+    /// Creates a snapshot of current state for checkpointing.
+    ///
+    /// @return immutable snapshot of current state, never null
     public HensuSnapshot snapshot() {
-        return new HensuSnapshot().from(this);
+        return HensuSnapshot.from(this);
+    }
+
+    /// Creates a snapshot with a reason for checkpointing.
+    ///
+    /// @param reason why this checkpoint is being created, may be null
+    /// @return immutable snapshot of current state, never null
+    public HensuSnapshot snapshot(String reason) {
+        return HensuSnapshot.from(this, reason);
+    }
+
+    /// Restores state from a snapshot.
+    ///
+    /// @param snapshot the snapshot to restore from, not null
+    /// @return restored workflow state, never null
+    public static HensuState restore(HensuSnapshot snapshot) {
+        return snapshot.toState();
     }
 
     private Builder toBuilder() {

@@ -1,6 +1,5 @@
 package io.hensu.core.execution.executor;
 
-import io.hensu.core.exception.NodeExecutorNotFound;
 import io.hensu.core.workflow.node.GenericNode;
 import java.util.logging.Logger;
 

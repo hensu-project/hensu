@@ -2,6 +2,7 @@ package io.hensu.cli.action;
 
 import io.hensu.core.execution.action.Action;
 import io.hensu.core.execution.action.ActionExecutor;
+import io.hensu.core.execution.action.ActionHandler;
 import io.hensu.core.execution.action.CommandRegistry;
 import io.hensu.core.execution.action.CommandRegistry.CommandDefinition;
 import io.hensu.core.template.SimpleTemplateResolver;
@@ -9,48 +10,52 @@ import io.hensu.core.template.TemplateResolver;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Path;
-import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
 /// CLI implementation of {@link ActionExecutor} for mid-workflow actions.
 ///
 /// ### Supported Actions
-/// - **Notify** - Logs messages to console with channel prefix
+/// - **Send** - Delegates to registered {@link ActionHandler} implementations
 /// - **Execute** - Runs shell commands from {@link CommandRegistry}
-/// - **HttpCall** - Makes HTTP requests with template-resolved parameters
 ///
 /// ### Security Model
-/// Execute commands are **not** specified in the workflow DSL. They are loaded from a
-/// `commands.yaml` file in the working directory to prevent command injection attacks.
-/// Only pre-defined command IDs can be referenced in workflows.
+/// - **Execute**: Commands are loaded from `commands.yaml`, not specified in DSL
+/// - **Send**: All configuration is encapsulated in user-implemented handlers
+///
+/// Both patterns keep sensitive data (credentials, endpoints) out of workflow files.
+///
+/// ### Action Handler Registration
+/// {@snippet :
+/// CLIActionExecutor executor = new CLIActionExecutor();
+/// executor.registerHandler(new SlackHandler(webhookUrl));
+/// executor.registerHandler(new GitHubDispatchHandler(token));
+/// }
 ///
 /// ### Template Resolution
 /// All action parameters support `{variable}` placeholder syntax, resolved from workflow context.
 ///
-/// @implNote Thread-safe for action execution. CommandRegistry loading should be done
-/// before parallel execution begins.
+/// @implNote Thread-safe. Uses ConcurrentHashMap for handler storage.
 ///
 /// @see io.hensu.core.execution.action.Action
 /// @see io.hensu.core.execution.action.CommandRegistry
+/// @see io.hensu.core.execution.action.ActionHandler
 @ApplicationScoped
 public class CLIActionExecutor implements ActionExecutor {
 
     private static final Logger logger = Logger.getLogger(CLIActionExecutor.class.getName());
 
     private final TemplateResolver templateResolver = new SimpleTemplateResolver();
-    private final HttpClient httpClient;
+    private final Map<String, ActionHandler> handlers = new ConcurrentHashMap<>();
     private CommandRegistry commandRegistry;
 
     public CLIActionExecutor() {
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
         this.commandRegistry = new CommandRegistry();
     }
 
@@ -78,22 +83,46 @@ public class CLIActionExecutor implements ActionExecutor {
     }
 
     @Override
+    public void registerHandler(ActionHandler handler) {
+        String handlerId = handler.getHandlerId();
+        handlers.put(handlerId, handler);
+        logger.info("Registered action handler: " + handlerId);
+    }
+
+    @Override
+    public Optional<ActionHandler> getHandler(String handlerId) {
+        return Optional.ofNullable(handlers.get(handlerId));
+    }
+
+    @Override
     public ActionResult execute(Action action, Map<String, Object> context) {
         return switch (action) {
-            case Action.Notify notify -> executeNotify(notify, context);
+            case Action.Send send -> executeSend(send, context);
             case Action.Execute exec -> executeCommand(exec, context);
-            case Action.HttpCall http -> executeHttpCall(http, context);
         };
     }
 
-    private ActionResult executeNotify(Action.Notify notify, Map<String, Object> context) {
-        String message = templateResolver.resolve(notify.getMessage(), context);
-        String channel = notify.getChannel();
+    private ActionResult executeSend(Action.Send send, Map<String, Object> context) {
+        String handlerId = send.getHandlerId();
 
-        logger.info("[" + channel.toUpperCase() + "] " + message);
-        System.out.println("\n" + message);
+        ActionHandler handler = handlers.get(handlerId);
+        if (handler == null) {
+            String msg =
+                    "Action handler not found: '"
+                            + handlerId
+                            + "'. "
+                            + "Registered handlers: "
+                            + handlers.keySet();
+            logger.warning(msg);
+            return ActionResult.failure(msg);
+        }
 
-        return ActionResult.success("Notification sent: " + message);
+        logger.info("Executing send action via handler: " + handlerId);
+
+        // Resolve template variables in payload values
+        Map<String, Object> resolvedPayload = resolvePayload(send.getPayload(), context);
+
+        return handler.execute(resolvedPayload, context);
     }
 
     private ActionResult executeCommand(Action.Execute exec, Map<String, Object> context) {
@@ -154,79 +183,18 @@ public class CLIActionExecutor implements ActionExecutor {
         }
     }
 
-    private ActionResult executeHttpCall(Action.HttpCall http, Map<String, Object> context) {
-        String endpoint = templateResolver.resolve(http.getEndpoint(), context);
-        String commandId = templateResolver.resolve(http.getCommandId(), context);
-        String body =
-                http.getBody() != null
-                        ? templateResolver.resolve(http.getBody(), context)
-                        : "{\"commandId\": \"" + commandId + "\"}";
-
-        logger.info(
-                "HTTP call: "
-                        + http.getMethod()
-                        + " "
-                        + endpoint
-                        + " (commandId: "
-                        + commandId
-                        + ")");
-
-        try {
-            HttpRequest.Builder requestBuilder =
-                    HttpRequest.newBuilder()
-                            .uri(URI.create(endpoint))
-                            .timeout(Duration.ofMillis(http.getTimeoutMs()));
-
-            // Add headers
-            for (Map.Entry<String, String> header : http.getHeaders().entrySet()) {
-                requestBuilder.header(header.getKey(), header.getValue());
-            }
-
-            // Default content type if not specified
-            if (!http.getHeaders().containsKey("Content-Type")) {
-                requestBuilder.header("Content-Type", "application/json");
-            }
-
-            // Set method and body
-            HttpRequest request =
-                    switch (http.getMethod().toUpperCase()) {
-                        case "GET" -> requestBuilder.GET().build();
-                        case "DELETE" -> requestBuilder.DELETE().build();
-                        case "POST" ->
-                                requestBuilder
-                                        .POST(HttpRequest.BodyPublishers.ofString(body))
-                                        .build();
-                        case "PUT" ->
-                                requestBuilder
-                                        .PUT(HttpRequest.BodyPublishers.ofString(body))
-                                        .build();
-                        default ->
-                                requestBuilder
-                                        .method(
-                                                http.getMethod(),
-                                                HttpRequest.BodyPublishers.ofString(body))
-                                        .build();
-                    };
-
-            HttpResponse<String> response =
-                    httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-            int statusCode = response.statusCode();
-            String responseBody = response.body();
-
-            logger.info("HTTP response: " + statusCode);
-
-            if (statusCode >= 200 && statusCode < 300) {
-                return ActionResult.success(
-                        "HTTP call successful (status: " + statusCode + ")", responseBody);
+    /// Resolves template variables in payload string values.
+    private Map<String, Object> resolvePayload(
+            Map<String, Object> payload, Map<String, Object> context) {
+        Map<String, Object> resolved = new HashMap<>();
+        for (Map.Entry<String, Object> entry : payload.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof String stringValue) {
+                resolved.put(entry.getKey(), templateResolver.resolve(stringValue, context));
             } else {
-                return ActionResult.failure(
-                        "HTTP call failed (status: " + statusCode + "): " + responseBody);
+                resolved.put(entry.getKey(), value);
             }
-
-        } catch (Exception e) {
-            logger.severe("HTTP call failed: " + e.getMessage());
-            return ActionResult.failure("HTTP call failed: " + e.getMessage(), e);
         }
+        return resolved;
     }
 }

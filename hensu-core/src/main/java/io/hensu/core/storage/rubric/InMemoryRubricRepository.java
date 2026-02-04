@@ -1,4 +1,4 @@
-package io.hensu.core.rubric.repository;
+package io.hensu.core.storage.rubric;
 
 import io.hensu.core.rubric.model.Rubric;
 import java.util.ArrayList;

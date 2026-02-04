@@ -6,6 +6,8 @@ import io.hensu.dsl.WorkingDirectory;
 import io.hensu.dsl.parsers.KotlinScriptParser;
 import jakarta.inject.Inject;
 import java.nio.file.Path;
+import java.util.Objects;
+import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import picocli.CommandLine.Option;
 
@@ -60,11 +62,11 @@ public abstract class WorkflowCommand implements Runnable {
 
     @Inject
     @ConfigProperty(name = "hensu.workflow.file")
-    private String defaultWorkflowName;
+    private Optional<String> defaultWorkflowName;
 
     @Inject
     @ConfigProperty(name = "hensu.working.dir")
-    private String defaultWorkingDir;
+    private Optional<String> defaultWorkingDir;
 
     @Inject private KotlinScriptParser kotlinParser;
 
@@ -103,14 +105,9 @@ public abstract class WorkflowCommand implements Runnable {
     ///
     /// @return working directory containing workflows/, prompts/, and rubrics/, never null
     protected WorkingDirectory getWorkingDirectory() {
-        Path effectivePath;
-        if (workingDirPath != null) {
-            effectivePath = workingDirPath;
-        } else if (defaultWorkingDir != null && !defaultWorkingDir.isBlank()) {
-            effectivePath = Path.of(defaultWorkingDir);
-        } else {
-            effectivePath = Path.of(".");
-        }
+        Path effectivePath =
+                Objects.requireNonNullElseGet(
+                        workingDirPath, () -> defaultWorkingDir.map(Path::of).orElse(Path.of(".")));
         return WorkingDirectory.of(effectivePath.toAbsolutePath());
     }
 
@@ -122,8 +119,6 @@ public abstract class WorkflowCommand implements Runnable {
         if (workflowName != null && !workflowName.isBlank()) {
             return workflowName;
         }
-        return defaultWorkflowName != null && !defaultWorkflowName.isBlank()
-                ? defaultWorkflowName
-                : null;
+        return defaultWorkflowName.orElse(null);
     }
 }

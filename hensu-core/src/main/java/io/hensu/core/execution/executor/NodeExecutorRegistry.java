@@ -1,6 +1,5 @@
 package io.hensu.core.execution.executor;
 
-import io.hensu.core.exception.NodeExecutorNotFound;
 import io.hensu.core.workflow.node.Node;
 import java.util.Optional;
 
@@ -30,7 +29,7 @@ public interface NodeExecutorRegistry {
     /// @param nodeType The node class
     /// @param <T> The node type
     /// @return The executor
-    /// @throws io.hensu.core.exception.NodeExecutorNotFound if no executor is registered
+    /// @throws NodeExecutorNotFound if no executor is registered
     <T extends Node> NodeExecutor<T> getExecutorOrThrow(Class<T> nodeType)
             throws NodeExecutorNotFound;
 
@@ -39,7 +38,7 @@ public interface NodeExecutorRegistry {
     /// @param node The node instance
     /// @param <T> The node type
     /// @return The executor
-    /// @throws io.hensu.core.exception.NodeExecutorNotFound if no executor is registered
+    /// @throws NodeExecutorNotFound if no executor is registered
     default <T extends Node> NodeExecutor<T> getExecutorFor(T node) throws NodeExecutorNotFound {
         return (NodeExecutor<T>) getExecutorOrThrow(node.getClass());
     }
@@ -84,7 +83,7 @@ public interface NodeExecutorRegistry {
     ///
     /// @param executorType The type identifier
     /// @return The handler
-    /// @throws io.hensu.core.exception.NodeExecutorNotFound if no handler is registered
+    /// @throws NodeExecutorNotFound if no handler is registered
     GenericNodeHandler getGenericHandlerOrThrow(String executorType) throws NodeExecutorNotFound;
 
     /// Check if a handler is registered for the given executor type.

@@ -4,11 +4,12 @@ This file provides project-specific instructions for AI coding agents.
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [DSL Reference](docs/dsl-reference.md) | Complete Kotlin DSL syntax and examples |
-| [Developer Guide](docs/developer-guide.md) | Architecture, API usage, engine extensions |
-| [Javadoc Guide](docs/javadoc-guide.md) | Documentation standards |
+| Document                                             | Description                                |
+|------------------------------------------------------|--------------------------------------------|
+| [DSL Reference](docs/dsl-reference.md)               | Complete Kotlin DSL syntax and examples    |
+| [Developer Guide](docs/developer-guide.md)           | Architecture, API usage, engine extensions |
+| [Javadoc Guide](docs/javadoc-guide.md)               | Documentation standards                    |
+| [Unified Architecture](docs/unified-architecture.md) | Unified Architecture Vision                |
 
 ## Build Commands
 

@@ -141,11 +141,20 @@ private fun createVerboseListener(): ExecutionListener {
         }
 
         override fun onAgentComplete(nodeId: String, agentId: String, response: AgentResponse) {
-            val status = if (response.isSuccess) "OK" else "FAIL"
+            val (status, output) =
+                when (response) {
+                    is AgentResponse.TextResponse -> "OK" to response.content()
+                    is AgentResponse.ToolRequest ->
+                        "TOOL" to "Tool: ${response.toolName()} - ${response.reasoning()}"
+                    is AgentResponse.PlanProposal ->
+                        "PLAN" to
+                            "Plan with ${response.steps().size} steps - ${response.reasoning()}"
+                    is AgentResponse.Error -> "FAIL" to response.message()
+                }
             println("+-------------------------------------------------------------")
             println("| * OUTPUT [$nodeId] <- Agent: $agentId ($status)")
             println("+-------------------------------------------------------------")
-            printIndented(response.output)
+            printIndented(output)
             println("+-------------------------------------------------------------")
             println()
         }

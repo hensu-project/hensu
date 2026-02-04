@@ -3,11 +3,14 @@ package io.hensu.core.execution.executor;
 import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.agent.AgentResponse;
+import io.hensu.core.agent.AgentResponse.Error;
+import io.hensu.core.agent.AgentResponse.TextResponse;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.template.TemplateResolver;
 import io.hensu.core.workflow.node.StandardNode;
+import java.util.Map;
 import java.util.logging.Logger;
 
 /// Executes standard workflow nodes by invoking the configured agent.
@@ -70,9 +73,10 @@ public class StandardNodeExecutor implements NodeExecutor<StandardNode> {
         // Notify listener after agent execution
         listener.onAgentComplete(node.getId(), node.getAgentId(), response);
 
-        return new NodeResult(
-                response.isSuccess() ? ResultStatus.SUCCESS : ResultStatus.FAILURE,
-                response.getOutput(),
-                response.getMetadata());
+        return switch (response) {
+            case TextResponse t -> new NodeResult(ResultStatus.SUCCESS, t.content(), t.metadata());
+            case Error e -> new NodeResult(ResultStatus.FAILURE, e.message(), Map.of());
+            default -> new NodeResult(ResultStatus.SUCCESS, "Response received", Map.of());
+        };
     }
 }

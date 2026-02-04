@@ -75,16 +75,27 @@ public class VerboseExecutionListener implements ExecutionListener {
     @Override
     public void onAgentComplete(String nodeId, String agentId, AgentResponse response) {
         out.println(styles.separatorTop());
-        String status = styles.successOrError("OK", response.isSuccess());
-        String leftArrow = styles.successOrError("←", response.isSuccess());
-        String marker = styles.successOrError("*", response.isSuccess());
+        boolean isSuccess = !(response instanceof AgentResponse.Error);
+        String output = extractOutput(response);
+        String status = styles.successOrError("OK", isSuccess);
+        String leftArrow = styles.successOrError("←", isSuccess);
+        String marker = styles.successOrError("*", isSuccess);
         out.printf(
                 "  %s %s [%s] %s %s (%s)%n",
                 marker, styles.bold("OUTPUT"), nodeId, leftArrow, agentId, status);
         out.println(styles.separatorMid());
-        printIndented(response.getOutput(), true);
+        printIndented(output, true);
         out.println(styles.separatorBottom());
         out.println();
+    }
+
+    private String extractOutput(AgentResponse response) {
+        return switch (response) {
+            case AgentResponse.TextResponse t -> t.content();
+            case AgentResponse.ToolRequest t -> "Tool: " + t.toolName() + " - " + t.reasoning();
+            case AgentResponse.PlanProposal p -> "Plan with " + p.steps().size() + " steps";
+            case AgentResponse.Error e -> e.message();
+        };
     }
 
     private void printIndented(String text, boolean isOutput) {

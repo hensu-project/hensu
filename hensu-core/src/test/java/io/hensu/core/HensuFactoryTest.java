@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
-import io.hensu.core.rubric.repository.RubricRepository;
+import io.hensu.core.storage.rubric.RubricRepository;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
