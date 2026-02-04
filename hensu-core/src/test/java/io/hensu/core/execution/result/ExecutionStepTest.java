@@ -50,7 +50,7 @@ class ExecutionStepTest {
         void shouldBuildWithSnapshot() {
             // Given
             NodeResult result = NodeResult.success("output", Map.of());
-            HensuSnapshot snapshot = new HensuSnapshot();
+            HensuSnapshot snapshot = createTestSnapshot();
 
             // When
             ExecutionStep step =
@@ -91,7 +91,7 @@ class ExecutionStepTest {
         void shouldCreateWithAllParameters() {
             // Given
             NodeResult result = NodeResult.success("output", Map.of());
-            HensuSnapshot snapshot = new HensuSnapshot();
+            HensuSnapshot snapshot = createTestSnapshot();
             Instant timestamp = Instant.now();
 
             // When
@@ -190,5 +190,17 @@ class ExecutionStepTest {
 
         // Then
         assertThat(toString).contains("my-node");
+    }
+
+    private static HensuSnapshot createTestSnapshot() {
+        return new HensuSnapshot(
+                "workflow-1",
+                "exec-1",
+                "node-1",
+                Map.of(),
+                new ExecutionHistory(),
+                null,
+                Instant.now(),
+                null);
     }
 }

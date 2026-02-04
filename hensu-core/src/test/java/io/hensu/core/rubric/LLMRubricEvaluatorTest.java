@@ -74,7 +74,7 @@ class LLMRubricEvaluatorTest {
         when(agentRegistry.getAgent("evaluator")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any()))
                 .thenReturn(
-                        AgentResponse.success(
+                        AgentResponse.TextResponse.of(
                                 "{\"score\": 85, \"reasoning\": \"Good work\"}", Map.of()));
 
         NodeResult result =
@@ -97,7 +97,7 @@ class LLMRubricEvaluatorTest {
         when(agentRegistry.hasAgent("evaluator")).thenReturn(true);
         when(agentRegistry.getAgent("evaluator")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.success("{\"score\": 75}", Map.of()));
+                .thenReturn(AgentResponse.TextResponse.of("{\"score\": 75}", Map.of()));
 
         String contentToEvaluate = "This is the content being evaluated.";
         NodeResult result = new NodeResult(ResultStatus.SUCCESS, contentToEvaluate, Map.of());
@@ -173,18 +173,21 @@ class LLMRubricEvaluatorTest {
         // Test format: "score": 90
         when(mockAgent.execute(any(), any()))
                 .thenReturn(
-                        AgentResponse.success(
+                        AgentResponse.TextResponse.of(
                                 "{\"score\": 90, \"reasoning\": \"test\"}", Map.of()));
         assertEquals(90.0, evaluator.evaluate(criterion, result, context));
 
         // Test format: score = 80
         when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.success("The score = 80 based on analysis", Map.of()));
+                .thenReturn(
+                        AgentResponse.TextResponse.of(
+                                "The score = 80 based on analysis", Map.of()));
         assertEquals(80.0, evaluator.evaluate(criterion, result, context));
 
         // Test format: score: 70.5
         when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.success("score: 70.5 - partial credit", Map.of()));
+                .thenReturn(
+                        AgentResponse.TextResponse.of("score: 70.5 - partial credit", Map.of()));
         assertEquals(70.5, evaluator.evaluate(criterion, result, context));
     }
 
@@ -201,14 +204,14 @@ class LLMRubricEvaluatorTest {
 
         // Test score > 100 should be clamped to 100
         when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.success("{\"score\": 150}", Map.of()));
+                .thenReturn(AgentResponse.TextResponse.of("{\"score\": 150}", Map.of()));
         assertEquals(100.0, evaluator.evaluate(criterion, result, context));
 
         // Test score < 0: The regex pattern doesn't match negative numbers,
         // so it falls back to keyword inference or default score (50.0)
         // This is acceptable behavior - negative scores are invalid input
         when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.success("{\"score\": -20}", Map.of()));
+                .thenReturn(AgentResponse.TextResponse.of("{\"score\": -20}", Map.of()));
         // Falls back to default 50.0 since -20 doesn't match the score pattern
         assertEquals(50.0, evaluator.evaluate(criterion, result, context));
     }
@@ -226,17 +229,21 @@ class LLMRubricEvaluatorTest {
 
         // Test "excellent" keyword
         when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.success("This is an excellent piece of work!", Map.of()));
+                .thenReturn(
+                        AgentResponse.TextResponse.of(
+                                "This is an excellent piece of work!", Map.of()));
         assertEquals(95.0, evaluator.evaluate(criterion, result, context));
 
         // Test "good" keyword
         when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.success("The content is good overall.", Map.of()));
+                .thenReturn(
+                        AgentResponse.TextResponse.of("The content is good overall.", Map.of()));
         assertEquals(80.0, evaluator.evaluate(criterion, result, context));
 
         // Test "poor" keyword
         when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.success("This is poor quality content.", Map.of()));
+                .thenReturn(
+                        AgentResponse.TextResponse.of("This is poor quality content.", Map.of()));
         assertEquals(35.0, evaluator.evaluate(criterion, result, context));
     }
 
@@ -247,9 +254,7 @@ class LLMRubricEvaluatorTest {
         when(agentRegistry.hasAgent("evaluator")).thenReturn(true);
         when(agentRegistry.getAgent("evaluator")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any()))
-                .thenReturn(
-                        AgentResponse.failure(
-                                new RuntimeException("Evaluation failed due to API error")));
+                .thenReturn(AgentResponse.Error.of("Evaluation failed due to API error"));
 
         NodeResult result = new NodeResult(ResultStatus.SUCCESS, "Content to evaluate", Map.of());
         Criterion criterion = createCriterion("quality", "Content Quality");
@@ -272,7 +277,7 @@ class LLMRubricEvaluatorTest {
         when(agentRegistry.hasAgent("quality-checker")).thenReturn(true);
         when(agentRegistry.getAgent("quality-checker")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.success("{\"score\": 88}", Map.of()));
+                .thenReturn(AgentResponse.TextResponse.of("{\"score\": 88}", Map.of()));
 
         NodeResult result = new NodeResult(ResultStatus.SUCCESS, "Content", Map.of());
         Criterion criterion = createCriterion("quality", "Content Quality");

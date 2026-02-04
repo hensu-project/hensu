@@ -14,6 +14,7 @@ This guide covers architecture details, API usage, adapter development, and test
   - [Executing Workflows](#executing-workflows)
 - [Creating Custom Adapters](#creating-custom-adapters)
 - [Generic Nodes](#generic-nodes)
+- [Action Handlers](#action-handlers)
 - [Testing](#testing)
 - [Build System](#build-system)
 - [Credentials Management](#credentials-management)
@@ -47,7 +48,7 @@ Workflow engine containing:
 - **RubricEngine** - Evaluates output quality using RubricRepository and RubricEvaluator
 - **TemplateResolver** - Resolves `{placeholder}` syntax in prompts
 - **ReviewHandler** - Handles human review checkpoints (optional)
-- **ActionExecutor** - Executes workflow actions like notifications, commands, HTTP calls (optional)
+- **ActionExecutor** - Executes workflow actions (notifications, commands, HTTP calls via registered handlers)
 
 ### hensu-cli
 
@@ -542,6 +543,185 @@ The CLI module provides these ready-to-use handlers:
 4. **Return meaningful metadata**: Include relevant info in `NodeResult` metadata map
 5. **Handle errors gracefully**: Return `NodeResult.failure()` with clear error messages
 
+## Action Handlers
+
+Action handlers allow you to send data from workflow actions to external systems with full control over the execution logic. Handlers can implement any integration: HTTP calls, messaging (Slack, email), event publishing (Kafka, RabbitMQ), database operations, or any custom logic.
+
+### How Action Handlers Work
+
+1. Implement the `ActionHandler` interface with your execution logic
+2. Register the handler with `ActionExecutor`
+3. Reference the handler by ID in workflow DSL using `send()`
+4. At runtime, the executor looks up your handler and invokes it
+
+### DSL Usage
+
+Payload values support `{variable}` template syntax, resolved from workflow context. This includes:
+- Initial context passed at workflow start
+- Output parameters extracted from previous agent steps via `outputParams`
+- Any values stored in context by previous nodes
+
+```kotlin
+graph {
+    start at "analyze"
+
+    // Agent extracts data into context via outputParams
+    node("analyze") {
+        agent = "analyzer"
+        prompt = "Analyze and output JSON with keys: status, summary, score"
+        outputParams = listOf("status", "summary", "score")
+        onSuccess goto "notify"
+    }
+
+    action("notify") {
+        // Use extracted values in payload
+        send("slack", mapOf(
+            "message" to "Analysis complete: {status}",
+            "details" to "{summary}",
+            "score" to "{score}"
+        ))
+        onSuccess goto "deploy"
+    }
+
+    action("deploy") {
+        // Combine with initial context variables
+        send("github-dispatch", mapOf(
+            "event_type" to "deploy",
+            "environment" to "{env}",      // From initial context
+            "ref" to "{branch}",           // From initial context
+            "analysis_status" to "{status}" // From previous agent output
+        ))
+        onSuccess goto "end"
+    }
+
+    end("end")
+}
+```
+
+### Creating a Handler
+
+Implement the `ActionHandler` interface:
+
+```java
+package com.example.handlers;
+
+import io.hensu.core.execution.action.ActionExecutor.ActionResult;
+import io.hensu.core.execution.action.ActionHandler;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.Map;
+
+public class SlackHandler implements ActionHandler {
+
+    private final String webhookUrl;
+    private final HttpClient client = HttpClient.newHttpClient();
+
+    public SlackHandler(String webhookUrl) {
+        this.webhookUrl = webhookUrl;  // Loaded from environment or secure config
+    }
+
+    @Override
+    public String getHandlerId() {
+        return "slack";
+    }
+
+    @Override
+    public ActionResult execute(Map<String, Object> payload, Map<String, Object> context) {
+        try {
+            String message = payload.getOrDefault("message", "Workflow event").toString();
+            String body = String.format("{\"text\": \"%s\"}", message);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(webhookUrl))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+
+            HttpResponse<String> response = client.send(request,
+                HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                return ActionResult.success("Slack notification sent");
+            } else {
+                return ActionResult.failure("Slack API error: " + response.statusCode());
+            }
+        } catch (Exception e) {
+            return ActionResult.failure("Slack call failed: " + e.getMessage(), e);
+        }
+    }
+}
+```
+
+### Registering Handlers
+
+#### Manual Registration (Pure Java)
+
+```java
+// Get executor from environment or create directly
+CLIActionExecutor executor = new CLIActionExecutor();
+
+// Register handlers with credentials loaded from secure sources
+String slackUrl = System.getenv("SLACK_WEBHOOK_URL");
+String githubToken = System.getenv("GITHUB_TOKEN");
+
+executor.registerHandler(new SlackHandler(slackUrl));
+executor.registerHandler(new GitHubDispatchHandler(githubToken));
+
+// Pass executor to HensuFactory
+HensuEnvironment env = HensuFactory.builder()
+    .actionExecutor(executor)
+    .build();
+```
+
+#### CDI Auto-Discovery (Quarkus/CDI)
+
+With CDI, handlers annotated with `@ApplicationScoped` are automatically discovered:
+
+```java
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+
+@ApplicationScoped
+public class SlackHandler implements ActionHandler {
+
+    @Inject
+    @ConfigProperty(name = "slack.webhook.url")
+    String webhookUrl;
+
+    @Override
+    public String getHandlerId() {
+        return "slack";
+    }
+
+    @Override
+    public ActionResult execute(Map<String, Object> payload, Map<String, Object> context) {
+        // Implementation using injected webhookUrl
+    }
+}
+```
+
+### Benefits
+
+The action handler pattern provides several advantages:
+
+1. **Flexibility** - Implement any integration: HTTP, messaging, events, databases
+2. **Encapsulation** - All configuration is encapsulated in handler implementations
+3. **Secure credential loading** - Handlers load credentials from environment variables or secure config
+4. **Audit trail** - All external calls go through registered handlers, making it easy to log and monitor
+5. **Centralized configuration** - Change endpoints or auth in one place without modifying workflows
+6. **Reusability** - Same handler can be used across multiple workflows
+
+### Handler Best Practices
+
+1. **Use descriptive handler IDs**: `"slack"`, `"github-dispatch"` are better than `"handler1"`
+2. **Load credentials securely**: Use environment variables, config files, or secret managers
+3. **Handle errors gracefully**: Return `ActionResult.failure()` with clear error messages
+4. **Include relevant info in responses**: Return useful data for debugging
+5. **Make handlers thread-safe**: They may be called concurrently
+
 ## Testing
 
 ### Stub Mode (No API Tokens)
@@ -689,6 +869,8 @@ Adapters look for their specific keys automatically.
 | `hensu-core/.../workflow/Workflow.java` | Core data model |
 | `hensu-core/.../dsl/HensuDSL.kt` | DSL entry point (`workflow()` function) |
 | `hensu-core/.../dsl/parsers/KotlinScriptParser.kt` | Script compilation |
+| `hensu-core/.../execution/action/ActionHandler.java` | Action handler interface |
+| `hensu-core/.../execution/executor/GenericNodeHandler.java` | Generic node handler interface |
 
 ## FAQ
 
@@ -709,3 +891,6 @@ A: AgentFactory throws `IllegalStateException` with a helpful error message.
 
 **Q: How does priority work?**
 A: Higher priority = preferred. Used when multiple providers support the same model.
+
+**Q: How do I send data to external systems from workflows?**
+A: Implement `ActionHandler` with your logic (HTTP calls, messaging, events), register it with `ActionExecutor`, and reference it by handler ID in DSL: `send("my-handler")`. This keeps sensitive data out of workflow files.

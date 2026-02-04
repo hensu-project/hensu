@@ -85,12 +85,17 @@ public final class LLMRubricEvaluator implements RubricEvaluator {
 
         AgentResponse response = evaluator.execute(prompt, context);
 
-        if (!response.isSuccess()) {
-            logger.warning("Evaluator agent failed: " + response.getOutput());
-            return 50.0; // Neutral score on failure
-        }
-
-        return parseScore(response.getOutput());
+        return switch (response) {
+            case AgentResponse.TextResponse t -> parseScore(t.content());
+            case AgentResponse.Error e -> {
+                logger.warning("Evaluator agent failed: " + e.message());
+                yield 50.0; // Neutral score on failure
+            }
+            default -> {
+                logger.warning("Unexpected response type: " + response.getClass().getSimpleName());
+                yield 50.0;
+            }
+        };
     }
 
     private String buildEvaluationPrompt(

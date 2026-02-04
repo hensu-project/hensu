@@ -3,6 +3,7 @@ package io.hensu.core.agent.stub;
 import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentResponse;
+import io.hensu.core.agent.AgentResponse.TextResponse;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.logging.Logger;
@@ -87,7 +88,7 @@ public class StubAgent implements Agent {
                 "scenario",
                 context != null ? context.getOrDefault("stub_scenario", "default") : "default");
 
-        return AgentResponse.success(response, metadata);
+        return TextResponse.of(response, metadata);
     }
 
     /// Generates a mock response when no configured response is found.

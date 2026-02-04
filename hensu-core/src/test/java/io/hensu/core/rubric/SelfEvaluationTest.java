@@ -3,6 +3,7 @@ package io.hensu.core.rubric;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.hensu.core.agent.AgentConfig;
+import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.agent.stub.StubAgent;
 import io.hensu.core.agent.stub.StubResponseRegistry;
 import io.hensu.core.execution.executor.NodeResult;
@@ -181,9 +182,10 @@ class SelfEvaluationTest {
         var response = agent.execute("Write about AI", context);
 
         // Then: Registry response is used
-        assertTrue(response.isSuccess());
-        assertTrue(response.getOutput().contains("score"));
-        assertTrue(response.getOutput().contains("90"));
+        assertInstanceOf(AgentResponse.TextResponse.class, response);
+        var textResponse = (AgentResponse.TextResponse) response;
+        assertTrue(textResponse.content().contains("score"));
+        assertTrue(textResponse.content().contains("90"));
     }
 
     @Test
@@ -216,8 +218,10 @@ class SelfEvaluationTest {
         var response = agent.execute("Write about AI", context);
 
         // Then: Low score response is used
-        assertTrue(response.getOutput().contains("45"));
-        assertTrue(response.getOutput().contains("Add more detail"));
+        assertInstanceOf(AgentResponse.TextResponse.class, response);
+        var textResponse = (AgentResponse.TextResponse) response;
+        assertTrue(textResponse.content().contains("45"));
+        assertTrue(textResponse.content().contains("Add more detail"));
     }
 
     private Criterion createCriterion(String id, double minScore) {

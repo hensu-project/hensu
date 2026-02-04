@@ -2,9 +2,8 @@
  * Test workflow demonstrating executable actions.
  *
  * Actions:
- * - notify: Send a notification message
+ * - send: Send data to a registered action handler (HTTP, messaging, events)
  * - execute: Run a command by ID (from commands.yaml)
- * - http: Make an HTTP call
  *
  * Security: Execute commands are NOT defined in the workflow.
  * They are referenced by ID and resolved from commands.yaml at runtime.
@@ -30,20 +29,15 @@ fun actionsTestWorkflow() = workflow("executable-actions-test") {
                 Generate a short message about the weather today.
                 Keep it to one sentence.
             """.trimIndent()
-            onSuccess goto "success"
+            onSuccess goto "notify"
         }
 
-        action("success") {
-            // Notification action
-            notify("Workflow completed successfully! Output: {generate}")
-
+        action("notify") {
             // Execute command by ID (from commands.yaml)
             execute("echo-result")
 
-            // HTTP call (would fail without a real endpoint, but shows the DSL)
-            // http("https://webhook.example.com/notify", "workflow-complete")
-
             onSuccess goto "exit"
+            onFailure retry 0 otherwise "exit"
         }
 
         end("exit")
