@@ -50,7 +50,7 @@ class VerboseExecutionListenerTest {
     void shouldPrintOutputBlockOnAgentComplete() {
         VerboseExecutionListener listener =
                 new VerboseExecutionListener(printStream, false, null, null);
-        AgentResponse response = AgentResponse.success("Agent output text");
+        AgentResponse response = AgentResponse.TextResponse.of("Agent output text");
 
         listener.onAgentComplete("test-node", "test-agent", response);
 
@@ -66,7 +66,7 @@ class VerboseExecutionListenerTest {
     void shouldPrintFailureStatusOnAgentComplete() {
         VerboseExecutionListener listener =
                 new VerboseExecutionListener(printStream, true, null, null);
-        AgentResponse response = AgentResponse.failure(new RuntimeException("Test error"));
+        AgentResponse response = AgentResponse.Error.of("Test error");
 
         listener.onAgentComplete("test-node", "test-agent", response);
 
@@ -105,7 +105,7 @@ class VerboseExecutionListenerTest {
     void shouldPrintMultilineOutputIndented() {
         VerboseExecutionListener listener =
                 new VerboseExecutionListener(printStream, false, null, null);
-        AgentResponse response = AgentResponse.success("Output 1\nOutput 2\nOutput 3");
+        AgentResponse response = AgentResponse.TextResponse.of("Output 1\nOutput 2\nOutput 3");
 
         listener.onAgentComplete("node", "agent", response);
 
@@ -141,7 +141,7 @@ class VerboseExecutionListenerTest {
     void shouldHandleEmptyOutput() {
         VerboseExecutionListener listener =
                 new VerboseExecutionListener(printStream, false, null, null);
-        AgentResponse response = AgentResponse.success("");
+        AgentResponse response = AgentResponse.TextResponse.of("");
 
         listener.onAgentComplete("node", "agent", response);
 
@@ -252,7 +252,7 @@ class VerboseExecutionListenerTest {
                 new VerboseExecutionListener(printStream, false, null, null);
 
         listener.onAgentStart("node", "agent", "prompt");
-        listener.onAgentComplete("node", "agent", AgentResponse.success("output"));
+        listener.onAgentComplete("node", "agent", AgentResponse.TextResponse.of("output"));
 
         String output = outputStream.toString();
         long blankLines = output.lines().filter(String::isBlank).count();
@@ -275,7 +275,7 @@ class VerboseExecutionListenerTest {
     void shouldHandleUnicodeInOutput() {
         VerboseExecutionListener listener =
                 new VerboseExecutionListener(printStream, false, null, null);
-        AgentResponse response = AgentResponse.success("Output with unicode: ✓ ✗ →");
+        AgentResponse response = AgentResponse.TextResponse.of("Output with unicode: ✓ ✗ →");
 
         listener.onAgentComplete("node", "agent", response);
 

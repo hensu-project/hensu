@@ -454,9 +454,8 @@ class WorkflowTest {
                             .id("notify")
                             .actions(
                                     List.of(
-                                            new Action.Notify("Build done", "slack"),
-                                            new Action.HttpCall(
-                                                    "https://webhook.example.com", "build-hook")))
+                                            new Action.Send("slack"),
+                                            new Action.Send("build-hook")))
                             .transitionRules(List.of(new SuccessTransition("end")))
                             .build());
             nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());

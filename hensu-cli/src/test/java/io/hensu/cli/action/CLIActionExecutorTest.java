@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.hensu.core.execution.action.Action;
 import io.hensu.core.execution.action.ActionExecutor.ActionResult;
+import io.hensu.core.execution.action.ActionHandler;
 import io.hensu.core.execution.action.CommandRegistry;
 import io.hensu.core.execution.action.CommandRegistry.CommandDefinition;
 import java.util.Map;
@@ -19,40 +20,107 @@ class CLIActionExecutorTest {
         executor = new CLIActionExecutor();
     }
 
-    // ========== Notify Action Tests ==========
+    // ========== Send Action Tests ==========
 
     @Test
-    void shouldExecuteNotifyActionSuccessfully() {
-        Action.Notify notify = new Action.Notify("Test notification message");
+    void shouldFailSendWhenHandlerNotRegistered() {
+        Action.Send send = new Action.Send("unknown-handler");
         Map<String, Object> context = Map.of();
 
-        ActionResult result = executor.execute(notify, context);
+        ActionResult result = executor.execute(send, context);
 
-        assertThat(result.success()).isTrue();
-        assertThat(result.message()).contains("Notification sent");
-        assertThat(result.message()).contains("Test notification message");
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("Action handler not found");
+        assertThat(result.message()).contains("unknown-handler");
     }
 
     @Test
-    void shouldResolveTemplateInNotifyMessage() {
-        Action.Notify notify = new Action.Notify("Hello {name}, your status is {status}");
-        Map<String, Object> context = Map.of("name", "User", "status", "active");
+    void shouldExecuteRegisteredHandler() {
+        executor.registerHandler(new TestActionHandler("test-handler", true, "Success"));
 
-        ActionResult result = executor.execute(notify, context);
+        Action.Send send = new Action.Send("test-handler");
+        Map<String, Object> context = Map.of();
+
+        ActionResult result = executor.execute(send, context);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.message()).contains("Hello User, your status is active");
+        assertThat(result.message()).isEqualTo("Success");
     }
 
     @Test
-    void shouldHandleNotifyWithChannel() {
-        Action.Notify notify = new Action.Notify("Alert message", "alerts");
+    void shouldPassPayloadToHandler() {
+        var handler = new PayloadCapturingHandler("capture-handler");
+        executor.registerHandler(handler);
+
+        Action.Send send = new Action.Send("capture-handler", Map.of("key", "value", "num", 42));
         Map<String, Object> context = Map.of();
 
-        ActionResult result = executor.execute(notify, context);
+        executor.execute(send, context);
 
-        assertThat(result.success()).isTrue();
-        assertThat(result.message()).contains("Alert message");
+        assertThat(handler.capturedPayload).containsEntry("key", "value");
+        assertThat(handler.capturedPayload).containsEntry("num", 42);
+    }
+
+    @Test
+    void shouldResolveTemplateVariablesInPayload() {
+        var handler = new PayloadCapturingHandler("template-handler");
+        executor.registerHandler(handler);
+
+        Action.Send send = new Action.Send("template-handler", Map.of("message", "Hello {name}"));
+        Map<String, Object> context = Map.of("name", "World");
+
+        executor.execute(send, context);
+
+        assertThat(handler.capturedPayload).containsEntry("message", "Hello World");
+    }
+
+    @Test
+    void shouldListRegisteredHandlersOnFailure() {
+        executor.registerHandler(new TestActionHandler("handler-a", true, "OK"));
+        executor.registerHandler(new TestActionHandler("handler-b", true, "OK"));
+
+        Action.Send send = new Action.Send("missing-handler");
+        ActionResult result = executor.execute(send, Map.of());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("handler-a");
+        assertThat(result.message()).contains("handler-b");
+    }
+
+    @Test
+    void shouldReturnHandlerFailureResult() {
+        executor.registerHandler(new TestActionHandler("failing-handler", false, "Handler error"));
+
+        Action.Send send = new Action.Send("failing-handler");
+        ActionResult result = executor.execute(send, Map.of());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).isEqualTo("Handler error");
+    }
+
+    @Test
+    void shouldHandleEmptyPayload() {
+        var handler = new PayloadCapturingHandler("empty-handler");
+        executor.registerHandler(handler);
+
+        Action.Send send = new Action.Send("empty-handler");
+        executor.execute(send, Map.of());
+
+        assertThat(handler.capturedPayload).isEmpty();
+    }
+
+    @Test
+    void shouldPassContextToHandler() {
+        var handler = new ContextCapturingHandler("context-handler");
+        executor.registerHandler(handler);
+
+        Action.Send send = new Action.Send("context-handler");
+        Map<String, Object> context = Map.of("user", "testUser", "env", "prod");
+
+        executor.execute(send, context);
+
+        assertThat(handler.capturedContext).containsEntry("user", "testUser");
+        assertThat(handler.capturedContext).containsEntry("env", "prod");
     }
 
     // ========== Execute Action Tests ==========
@@ -151,58 +219,6 @@ class CLIActionExecutorTest {
         assertThat(result.output().toString()).contains("line3");
     }
 
-    // ========== HttpCall Action Tests ==========
-
-    @Test
-    void shouldFailHttpCallWithInvalidEndpoint() {
-        Action.HttpCall http = new Action.HttpCall("invalid-url", "test-command");
-        Map<String, Object> context = Map.of();
-
-        ActionResult result = executor.execute(http, context);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.message()).contains("HTTP call failed");
-    }
-
-    @Test
-    void shouldResolveTemplateInHttpEndpoint() {
-        Action.HttpCall http =
-                new Action.HttpCall(
-                        "https://{host}/api/endpoint", "POST", "cmd-id", Map.of(), null, 1000);
-        Map<String, Object> context = Map.of("host", "example.com");
-
-        ActionResult result = executor.execute(http, context);
-
-        assertThat(result.success()).isFalse();
-    }
-
-    @Test
-    void shouldResolveTemplateInHttpBody() {
-        Action.HttpCall http =
-                new Action.HttpCall(
-                        "https://example.com/api",
-                        "POST",
-                        "cmd-id",
-                        Map.of(),
-                        "{\"data\": \"{value}\"}",
-                        1000);
-        Map<String, Object> context = Map.of("value", "test-value");
-
-        ActionResult result = executor.execute(http, context);
-
-        assertThat(result.success()).isFalse();
-    }
-
-    @Test
-    void shouldUseDefaultBodyWhenNotProvided() {
-        Action.HttpCall http = new Action.HttpCall("https://example.com/api", "my-command");
-        Map<String, Object> context = Map.of();
-
-        ActionResult result = executor.execute(http, context);
-
-        assertThat(result.success()).isFalse();
-    }
-
     // ========== Registry Loading Tests ==========
 
     @Test
@@ -246,57 +262,94 @@ class CLIActionExecutorTest {
 
     @Test
     void shouldHandleComplexContextValues() {
-        Action.Notify notify = new Action.Notify("Count: {count}, Active: {active}");
+        var handler = new PayloadCapturingHandler("complex-handler");
+        executor.registerHandler(handler);
+
+        Action.Send send =
+                new Action.Send(
+                        "complex-handler", Map.of("msg", "Count: {count}, Active: {active}"));
         Map<String, Object> context = Map.of("count", 42, "active", true);
 
-        ActionResult result = executor.execute(notify, context);
+        ActionResult result = executor.execute(send, context);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.message()).contains("Count: 42");
-        assertThat(result.message()).contains("Active: true");
+        assertThat(handler.capturedPayload.get("msg")).isEqualTo("Count: 42, Active: true");
     }
 
     @Test
     void shouldHandleMissingContextVariable() {
-        Action.Notify notify = new Action.Notify("Value: {missing}");
+        var handler = new PayloadCapturingHandler("missing-var-handler");
+        executor.registerHandler(handler);
+
+        Action.Send send =
+                new Action.Send("missing-var-handler", Map.of("msg", "Value: {missing}"));
         Map<String, Object> context = Map.of();
 
-        ActionResult result = executor.execute(notify, context);
+        ActionResult result = executor.execute(send, context);
 
         assertThat(result.success()).isTrue();
     }
 
-    // ========== Edge Cases ==========
+    // Test helpers for action handler tests
+    static class TestActionHandler implements ActionHandler {
+        private final String handlerId;
+        private final boolean success;
+        private final String message;
 
-    @Test
-    void shouldHandleEmptyNotifyMessage() {
-        Action.Notify notify = new Action.Notify("");
-        Map<String, Object> context = Map.of();
+        TestActionHandler(String handlerId, boolean success, String message) {
+            this.handlerId = handlerId;
+            this.success = success;
+            this.message = message;
+        }
 
-        ActionResult result = executor.execute(notify, context);
+        @Override
+        public String getHandlerId() {
+            return handlerId;
+        }
 
-        assertThat(result.success()).isTrue();
+        @Override
+        public ActionResult execute(Map<String, Object> payload, Map<String, Object> context) {
+            return success ? ActionResult.success(message) : ActionResult.failure(message);
+        }
     }
 
-    @Test
-    void shouldHandleSpecialCharactersInMessage() {
-        Action.Notify notify = new Action.Notify("Special chars: $!@#%^&*()");
-        Map<String, Object> context = Map.of();
+    static class PayloadCapturingHandler implements ActionHandler {
+        private final String handlerId;
+        Map<String, Object> capturedPayload;
 
-        ActionResult result = executor.execute(notify, context);
+        PayloadCapturingHandler(String handlerId) {
+            this.handlerId = handlerId;
+        }
 
-        assertThat(result.success()).isTrue();
-        assertThat(result.message()).contains("$!@#%^&*()");
+        @Override
+        public String getHandlerId() {
+            return handlerId;
+        }
+
+        @Override
+        public ActionResult execute(Map<String, Object> payload, Map<String, Object> context) {
+            this.capturedPayload = payload;
+            return ActionResult.success("Captured");
+        }
     }
 
-    @Test
-    void shouldHandleUnicodeInMessage() {
-        Action.Notify notify = new Action.Notify("Unicode: ✓ ✗ →");
-        Map<String, Object> context = Map.of();
+    static class ContextCapturingHandler implements ActionHandler {
+        private final String handlerId;
+        Map<String, Object> capturedContext;
 
-        ActionResult result = executor.execute(notify, context);
+        ContextCapturingHandler(String handlerId) {
+            this.handlerId = handlerId;
+        }
 
-        assertThat(result.success()).isTrue();
-        assertThat(result.message()).contains("✓");
+        @Override
+        public String getHandlerId() {
+            return handlerId;
+        }
+
+        @Override
+        public ActionResult execute(Map<String, Object> payload, Map<String, Object> context) {
+            this.capturedContext = context;
+            return ActionResult.success("Captured context");
+        }
     }
 }

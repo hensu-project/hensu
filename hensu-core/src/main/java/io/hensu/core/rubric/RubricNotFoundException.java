@@ -1,4 +1,4 @@
-package io.hensu.core.exception;
+package io.hensu.core.rubric;
 
 import java.io.Serial;
 

@@ -1,6 +1,5 @@
 package io.hensu.core.agent;
 
-import io.hensu.core.exception.AgentNotFoundException;
 import java.util.Map;
 import java.util.Optional;
 
@@ -33,7 +32,7 @@ public interface AgentRegistry {
     ///
     /// @param id the agent identifier to look up, not null
     /// @return the agent instance, never null
-    /// @throws io.hensu.core.exception.AgentNotFoundException if no agent exists with the given ID
+    /// @throws AgentNotFoundException if no agent exists with the given ID
     /// @throws NullPointerException if id is null
     Agent getAgentOrThrow(String id) throws AgentNotFoundException;
 

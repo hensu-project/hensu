@@ -6,33 +6,67 @@ import java.util.Map;
 ///
 /// ### Supported action types
 ///
-/// {@link Notify} - Send a notification message
-/// {@link Execute} - Execute a local command
-/// {@link HttpCall} - Make an HTTP call (REST, webhooks, etc.)
+/// {@link Send} - Send data to a registered handler (HTTP, messaging, events, etc.)
+/// {@link Execute} - Execute a local command from the command registry
 public abstract sealed class Action {
 
     private Action() {}
 
-    /// Notification action - sends a message to configured channels.
-    public static final class Notify extends Action {
-        private final String message;
-        private final String channel;
+    /// Send action - invokes a registered {@link ActionHandler} by handler ID.
+    ///
+    /// ### Use Cases
+    /// - HTTP calls (REST APIs, webhooks)
+    /// - Messaging (Slack, Teams, email)
+    /// - Event publishing (Kafka, RabbitMQ)
+    /// - Any external integration
+    ///
+    /// ### Security Model
+    /// All configuration (endpoints, auth, headers) is encapsulated in user-implemented
+    /// {@link ActionHandler} instances. Workflows only reference handlers by ID,
+    /// keeping sensitive data out of DSL files.
+    ///
+    /// ### Usage
+    /// {@snippet lang=kotlin :
+    /// action("notify") {
+    ///     send("slack")  // simple call
+    ///     send("github-api", mapOf("repo" to "hensu", "action" to "dispatch"))  // with payload
+    /// }
+    /// }
+    ///
+    /// @see ActionHandler
+    /// @see ActionExecutor#registerHandler(ActionHandler)
+    public static final class Send extends Action {
+        private final String handlerId;
+        private final Map<String, Object> payload;
 
-        public Notify(String message) {
-            this(message, "default");
+        /// Creates a send action with no payload.
+        ///
+        /// @param handlerId the registered action handler ID, not null or blank
+        public Send(String handlerId) {
+            this(handlerId, Map.of());
         }
 
-        public Notify(String message, String channel) {
-            this.message = message;
-            this.channel = channel;
+        /// Creates a send action with payload data.
+        ///
+        /// @param handlerId the registered action handler ID, not null or blank
+        /// @param payload action-specific data passed to the handler, not null
+        public Send(String handlerId, Map<String, Object> payload) {
+            this.handlerId = handlerId;
+            this.payload = payload != null ? Map.copyOf(payload) : Map.of();
         }
 
-        public String getMessage() {
-            return message;
+        /// Returns the action handler ID.
+        ///
+        /// @return the handler ID, never null
+        public String getHandlerId() {
+            return handlerId;
         }
 
-        public String getChannel() {
-            return channel;
+        /// Returns the payload data for this action.
+        ///
+        /// @return immutable payload map, never null (may be empty)
+        public Map<String, Object> getPayload() {
+            return payload;
         }
     }
 
@@ -55,84 +89,21 @@ public abstract sealed class Action {
         }
     }
 
-    /// HTTP call action - makes an HTTP request to an endpoint.
-    ///
-    /// Used for triggering external systems, CI/CD pipelines, webhooks, etc. Supports any HTTP
-    /// method (GET, POST, PUT, DELETE, etc.).
-    public static final class HttpCall extends Action {
-        private final String endpoint;
-        private final String method;
-        private final String commandId;
-        private final Map<String, String> headers;
-        private final String body;
-        private final long timeoutMs;
-
-        public HttpCall(String endpoint, String commandId) {
-            this(endpoint, "POST", commandId, Map.of(), null, 30000);
-        }
-
-        public HttpCall(
-                String endpoint,
-                String method,
-                String commandId,
-                Map<String, String> headers,
-                String body,
-                long timeoutMs) {
-            this.endpoint = endpoint;
-            this.method = method;
-            this.commandId = commandId;
-            this.headers = headers != null ? Map.copyOf(headers) : Map.of();
-            this.body = body;
-            this.timeoutMs = timeoutMs;
-        }
-
-        public String getEndpoint() {
-            return endpoint;
-        }
-
-        public String getMethod() {
-            return method;
-        }
-
-        public String getCommandId() {
-            return commandId;
-        }
-
-        public Map<String, String> getHeaders() {
-            return headers;
-        }
-
-        public String getBody() {
-            return body;
-        }
-
-        public long getTimeoutMs() {
-            return timeoutMs;
-        }
-    }
-
     /// Parse action from string format.
     ///
     /// ### Supported Formats
-    /// - `"notify:message"` — Triggers a **Notification** action.
+    /// - `"send:handlerId"` — Triggers a **Send** action via registered handler.
     /// - `"exec:command"` — Triggers a **Local command execution** action.
-    /// - `"http:endpoint:commandId"` — Triggers a **Remote HTTP call** action.
     ///
     public static Action fromString(String str) {
-        if (str.startsWith("notify:")) {
-            return new Notify(str.substring("notify:".length()).trim());
+        if (str.startsWith("send:")) {
+            String handlerId = str.substring("send:".length()).trim();
+            return new Send(handlerId);
         } else if (str.startsWith("exec:")) {
             return new Execute(str.substring("exec:".length()).trim());
-        } else if (str.startsWith("http:")) {
-            String rest = str.substring("http:".length()).trim();
-            String[] parts = rest.split(":", 2);
-            if (parts.length == 2) {
-                return new HttpCall(parts[0].trim(), parts[1].trim());
-            } else {
-                return new HttpCall(rest, "default");
-            }
         } else {
-            return new Notify(str);
+            // Default: treat as send action with message payload
+            return new Send("default", Map.of("message", str));
         }
     }
 }

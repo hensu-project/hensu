@@ -33,6 +33,9 @@ object onNoConsensus
 /** Marker for fork completion syntax: `onComplete goto "nodeId"`. */
 object onComplete
 
+/** Marker for plan failure syntax: `onPlanFailure goto "nodeId"`. */
+object OnPlanFailure
+
 /**
  * Mixin interface providing standard transition markers for node builders.
  *

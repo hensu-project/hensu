@@ -67,7 +67,7 @@ public class LangChain4jAgent implements Agent {
 
             logger.fine("Agent '" + id + "' completed successfully");
 
-            return AgentResponse.builder().success(true).output(output).metadata(metadata).build();
+            return AgentResponse.TextResponse.of(output, metadata);
 
         } catch (Exception e) {
             logger.severe("Agent '" + id + "' execution failed: " + e.getMessage());
@@ -163,17 +163,7 @@ public class LangChain4jAgent implements Agent {
     }
 
     private AgentResponse createErrorResponse(String errorMessage, Instant startTime) {
-        Map<String, Object> metadata = new HashMap<>();
-        metadata.put("agent_id", id);
-        metadata.put("error", errorMessage);
-        metadata.put("timestamp", startTime.toString());
-        metadata.put("duration_ms", Duration.between(startTime, Instant.now()).toMillis());
-
-        return AgentResponse.builder()
-                .success(false)
-                .output("Error: " + errorMessage)
-                .metadata(metadata)
-                .build();
+        return AgentResponse.Error.of(errorMessage);
     }
 
     private String resolveTemplate(String template, Map<String, Object> context) {

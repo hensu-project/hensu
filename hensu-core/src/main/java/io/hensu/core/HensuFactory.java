@@ -12,8 +12,8 @@ import io.hensu.core.rubric.*;
 import io.hensu.core.rubric.evaluator.DefaultRubricEvaluator;
 import io.hensu.core.rubric.evaluator.LLMRubricEvaluator;
 import io.hensu.core.rubric.evaluator.RubricEvaluator;
-import io.hensu.core.rubric.repository.InMemoryRubricRepository;
-import io.hensu.core.rubric.repository.RubricRepository;
+import io.hensu.core.storage.rubric.InMemoryRubricRepository;
+import io.hensu.core.storage.rubric.RubricRepository;
 import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.template.TemplateResolver;
 import java.util.HashMap;
@@ -486,7 +486,7 @@ public final class HensuFactory {
 
         /// Configures an executor for action node.
         ///
-        /// When set, actions (notify, execute, http) are processed
+        /// When set, actions (send, execute) are processed
         /// by this executor. If not set, actions are logged but not executed.
         ///
         /// @param actionExecutor the action executor, may be null for logging-only mode

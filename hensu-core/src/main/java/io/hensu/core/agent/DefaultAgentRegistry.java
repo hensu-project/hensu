@@ -1,6 +1,5 @@
 package io.hensu.core.agent;
 
-import io.hensu.core.exception.AgentNotFoundException;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
