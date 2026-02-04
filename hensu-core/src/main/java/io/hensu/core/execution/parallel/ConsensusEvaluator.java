@@ -339,7 +339,16 @@ public class ConsensusEvaluator {
         logger.info("Invoking judge agent: " + judgeAgentId);
         AgentResponse judgeResponse = judgeAgent.execute(prompt, state.getContext());
 
-        return parseJudgeResponse(judgeResponse.getOutput(), votes, config);
+        String responseContent =
+                switch (judgeResponse) {
+                    case AgentResponse.TextResponse t -> t.content();
+                    case AgentResponse.Error e ->
+                            throw new IllegalStateException("Judge agent failed: " + e.message());
+                    default ->
+                            throw new IllegalStateException(
+                                    "Unexpected response type from judge agent");
+                };
+        return parseJudgeResponse(responseContent, votes, config);
     }
 
     /// Builds the prompt for the judge agent.

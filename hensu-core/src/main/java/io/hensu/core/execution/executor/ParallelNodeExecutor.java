@@ -87,13 +87,7 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
                                                                     state.getContext());
 
                                                     return new BranchResult(
-                                                            branch.getId(),
-                                                            new NodeResult(
-                                                                    response.isSuccess()
-                                                                            ? ResultStatus.SUCCESS
-                                                                            : ResultStatus.FAILURE,
-                                                                    response.getOutput(),
-                                                                    response.getMetadata()));
+                                                            branch.getId(), toNodeResult(response));
                                                 }))
                         .toList();
 
@@ -182,6 +176,28 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
 
         logger.info("Parallel execution completed: " + node.getId());
         return finalResult;
+    }
+
+    private NodeResult toNodeResult(AgentResponse response) {
+        return switch (response) {
+            case AgentResponse.TextResponse t ->
+                    new NodeResult(ResultStatus.SUCCESS, t.content(), t.metadata());
+            case AgentResponse.ToolRequest t ->
+                    new NodeResult(
+                            ResultStatus.SUCCESS,
+                            "Tool: " + t.toolName(),
+                            Map.of("toolName", t.toolName(), "arguments", t.arguments()));
+            case AgentResponse.PlanProposal p ->
+                    new NodeResult(
+                            ResultStatus.SUCCESS,
+                            "Plan with " + p.steps().size() + " steps",
+                            Map.of("steps", p.steps()));
+            case AgentResponse.Error e ->
+                    new NodeResult(
+                            ResultStatus.FAILURE,
+                            e.message(),
+                            Map.of("errorType", e.errorType().name()));
+        };
     }
 
     private NodeResult evaluateConsensus(

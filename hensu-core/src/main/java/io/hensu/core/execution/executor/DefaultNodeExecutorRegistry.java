@@ -1,6 +1,5 @@
 package io.hensu.core.execution.executor;
 
-import io.hensu.core.exception.NodeExecutorNotFound;
 import io.hensu.core.workflow.node.Node;
 import java.util.HashMap;
 import java.util.Map;

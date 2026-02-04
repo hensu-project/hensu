@@ -188,8 +188,8 @@ class GraphBuilder(private val workingDirectory: WorkingDirectory) {
     /**
      * Define an action node for executing commands mid-workflow.
      *
-     * Action nodes execute side effects (shell commands, HTTP calls, notifications) and then
-     * transition to the next node. Unlike end nodes, action nodes continue workflow execution.
+     * Action nodes execute side effects (shell commands, messaging, HTTP calls) and then transition
+     * to the next node. Unlike end nodes, action nodes continue workflow execution.
      *
      * Usage:
      * ```kotlin
@@ -199,8 +199,8 @@ class GraphBuilder(private val workingDirectory: WorkingDirectory) {
      * }
      *
      * action("notify-team") {
-     *     notify("Build completed: {result}")
-     *     http("https://webhook.example.com", "build-done")
+     *     send("slack", mapOf("message" to "Build completed: {result}"))
+     *     send("webhook", mapOf("event" to "deploy"))
      *     onSuccess goto "deploy"
      *     onFailure retry 2 otherwise "error"
      * }

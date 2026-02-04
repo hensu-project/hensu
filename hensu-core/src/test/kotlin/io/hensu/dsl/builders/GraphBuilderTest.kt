@@ -216,8 +216,8 @@ class GraphBuilderTest {
 
             action("deploy") {
                 execute("deploy-prod")
-                notify("Deployment started", "slack")
-                http("https://webhook.example.com", "deploy-hook")
+                send("slack", mapOf("message" to "Deployment started"))
+                send("webhook")
                 onSuccess goto "end"
                 onFailure retry 2 otherwise "rollback"
             }
@@ -232,5 +232,29 @@ class GraphBuilderTest {
         val actionNode = result.nodes["deploy"] as ActionNode
         assertThat(actionNode.actions).hasSize(3)
         assertThat(actionNode.transitionRules).hasSize(2)
+    }
+
+    @Test
+    fun `should build action node with send action`() {
+        // Given
+        val builder = GraphBuilder(workingDir)
+
+        // When
+        builder.apply {
+            start at "notify"
+
+            action("notify") {
+                send("slack", mapOf("message" to "Build completed: {status}"))
+                onSuccess goto "end"
+            }
+
+            end("end")
+        }
+
+        val result = builder.build()
+
+        // Then
+        val actionNode = result.nodes["notify"] as ActionNode
+        assertThat(actionNode.actions).hasSize(1)
     }
 }
