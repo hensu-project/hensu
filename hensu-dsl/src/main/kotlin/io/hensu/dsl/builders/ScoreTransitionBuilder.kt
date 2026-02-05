@@ -28,6 +28,7 @@ class ScoreTransitionBuilder {
     private val conditions = mutableListOf<ScoreCondition>()
 
     /** Access to [whenScore] marker for condition syntax. */
+    @Suppress("RemoveRedundantQualifierName")
     val whenScore: whenScore
         get() = io.hensu.dsl.builders.whenScore
 

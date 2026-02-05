@@ -45,6 +45,7 @@ object OnPlanFailure
  * @see StandardNodeBuilder
  * @see GenericNodeBuilder
  */
+@Suppress("RemoveRedundantQualifierName")
 interface TransitionMarkers {
     /** Access to [onSuccess] marker for transition syntax. */
     val onSuccess: onSuccess
@@ -62,6 +63,7 @@ interface TransitionMarkers {
  *
  * @see ParallelNodeBuilder
  */
+@Suppress("RemoveRedundantQualifierName")
 interface ConsensusMarkers : TransitionMarkers {
     /** Access to [onConsensus] marker for consensus-reached transitions. */
     val onConsensus: onConsensus
@@ -81,6 +83,7 @@ interface ConsensusMarkers : TransitionMarkers {
  */
 interface ForkJoinMarkers : TransitionMarkers {
     /** Access to [onComplete] marker for fork completion transitions. */
+    @Suppress("RemoveRedundantQualifierName")
     val onComplete: onComplete
         get() = io.hensu.dsl.builders.onComplete
 }
