@@ -357,9 +357,6 @@ hensu-server/
 │   ├── streaming/              # SSE event streaming
 │   │   ├── ExecutionEvent.java            # Event DTOs for execution monitoring
 │   │   └── ExecutionEventBroadcaster.java # PlanObserver for event broadcasting
-│   ├── persistence/            # State persistence
-│   │   ├── WorkflowStateRepository.java
-│   │   └── InMemoryWorkflowStateRepository.java
 │   ├── planner/                # LLM planning
 │   │   └── LlmPlanner.java
 │   ├── service/                # Business logic
