@@ -17,7 +17,7 @@ import java.util.Map;
 /// invoke the same agent concurrently during parallel execution.
 ///
 /// @see AgentRegistry for agent lifecycle management
-/// @see AgentFactory for agent instantiation via SPI
+/// @see AgentFactory for agent instantiation
 /// @see io.hensu.core.agent.spi.AgentProvider for implementing custom agent backends
 public interface Agent {
 

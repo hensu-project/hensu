@@ -1,38 +1,36 @@
 package io.hensu.server.api;
 
-import io.hensu.server.service.WorkflowService;
-import io.hensu.server.service.WorkflowService.ExecutionNotFoundException;
-import io.hensu.server.service.WorkflowService.ExecutionStartResult;
-import io.hensu.server.service.WorkflowService.ExecutionStatus;
-import io.hensu.server.service.WorkflowService.ExecutionSummary;
-import io.hensu.server.service.WorkflowService.PlanInfo;
-import io.hensu.server.service.WorkflowService.ResumeDecision;
-import io.hensu.server.service.WorkflowService.WorkflowNotFoundException;
+import io.hensu.core.workflow.Workflow;
+import io.hensu.server.persistence.WorkflowRepository;
 import jakarta.inject.Inject;
-import jakarta.ws.rs.Consumes;
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.HeaderParam;
-import jakarta.ws.rs.NotFoundException;
-import jakarta.ws.rs.POST;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.PathParam;
-import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.Map;
 import org.jboss.logging.Logger;
 
-/// REST API for workflow operations.
+/// REST API for workflow definition management.
 ///
-/// Provides endpoints for:
-/// - Starting workflow executions
-/// - Resuming paused executions
-/// - Querying execution status and plans
+/// Provides terraform/kubectl-style endpoints for:
+/// - Pushing workflow definitions (create or update)
+/// - Pulling workflow definitions
+/// - Listing workflows for a tenant
+/// - Deleting workflows
 ///
 /// All endpoints require `X-Tenant-ID` header for multi-tenant isolation.
 ///
-/// @see WorkflowService for business logic
+/// ### Usage Pattern
+/// CLI compiles Kotlin DSL to JSON and pushes to server:
+/// ```
+/// hensu push workflow.kt  → POST /api/v1/workflows
+/// hensu pull <id>         → GET /api/v1/workflows/{id}
+/// hensu list              → GET /api/v1/workflows
+/// hensu delete <id>       → DELETE /api/v1/workflows/{id}
+/// ```
+///
+/// @see WorkflowRepository for persistence
+/// @see ExecutionResource for execution operations
 @Path("/api/v1/workflows")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
@@ -40,237 +38,163 @@ public class WorkflowResource {
 
     private static final Logger LOG = Logger.getLogger(WorkflowResource.class);
 
-    private final WorkflowService workflowService;
+    private final WorkflowRepository workflowRepository;
 
     @Inject
-    public WorkflowResource(WorkflowService workflowService) {
-        this.workflowService = workflowService;
+    public WorkflowResource(WorkflowRepository workflowRepository) {
+        this.workflowRepository = workflowRepository;
     }
 
-    /// Starts a new workflow execution.
+    /// Pushes a workflow definition (idempotent create or update).
     ///
     /// ### Request
     /// ```
-    /// POST /api/v1/workflows/{workflowId}/execute
+    /// POST /api/v1/workflows
     /// X-Tenant-ID: tenant-123
     /// Content-Type: application/json
     ///
-    /// {"orderId": "123", "userId": "456"}
+    /// {
+    ///   "id": "order-processing",
+    ///   "version": "1.0.0",
+    ///   "startNode": "start",
+    ///   "nodes": {...},
+    ///   "agents": {...},
+    ///   "rubrics": {...}
+    /// }
     /// ```
     ///
-    /// ### Response (202 Accepted)
+    /// ### Response (200 OK for update, 201 Created for new)
     /// ```json
-    /// {"executionId": "exec-abc", "workflowId": "order-processing"}
+    /// {"id": "order-processing", "version": "1.0.0", "created": true}
     /// ```
     @POST
-    @Path("/{workflowId}/execute")
-    public Response execute(
-            @PathParam("workflowId") String workflowId,
-            @HeaderParam("X-Tenant-ID") String tenantId,
-            Map<String, Object> context) {
+    public Response pushWorkflow(@HeaderParam("X-Tenant-ID") String tenantId, Workflow workflow) {
 
         validateTenantId(tenantId);
 
-        LOG.infov("Execute workflow request: workflow={0}, tenant={1}", workflowId, tenantId);
-
-        try {
-            ExecutionStartResult result =
-                    workflowService.startExecution(
-                            tenantId, workflowId, context != null ? context : Map.of());
-
-            return Response.accepted()
-                    .entity(
-                            Map.of(
-                                    "executionId", result.executionId(),
-                                    "workflowId", result.workflowId()))
-                    .build();
-        } catch (WorkflowNotFoundException e) {
-            LOG.warnv("Workflow not found: {0}", workflowId);
-            throw new NotFoundException(e.getMessage());
+        if (workflow == null) {
+            throw new BadRequestException("Workflow definition is required");
         }
+
+        LOG.infov(
+                "Push workflow: id={0}, version={1}, tenant={2}",
+                workflow.getId(), workflow.getVersion(), tenantId);
+
+        boolean exists = workflowRepository.exists(tenantId, workflow.getId());
+        workflowRepository.save(tenantId, workflow);
+
+        Response.Status status = exists ? Response.Status.OK : Response.Status.CREATED;
+
+        return Response.status(status)
+                .entity(
+                        Map.of(
+                                "id", workflow.getId(),
+                                "version", workflow.getVersion(),
+                                "created", !exists))
+                .build();
     }
 
-    /// Resumes a paused workflow execution.
+    /// Pulls a workflow definition by ID.
     ///
     /// ### Request
     /// ```
-    /// POST /api/v1/workflows/executions/{executionId}/resume
-    /// X-Tenant-ID: tenant-123
-    /// Content-Type: application/json
-    ///
-    /// {"approved": true, "modifications": {}}
-    /// ```
-    ///
-    /// ### Response (200 OK)
-    /// ```json
-    /// {"status": "resumed"}
-    /// ```
-    @POST
-    @Path("/executions/{executionId}/resume")
-    public Response resume(
-            @PathParam("executionId") String executionId,
-            @HeaderParam("X-Tenant-ID") String tenantId,
-            ResumeRequest request) {
-
-        validateTenantId(tenantId);
-
-        LOG.infov("Resume execution request: executionId={0}, tenant={1}", executionId, tenantId);
-
-        try {
-            ResumeDecision decision =
-                    request != null && request.approved()
-                            ? ResumeDecision.modify(
-                                    request.modifications() != null
-                                            ? request.modifications()
-                                            : Map.of())
-                            : ResumeDecision.approve();
-
-            workflowService.resumeExecution(tenantId, executionId, decision);
-
-            return Response.ok().entity(Map.of("status", "resumed")).build();
-        } catch (ExecutionNotFoundException e) {
-            LOG.warnv("Execution not found: {0}", executionId);
-            throw new NotFoundException(e.getMessage());
-        }
-    }
-
-    /// Gets the pending plan for an execution awaiting review.
-    ///
-    /// ### Request
-    /// ```
-    /// GET /api/v1/workflows/executions/{executionId}/plan
-    /// X-Tenant-ID: tenant-123
-    /// ```
-    ///
-    /// ### Response (200 OK)
-    /// ```json
-    /// {"planId": "plan-123", "totalSteps": 5, "currentStep": 2}
-    /// ```
-    @GET
-    @Path("/executions/{executionId}/plan")
-    public Response getPlan(
-            @PathParam("executionId") String executionId,
-            @HeaderParam("X-Tenant-ID") String tenantId) {
-
-        validateTenantId(tenantId);
-
-        try {
-            PlanInfo planInfo =
-                    workflowService
-                            .getPendingPlan(tenantId, executionId)
-                            .orElseThrow(
-                                    () ->
-                                            new NotFoundException(
-                                                    "No pending plan for execution: "
-                                                            + executionId));
-
-            return Response.ok()
-                    .entity(
-                            Map.of(
-                                    "planId", planInfo.planId(),
-                                    "totalSteps", planInfo.totalSteps(),
-                                    "currentStep", planInfo.currentStep()))
-                    .build();
-        } catch (ExecutionNotFoundException e) {
-            LOG.warnv("Execution not found: {0}", executionId);
-            throw new NotFoundException(e.getMessage());
-        }
-    }
-
-    /// Gets the status of an execution.
-    ///
-    /// ### Request
-    /// ```
-    /// GET /api/v1/workflows/executions/{executionId}
+    /// GET /api/v1/workflows/{workflowId}
     /// X-Tenant-ID: tenant-123
     /// ```
     ///
     /// ### Response (200 OK)
     /// ```json
     /// {
-    ///   "executionId": "exec-123",
-    ///   "workflowId": "order-processing",
-    ///   "status": "PAUSED",
-    ///   "currentNodeId": "validate-payment",
-    ///   "hasPendingPlan": true
+    ///   "id": "order-processing",
+    ///   "version": "1.0.0",
+    ///   "startNode": "start",
+    ///   "nodes": {...},
+    ///   "agents": {...},
+    ///   "rubrics": {...}
     /// }
     /// ```
     @GET
-    @Path("/executions/{executionId}")
-    public Response getExecution(
-            @PathParam("executionId") String executionId,
+    @Path("/{workflowId}")
+    public Response pullWorkflow(
+            @PathParam("workflowId") String workflowId,
             @HeaderParam("X-Tenant-ID") String tenantId) {
 
         validateTenantId(tenantId);
 
-        try {
-            ExecutionStatus status = workflowService.getExecutionStatus(tenantId, executionId);
+        LOG.debugv("Pull workflow: id={0}, tenant={1}", workflowId, tenantId);
 
-            return Response.ok()
-                    .entity(
-                            Map.of(
-                                    "executionId", status.executionId(),
-                                    "workflowId", status.workflowId(),
-                                    "status", status.status(),
-                                    "currentNodeId",
-                                            status.currentNodeId() != null
-                                                    ? status.currentNodeId()
-                                                    : "",
-                                    "hasPendingPlan", status.hasPendingPlan()))
-                    .build();
-        } catch (ExecutionNotFoundException e) {
-            LOG.warnv("Execution not found: {0}", executionId);
-            throw new NotFoundException(e.getMessage());
-        }
+        Workflow workflow =
+                workflowRepository
+                        .findById(tenantId, workflowId)
+                        .orElseThrow(
+                                () -> new NotFoundException("Workflow not found: " + workflowId));
+
+        return Response.ok().entity(workflow).build();
     }
 
-    /// Lists paused executions for the tenant.
+    /// Lists all workflows for a tenant.
     ///
     /// ### Request
     /// ```
-    /// GET /api/v1/workflows/executions/paused
+    /// GET /api/v1/workflows
     /// X-Tenant-ID: tenant-123
     /// ```
     ///
     /// ### Response (200 OK)
     /// ```json
     /// [
-    ///   {"executionId": "exec-1", "workflowId": "wf-1", "currentNodeId": "node-1"},
-    ///   {"executionId": "exec-2", "workflowId": "wf-2", "currentNodeId": "node-3"}
+    ///   {"id": "order-processing", "version": "1.0.0"},
+    ///   {"id": "user-onboarding", "version": "2.1.0"}
     /// ]
     /// ```
     @GET
-    @Path("/executions/paused")
-    public Response listPausedExecutions(@HeaderParam("X-Tenant-ID") String tenantId) {
+    public Response listWorkflows(@HeaderParam("X-Tenant-ID") String tenantId) {
 
         validateTenantId(tenantId);
 
-        List<ExecutionSummary> paused = workflowService.listPausedExecutions(tenantId);
+        LOG.debugv("List workflows: tenant={0}", tenantId);
 
-        List<Map<String, Object>> response =
-                paused.stream()
-                        .map(
-                                s ->
-                                        Map.<String, Object>of(
-                                                "executionId", s.executionId(),
-                                                "workflowId", s.workflowId(),
-                                                "currentNodeId",
-                                                        s.currentNodeId() != null
-                                                                ? s.currentNodeId()
-                                                                : "",
-                                                "createdAt", s.createdAt().toString()))
+        List<Workflow> workflows = workflowRepository.findAll(tenantId);
+
+        List<Map<String, String>> summaries =
+                workflows.stream()
+                        .map(w -> Map.of("id", w.getId(), "version", w.getVersion()))
                         .toList();
 
-        return Response.ok().entity(response).build();
+        return Response.ok().entity(summaries).build();
     }
 
-    /// Validates tenant ID header is present.
+    /// Deletes a workflow definition.
+    ///
+    /// ### Request
+    /// ```
+    /// DELETE /api/v1/workflows/{workflowId}
+    /// X-Tenant-ID: tenant-123
+    /// ```
+    ///
+    /// ### Response (204 No Content)
+    @DELETE
+    @Path("/{workflowId}")
+    public Response deleteWorkflow(
+            @PathParam("workflowId") String workflowId,
+            @HeaderParam("X-Tenant-ID") String tenantId) {
+
+        validateTenantId(tenantId);
+
+        LOG.infov("Delete workflow: id={0}, tenant={1}", workflowId, tenantId);
+
+        boolean deleted = workflowRepository.delete(tenantId, workflowId);
+
+        if (!deleted) {
+            throw new NotFoundException("Workflow not found: " + workflowId);
+        }
+
+        return Response.noContent().build();
+    }
+
     private void validateTenantId(String tenantId) {
         if (tenantId == null || tenantId.isBlank()) {
             throw new jakarta.ws.rs.BadRequestException("X-Tenant-ID header is required");
         }
     }
-
-    /// Request body for resume endpoint.
-    public record ResumeRequest(boolean approved, Map<String, Object> modifications) {}
 }

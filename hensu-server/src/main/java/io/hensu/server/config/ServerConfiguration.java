@@ -1,133 +1,102 @@
 package io.hensu.server.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hensu.core.HensuEnvironment;
 import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentConfig;
-import io.hensu.core.agent.AgentNotFoundException;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.execution.WorkflowExecutor;
-import io.hensu.core.execution.action.ActionExecutor;
-import io.hensu.core.execution.executor.DefaultNodeExecutorRegistry;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
 import io.hensu.core.plan.PlanExecutor;
-import io.hensu.core.rubric.RubricEngine;
-import io.hensu.core.rubric.evaluator.DefaultRubricEvaluator;
-import io.hensu.core.storage.rubric.InMemoryRubricRepository;
-import io.hensu.core.storage.workflow.InMemoryWorkflowStateRepository;
-import io.hensu.core.storage.workflow.WorkflowStateRepository;
+import io.hensu.serialization.WorkflowSerializer;
 import io.hensu.server.mcp.McpConnection;
 import io.hensu.server.mcp.McpConnectionFactory;
 import io.hensu.server.mcp.McpException;
+import io.hensu.server.persistence.InMemoryWorkflowRepository;
+import io.hensu.server.persistence.InMemoryWorkflowStateRepository;
+import io.hensu.server.persistence.WorkflowRepository;
+import io.hensu.server.persistence.WorkflowStateRepository;
 import io.hensu.server.planner.LlmPlanner;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Singleton;
 import java.time.Duration;
 import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
 import org.jboss.logging.Logger;
 
-/// CDI configuration for server beans.
+/// CDI configuration for server-specific beans.
 ///
-/// Provides producer methods for core module classes that are not CDI beans,
-/// and for server components that require complex initialization.
+/// Core components (AgentRegistry, NodeExecutorRegistry, WorkflowExecutor, ActionExecutor)
+/// are produced by {@link HensuEnvironmentProducer} via {@link io.hensu.core.HensuFactory}.
+///
+/// This class produces:
+/// - Server-specific beans (ObjectMapper, WorkflowStateRepository)
+/// - Delegating producers that expose HensuEnvironment components for direct injection
+/// - Server extensions (PlanExecutor, LlmPlanner, McpConnectionFactory)
 @ApplicationScoped
 public class ServerConfiguration {
 
     private static final Logger LOG = Logger.getLogger(ServerConfiguration.class);
 
+    // ========== Utility Beans ==========
+
     @Produces
     @Singleton
     public ObjectMapper objectMapper() {
-        return new ObjectMapper();
+        return WorkflowSerializer.createMapper();
     }
 
     @Produces
     @Singleton
-    public AgentRegistry agentRegistry() {
-        // Stub registry until LangChain4j integration is configured
-        return new AgentRegistry() {
-            private final Map<String, Agent> agents = new ConcurrentHashMap<>();
-
-            @Override
-            public Optional<Agent> getAgent(String id) {
-                return Optional.ofNullable(agents.get(id));
-            }
-
-            @Override
-            public Agent getAgentOrThrow(String id) throws AgentNotFoundException {
-                return getAgent(id)
-                        .orElseThrow(() -> new AgentNotFoundException("Agent not found: " + id));
-            }
-
-            @Override
-            public Agent registerAgent(String agentId, AgentConfig config) {
-                LOG.warnv("Agent registration not configured: {0}", agentId);
-                Agent stubAgent = new StubAgent(agentId, config);
-                agents.put(agentId, stubAgent);
-                return stubAgent;
-            }
-
-            @Override
-            public void registerAgents(Map<String, AgentConfig> configs) {
-                configs.forEach(this::registerAgent);
-            }
-
-            @Override
-            public boolean hasAgent(String agentId) {
-                return agents.containsKey(agentId);
-            }
-        };
+    public WorkflowStateRepository workflowStateRepository() {
+        return new InMemoryWorkflowStateRepository();
     }
 
     @Produces
     @Singleton
-    public NodeExecutorRegistry nodeExecutorRegistry() {
-        return new DefaultNodeExecutorRegistry();
+    public WorkflowRepository workflowRepository() {
+        return new InMemoryWorkflowRepository();
+    }
+
+    // ========== HensuEnvironment Component Delegates ==========
+    // These producers expose HensuEnvironment components for direct CDI injection
+
+    @Produces
+    @Singleton
+    public WorkflowExecutor workflowExecutor(HensuEnvironment env) {
+        return env.getWorkflowExecutor();
     }
 
     @Produces
     @Singleton
-    public RubricEngine rubricEngine() {
-        return new RubricEngine(new InMemoryRubricRepository(), new DefaultRubricEvaluator());
+    public AgentRegistry agentRegistry(HensuEnvironment env) {
+        return env.getAgentRegistry();
     }
 
     @Produces
     @Singleton
-    public WorkflowExecutor workflowExecutor(
-            NodeExecutorRegistry nodeExecutorRegistry,
-            AgentRegistry agentRegistry,
-            ExecutorService executorService,
-            RubricEngine rubricEngine) {
-        return new WorkflowExecutor(
-                nodeExecutorRegistry, agentRegistry, executorService, rubricEngine, null);
+    public NodeExecutorRegistry nodeExecutorRegistry(HensuEnvironment env) {
+        return env.getNodeExecutorRegistry();
+    }
+
+    // ========== Server Extensions ==========
+
+    @Produces
+    @Singleton
+    public PlanExecutor planExecutor(HensuEnvironment env) {
+        return new PlanExecutor(env.getActionExecutor());
     }
 
     @Produces
     @Singleton
-    public ActionExecutor actionExecutor() {
-        // Stub action executor until MCP integration is configured
-        return (action, _) -> {
-            LOG.warnv("Action execution not configured: {0}", action);
-            return ActionExecutor.ActionResult.failure("Action executor not configured");
-        };
-    }
-
-    @Produces
-    @Singleton
-    public PlanExecutor planExecutor(ActionExecutor actionExecutor) {
-        return new PlanExecutor(actionExecutor);
-    }
-
-    @Produces
-    @Singleton
-    public LlmPlanner llmPlanner(ObjectMapper objectMapper) {
-        // Stub planning agent until configured
-        Agent stubPlanningAgent = new StubAgent("_planning_agent", null);
-        return new LlmPlanner(stubPlanningAgent, objectMapper);
+    public LlmPlanner llmPlanner(HensuEnvironment env, ObjectMapper objectMapper) {
+        // Get planning agent from registry, or create stub if not configured
+        Agent planningAgent =
+                env.getAgentRegistry()
+                        .getAgent("_planning_agent")
+                        .orElseGet(this::createStubPlanningAgent);
+        return new LlmPlanner(planningAgent, objectMapper);
     }
 
     @Produces
@@ -149,35 +118,23 @@ public class ServerConfiguration {
         };
     }
 
-    @Produces
-    @Singleton
-    public WorkflowStateRepository workflowStateRepository() {
-        return new InMemoryWorkflowStateRepository();
-    }
+    private Agent createStubPlanningAgent() {
+        LOG.warn("Planning agent not configured, using stub");
+        return new Agent() {
+            @Override
+            public AgentResponse execute(String prompt, Map<String, Object> context) {
+                return AgentResponse.Error.of("Planning agent not configured");
+            }
 
-    /// Stub agent implementation for unconfigured agents.
-    private static class StubAgent implements Agent {
-        private final String id;
-        private final AgentConfig config;
+            @Override
+            public String getId() {
+                return "_planning_agent";
+            }
 
-        StubAgent(String id, AgentConfig config) {
-            this.id = id;
-            this.config = config;
-        }
-
-        @Override
-        public AgentResponse execute(String prompt, Map<String, Object> context) {
-            return AgentResponse.Error.of("Agent not configured: " + id);
-        }
-
-        @Override
-        public String getId() {
-            return id;
-        }
-
-        @Override
-        public AgentConfig getConfig() {
-            return config;
-        }
+            @Override
+            public AgentConfig getConfig() {
+                return null;
+            }
+        };
     }
 }

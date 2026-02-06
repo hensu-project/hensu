@@ -3,22 +3,22 @@ package io.hensu.core;
 import io.hensu.core.agent.AgentFactory;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.agent.DefaultAgentRegistry;
+import io.hensu.core.agent.spi.AgentProvider;
+import io.hensu.core.agent.stub.StubAgentProvider;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.DefaultNodeExecutorRegistry;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
 import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.rubric.*;
+import io.hensu.core.rubric.InMemoryRubricRepository;
+import io.hensu.core.rubric.RubricRepository;
 import io.hensu.core.rubric.evaluator.DefaultRubricEvaluator;
 import io.hensu.core.rubric.evaluator.LLMRubricEvaluator;
 import io.hensu.core.rubric.evaluator.RubricEvaluator;
-import io.hensu.core.storage.rubric.InMemoryRubricRepository;
-import io.hensu.core.storage.rubric.RubricRepository;
 import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.template.TemplateResolver;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -30,19 +30,18 @@ import java.util.concurrent.Executors;
 ///
 /// ### Usage Patterns
 ///
-/// **Quick start with environment variables**:
-/// {@snippet :
-/// var env = HensuFactory.createEnvironment();
-/// }
-///
-/// **Custom configuration**:
+/// **Builder with explicit providers** (recommended for Quarkus apps):
 /// {@snippet :
 /// var env = HensuFactory.builder()
-///     .anthropicApiKey("sk-...")
-///     .config(HensuConfig.builder()
-///         .useVirtualThreads(true)
-///         .build())
+///     .config(HensuConfig.builder().useVirtualThreads(true).build())
+///     .loadCredentials(properties)
+///     .agentProviders(List.of(new LangChain4jProvider()))
 ///     .build();
+/// }
+///
+/// **Quick start with environment variables** (standalone):
+/// {@snippet :
+/// var env = HensuFactory.createEnvironment();
 /// }
 ///
 /// @implNote This is a utility class with only static methods. All dependencies
@@ -97,8 +96,9 @@ public final class HensuFactory {
         // Apply stub mode setting as system property if present in credentials
         applyStubModeSetting(credentials);
 
-        // Create AgentFactory with provided credentials
-        AgentFactory agentFactory = new AgentFactory(credentials);
+        // Create AgentFactory with StubAgentProvider (the only provider in hensu-core).
+        // For real model providers, use HensuFactory.builder().agentProviders(...).
+        AgentFactory agentFactory = new AgentFactory(credentials, List.of(new StubAgentProvider()));
 
         // Create AgentRegistry using the factory
         AgentRegistry agentRegistry = new DefaultAgentRegistry(agentFactory);
@@ -262,7 +262,7 @@ public final class HensuFactory {
     /// - `*_TOKEN` (e.g., `ACCESS_TOKEN`)
     ///
     /// @return map of discovered credentials, never null (may be empty)
-    static Map<String, String> loadCredentialsFromEnvironment() {
+    public static Map<String, String> loadCredentialsFromEnvironment() {
         Map<String, String> credentials = new HashMap<>();
 
         // Auto-discover all environment variables matching API key patterns
@@ -292,8 +292,8 @@ public final class HensuFactory {
     /// Loads credentials from a Properties object.
     ///
     /// Supports multiple patterns:
+    /// - Prefixed keys (e.g., `hensu.credentials.ANTHROPIC_API_KEY=sk-...`) — prefix is stripped
     /// - Direct API key names (e.g., `ANTHROPIC_API_KEY=sk-...`)
-    /// - Prefixed keys (e.g., `hensu.credentials.ANTHROPIC_API_KEY=sk-...`)
     /// - Stub mode setting: `hensu.stub.enabled=true`
     ///
     /// @param properties the properties to extract credentials from, not null
@@ -360,15 +360,16 @@ public final class HensuFactory {
     /// Fluent builder for constructing {@link HensuEnvironment} instances with fine-grained
     /// control.
     ///
-    /// Provides methods for configuring credentials, registries, handlers, and
-    /// threading options. Call {@link #build()} to create the environment.
+    /// Provides methods for configuring credentials, agent providers, registries,
+    /// handlers, and threading options. Call {@link #build()} to create the environment.
     ///
     /// ### Example
     /// {@snippet :
     /// var env = HensuFactory.builder()
-    ///     .anthropicApiKey("sk-...")
-    ///     .evaluatorAgent("evaluator")
-    ///     .reviewHandler(myHandler)
+    ///     .config(HensuConfig.builder().useVirtualThreads(true).build())
+    ///     .loadCredentials(properties)
+    ///     .agentProviders(List.of(new LangChain4jProvider()))
+    ///     .actionExecutor(actionExecutor)
     ///     .build();
     /// }
     ///
@@ -377,6 +378,7 @@ public final class HensuFactory {
     public static class Builder {
         private HensuConfig config = new HensuConfig();
         private Map<String, String> credentials = new HashMap<>();
+        private List<AgentProvider> agentProviders = new ArrayList<>();
         private NodeExecutorRegistry nodeExecutorRegistry;
         private AgentRegistry agentRegistry;
         private String evaluatorAgentId = null;
@@ -445,6 +447,29 @@ public final class HensuFactory {
         /// @return this builder for chaining, never null
         public Builder deepSeekApiKey(String apiKey) {
             this.credentials.put("DEEPSEEK_API_KEY", apiKey);
+            return this;
+        }
+
+        /// Sets the agent providers for model creation.
+        ///
+        /// Providers are selected by priority when creating agents. The built-in
+        /// {@link StubAgentProvider} is always included automatically — do not add
+        /// it explicitly.
+        ///
+        /// @param providers list of agent providers, not null
+        /// @return this builder for chaining, never null
+        /// @see AgentProvider for implementing custom providers
+        public Builder agentProviders(List<AgentProvider> providers) {
+            this.agentProviders = new ArrayList<>(providers);
+            return this;
+        }
+
+        /// Adds a single agent provider.
+        ///
+        /// @param provider the agent provider, not null
+        /// @return this builder for chaining, never null
+        public Builder agentProvider(AgentProvider provider) {
+            this.agentProviders.add(provider);
             return this;
         }
 
@@ -534,7 +559,8 @@ public final class HensuFactory {
 
         /// Loads credentials from a Properties object.
         ///
-        /// Supports both direct API key patterns and `hensu.credentials.*` prefixed keys.
+        /// Supports `hensu.credentials.*` prefixed keys (prefix is stripped),
+        /// direct API key patterns, and `hensu.stub.enabled`.
         ///
         /// @param properties the properties to extract credentials from, not null
         /// @return this builder for chaining, never null
@@ -580,8 +606,10 @@ public final class HensuFactory {
                                 : Executors.newFixedThreadPool(config.getThreadPoolSize());
             }
             if (agentRegistry == null) {
-                // Create AgentFactory, AgentRegistry and NodeExecutorRegistry
-                AgentFactory agentFactory = new AgentFactory(credentials);
+                // Always include StubAgentProvider alongside explicit providers
+                List<AgentProvider> allProviders = new ArrayList<>(agentProviders);
+                allProviders.add(new StubAgentProvider());
+                AgentFactory agentFactory = new AgentFactory(credentials, allProviders);
                 agentRegistry = new DefaultAgentRegistry(agentFactory);
             }
             if (nodeExecutorRegistry == null) {

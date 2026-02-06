@@ -1,0 +1,203 @@
+package io.hensu.serialization;
+
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
+import io.hensu.core.execution.action.Action;
+import io.hensu.core.execution.parallel.Branch;
+import io.hensu.core.execution.parallel.ConsensusConfig;
+import io.hensu.core.execution.result.ExitStatus;
+import io.hensu.core.plan.Plan;
+import io.hensu.core.plan.PlanningConfig;
+import io.hensu.core.review.ReviewConfig;
+import io.hensu.core.workflow.node.*;
+import io.hensu.core.workflow.transition.TransitionRule;
+import java.io.IOException;
+import java.io.Serial;
+import java.util.List;
+import java.util.Map;
+
+/// Deserializes JSON to the appropriate `Node` subtype based on `nodeType` field.
+///
+/// @see NodeSerializer for the inverse operation
+class NodeDeserializer extends StdDeserializer<Node> {
+
+    @Serial private static final long serialVersionUID = -4216640652578505546L;
+
+    private static final TypeReference<List<TransitionRule>> TRANSITION_LIST =
+            new TypeReference<>() {};
+    private static final TypeReference<List<Action>> ACTION_LIST = new TypeReference<>() {};
+    private static final TypeReference<List<Branch>> BRANCH_LIST = new TypeReference<>() {};
+    private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
+    private static final TypeReference<Map<String, String>> STRING_MAP = new TypeReference<>() {};
+    private static final TypeReference<Map<String, Object>> OBJECT_MAP = new TypeReference<>() {};
+
+    NodeDeserializer() {
+        super(Node.class);
+    }
+
+    @Override
+    public Node deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
+        ObjectMapper mapper = (ObjectMapper) p.getCodec();
+        JsonNode root = mapper.readTree(p);
+
+        String id = root.get("id").asText();
+        NodeType nodeType = NodeType.valueOf(root.get("nodeType").asText());
+
+        return switch (nodeType) {
+            case STANDARD -> deserializeStandard(mapper, root, id);
+            case END -> deserializeEnd(root, id);
+            case ACTION -> deserializeAction(mapper, root, id);
+            case GENERIC -> deserializeGeneric(mapper, root, id);
+            case PARALLEL -> deserializeParallel(mapper, root, id);
+            case FORK -> deserializeFork(mapper, root, id);
+            case JOIN -> deserializeJoin(mapper, root, id);
+            case SUB_WORKFLOW -> deserializeSubWorkflow(mapper, root, id);
+            case LOOP -> new LoopNode(id);
+        };
+    }
+
+    private StandardNode deserializeStandard(ObjectMapper mapper, JsonNode root, String id)
+            throws IOException {
+        StandardNode.Builder b =
+                StandardNode.builder()
+                        .id(id)
+                        .agentId(textOrNull(root, "agentId"))
+                        .prompt(textOrNull(root, "prompt"))
+                        .rubricId(textOrNull(root, "rubricId"))
+                        .transitionRules(
+                                readValue(mapper, root, "transitionRules", TRANSITION_LIST))
+                        .planFailureTarget(textOrNull(root, "planFailureTarget"));
+
+        if (root.has("reviewConfig")) {
+            b.reviewConfig(mapper.treeToValue(root.get("reviewConfig"), ReviewConfig.class));
+        }
+        if (root.has("outputParams")) {
+            b.outputParams(readValue(mapper, root, "outputParams", STRING_LIST));
+        }
+        if (root.has("planningConfig")) {
+            b.planningConfig(mapper.treeToValue(root.get("planningConfig"), PlanningConfig.class));
+        }
+        if (root.has("staticPlan")) {
+            b.staticPlan(mapper.treeToValue(root.get("staticPlan"), Plan.class));
+        }
+        return b.build();
+    }
+
+    private EndNode deserializeEnd(JsonNode root, String id) {
+        return EndNode.builder()
+                .id(id)
+                .status(ExitStatus.valueOf(root.get("status").asText()))
+                .build();
+    }
+
+    private ActionNode deserializeAction(ObjectMapper mapper, JsonNode root, String id)
+            throws IOException {
+        return ActionNode.builder()
+                .id(id)
+                .actions(readValue(mapper, root, "actions", ACTION_LIST))
+                .transitionRules(readValue(mapper, root, "transitionRules", TRANSITION_LIST))
+                .build();
+    }
+
+    private GenericNode deserializeGeneric(ObjectMapper mapper, JsonNode root, String id)
+            throws IOException {
+        GenericNode.Builder b =
+                GenericNode.builder()
+                        .id(id)
+                        .executorType(root.get("executorType").asText())
+                        .transitionRules(
+                                readValue(mapper, root, "transitionRules", TRANSITION_LIST))
+                        .rubricId(textOrNull(root, "rubricId"));
+
+        if (root.has("config")) {
+            b.config(mapper.convertValue(root.get("config"), OBJECT_MAP));
+        }
+        return b.build();
+    }
+
+    private ParallelNode deserializeParallel(ObjectMapper mapper, JsonNode root, String id)
+            throws IOException {
+        ParallelNode.Builder b =
+                ParallelNode.builder(id).branches(readValue(mapper, root, "branches", BRANCH_LIST));
+
+        if (root.has("consensusConfig")) {
+            b.consensus(mapper.treeToValue(root.get("consensusConfig"), ConsensusConfig.class));
+        }
+        if (root.has("transitionRules")) {
+            b.transitionRules(readValue(mapper, root, "transitionRules", TRANSITION_LIST));
+        }
+        return b.build();
+    }
+
+    private ForkNode deserializeFork(ObjectMapper mapper, JsonNode root, String id)
+            throws IOException {
+        ForkNode.Builder b =
+                ForkNode.builder(id).targets(readValue(mapper, root, "targets", STRING_LIST));
+
+        if (root.has("targetConfigs")) {
+            b.targetConfigs(mapper.convertValue(root.get("targetConfigs"), OBJECT_MAP));
+        }
+        if (root.has("transitionRules")) {
+            b.transitionRules(readValue(mapper, root, "transitionRules", TRANSITION_LIST));
+        }
+        if (root.has("waitForAll")) {
+            b.waitForAll(root.get("waitForAll").asBoolean());
+        }
+        return b.build();
+    }
+
+    private JoinNode deserializeJoin(ObjectMapper mapper, JsonNode root, String id)
+            throws IOException {
+        JoinNode.Builder b =
+                JoinNode.builder(id)
+                        .awaitTargets(readValue(mapper, root, "awaitTargets", STRING_LIST));
+
+        if (root.has("mergeStrategy")) {
+            b.mergeStrategy(MergeStrategy.valueOf(root.get("mergeStrategy").asText()));
+        }
+        if (root.has("outputField")) {
+            b.outputField(root.get("outputField").asText());
+        }
+        if (root.has("timeoutMs")) {
+            b.timeoutMs(root.get("timeoutMs").asLong());
+        }
+        if (root.has("failOnAnyError")) {
+            b.failOnAnyError(root.get("failOnAnyError").asBoolean());
+        }
+        if (root.has("transitionRules")) {
+            b.transitionRules(readValue(mapper, root, "transitionRules", TRANSITION_LIST));
+        }
+        return b.build();
+    }
+
+    private SubWorkflowNode deserializeSubWorkflow(ObjectMapper mapper, JsonNode root, String id)
+            throws IOException {
+        return new SubWorkflowNode(
+                id,
+                root.get("workflowId").asText(),
+                root.has("inputMapping")
+                        ? mapper.convertValue(root.get("inputMapping"), STRING_MAP)
+                        : Map.of(),
+                root.has("outputMapping")
+                        ? mapper.convertValue(root.get("outputMapping"), STRING_MAP)
+                        : Map.of(),
+                readValue(mapper, root, "transitionRules", TRANSITION_LIST));
+    }
+
+    private String textOrNull(JsonNode root, String field) {
+        return root.has(field) ? root.get(field).asText() : null;
+    }
+
+    private <T> T readValue(
+            ObjectMapper mapper, JsonNode root, String field, TypeReference<T> typeRef)
+            throws IOException {
+        if (!root.has(field)) {
+            return mapper.readValue("[]", typeRef);
+        }
+        return mapper.treeToValue(root.get(field), mapper.constructType(typeRef.getType()));
+    }
+}

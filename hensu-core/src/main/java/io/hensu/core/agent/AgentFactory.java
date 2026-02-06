@@ -4,20 +4,17 @@ import io.hensu.core.agent.spi.AgentProvider;
 import java.util.*;
 import java.util.logging.Logger;
 
-/// Factory for creating agents using discovered SPI providers.
+/// Factory for creating agents from explicitly provided {@link AgentProvider} instances.
 ///
-/// Uses Java's {@link ServiceLoader} mechanism to discover {@link AgentProvider}
-/// implementations at runtime. When creating an agent, selects the highest-priority
-/// provider that supports the requested model.
+/// Selects the highest-priority provider that supports the requested model.
+/// {@link io.hensu.core.agent.stub.StubAgentProvider} uses priority 1000 when
+/// enabled, intercepting all model requests for testing.
 ///
-/// ### Provider Discovery
-/// Providers are loaded from `META-INF/services/io.hensu.core.agent.spi.AgentProvider`.
-/// Multiple providers may support the same model; the one with the highest
-/// {@link AgentProvider#getPriority()} value is selected.
+/// Providers are wired explicitly via constructor. This ensures reliable behavior
+/// in GraalVM native image contexts.
 ///
 /// @implNote Thread-safe after construction. Provider list and credentials are
-/// immutable once the factory is created. Individual provider thread-safety
-/// depends on the provider implementation.
+/// immutable once the factory is created.
 ///
 /// @see AgentProvider for implementing custom agent backends
 /// @see AgentRegistry for agent lifecycle management
@@ -28,16 +25,14 @@ public class AgentFactory {
     private final List<AgentProvider> providers;
     private final Map<String, String> credentials;
 
-    /// Creates a new agent factory with the given credentials.
-    ///
-    /// Discovers all available {@link AgentProvider} implementations via ServiceLoader
-    /// and logs the discovered providers at INFO level.
+    /// Creates a new agent factory with the given providers.
     ///
     /// @param credentials map of credential keys to values (e.g., `ANTHROPIC_API_KEY`), not null
-    /// @throws NullPointerException if credentials is null
-    public AgentFactory(Map<String, String> credentials) {
+    /// @param providers list of agent providers to use for model creation, not null
+    /// @throws NullPointerException if credentials or providers is null
+    public AgentFactory(Map<String, String> credentials, List<AgentProvider> providers) {
         this.credentials = new HashMap<>(credentials);
-        this.providers = loadProviders();
+        this.providers = new ArrayList<>(providers);
 
         logger.info(
                 "Loaded "
@@ -75,21 +70,6 @@ public class AgentFactory {
 
         logger.info("Creating agent '" + agentId + "' with provider: " + provider.getName());
         return provider.createAgent(agentId, config, credentials);
-    }
-
-    /// Loads all available providers via ServiceLoader.
-    ///
-    /// @return list of discovered providers, may be empty, never null
-    private List<AgentProvider> loadProviders() {
-        List<AgentProvider> discovered = new ArrayList<>();
-        ServiceLoader<AgentProvider> loader = ServiceLoader.load(AgentProvider.class);
-
-        for (AgentProvider provider : loader) {
-            discovered.add(provider);
-            logger.fine("Discovered provider: " + provider.getName());
-        }
-
-        return discovered;
     }
 
     /// Returns an unmodifiable view of all loaded providers.
