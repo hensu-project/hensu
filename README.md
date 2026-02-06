@@ -91,12 +91,14 @@ fun myWorkflow() = workflow("ContentPipeline") {
 
 ## Documentation
 
-| Document | Description                                                      |
-|----------|------------------------------------------------------------------|
-| [DSL Reference](docs/dsl-reference.md) | Complete Kotlin DSL syntax and examples                          |
-| [Developer Guide](docs/developer-guide.md) | Architecture, API usage, engine extensions                       |
-| [Javadoc Guide](docs/javadoc-guide.md) | Documentation standards                                          |
-| [AGENTS.md](AGENTS.md) | Coding agent project instructions                                |
+| Document | Description |
+|----------|-------------|
+| [Core Developer Guide](hensu-core/docs/developer-guide.md) | API usage, adapters, extension points, testing |
+| [DSL Reference](hensu-dsl/docs/dsl-reference.md) | Complete Kotlin DSL syntax and examples |
+| [Server Developer Guide](hensu-server/docs/developer-guide.md) | Server development patterns |
+| [Unified Architecture](docs/unified-architecture.md) | System-wide architecture vision |
+| [Javadoc Guide](docs/javadoc-guide.md) | Documentation standards |
+| [AGENTS.md](AGENTS.md) | Coding agent project instructions |
 | [Pommel](https://github.com/dbinky/Pommel) | Local-first semantic code search for AI coding agents (optional) |
 
 ## Architecture
@@ -104,12 +106,15 @@ fun myWorkflow() = workflow("ContentPipeline") {
 Hensu uses a modular adapter pattern with zero AI dependencies in the core:
 
 ```
-hensu-core                    # Core workflow engine (pure Java, no AI deps)
-hensu-cli                     # Quarkus-based CLI
-hensu-langchain4j-adapter     # LangChain4j integration (Claude, GPT, Gemini)
+hensu-core                    # Core workflow engine (pure Java, zero external deps)
+hensu-dsl                     # Kotlin DSL for workflow definitions
+hensu-serialization           # Shared JSON serialization (Jackson)
+hensu-langchain4j-adapter     # LangChain4j integration (Claude, GPT, Gemini, DeepSeek)
+hensu-cli                     # Quarkus-based CLI (compile, run, push/pull)
+hensu-server                  # Quarkus native-image server (REST API, MCP, multi-tenant)
 ```
 
-Providers are discovered automatically via Java's ServiceLoader (SPI).
+Agent providers are wired explicitly via `HensuFactory.builder().agentProviders(...)` — no classpath scanning, GraalVM native-image safe.
 
 ## Stub Mode (Development/Testing)
 
@@ -147,7 +152,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 2. Create a feature branch
 3. Submit a pull request
 
-See [Developer Guide](docs/developer-guide.md) for architecture details and adapter development.
+See [Core Developer Guide](hensu-core/docs/developer-guide.md) for architecture details and adapter development.
 
 ## Using with Claude Code
 

@@ -4,7 +4,7 @@ import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
-import io.hensu.core.storage.rubric.RubricRepository;
+import io.hensu.core.rubric.RubricRepository;
 import java.util.concurrent.ExecutorService;
 
 /// Container holding all core Hensu components required for workflow execution.
