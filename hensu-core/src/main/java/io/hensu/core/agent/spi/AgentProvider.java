@@ -2,19 +2,23 @@ package io.hensu.core.agent.spi;
 
 import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentConfig;
+import java.util.List;
 import java.util.Map;
 
-/// Service Provider Interface (SPI) for pluggable agent implementations.
+/// Provider interface for pluggable agent implementations.
 ///
 /// Implement this interface to add support for new AI providers (e.g., Claude, GPT,
-/// custom models). Implementations are discovered at runtime via Java's
-/// {@link java.util.ServiceLoader} mechanism.
+/// custom models). Implementations are wired explicitly via
+/// {@link io.hensu.core.agent.AgentFactory} constructor — no classpath scanning
+/// or reflection is required, making this GraalVM native-image safe.
 ///
 /// ### Registration
-/// Register implementations in `META-INF/services/io.hensu.core.agent.spi.AgentProvider`:
-/// ```
-/// com.example.MyAgentProvider
-/// ```
+/// Pass provider instances to {@link io.hensu.core.HensuFactory.Builder#agentProviders(List)}:
+/// {@snippet :
+/// var env = HensuFactory.builder()
+///     .agentProviders(List.of(new MyAgentProvider()))
+///     .build();
+/// }
 ///
 /// ### Priority System
 /// When multiple providers support the same model, the one with the highest
@@ -25,7 +29,7 @@ import java.util.Map;
 /// @implNote Implementations should be stateless and thread-safe.
 /// The same provider instance may create agents for multiple workflows concurrently.
 ///
-/// @see io.hensu.core.agent.AgentFactory for provider discovery and selection
+/// @see io.hensu.core.agent.AgentFactory for provider selection
 /// @see io.hensu.core.agent.stub.StubAgentProvider for a testing implementation
 public interface AgentProvider {
 

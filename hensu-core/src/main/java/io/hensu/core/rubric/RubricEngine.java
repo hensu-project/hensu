@@ -6,7 +6,6 @@ import io.hensu.core.rubric.evaluator.RubricEvaluator;
 import io.hensu.core.rubric.model.Criterion;
 import io.hensu.core.rubric.model.CriterionEvaluation;
 import io.hensu.core.rubric.model.Rubric;
-import io.hensu.core.storage.rubric.RubricRepository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;

@@ -5,27 +5,30 @@ This guide covers the architecture, patterns, and best practices for developing 
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
+- [Server Initialization](#server-initialization)
 - [Package Structure](#package-structure)
 - [Multi-Tenancy](#multi-tenancy)
 - [REST API Development](#rest-api-development)
 - [SSE Streaming](#sse-streaming)
 - [MCP Integration](#mcp-integration)
 - [Testing](#testing)
+- [GraalVM Native Image](#graalvm-native-image)
 - [Configuration](#configuration)
 
 ---
 
 ## Architecture Overview
 
-The server module extends `hensu-core` with HTTP capabilities:
+The server module extends `hensu-core` with HTTP capabilities. Core infrastructure is initialized
+via `HensuFactory.builder()` - **never** by constructing components directly.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                           hensu-server                              │
 │                                                                     │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │                        api/ (REST + SSE)                     │   │
-│  │  WorkflowResource │ ExecutionEventResource │ McpGatewayResource │
+│  │                     api/ (REST + SSE)                        │   │
+│  │  WorkflowResource │ ExecutionResource │ ExecutionEventResource │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                              │                                      │
 │  ┌───────────────────────────┼───────────────────────────────────┐ │
@@ -38,15 +41,18 @@ The server module extends `hensu-core` with HTTP capabilities:
 │  │  (SSE Events)│  (MCP Split-Pipe)       │  (State Storage)   │   │
 │  └──────────────┴─────────────────────────┴────────────────────┘   │
 │                              │                                      │
-│  ┌───────────────────────────┴───────────────────────────────────┐ │
-│  │                      tenant/ (Multi-Tenancy)                  │ │
-│  │                        TenantContext                          │ │
-│  └───────────────────────────────────────────────────────────────┘ │
+│  ┌──────────┬────────────────┴────────────────┬────────────────┐   │
+│  │ action/  │          config/                │   tenant/      │   │
+│  │ Server   │  HensuEnvironmentProducer       │  TenantContext │   │
+│  │ Action   │  ServerConfiguration            │  (ScopedValue) │   │
+│  │ Executor │  ServerBootstrap                │                │   │
+│  └──────────┴─────────────────────────────────┴────────────────┘   │
 │                              │                                      │
 └──────────────────────────────┼──────────────────────────────────────┘
                                │
                     ┌──────────┴──────────┐
                     │     hensu-core      │
+                    │  (HensuEnvironment) │
                     │  WorkflowExecutor   │
                     │  AgentRegistry      │
                     │  PlanExecutor       │
@@ -64,23 +70,110 @@ The server module extends `hensu-core` with HTTP capabilities:
 
 ---
 
+## Server Initialization
+
+The server **MUST** use `HensuFactory.builder()` to create core infrastructure.
+This is wired through CDI in three classes:
+
+### HensuEnvironmentProducer
+
+Creates the `HensuEnvironment` singleton via `HensuFactory`:
+
+```java
+@Produces
+@ApplicationScoped
+public HensuEnvironment hensuEnvironment() {
+    Properties properties = extractHensuProperties();
+    hensuEnvironment = HensuFactory.builder()
+            .config(HensuConfig.builder().useVirtualThreads(true).build())
+            .loadCredentials(properties)
+            .actionExecutor(actionExecutor)  // ServerActionExecutor (MCP-only)
+            .build();
+    registerGenericHandlers();
+    return hensuEnvironment;
+}
+```
+
+### ServerConfiguration
+
+Delegates `HensuEnvironment` components for CDI injection and produces server-specific beans:
+
+```java
+// Core components from HensuEnvironment
+@Produces @Singleton
+public WorkflowExecutor workflowExecutor(HensuEnvironment env) {
+    return env.getWorkflowExecutor();
+}
+
+@Produces @Singleton
+public AgentRegistry agentRegistry(HensuEnvironment env) {
+    return env.getAgentRegistry();
+}
+
+// Shared ObjectMapper with Hensu serialization support
+@Produces @Singleton
+public ObjectMapper objectMapper() {
+    return WorkflowSerializer.createMapper();
+}
+
+// Server-specific beans
+@Produces @Singleton
+public WorkflowRepository workflowRepository() {
+    return new InMemoryWorkflowRepository();
+}
+
+@Produces @Singleton
+public WorkflowStateRepository workflowStateRepository() {
+    return new InMemoryWorkflowStateRepository();
+}
+```
+
+### ServerActionExecutor
+
+Server-specific `ActionExecutor` that **only supports MCP requests** (no local execution):
+
+```java
+@Override
+public ActionResult execute(Action action, Map<String, Object> context) {
+    return switch (action) {
+        case Action.Send send -> executeSend(send, context);
+        case Action.Execute exec -> ActionResult.failure(
+            "Server mode does not support local command execution");
+    };
+}
+```
+
+### Common Mistakes
+
+- **NEVER** create `WorkflowExecutor`, `AgentRegistry`, or other core components directly
+- **NEVER** create a `StubAgent` manually - `HensuFactory` has stub mode built-in
+- **NEVER** put persistence interfaces in `hensu-core` - storage is a server concern
+- **NEVER** support local command execution in server mode
+
+---
+
 ## Package Structure
 
 ```
 io.hensu.server/
-├── api/                    # HTTP endpoints (REST + SSE)
-│   ├── WorkflowResource         # Workflow execution REST API
+├── action/                # Server-specific action execution
+│   └── ServerActionExecutor     # MCP-only (rejects Action.Execute)
+│
+├── api/                   # HTTP endpoints (REST + SSE)
+│   ├── WorkflowResource        # Workflow definition management (push/pull/delete/list)
+│   ├── ExecutionResource        # Execution runtime (start/resume/status/plan)
 │   ├── ExecutionEventResource   # Execution monitoring SSE
 │   └── McpGatewayResource       # MCP split-pipe SSE/POST
 │
-├── config/                 # CDI configuration
+├── config/                # CDI configuration
+│   ├── HensuEnvironmentProducer # HensuFactory → HensuEnvironment
 │   ├── ServerBootstrap          # Startup registrations
-│   └── ServerConfiguration      # Configuration beans
+│   └── ServerConfiguration      # CDI delegation + server beans
 │
-├── executor/               # Planning-aware execution
+├── executor/              # Planning-aware execution
 │   └── AgenticNodeExecutor      # StandardNode executor with planning
 │
-├── mcp/                    # MCP protocol implementation
+├── mcp/                   # MCP protocol implementation
 │   ├── JsonRpc                  # JSON-RPC 2.0 message helper
 │   ├── McpSessionManager        # SSE session management
 │   ├── McpConnection            # Connection interface
@@ -88,16 +181,23 @@ io.hensu.server/
 │   ├── McpSidecar               # ActionHandler for MCP tools
 │   └── SseMcpConnection         # SSE-based connection impl
 │
-├── streaming/              # Execution event streaming
+├── persistence/           # Server-specific storage
+│   ├── WorkflowRepository       # Workflow definition persistence
+│   ├── InMemoryWorkflowRepository
+│   ├── WorkflowStateRepository  # Execution state persistence
+│   └── InMemoryWorkflowStateRepository
+│
+├── planner/               # LLM planning
+│   └── LlmPlanner              # LLM-based plan generation
+│
+├── service/               # Business logic layer
+│   └── WorkflowService          # Workflow operations
+│
+├── streaming/             # Execution event streaming
 │   ├── ExecutionEvent           # Event DTOs (sealed interface)
 │   └── ExecutionEventBroadcaster # PlanObserver + broadcaster
 │
-
-│
-├── service/                # Business logic layer
-│   └── WorkflowService          # Workflow operations
-│
-└── tenant/                 # Multi-tenancy
+└── tenant/                # Multi-tenancy
     ├── TenantContext            # ScopedValue-based context
     ├── TenantAware              # Marker interface
     └── TenantResolutionInterceptor
@@ -144,6 +244,20 @@ public class TenantAwareRepository {
 
 ## REST API Development
 
+### API Separation
+
+The REST API is split into two distinct resources:
+
+1. **WorkflowResource** (`/api/v1/workflows`) - Workflow definition management (CLI integration)
+   - Push, pull, delete, list workflow definitions
+   - Uses `WorkflowRepository` directly
+
+2. **ExecutionResource** (`/api/v1/executions`) - Execution runtime (client integration)
+   - Start, resume, status, plan
+   - Uses `WorkflowService` for business logic
+
+**Do not mix** definition management with execution in the same resource.
+
 ### Creating a New Resource
 
 ```java
@@ -186,9 +300,9 @@ public class MyResource {
 | Status | Usage |
 |--------|-------|
 | 200 OK | Successful GET, PUT, POST with body |
-| 201 Created | Resource created (include Location header) |
-| 202 Accepted | Async operation started |
-| 204 No Content | Successful DELETE or POST without body |
+| 201 Created | Resource created (workflow push - new) |
+| 202 Accepted | Async operation started (execution start) |
+| 204 No Content | Successful DELETE |
 | 400 Bad Request | Invalid input, missing headers |
 | 404 Not Found | Resource not found |
 | 500 Internal Server Error | Unexpected errors |
@@ -244,27 +358,6 @@ private ExecutionEvent convertEvent(String executionId, PlanEvent event) {
 
 ```java
 broadcaster.publish(executionId, ExecutionEvent.MyNewEvent.now(executionId, "value"));
-```
-
-### Creating a New SSE Endpoint
-
-```java
-@GET
-@Path("/my-stream")
-@Produces(MediaType.SERVER_SENT_EVENTS)
-@RestStreamElementType(MediaType.APPLICATION_JSON)
-public Multi<MyEvent> streamMyEvents(@QueryParam("filter") String filter) {
-
-    return Multi.createFrom().emitter(emitter -> {
-        // Register emitter for events
-        myEventSource.subscribe(filter, emitter::emit);
-
-        // Cleanup on disconnect
-        emitter.onTermination(() -> {
-            myEventSource.unsubscribe(filter);
-        });
-    });
-}
 ```
 
 ### BroadcastProcessor Pattern
@@ -382,29 +475,6 @@ class MyResourceTest {
 }
 ```
 
-### SSE Test Pattern
-
-```java
-@Test
-void shouldStreamEvents() {
-    ExecutionEvent event1 = ExecutionEvent.ExecutionStarted.now("exec-1", "wf-1", "tenant-1");
-    ExecutionEvent event2 = new ExecutionEvent.StepStarted(...);
-
-    Multi<ExecutionEvent> mockStream = Multi.createFrom().items(event1, event2);
-    when(broadcaster.subscribe("exec-1")).thenReturn(mockStream);
-
-    Multi<ExecutionEvent> result = resource.streamEvents("exec-1", "tenant-1");
-
-    AssertSubscriber<ExecutionEvent> subscriber = result
-            .subscribe()
-            .withSubscriber(AssertSubscriber.create(10));
-    subscriber.awaitCompletion();
-
-    assertThat(subscriber.getItems()).hasSize(2);
-    assertThat(subscriber.getItems().get(0).type()).isEqualTo("execution.started");
-}
-```
-
 ### Integration Test Pattern
 
 ```java
@@ -412,19 +482,145 @@ void shouldStreamEvents() {
 class MyResourceIT {
 
     @Test
-    void shouldExecuteWorkflow() {
+    void shouldPushWorkflow() {
         given()
             .header("X-Tenant-ID", "test-tenant")
             .contentType(ContentType.JSON)
-            .body(Map.of("input", "value"))
+            .body(workflowJson)
         .when()
-            .post("/api/v1/workflows/my-workflow/execute")
+            .post("/api/v1/workflows")
+        .then()
+            .statusCode(201)
+            .body("id", notNullValue())
+            .body("created", equalTo(true));
+    }
+
+    @Test
+    void shouldStartExecution() {
+        given()
+            .header("X-Tenant-ID", "test-tenant")
+            .contentType(ContentType.JSON)
+            .body(Map.of("workflowId", "my-workflow", "context", Map.of()))
+        .when()
+            .post("/api/v1/executions")
         .then()
             .statusCode(202)
             .body("executionId", notNullValue());
     }
 }
 ```
+
+---
+
+## GraalVM Native Image
+
+The server is deployed as a GraalVM native image via Quarkus. All server code — and any dependency it pulls in — must be native-image safe. See the [hensu-core Developer Guide](../../hensu-core/docs/developer-guide.md#graalvm-native-image-constraints) for the foundational rules (no reflection, no classpath scanning, no dynamic proxies, no runtime bytecode generation). This section covers **server-specific** concerns.
+
+### How Quarkus Changes the Picture
+
+Quarkus performs heavy build-time processing that relaxes some raw GraalVM constraints:
+
+| Feature | Raw GraalVM | With Quarkus |
+|---------|-------------|-------------|
+| CDI injection (`@Inject`) | Requires reflection config | Works — Quarkus resolves beans at build time (ArC) |
+| `@ConfigProperty` | Requires reflection config | Works — processed at build time |
+| JAX-RS resources (`@Path`, `@GET`) | Requires reflection config | Works — REST layer is build-time wired |
+| Jackson `@JsonProperty` on DTOs | Requires reflection config | Works — `quarkus-jackson` registers metadata |
+| `ServiceLoader` | Fails at runtime | Works — Quarkus scans `META-INF/services` at build time |
+| LangChain4j AI services | Requires reflection config | Works — `quarkus-langchain4j` extensions register metadata |
+
+**Key insight**: Within Quarkus-managed code, standard annotations and CDI work normally. The constraints only bite when you introduce code that Quarkus doesn't know about — custom reflection, third-party libraries without Quarkus extensions, or `hensu-core` internals that bypass the framework.
+
+### Adding New Dependencies
+
+When adding a new library to `hensu-server`:
+
+1. **Check if a Quarkus extension exists.** Search [extensions catalog](https://quarkus.io/extensions/) first. Extensions provide build-time metadata, so you get native-image support automatically.
+
+2. **If an extension exists**, add the Quarkus extension (not the raw library):
+   ```kotlin
+   // build.gradle.kts
+   implementation("io.quarkus:quarkus-my-library")  // Quarkus extension
+   // NOT: implementation("org.example:my-library")  // raw library
+   ```
+
+3. **If no extension exists**, you must verify native-image compatibility:
+   - Run `./gradlew hensu-server:build -Dquarkus.native.enabled=true`
+   - Test the binary: `./hensu-server/build/hensu-server-*-runner`
+   - If it fails with `ClassNotFoundException` or `NoSuchMethodException`, add reflection configuration:
+     ```json
+     // src/main/resources/reflect-config.json
+     [
+       {
+         "name": "com.example.SomeClass",
+         "allDeclaredConstructors": true,
+         "allPublicMethods": true
+       }
+     ]
+     ```
+
+4. **Pin the version to match Quarkus BOM.** If the library is managed by the Quarkus BOM (e.g., Jackson, Vert.x), do not override the version. Mismatched versions cause subtle native-image failures.
+
+### CDI Producers and Native Image
+
+CDI producers in `ServerConfiguration` are native-image safe because Quarkus processes them at build time. Follow these patterns:
+
+```java
+// SAFE — Quarkus resolves this at build time
+@Produces @Singleton
+public WorkflowExecutor workflowExecutor(HensuEnvironment env) {
+    return env.getWorkflowExecutor();
+}
+
+// SAFE — concrete instantiation
+@Produces @Singleton
+public WorkflowRepository workflowRepository() {
+    return new InMemoryWorkflowRepository();
+}
+
+// UNSAFE — dynamic class loading in a producer
+@Produces @Singleton
+public Object dynamicBean() {
+    return Class.forName(config.getClassName()).newInstance();  // fails in native
+}
+```
+
+### Server-Specific Pitfalls
+
+**Mutiny reactive types are safe.** `Uni`, `Multi`, `BroadcastProcessor` all work in native image — Quarkus handles their registration.
+
+**`ScopedValue` is a standard API in Java 25.** The `TenantContext` pattern uses `ScopedValue`, which was finalized in JDK 25. No `--enable-preview` flag is needed.
+
+**MCP JSON-RPC uses explicit Jackson.** The `JsonRpc` class uses `ObjectMapper` directly with `readTree`/`writeValueAsString` — no reflection-based deserialization. This is intentionally safe for native image.
+
+**Sealed interfaces in event types.** `ExecutionEvent` is a sealed interface with record implementations. Pattern matching (`switch`) over sealed types is fully native-image safe and is the preferred approach for type dispatch.
+
+### Verifying Native Image Compatibility
+
+```bash
+# Full native build (slow — run before releases, not on every change)
+./gradlew hensu-server:build -Dquarkus.native.enabled=true
+
+# Quick JVM-mode test (catches most issues except native-specific ones)
+./gradlew hensu-server:test
+
+# Native integration tests
+./gradlew hensu-server:test -Dquarkus.test.native-image-profile=true
+```
+
+### Quick Reference (Server-Specific)
+
+| Pattern | Safe | Notes |
+|---------|------|-------|
+| `@Inject` / `@Produces` | Yes | Quarkus ArC — build-time CDI |
+| `@ConfigProperty` | Yes | Build-time processed |
+| Quarkus extensions | Yes | Provide native metadata |
+| Raw third-party libs | Maybe | Need `reflect-config.json` if reflective |
+| `ObjectMapper.readTree()` | Yes | No reflection — tree-model parsing |
+| `new ObjectMapper().readValue(json, MyClass.class)` | Maybe | Needs registration unless Quarkus-managed |
+| `ScopedValue` | Yes | Standard API in JDK 25 |
+| Sealed interface `switch` | Yes | Preferred for type dispatch |
+| Mutiny `Uni`/`Multi` | Yes | Quarkus-managed |
 
 ---
 
@@ -472,6 +668,8 @@ public class MyComponent {
 ### Do
 
 - Always validate `X-Tenant-ID` header in REST resources
+- Use `HensuFactory.builder()` for core infrastructure (never construct directly)
+- Keep workflow definition management separate from execution operations
 - Use service layer for business logic, resources for HTTP concerns
 - Prefer constructor injection over field injection
 - Use sealed interfaces for event types (exhaustive pattern matching)
@@ -480,16 +678,20 @@ public class MyComponent {
 
 ### Don't
 
+- Don't bypass `HensuFactory` by constructing core components directly
+- Don't create `StubAgent` manually (use built-in stub mode)
+- Don't put persistence interfaces in `hensu-core`
+- Don't support local command execution in server mode
 - Don't put business logic in REST resources
 - Don't expose internal exceptions to clients
 - Don't block on I/O in reactive streams (use virtual threads or async)
-- Don't forget to remove pending futures on timeout
-- Don't use mutable state in request-scoped beans
+- Don't mix definition management with execution in same REST resource
 
 ---
 
 ## See Also
 
 - [README.md](../README.md) - Module overview and quick start
+- [Unified Architecture](../../docs/unified-architecture.md) - Architecture decisions and vision
 - [hensu-core Developer Guide](../../docs/developer-guide.md) - Core engine documentation
 - [DSL Reference](../../docs/dsl-reference.md) - Workflow DSL syntax
