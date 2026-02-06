@@ -6,33 +6,40 @@ Quarkus-based HTTP server for multi-tenant AI workflow execution with MCP (Model
 
 The `hensu-server` module extends `hensu-core` with:
 
-- **REST API** for workflow execution and management
+- **REST API** for workflow definition management and execution
 - **Multi-Tenant Isolation** using Java 21+ ScopedValues
-- **MCP Gateway** for external tool integration
+- **MCP Gateway** for external tool integration (server never executes locally)
 - **Dynamic Planning** via LLM-based plan generation
 - **Human-in-the-Loop** support with plan review workflows
-- **HTTP/3 (QUIC)** experimental support for improved streaming performance
 - **SSE Streaming** for real-time execution monitoring
 
 ## Architecture
 
+The server is a **GraalVM native image** that receives pre-compiled workflow JSON from the CLI.
+It initializes core infrastructure via `HensuFactory.builder()` and delegates all tool execution
+to external MCP servers.
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         hensu-server                            │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │  REST API   │  │ MCP Gateway │  │  Agentic Executor       │  │
-│  │  (JAX-RS)   │  │ (JSON-RPC)  │  │  (Planning + Execution) │  │
-│  └──────┬──────┘  └──────┬──────┘  └───────────┬─────────────┘  │
-│         │                │                     │                │
-│  ┌──────┴────────────────┴─────────────────────┴─────────────┐  │
-│  │                    Tenant Context                         │  │
-│  │                   (ScopedValues)                          │  │
-│  └──────┬────────────────────────────────────────────────────┘  │
-│         │                                                       │
-│  ┌──────┴──────────────────────────────────────────────────┐    │
-│  │                     hensu-core                          │    │
-│  │  WorkflowExecutor │ AgentRegistry │ RubricEngine        │    │
-│  └─────────────────────────────────────────────────────────┘    │
+│  ┌──────────────────┐  ┌─────────────┐  ┌───────────────────┐  │
+│  │  REST API        │  │ MCP Gateway │  │  Agentic Executor │  │
+│  │  (Workflows +    │  │ (JSON-RPC)  │  │  (Plan + Execute) │  │
+│  │   Executions)    │  │             │  │                   │  │
+│  └────────┬─────────┘  └──────┬──────┘  └────────┬──────────┘  │
+│           │                   │                  │              │
+│  ┌────────┴───────────────────┴──────────────────┴───────────┐  │
+│  │  Server Runtime                                           │  │
+│  │  ┌────────────────┐  ┌──────────────┐  ┌──────────────┐   │  │
+│  │  │ ServerAction   │  │ Workflow     │  │ TenantContext │   │  │
+│  │  │ Executor (MCP) │  │ Repository   │  │ (ScopedValue) │  │  │
+│  │  └────────────────┘  └──────────────┘  └──────────────┘   │  │
+│  └───────────────────────────┬───────────────────────────────┘  │
+│                              │                                  │
+│  ┌───────────────────────────┴───────────────────────────────┐  │
+│  │  hensu-core (HensuEnvironment via HensuFactory)           │  │
+│  │  WorkflowExecutor │ AgentRegistry │ PlanExecutor          │  │
+│  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -49,16 +56,32 @@ The `hensu-server` module extends `hensu-core` with:
 java -jar hensu-server/build/quarkus-app/quarkus-run.jar
 ```
 
-### Execute a Workflow
+### Push a Workflow (CLI → Server)
 
 ```bash
-# Start workflow execution
-curl -X POST http://localhost:8080/api/v1/workflows/order-processing/execute \
+# Build (compile DSL to JSON) then push to server
+hensu build workflow.kt -d working-dir
+hensu push my-workflow
+
+# Or directly via curl
+curl -X POST http://localhost:8080/api/v1/workflows \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: tenant-123" \
-  -d '{"orderId": "ORD-456", "userId": "user-789"}'
+  -d @workflow.json
 
-# Response
+# Response (201 Created)
+{"id": "order-processing", "version": "1.0.0", "created": true}
+```
+
+### Start an Execution
+
+```bash
+curl -X POST http://localhost:8080/api/v1/executions \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-ID: tenant-123" \
+  -d '{"workflowId": "order-processing", "context": {"orderId": "ORD-456"}}'
+
+# Response (202 Accepted)
 {"executionId": "exec-abc-123", "workflowId": "order-processing"}
 ```
 
@@ -66,23 +89,38 @@ curl -X POST http://localhost:8080/api/v1/workflows/order-processing/execute \
 
 All endpoints require the `X-Tenant-ID` header for multi-tenant isolation.
 
-### Endpoints
+### Workflow Definition Management
+
+Terraform/kubectl-style operations for managing workflow definitions (CLI integration).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/workflows/{workflowId}/execute` | Start workflow execution |
-| `POST` | `/api/v1/workflows/executions/{executionId}/resume` | Resume paused execution |
-| `GET` | `/api/v1/workflows/executions/{executionId}` | Get execution status |
-| `GET` | `/api/v1/workflows/executions/{executionId}/plan` | Get pending plan for review |
-| `GET` | `/api/v1/workflows/executions/paused` | List paused executions |
+| `POST` | `/api/v1/workflows` | Push workflow (create or update) |
+| `GET` | `/api/v1/workflows` | List all workflows for tenant |
+| `GET` | `/api/v1/workflows/{workflowId}` | Pull workflow definition |
+| `DELETE` | `/api/v1/workflows/{workflowId}` | Delete workflow |
+
+### Execution Operations
+
+Runtime operations for starting and managing workflow executions (client integration).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/executions` | Start workflow execution |
+| `GET` | `/api/v1/executions/{executionId}` | Get execution status |
+| `POST` | `/api/v1/executions/{executionId}/resume` | Resume paused execution |
+| `GET` | `/api/v1/executions/{executionId}/plan` | Get pending plan for review |
+| `GET` | `/api/v1/executions/paused` | List paused executions |
+
+### Event Streaming (SSE)
+
+| Method | Path | Description |
+|--------|------|-------------|
 | `GET` | `/api/v1/executions/{executionId}/events` | SSE stream for execution events |
 | `GET` | `/api/v1/executions/events` | SSE stream for all tenant events |
 
-### Execution Event Streaming (SSE)
+### Execution Event Types
 
-Real-time execution monitoring via Server-Sent Events. Clients receive JSON events as execution progresses.
-
-**Event Types:**
 - `execution.started` - Execution began
 - `plan.created` - Plan was generated (static or dynamic)
 - `step.started` - Step execution began
@@ -93,51 +131,44 @@ Real-time execution monitoring via Server-Sent Events. Clients receive JSON even
 - `execution.completed` - Workflow finished
 - `execution.error` - Error occurred
 
-**JavaScript Client Example:**
-
-```javascript
-const eventSource = new EventSource('/api/v1/executions/exec-123/events', {
-    headers: { 'X-Tenant-ID': 'tenant-1' }
-});
-
-eventSource.addEventListener('step.started', (e) => {
-    const data = JSON.parse(e.data);
-    console.log(`Step ${data.stepIndex} started: ${data.toolName}`);
-});
-
-eventSource.addEventListener('step.completed', (e) => {
-    const data = JSON.parse(e.data);
-    console.log(`Step ${data.stepIndex} ${data.success ? 'succeeded' : 'failed'}`);
-});
-
-eventSource.addEventListener('execution.completed', (e) => {
-    const data = JSON.parse(e.data);
-    console.log(`Execution ${data.success ? 'succeeded' : 'failed'}`);
-    eventSource.close();
-});
-```
-
 ### Example: Plan Review Workflow
 
 ```bash
 # 1. Start execution (pauses for plan review)
-curl -X POST http://localhost:8080/api/v1/workflows/research/execute \
+curl -X POST http://localhost:8080/api/v1/executions \
   -H "X-Tenant-ID: tenant-123" \
-  -d '{"topic": "quantum computing"}'
+  -d '{"workflowId": "research", "context": {"topic": "quantum computing"}}'
 
 # 2. Check pending plan
-curl http://localhost:8080/api/v1/workflows/executions/exec-123/plan \
+curl http://localhost:8080/api/v1/executions/exec-123/plan \
   -H "X-Tenant-ID: tenant-123"
 
 # Response: {"planId": "plan-456", "totalSteps": 5, "currentStep": 0}
 
 # 3. Approve and resume
-curl -X POST http://localhost:8080/api/v1/workflows/executions/exec-123/resume \
+curl -X POST http://localhost:8080/api/v1/executions/exec-123/resume \
   -H "X-Tenant-ID: tenant-123" \
   -d '{"approved": true}'
 ```
 
 ## Key Components
+
+### Server Initialization
+
+The server initializes core infrastructure via CDI:
+
+1. `HensuEnvironmentProducer` creates `HensuEnvironment` via `HensuFactory.builder()`
+2. `ServerConfiguration` delegates core components for CDI injection
+3. `ServerActionExecutor` provides MCP-only action execution (rejects local bash)
+
+```java
+// HensuEnvironmentProducer
+HensuEnvironment env = HensuFactory.builder()
+    .config(HensuConfig.builder().useVirtualThreads(true).build())
+    .loadCredentials(properties)
+    .actionExecutor(serverActionExecutor)  // MCP-only
+    .build();
+```
 
 ### Tenant Context
 
@@ -161,14 +192,6 @@ Planning-aware executor for StandardNodes:
 - **Plan Revision**: Automatic retry with revised plans on failure
 - **Human Review**: Optional pause before plan execution
 
-```java
-// Execution modes
-PlanningConfig.disabled()           // Simple agent call
-PlanningConfig.forStatic()          // Use DSL-defined plan
-PlanningConfig.forDynamic()         // Generate plan via LLM
-PlanningConfig.forStaticWithReview() // Static plan + human review
-```
-
 ### MCP Gateway (SSE Split-Pipe Transport)
 
 Implements MCP (Model Context Protocol) over SSE using a "split-pipe" architecture:
@@ -188,86 +211,18 @@ Implements MCP (Model Context Protocol) over SSE using a "split-pipe" architectu
 └─────────────────┘                    └─────────────────┘
 ```
 
-**MCP Gateway Endpoints:**
-
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/mcp/connect?clientId=...` | SSE stream for receiving tool call requests |
 | `POST` | `/mcp/message` | Submit JSON-RPC responses |
 | `GET` | `/mcp/status` | Gateway status (connected clients, pending requests) |
 
-**Client Connection Example (JavaScript):**
+### Persistence
 
-```javascript
-// Connect to SSE stream
-const events = new EventSource('/mcp/connect?clientId=my-tenant');
+Server-specific storage (MVP uses in-memory implementations):
 
-events.onmessage = async (e) => {
-    const request = JSON.parse(e.data);
-
-    if (request.method === 'tools/call') {
-        // Execute tool locally
-        const result = await executeToolLocally(request.params);
-
-        // Send response back via POST
-        await fetch('/mcp/message', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                jsonrpc: '2.0',
-                id: request.id,
-                result: result
-            })
-        });
-    }
-};
-```
-
-**Server-Side Tool Call (Java 25 Virtual Threads):**
-
-```java
-// In ActionNodeExecutor - blocks virtual thread efficiently
-McpConnection conn = connectionPool.getForTenant(tenantId);
-Map<String, Object> result = conn.callTool("read_file", Map.of("path", "/etc/hosts"));
-// Virtual thread is parked while waiting - OS thread is released
-```
-
-### MCP Sidecar (ActionHandler)
-
-Routes tool calls to tenant-specific MCP servers via the ActionHandler interface:
-
-```kotlin
-// In workflow DSL
-node("process") {
-    action {
-        send("mcp", mapOf(
-            "tool" to "read_file",
-            "arguments" to mapOf("path" to "/data/input.json")
-        ))
-    }
-}
-```
-
-### Workflow Service
-
-Business logic layer separating concerns from REST controllers:
-
-```java
-@Inject
-WorkflowService workflowService;
-
-// Start execution
-ExecutionStartResult result = workflowService.startExecution(
-    tenantId, workflowId, context);
-
-// Get status
-ExecutionStatus status = workflowService.getExecutionStatus(
-    tenantId, executionId);
-
-// Resume with decision
-workflowService.resumeExecution(tenantId, executionId,
-    ResumeDecision.approve());
-```
+- `WorkflowRepository` - Workflow definition persistence (push/pull/delete)
+- `WorkflowStateRepository` - Execution state persistence (snapshots, pause/resume)
 
 ## Configuration
 
@@ -277,10 +232,6 @@ workflowService.resumeExecution(tenantId, executionId,
 # HTTP Server
 quarkus.http.port=8080
 quarkus.http.host=0.0.0.0
-
-# HTTP/3 (QUIC) - requires TLS
-quarkus.http.http3=true
-quarkus.http.ssl-port=8443
 
 # MCP Configuration
 hensu.mcp.connection-timeout=30s
@@ -297,75 +248,49 @@ hensu.planning.default-timeout=5m
 # quarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/hensu
 ```
 
-### HTTP/3 Setup (Experimental)
-
-> **Note:** HTTP/3 support in Quarkus is experimental. See [Quarkus HTTP Reference](https://quarkus.io/guides/http-reference#http3-experimental).
-
-HTTP/3 uses QUIC protocol which requires TLS. Generate a development certificate:
-
-```bash
-# Generate self-signed certificate for development
-keytool -genkeypair -alias hensu -keyalg RSA -keysize 2048 \
-  -storetype PKCS12 -keystore hensu-keystore.p12 -validity 365 \
-  -storepass changeit -dname "CN=localhost"
-
-# Place in project root or configure path in application.properties
-```
-
-Configure TLS in `application.properties`:
-
-```properties
-# Development
-%dev.quarkus.http.ssl.certificate.key-store-file=hensu-keystore.p12
-%dev.quarkus.http.ssl.certificate.key-store-password=changeit
-
-# Production (use proper certificates)
-quarkus.http.ssl.certificate.files=/path/to/cert.pem
-quarkus.http.ssl.certificate.key-files=/path/to/key.pem
-```
-
-**HTTP/3 Benefits for SSE Streaming:**
-- Faster connection establishment (0-RTT)
-- Better handling of packet loss (no head-of-line blocking)
-- Improved performance for real-time event streaming
-- Multiplexed streams over single connection
-
 ## Module Structure
 
 ```
 hensu-server/
 ├── src/main/java/io/hensu/server/
-│   ├── api/                    # REST and SSE endpoints
-│   │   ├── WorkflowResource.java        # Workflow execution REST API
+│   ├── action/                # Server-specific action execution
+│   │   └── ServerActionExecutor.java    # MCP-only (rejects local execution)
+│   ├── api/                   # REST and SSE endpoints
+│   │   ├── WorkflowResource.java        # Workflow definition management
+│   │   ├── ExecutionResource.java       # Execution runtime operations
 │   │   ├── ExecutionEventResource.java  # SSE endpoint for execution events
 │   │   └── McpGatewayResource.java      # MCP SSE/POST endpoints
-│   ├── config/                 # CDI configuration
-│   │   ├── ServerBootstrap.java
-│   │   └── ServerConfiguration.java
-│   ├── executor/               # Planning-aware execution
+│   ├── config/                # CDI configuration
+│   │   ├── HensuEnvironmentProducer.java  # HensuFactory → HensuEnvironment
+│   │   ├── ServerBootstrap.java           # Startup registrations
+│   │   └── ServerConfiguration.java       # CDI delegation + server beans
+│   ├── executor/              # Planning-aware execution
 │   │   └── AgenticNodeExecutor.java
-│   ├── mcp/                    # MCP integration (SSE split-pipe transport)
-│   │   ├── JsonRpc.java             # JSON-RPC 2.0 message helper
-│   │   ├── McpConnection.java       # Connection interface
+│   ├── mcp/                   # MCP integration (SSE split-pipe transport)
+│   │   ├── JsonRpc.java
+│   │   ├── McpConnection.java
 │   │   ├── McpConnectionFactory.java
-│   │   ├── McpConnectionPool.java   # Connection pool (HTTP + SSE)
-│   │   ├── McpSessionManager.java   # SSE session management
-│   │   ├── McpSidecar.java          # ActionHandler implementation
-│   │   ├── SseMcpConnection.java    # SSE-based connection
-│   │   ├── McpToolDiscovery.java
-│   │   └── TenantToolRegistry.java
-│   ├── streaming/              # SSE event streaming
-│   │   ├── ExecutionEvent.java            # Event DTOs for execution monitoring
-│   │   └── ExecutionEventBroadcaster.java # PlanObserver for event broadcasting
-│   ├── planner/                # LLM planning
+│   │   ├── McpConnectionPool.java
+│   │   ├── McpSessionManager.java
+│   │   ├── McpSidecar.java
+│   │   └── SseMcpConnection.java
+│   ├── persistence/           # Server-specific storage
+│   │   ├── WorkflowRepository.java
+│   │   ├── InMemoryWorkflowRepository.java
+│   │   ├── WorkflowStateRepository.java
+│   │   └── InMemoryWorkflowStateRepository.java
+│   ├── planner/               # LLM planning
 │   │   └── LlmPlanner.java
-│   ├── service/                # Business logic
+│   ├── service/               # Business logic
 │   │   └── WorkflowService.java
-│   └── tenant/                 # Multi-tenancy
+│   ├── streaming/             # SSE event streaming
+│   │   ├── ExecutionEvent.java
+│   │   └── ExecutionEventBroadcaster.java
+│   └── tenant/                # Multi-tenancy
 │       ├── TenantContext.java
 │       ├── TenantAware.java
 │       └── TenantResolutionInterceptor.java
-└── src/test/java/              # Tests
+└── src/test/java/
     └── io/hensu/server/
         ├── api/
         ├── executor/
@@ -392,6 +317,7 @@ hensu-server/
 ## Dependencies
 
 - **hensu-core**: Core workflow engine
+- **hensu-serialization**: Jackson-based JSON serialization (provides `ObjectMapper` via `WorkflowSerializer.createMapper()`)
 - **hensu-langchain4j-adapter**: LLM provider integration
 - **Quarkus REST**: JAX-RS implementation
 - **Quarkus Arc**: CDI container
@@ -400,5 +326,6 @@ hensu-server/
 ## See Also
 
 - [hensu-core README](../hensu-core/README.md) - Core engine documentation
+- [Unified Architecture](../docs/unified-architecture.md) - Architecture decisions and vision
 - [DSL Reference](../docs/dsl-reference.md) - Workflow DSL syntax
-- [Developer Guide](../docs/developer-guide.md) - Architecture details
+- [Developer Guide](docs/developer-guide.md) - Server development patterns

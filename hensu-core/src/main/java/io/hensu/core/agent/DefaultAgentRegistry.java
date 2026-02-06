@@ -17,7 +17,7 @@ import java.util.logging.Logger;
 /// All public methods can be called from any thread without external synchronization.
 ///
 /// @see AgentRegistry for the interface contract
-/// @see AgentFactory for agent creation via SPI providers
+/// @see AgentFactory for agent creation
 public class DefaultAgentRegistry implements AgentRegistry {
 
     private static final Logger logger = Logger.getLogger(DefaultAgentRegistry.class.getName());
