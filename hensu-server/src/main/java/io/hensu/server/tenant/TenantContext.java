@@ -7,7 +7,7 @@ import java.util.concurrent.Callable;
 /// Thread-safe tenant context using ScopedValues for multi-tenant isolation.
 ///
 /// Provides tenant-scoped context propagation without explicit parameter passing.
-/// Uses Java 21+ ScopedValues for safe, immutable context binding.
+/// Uses Java 25 ScopedValues for safe, immutable context binding.
 ///
 /// ### Usage
 /// {@snippet :

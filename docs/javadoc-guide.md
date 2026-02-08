@@ -35,21 +35,21 @@ Use `///` for all new code. More readable for LLMs than legacy HTML.
 
 ### Core Tags (Always Use)
 
-| Tag | Purpose | Machine Use |
-|:----|:--------|:------------|
-| `@param name` | Parameter description | Input validation, type inference |
-| `@return` | Return value description | Output expectation |
-| `@throws Exception` | Failure conditions | Error boundary detection |
-| `@see` | Cross-references | Dependency graph |
+| Tag                 | Purpose                  | Machine Use                      |
+|:--------------------|:-------------------------|:---------------------------------|
+| `@param name`       | Parameter description    | Input validation, type inference |
+| `@return`           | Return value description | Output expectation               |
+| `@throws Exception` | Failure conditions       | Error boundary detection         |
+| `@see`              | Cross-references         | Dependency graph                 |
 
 ### Java 21+ Tags
 
-| Tag | Purpose | Example |
-|:----|:--------|:--------|
-| `@apiNote` | Usage guidance, non-contractual | "Prefer `newMethod()` for new code" |
-| `@implNote` | Implementation detail, may change | "Uses ConcurrentHashMap internally" |
-| `@implSpec` | Implementation requirements for subclasses | "Subclasses must call super" |
-| `@spec URL title` | Link to external specification | `@spec https://spec.org RFC-1234` |
+| Tag               | Purpose                                    | Example                             |
+|:------------------|:-------------------------------------------|:------------------------------------|
+| `@apiNote`        | Usage guidance, non-contractual            | "Prefer `newMethod()` for new code" |
+| `@implNote`       | Implementation detail, may change          | "Uses ConcurrentHashMap internally" |
+| `@implSpec`       | Implementation requirements for subclasses | "Subclasses must call super"        |
+| `@spec URL title` | Link to external specification             | `@spec https://spec.org RFC-1234`   |
 
 ### Snippet Tag (Java 21+)
 

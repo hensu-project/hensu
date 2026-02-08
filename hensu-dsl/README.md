@@ -77,15 +77,17 @@ The DSL compiles workflows to JSON for server deployment:
 
 ## DSL Reference
 
-See [DSL Reference](docs/dsl-reference.md) for the complete syntax reference including:
+See [DSL Reference](../docs/dsl-reference.md) for the complete syntax reference including:
 
 - Workflow structure and configuration
 - Agent definitions and model constants
-- Node types (standard, parallel, fork/join, loop, action, generic, end)
-- Transition rules (success, failure, score-based, always)
+- Node types (standard, parallel, fork/join, action, generic, end)
+- Transition rules (success, failure, score-based, consensus)
+- Parameter extraction (`outputParams` + `{placeholder}` syntax)
 - Rubric-driven quality gates
 - Human review configuration
-- Template variables (`{variable}` syntax)
+- Planning (static `plan { }` and dynamic `planning { }`)
+- External prompt files (`.md` from `prompts/` directory)
 
 ## Module Structure
 
@@ -130,7 +132,8 @@ hensu-dsl/src/main/kotlin/io/hensu/dsl/
 
 ### Client-Side Compilation
 
-The DSL module contains the Kotlin compiler — this runs on the **client** (CLI), never on the server. The compilation flow:
+The DSL module contains the Kotlin compiler — this runs on the **client** (CLI), never on the server. The compilation
+flow:
 
 ```
 workflow.kt → KotlinScriptParser → Workflow object → JSON (via hensu-serialization) → Server
@@ -156,24 +159,24 @@ working-dir/
 
 The `Models` object provides constants for supported AI models:
 
-| Constant | Model |
-|----------|-------|
+| Constant                   | Model                        |
+|----------------------------|------------------------------|
 | `Models.CLAUDE_SONNET_4_5` | `claude-sonnet-4-5-20250929` |
-| `Models.CLAUDE_SONNET_4` | `claude-sonnet-4-20250514` |
-| `Models.GPT_4O` | `gpt-4o` |
-| `Models.GPT_4O_MINI` | `gpt-4o-mini` |
-| `Models.GEMINI_2_5_FLASH` | `gemini-2.5-flash` |
-| `Models.DEEPSEEK_CHAT` | `deepseek-chat` |
+| `Models.CLAUDE_SONNET_4`   | `claude-sonnet-4-20250514`   |
+| `Models.GPT_4O`            | `gpt-4o`                     |
+| `Models.GPT_4O_MINI`       | `gpt-4o-mini`                |
+| `Models.GEMINI_2_5_FLASH`  | `gemini-2.5-flash`           |
+| `Models.DEEPSEEK_CHAT`     | `deepseek-chat`              |
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [DSL Reference](docs/dsl-reference.md) | Complete Kotlin DSL syntax and examples |
+| Document                                  | Description                             |
+|-------------------------------------------|-----------------------------------------|
+| [DSL Reference](../docs/dsl-reference.md) | Complete Kotlin DSL syntax and examples |
 
 ## Dependencies
 
 - **hensu-core** - Core workflow data model and execution engine
 - **Kotlin Stdlib + Reflect** - Kotlin standard library
-- **Kotlin Scripting** - Runtime `.kt` file compilation (2.3.0)
+- **Kotlin Scripting** - Runtime `.kt` file compilation (2.3.10)
 - **Kotlin Compiler Embeddable** - Embedded Kotlin compiler
