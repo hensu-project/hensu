@@ -1,189 +1,246 @@
-# Hensu - The Agentic Workflow Engine
+<div align="center">
 
-Orchestrate AI agents with simple DSL configuration.                          
+# Hensu
+
+### Open-Source Infrastructure for AI Agent Workflows
+
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Java](https://img.shields.io/badge/Java-25-ED8B00?logo=openjdk&logoColor=white)](https://jdk.java.net/)
+[![Build](https://img.shields.io/badge/Build-Native%20Image-success)](https://graalvm.org/)
+[![Protocol](https://img.shields.io/badge/Protocol-MCP-green)](https://modelcontextprotocol.io/)
+[![Status](https://img.shields.io/badge/Status-Alpha-red)]()
+
+**Define. Build. Run.**<br>
 Self-hosted. Developer-friendly. Zero lock-in.
 
-## Key Features
+[Get Started](#getting-started) • [Architecture](docs/unified-architecture.md) • [DSL Reference](docs/dsl-reference.md) • [Documentation](docs)
 
-- **Declarative Workflow Configuration** - Define workflows declaratively with an intuitive Kotlin DSL
-- **Extensible Node System** - Create custom nodes to extend workflow capabilities when needed
-- **Complex Workflows** - Undirected flows, loops, forks, parallel execution, consensus-based decisions
-- **Rubric-Driven Quality Gates** - Evaluate outputs against defined criteria with score-based routing
-- **Human Review Integration** - Optional or required review at any workflow step
-- **Multi-Provider Support** - Claude, GPT, Gemini, DeepSeek via pluggable adapters
-- **Time-Travel Debugging** - Execution history with backtracking support
-- **Zero Lock-In** - Self-hosted, pure code, no proprietary formats
+</div>
 
-## Quick Start
+---
 
-### Prerequisites
+**Hensu** is a modular infrastructure stack for building and running multi-agent AI workflows. It separates the *
+*definition of intelligence** (via a type-safe Kotlin DSL) from the **execution of intelligence** (via a
+high-performance, native-image server).
 
-- Java 25+
-- API key for your preferred LLM provider (Anthropic, OpenAI, DeepSeek or Google)
+Unlike monolithic frameworks, Hensu provides a "Build-Then-Push" architecture similar to Terraform or Docker. Workflows
+are compiled locally into portable JSON execution definitions and pushed to a stateless, multi-tenant runtime that
+manages the complex orchestration of LLMs, MCP tools, and human-in-the-loop gates.
 
-### Run Your First Workflow
+## Key Capabilities
 
-```bash
-# Clone and build
-git clone https://github.com/alxsuv/hensu.git
-cd hensu
-./gradlew build -x test
+| Feature              | Description                                                                                      |
+|:---------------------|:-------------------------------------------------------------------------------------------------|
+| **Pure Java Core**   | Zero-dependency execution engine built on Java 25 virtual threads.                               |
+| **Type-Safe DSL**    | Describe, don't implement. Define complex agent behaviors using a type-safe, declarative syntax. |
+| **MCP Native**       | The server acts as an MCP Gateway. It **never** executes tools locally, ensuring security.       |
+| **Multi-Tenancy**    | rigorous isolation using Java `ScopedValues` for safe SaaS deployment.                           |
+| **Resilience**       | Distributed state architecture allows workflows to be paused, resumed, and migrated.             |
+| **Agentic Planning** | Supports both static (pre-defined) and dynamic (LLM-generated) execution plans.                  |
 
-# Set your API key
-export ANTHROPIC_API_KEY="sk-ant-..."
-# or: export OPENAI_API_KEY="sk-..."
-# or: export GOOGLE_API_KEY="..."
-# or: export DEEPSEEK_API_KEY="sk-..."
+---
 
-# Run a workflow
-./hensu run -d working-dir georgia-discovery.kt
-```
+## The Hensu Stack
 
-### CLI Commands
+Hensu strictly separates **Development** (managed by you) from **Execution** (managed by the server).
 
-```bash
-./hensu run -d working-dir workflow.kt                         # Execute a workflow
-./hensu run -d working-dir workflow.kt -v                      # Execute with verbose output
-./hensu validate -d working-dir workflow.kt                    # Validate workflow syntax
-./hensu visualize -d working-dir workflow.kt                   # Visualize as ASCII text
-./hensu visualize -d working-dir workflow.kt --format=mermaid  # Visualize as Mermaid diagram
-```
+### 1. The Toolchain (Compiler & CLI)
 
-### Example Workflow
+* **[hensu-dsl](hensu-dsl/README.md):** The Source. A Kotlin DSL that compiles `.kt` files into static, versioned
+  **Workflow Definitions** (JSON).
+* **[hensu-cli](hensu-cli/README.md):** The Manager. Acts as a package manager for your workflows. It compiles
+  definitions and synchronizes them with the Server's persistence layer (`build`, `push`, `pull`, `delete`, `list`).
 
-```kotlin
-fun myWorkflow() = workflow("ContentPipeline") {
-    agents {
-        agent("writer") {
-            role = "Content Writer"
-            model = Models.CLAUDE_SONNET_4_5
-        }
-        agent("reviewer") {
-            role = "Quality Reviewer"
-            model = Models.GPT_4O
-        }
-    }
+### 2. The Runtime (Server & Core)
 
-    graph {
-        start at "write"
+* **[hensu-core](hensu-core/README.md):** The Engine. A pure Java library that hydrates static Definitions into
+  executable graphs. It handles state transitions, rubric evaluation, and agent interactions.
+* **[hensu-server](hensu-server/README.md):** The Platform. A stateless, multi-tenant server that executes workflows.
+  Its core feature is the **SSE Split-Pipe** for MCP: a secure, bidirectional tunnel that allows the server to request
+  tool execution on tenant clients without requiring open inbound ports. It also exposes REST APIs for triggering
+  instances and standard SSE for event monitoring.
 
-        node("write") {
-            agent = "writer"
-            prompt = "Write a short article about {topic}"
-            onSuccess goto "review"
-        }
-
-        node("review") {
-            agent = "reviewer"
-            prompt = "Review this article: {write}"
-            rubric = "content-quality"
-
-            onScore {
-                whenScore greaterThanOrEqual 80.0 goto "end_success"
-                whenScore lessThan 80.0 goto "write"  // Loop back for revision
-            }
-        }
-
-        end("end_success")
-    }
-}
-```
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Core Developer Guide](hensu-core/docs/developer-guide.md) | API usage, adapters, extension points, testing |
-| [DSL Reference](hensu-dsl/docs/dsl-reference.md) | Complete Kotlin DSL syntax and examples |
-| [Server Developer Guide](hensu-server/docs/developer-guide.md) | Server development patterns |
-| [Unified Architecture](docs/unified-architecture.md) | System-wide architecture vision |
-| [Javadoc Guide](docs/javadoc-guide.md) | Documentation standards |
-| [AGENTS.md](AGENTS.md) | Coding agent project instructions |
-| [Pommel](https://github.com/dbinky/Pommel) | Local-first semantic code search for AI coding agents (optional) |
+---
 
 ## Architecture
 
-Hensu uses a modular adapter pattern with zero AI dependencies in the core:
+The architecture follows a strict **Split-Pipe** model:
 
-```
-hensu-core                    # Core workflow engine (pure Java, zero external deps)
-hensu-dsl                     # Kotlin DSL for workflow definitions
-hensu-serialization           # Shared JSON serialization (Jackson)
-hensu-langchain4j-adapter     # LangChain4j integration (Claude, GPT, Gemini, DeepSeek)
-hensu-cli                     # Quarkus-based CLI (compile, run, push/pull)
-hensu-server                  # Quarkus native-image server (REST API, MCP, multi-tenant)
-```
+1. **Compilation:** The CLI compiles Kotlin DSL into a static **Workflow Definition** (JSON).
+2. **Distribution:** The Definition is pushed to the Server's persistence layer.
+3. **Execution:** The Server hydrates the Definition into an active instance. When a tool is needed, it uses the *
+   *Split-Pipe** transport:
+    * **Downstream (SSE):** The Server pushes a JSON-RPC tool request to the connected tenant client.
+    * **Upstream (HTTP):** The Client executes the tool locally and `POST`s the result back.
 
-Agent providers are wired explicitly via `HensuFactory.builder().agentProviders(...)` — no classpath scanning, GraalVM native-image safe.
+**No user code runs on the server.** The server is a pure orchestrator; all side effects happen on the client via MCP.
 
-## Stub Mode (Development/Testing)
+```mermaid
+graph LR
+    User[Developer] -->|1 . Write| DSL[Kotlin DSL]
+    DSL -->|2 . hensu build| JSON[JSON Definition]
+    JSON -->|3 . hensu push| Server[Hensu Server]
 
-Run workflows without consuming API tokens:
+    subgraph "Hensu Runtime"
+        Server -->|Orchestrate| Core[Core Engine]
+        Core -->|Stream Events| SSE[Observability]
+    end
 
-```bash
-export HENSU_STUB_ENABLED=true
-./hensu run -d working-dir workflow.kt -v
-```
-
-## Build Commands
-
-```bash
-./gradlew build           # Build all modules
-./gradlew test            # Run all tests
-./gradlew hensu-cli:quarkusDev  # Run in dev mode
+    subgraph "External Ecosystem"
+        Server <-->|MCP Protocol| Tools[Databases / APIs]
+        Server <-->|API| LLMs[Claude / GPT / Gemini]
+    end
 ```
 
-Or use Make:
+---
 
-```bash
-make build    # Build all
-make test     # Run tests
-make run      # Run default workflow
-make dev      # Dev mode
-```
+## Workflow Example
 
-## License
+Define complex, self-correcting behaviors using the Kotlin DSL. This example shows a writer/reviewer loop with a quality
+gate.
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+```kotlin
+fun contentPipeline() = workflow("ContentPipeline") {
+    description = "Research, write, and review content with parallel review"
+    version = "1.0.0"
 
-## Contributing
+    agents {
+        agent("researcher") {
+            role = "Research Analyst"
+            model = Models.GEMINI_2_5_FLASH
+            temperature = 0.3
+        }
 
-1. Fork the repository
-2. Create a feature branch
-3. Submit a pull request
+        agent("writer") {
+            role = "Content Writer"
+            model = Models.CLAUDE_SONNET_4_5
+            temperature = 0.7
+            maintainContext = true
+        }
 
-See [Core Developer Guide](hensu-core/docs/developer-guide.md) for architecture details and adapter development.
+        agent("reviewer") {
+            role = "Content Reviewer"
+            model = Models.GPT_4O
+            temperature = 0.5
+        }
+    }
 
-## Using with Claude Code
+    rubrics {
+        rubric("content-quality", "content-quality.md")
+    }
 
-Claude Code reads `CLAUDE.md` by default. To use `AGENTS.md` instead, configure the `agentInstructionsFile` setting:
+    graph {
+        start at "research"
 
-**Option 1: Global setting (all projects)**
+        node("research") {
+            agent = "researcher"
+            prompt = """
+                Research {topic} and provide key facts.
+                Output as JSON: {"fact1": "...", "fact2": "...", "fact3": "..."}
+            """.trimIndent()
 
-Add to your `~/.claude/settings.json`:
+            outputParams = listOf("fact1", "fact2", "fact3")
 
-```json
-{
-  "agentInstructionsFile": "AGENTS.md"
+            onSuccess goto "write"
+            onFailure retry 2 otherwise "end_failure"
+        }
+
+        node("write") {
+            agent = "writer"
+            prompt = """
+                Write an article about {topic} using these facts:
+                - {fact1}
+                - {fact2}
+                - {fact3}
+            """.trimIndent()
+
+            onSuccess goto "parallel-review"
+        }
+
+        parallel("parallel-review") {
+            branch("quality-review") {
+                agent = "reviewer"
+                prompt = "Review for quality: {write}"
+            }
+            branch("accuracy-review") {
+                agent = "reviewer"
+                prompt = "Review for accuracy: {write}"
+            }
+
+            consensus {
+                strategy = ConsensusStrategy.MAJORITY_VOTE
+                threshold = 0.5
+            }
+
+            onConsensus goto "end_success"
+            onNoConsensus goto "write"
+        }
+
+        end("end_success", ExitStatus.SUCCESS)
+        end("end_failure", ExitStatus.FAILURE)
+    }
 }
 ```
 
-**Option 2: Project-specific setting**
+---
 
-Create `.claude/settings.json` in your project root:
+## Getting Started
 
-```json
-{
-  "agentInstructionsFile": "AGENTS.md"
-}
+### Prerequisites
+
+- JDK 25+ (for building source)
+- Docker (optional, for running the native server)
+- API Keys (Anthropic, Gemini, OpenAI, etc.)
+
+### 1. Installation
+
+```shell
+git clone [https://github.com/hensu-project/hensu.git](https://github.com/hensu-project/hensu.git) && cd hensu
+./gradlew build -x test
 ```
 
-Claude Code will now read `AGENTS.md` instead of `CLAUDE.md` for project instructions.
+### 2. Run the Server
 
-## Pommel - Semantic Code Search (Optional)
+```shell
+java -jar hensu-server/build/quarkus-app/quarkus-run.jar
+```
 
-[Pommel](https://github.com/dbinky/Pommel) is a local-first semantic code search tool designed for AI coding agents. It provides semantic matches with significantly fewer tokens than grep-based searching.
+### 3. Build & Deploy a Workflow
 
-This is an optional tool. If you don't need semantic search capabilities, remove the Pommel section from `AGENTS.md`.
+```shell
+# Create a new workflow file
+echo 'fun flow() = workflow("hello") { ... }' > hello.kt
 
-For installation and setup instructions, see the [Pommel GitHub repository](https://github.com/dbinky/Pommel).
+# Compile DSL to JSON
+./hensu build hello.kt -d .
+
+# Push to the local server
+./hensu push hello --server http://localhost:8080
+```
+
+### 4. Execute
+
+```shell
+curl -X POST http://localhost:8080/api/v1/executions \
+  -H "X-Tenant-ID: tenant-1" \
+  -d '{"workflowId": "hello", "context": {"topic": "AI Agents"}}'
+```
+
+---
+
+## Security & MCP
+
+Hensu is designed for Zero-Trust environments.
+
+- No Local Execution: The server does not support local shell execution. All side effects must be routed through the
+  Model Context Protocol (MCP).
+- Tenant Isolation: Workflow execution contexts are isolated using Java ScopedValues, preventing data leakage between
+  concurrent executions.
+
+<div align="center">
+
+Built with
+
+Java 25+ • Kotlin DSL • Quarkus • GraalVM Native Image • MCP Protocol
+
+</div>

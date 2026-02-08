@@ -7,7 +7,7 @@ Quarkus-based HTTP server for multi-tenant AI workflow execution with MCP (Model
 The `hensu-server` module extends `hensu-core` with:
 
 - **REST API** for workflow definition management and execution
-- **Multi-Tenant Isolation** using Java 21+ ScopedValues
+- **Multi-Tenant Isolation** using Java 25 ScopedValues
 - **MCP Gateway** for external tool integration (server never executes locally)
 - **Dynamic Planning** via LLM-based plan generation
 - **Human-in-the-Loop** support with plan review workflows
@@ -22,23 +22,24 @@ to external MCP servers.
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         hensu-server                            │
-│  ┌──────────────────┐  ┌─────────────┐  ┌───────────────────┐  │
-│  │  REST API        │  │ MCP Gateway │  │  Agentic Executor │  │
-│  │  (Workflows +    │  │ (JSON-RPC)  │  │  (Plan + Execute) │  │
-│  │   Executions)    │  │             │  │                   │  │
-│  └────────┬─────────┘  └──────┬──────┘  └────────┬──────────┘  │
+│  ┌──────────────────┐  ┌─────────────┐  ┌───────────────────┐   │
+│  │  REST API        │  │ MCP Gateway │  │  Agentic Executor │   │
+│  │  (Workflows +    │  │ (JSON-RPC)  │  │  (Plan + Execute) │   │
+│  │   Executions)    │  │             │  │                   │   │
+│  └────────┬─────────┘  └──────┬──────┘  └────────┬──────────┘   │
 │           │                   │                  │              │
 │  ┌────────┴───────────────────┴──────────────────┴───────────┐  │
 │  │  Server Runtime                                           │  │
 │  │  ┌────────────────┐  ┌──────────────┐  ┌──────────────┐   │  │
-│  │  │ ServerAction   │  │ Workflow     │  │ TenantContext │   │  │
-│  │  │ Executor (MCP) │  │ Repository   │  │ (ScopedValue) │  │  │
+│  │  │ ServerAction   │  │ Workflow     │  │ TenantContext│   │  │
+│  │  │ Executor (MCP) │  │ Repository   │  │ (ScopedValue)│   │  │
 │  │  └────────────────┘  └──────────────┘  └──────────────┘   │  │
 │  └───────────────────────────┬───────────────────────────────┘  │
 │                              │                                  │
 │  ┌───────────────────────────┴───────────────────────────────┐  │
 │  │  hensu-core (HensuEnvironment via HensuFactory)           │  │
-│  │  WorkflowExecutor │ AgentRegistry │ PlanExecutor          │  │
+│  │  WorkflowExecutor │ AgentRegistry │ PlanExecutor │        │  │ 
+│  │              RubricEngine │ ToolRegistry                  │  │
 │  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -93,31 +94,56 @@ All endpoints require the `X-Tenant-ID` header for multi-tenant isolation.
 
 Terraform/kubectl-style operations for managing workflow definitions (CLI integration).
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/v1/workflows` | Push workflow (create or update) |
-| `GET` | `/api/v1/workflows` | List all workflows for tenant |
-| `GET` | `/api/v1/workflows/{workflowId}` | Pull workflow definition |
-| `DELETE` | `/api/v1/workflows/{workflowId}` | Delete workflow |
+| Method   | Path                             | Description                      |
+|----------|----------------------------------|----------------------------------|
+| `POST`   | `/api/v1/workflows`              | Push workflow (create or update) |
+| `GET`    | `/api/v1/workflows`              | List all workflows for tenant    |
+| `GET`    | `/api/v1/workflows/{workflowId}` | Pull workflow definition         |
+| `DELETE` | `/api/v1/workflows/{workflowId}` | Delete workflow                  |
 
 ### Execution Operations
 
 Runtime operations for starting and managing workflow executions (client integration).
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/v1/executions` | Start workflow execution |
-| `GET` | `/api/v1/executions/{executionId}` | Get execution status |
-| `POST` | `/api/v1/executions/{executionId}/resume` | Resume paused execution |
-| `GET` | `/api/v1/executions/{executionId}/plan` | Get pending plan for review |
-| `GET` | `/api/v1/executions/paused` | List paused executions |
+| Method | Path                                      | Description                 |
+|--------|-------------------------------------------|-----------------------------|
+| `POST` | `/api/v1/executions`                      | Start workflow execution    |
+| `GET`  | `/api/v1/executions/{executionId}`        | Get execution status        |
+| `POST` | `/api/v1/executions/{executionId}/resume` | Resume paused execution     |
+| `GET`  | `/api/v1/executions/{executionId}/plan`   | Get pending plan for review |
+| `GET`  | `/api/v1/executions/paused`               | List paused executions      |
+
+### MCP Gateway (SSE Split-Pipe Transport)
+
+Implements MCP (Model Context Protocol) over SSE using a "split-pipe" architecture:
+
+- **Downstream (SSE)**: Hensu pushes JSON-RPC tool call requests to connected clients
+- **Upstream (HTTP POST)**: Clients send JSON-RPC responses back
+
+```
+┌─────────────────┐                    ┌─────────────────┐
+│  Hensu Engine   │                    │  Tenant Client  │
+│                 │                    │  (MCP Server)   │
+│  sendRequest()  │──── SSE ──────────>│  EventSource    │
+│                 │  (tools/call)      │                 │
+│                 │                    │                 │
+│  handleResponse │<─── POST ──────────│  POST /message  │
+│  (Future.done)  │  (result/error)    │                 │
+└─────────────────┘                    └─────────────────┘
+```
+
+| Method | Path                        | Description                                          |
+|--------|-----------------------------|------------------------------------------------------|
+| `GET`  | `/mcp/connect?clientId=...` | SSE stream for receiving tool call requests          |
+| `POST` | `/mcp/message`              | Submit JSON-RPC responses                            |
+| `GET`  | `/mcp/status`               | Gateway status (connected clients, pending requests) |
 
 ### Event Streaming (SSE)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/v1/executions/{executionId}/events` | SSE stream for execution events |
-| `GET` | `/api/v1/executions/events` | SSE stream for all tenant events |
+| Method | Path                                      | Description                      |
+|--------|-------------------------------------------|----------------------------------|
+| `GET`  | `/api/v1/executions/{executionId}/events` | SSE stream for execution events  |
+| `GET`  | `/api/v1/executions/events`               | SSE stream for all tenant events |
 
 ### Execution Event Types
 
@@ -172,7 +198,7 @@ HensuEnvironment env = HensuFactory.builder()
 
 ### Tenant Context
 
-Thread-safe tenant isolation using Java 21+ ScopedValues:
+Thread-safe tenant isolation using Java 25 ScopedValues:
 
 ```java
 TenantInfo tenant = TenantInfo.withMcp("tenant-123", "http://mcp.local:8080");
@@ -192,31 +218,6 @@ Planning-aware executor for StandardNodes:
 - **Plan Revision**: Automatic retry with revised plans on failure
 - **Human Review**: Optional pause before plan execution
 
-### MCP Gateway (SSE Split-Pipe Transport)
-
-Implements MCP (Model Context Protocol) over SSE using a "split-pipe" architecture:
-
-- **Downstream (SSE)**: Hensu pushes JSON-RPC tool call requests to connected clients
-- **Upstream (HTTP POST)**: Clients send JSON-RPC responses back
-
-```
-┌─────────────────┐                    ┌─────────────────┐
-│  Hensu Engine   │                    │  Tenant Client  │
-│                 │                    │  (MCP Server)   │
-│  sendRequest()  │──── SSE ──────────>│  EventSource    │
-│                 │  (tools/call)      │                 │
-│                 │                    │                 │
-│  handleResponse │<─── POST ──────────│  POST /message  │
-│  (Future.done)  │  (result/error)    │                 │
-└─────────────────┘                    └─────────────────┘
-```
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/mcp/connect?clientId=...` | SSE stream for receiving tool call requests |
-| `POST` | `/mcp/message` | Submit JSON-RPC responses |
-| `GET` | `/mcp/status` | Gateway status (connected clients, pending requests) |
-
 ### Persistence
 
 Server-specific storage (MVP uses in-memory implementations):
@@ -232,17 +233,14 @@ Server-specific storage (MVP uses in-memory implementations):
 # HTTP Server
 quarkus.http.port=8080
 quarkus.http.host=0.0.0.0
-
 # MCP Configuration
 hensu.mcp.connection-timeout=30s
 hensu.mcp.read-timeout=60s
 hensu.mcp.pool-size=10
-
 # Planning Configuration
 hensu.planning.default-max-steps=10
 hensu.planning.default-max-replans=3
 hensu.planning.default-timeout=5m
-
 # Database (optional)
 # quarkus.datasource.db-kind=postgresql
 # quarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/hensu
@@ -317,7 +315,8 @@ hensu-server/
 ## Dependencies
 
 - **hensu-core**: Core workflow engine
-- **hensu-serialization**: Jackson-based JSON serialization (provides `ObjectMapper` via `WorkflowSerializer.createMapper()`)
+- **hensu-serialization**: Jackson-based JSON serialization (provides `ObjectMapper` via
+  `WorkflowSerializer.createMapper()`)
 - **hensu-langchain4j-adapter**: LLM provider integration
 - **Quarkus REST**: JAX-RS implementation
 - **Quarkus Arc**: CDI container
@@ -328,4 +327,4 @@ hensu-server/
 - [hensu-core README](../hensu-core/README.md) - Core engine documentation
 - [Unified Architecture](../docs/unified-architecture.md) - Architecture decisions and vision
 - [DSL Reference](../docs/dsl-reference.md) - Workflow DSL syntax
-- [Developer Guide](docs/developer-guide.md) - Server development patterns
+- [Developer Guide](../docs/server-developer-guide.md) - Server development patterns

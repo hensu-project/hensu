@@ -33,22 +33,24 @@ The `hensu-core` module is the execution engine at the heart of Hensu. It provid
 │  │  Standard │ Parallel │ Fork/Join │ Loop │ Action │ Generic     │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐               │
 │  │ AgentFactory │  │ PlanExecutor │  │ ActionExecutor│               │
-│  │ (providers)  │  │ (step exec)  │  │ (send/execute)│              │
-│  └──────────────┘  └──────────────┘  └──────────────┘               │
+│  │ (providers)  │  │ (step exec)  │  │ (send/execute)│               │
+│  └──────────────┘  └──────────────┘  └───────────────┘               │
 │                                                                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐   │
-│  │ ToolRegistry │  │ TemplateRes. │  │ ReviewHandler            │   │
-│  │ (tool defs)  │  │ ({var} subst)│  │ (human-in-the-loop)      │   │
-│  └──────────────┘  └──────────────┘  └──────────────────────────┘   │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────────┐   │
+│  │ ToolRegistry │  │ TemplateRes. │  │ ReviewHandler             │   │
+│  │ (tool defs)  │  │ ({var} subst)│  │ (human-in-the-loop)       │   │
+│  └──────────────┘  └──────────────┘  └───────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Key Design Principles
 
-- **Zero external dependencies** — enforced by Gradle (`configurations.api` check fails the build on any dependency leak)
-- **Provider-agnostic** — AI provider integration happens through `AgentProvider` interface, implemented in adapter modules
+- **Zero external dependencies** — enforced by Gradle (`configurations.api` check fails the build on any dependency
+  leak)
+- **Provider-agnostic** — AI provider integration happens through `AgentProvider` interface, implemented in adapter
+  modules
 - **GraalVM native-image safe** — no reflection, no classpath scanning, explicit wiring only
 - **Thread-safe after construction** — immutable components wired via `HensuFactory`
 - **No persistence** — core is a pure execution runtime; persistence is handled at the server layer
@@ -72,7 +74,8 @@ ExecutionResult result = env.getWorkflowExecutor().execute(workflow, initialCont
 
 ## Rubric Engine
 
-Quality evaluation engine for rubric-based output assessment. Evaluates workflow node outputs against configurable rubrics to determine quality scores and pass/fail status.
+Quality evaluation engine for rubric-based output assessment. Evaluates workflow node outputs against configurable
+rubrics to determine quality scores and pass/fail status.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -98,66 +101,69 @@ Quality evaluation engine for rubric-based output assessment. Evaluates workflow
 
 **Key types:**
 
-| Type | Description |
-|------|-------------|
-| `RubricEngine` | Orchestrates evaluation using repository and evaluator |
-| `RubricRepository` | Stores rubric definitions (in-memory by default) |
-| `RubricEvaluator` | Evaluates output against criteria (self-eval or external LLM) |
-| `Rubric` | Immutable rubric definition with pass threshold and criteria list |
-| `Criterion` | Single evaluation dimension with weight and minimum score |
-| `RubricEvaluation` | Complete evaluation result with per-criterion scores |
+| Type               | Description                                                       |
+|--------------------|-------------------------------------------------------------------|
+| `RubricEngine`     | Orchestrates evaluation using repository and evaluator            |
+| `RubricRepository` | Stores rubric definitions (in-memory by default)                  |
+| `RubricEvaluator`  | Evaluates output against criteria (self-eval or external LLM)     |
+| `Rubric`           | Immutable rubric definition with pass threshold and criteria list |
+| `Criterion`        | Single evaluation dimension with weight and minimum score         |
+| `RubricEvaluation` | Complete evaluation result with per-criterion scores              |
 
-Score-based routing: nodes can use `ScoreTransition` to route based on evaluation scores (e.g., score >= 80 goto "approve", else goto "revise").
+Score-based routing: nodes can use `ScoreTransition` to route based on evaluation scores (e.g., score >= 80 goto "
+approve", else goto "revise").
 
 ## Plan Engine
 
-Supports static or LLM-generated step-by-step plan execution within nodes. Plans define sequences of tool invocations to achieve a goal.
+Supports static or LLM-generated step-by-step plan execution within nodes. Plans define sequences of tool invocations to
+achieve a goal.
 
 ```
 ┌─────────────────────────────────────────────────┐
 │  Node with Planning                             │
 │                                                 │
-│  Goal ──► Planner ──► Plan [S1, S2, S3, ...]   │
+│  Goal ──► Planner ──► Plan [S1, S2, S3, ...]    │
 │           │                    │                │
 │           │  ┌─────────────────┘                │
 │           │  ▼                                  │
 │           │  PlanExecutor                       │
-│           │  ┌──────┐  ┌───────┐  ┌───────┐    │
-│           │  │Exec  │─►│Observe│─►│Reflect│──┐ │
-│           │  │Step  │  │Result │  │       │  │ │
-│           │  └──────┘  └───────┘  └───────┘  │ │
-│           │      ▲                           │ │
-│           │      └───────────────────────────┘ │
+│           │  ┌──────┐  ┌───────┐  ┌───────┐     │
+│           │  │Exec  │─►│Observe│─►│Reflect│──┐  │
+│           │  │Step  │  │Result │  │       │  │  │
+│           │  └──────┘  └───────┘  └───────┘  │  │
+│           │      ▲                           │  │
+│           │      └───────────────────────────┘  │
 │           │            (next step or replan)    │
-│  ┌────────┴───────┐                            │
-│  │ StaticPlanner  │  (from DSL plan {} block)  │
-│  │ LLM Planner   │  (server-side, dynamic)     │
-│  └────────────────┘                            │
+│  ┌────────┴───────┐                             │
+│  │ StaticPlanner  │  (from DSL plan {} block)   │
+│  │ LLM Planner   │  (server-side, dynamic)      │
+│  └────────────────┘                             │
 └─────────────────────────────────────────────────┘
 ```
 
 **Planning modes:**
 
-| Mode | Description |
-|------|-------------|
+| Mode       | Description                                   |
+|------------|-----------------------------------------------|
 | `DISABLED` | No planning, direct agent execution (default) |
-| `STATIC` | Predefined plan from DSL `plan { }` block |
-| `DYNAMIC` | LLM generates plan at runtime based on goal |
+| `STATIC`   | Predefined plan from DSL `plan { }` block     |
+| `DYNAMIC`  | LLM generates plan at runtime based on goal   |
 
 **Key types:**
 
-| Type | Description |
-|------|-------------|
-| `Plan` | Sequence of steps with constraints and metadata |
-| `PlannedStep` | Single tool invocation with parameters |
-| `PlanExecutor` | Executes plan steps via ActionExecutor, emits events |
-| `Planner` | Interface for plan creation (StaticPlanner, LLM planner) |
-| `PlanConstraints` | Max steps, max replans, timeout limits |
-| `PlanObserver` | Callback for monitoring plan execution events |
+| Type              | Description                                              |
+|-------------------|----------------------------------------------------------|
+| `Plan`            | Sequence of steps with constraints and metadata          |
+| `PlannedStep`     | Single tool invocation with parameters                   |
+| `PlanExecutor`    | Executes plan steps via ActionExecutor, emits events     |
+| `Planner`         | Interface for plan creation (StaticPlanner, LLM planner) |
+| `PlanConstraints` | Max steps, max replans, timeout limits                   |
+| `PlanObserver`    | Callback for monitoring plan execution events            |
 
 ## Tool Registry
 
-Protocol-agnostic tool descriptors used by plan generation and execution. The core defines tool shapes; actual invocation happens through `ActionHandler` implementations at the application layer.
+Protocol-agnostic tool descriptors used by plan generation and execution. The core defines tool shapes; actual
+invocation happens through `ActionHandler` implementations at the application layer.
 
 ```java
 // Register tools
@@ -172,14 +178,15 @@ registry.register(ToolDefinition.of("analyze", "Analyze data",
 
 **Key types:**
 
-| Type | Description |
-|------|-------------|
-| `ToolDefinition` | Tool descriptor with name, description, and parameters |
-| `ParameterDef` | Parameter type with name, type, required flag, and default value |
-| `ToolRegistry` | Interface for tool registration and lookup |
-| `DefaultToolRegistry` | Thread-safe ConcurrentHashMap implementation |
+| Type                  | Description                                                      |
+|-----------------------|------------------------------------------------------------------|
+| `ToolDefinition`      | Tool descriptor with name, description, and parameters           |
+| `ParameterDef`        | Parameter type with name, type, required flag, and default value |
+| `ToolRegistry`        | Interface for tool registration and lookup                       |
+| `DefaultToolRegistry` | Thread-safe ConcurrentHashMap implementation                     |
 
-The server layer populates the tool registry from MCP server connections. Tools discovered via MCP become available for plan generation and execution.
+The server layer populates the tool registry from MCP server connections. Tools discovered via MCP become available for
+plan generation and execution.
 
 ## Module Structure
 
@@ -256,26 +263,26 @@ hensu-core/src/main/java/io/hensu/core/
 
 ## Node Types
 
-| Node | Description |
-|------|-------------|
-| `StandardNode` | Executes an LLM prompt via an agent |
-| `ParallelNode` | Runs multiple branches concurrently |
-| `ForkNode` | Splits execution into parallel paths |
-| `JoinNode` | Merges parallel results with configurable strategy |
-| `LoopNode` | Iterates until a condition or max iterations |
-| `ActionNode` | Dispatches actions (send HTTP, execute command) |
-| `GenericNode` | Custom handler for extensible operations |
-| `SubWorkflowNode` | Delegates to another workflow |
-| `EndNode` | Terminal node |
+| Node              | Description                                        |
+|-------------------|----------------------------------------------------|
+| `StandardNode`    | Executes an LLM prompt via an agent                |
+| `ParallelNode`    | Runs multiple branches concurrently                |
+| `ForkNode`        | Splits execution into parallel paths               |
+| `JoinNode`        | Merges parallel results with configurable strategy |
+| `LoopNode`        | Iterates until a condition or max iterations       |
+| `ActionNode`      | Dispatches actions (send HTTP, execute command)    |
+| `GenericNode`     | Custom handler for extensible operations           |
+| `SubWorkflowNode` | Delegates to another workflow                      |
+| `EndNode`         | Terminal node                                      |
 
 ## Transition Rules
 
-| Rule | Description |
-|------|-------------|
-| `SuccessTransition` | Routes on successful execution |
-| `FailureTransition` | Routes on execution failure |
-| `ScoreTransition` | Routes based on rubric evaluation score |
-| `AlwaysTransition` | Unconditional transition |
+| Rule                   | Description                                |
+|------------------------|--------------------------------------------|
+| `SuccessTransition`    | Routes on successful execution             |
+| `FailureTransition`    | Routes on execution failure                |
+| `ScoreTransition`      | Routes based on rubric evaluation score    |
+| `AlwaysTransition`     | Unconditional transition                   |
 | `RubricFailTransition` | Routes when rubric evaluation itself fails |
 
 ## Agent Provider Interface
@@ -292,7 +299,8 @@ public class MyProvider implements AgentProvider {
 }
 ```
 
-Wire providers explicitly via `HensuFactory.builder().agentProviders(...)`. The built-in `StubAgentProvider` is always included automatically for testing support.
+Wire providers explicitly via `HensuFactory.builder().agentProviders(...)`. The built-in `StubAgentProvider` is always
+included automatically for testing support.
 
 ## Stub Mode
 
@@ -308,9 +316,9 @@ When enabled, `StubAgentProvider` (priority 1000) intercepts all model requests,
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [Developer Guide](docs/developer-guide.md) | Architecture deep-dive, extension points, testing patterns |
+| Document                                           | Description                                                |
+|----------------------------------------------------|------------------------------------------------------------|
+| [Developer Guide](../docs/core-developer-guide.md) | Architecture deep-dive, extension points, testing patterns |
 
 ## Dependencies
 
