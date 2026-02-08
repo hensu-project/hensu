@@ -19,7 +19,7 @@ This guide covers API usage, adapter development, extension points, and testing 
 - [Testing](#testing)
 - [GraalVM Native Image Constraints](#graalvm-native-image-constraints)
 - [Credentials Management](#credentials-management)
-- [Key Files Reference](#key-files-reference)
+- [Key Classes Reference](#key-files-reference)
 
 ## API Usage
 
@@ -441,15 +441,15 @@ The rubric engine evaluates output quality against defined criteria with score-b
 
 ### Components
 
-| Component | Description |
-|-----------|-------------|
-| `RubricEngine` | Orchestrates evaluation using repository and evaluator |
-| `RubricRepository` | Stores rubric definitions (in-memory by default) |
-| `RubricEvaluator` | Evaluates output against criteria |
-| `DefaultRubricEvaluator` | Self-evaluation: extracts scores from agent's own JSON output |
-| `LLMRubricEvaluator` | External evaluation: uses a separate agent to assess output |
-| `Rubric` | Immutable definition with pass threshold and weighted criteria |
-| `Criterion` | Single evaluation dimension with weight, minimum score, and evaluation type |
+| Component                | Description                                                                 |
+|--------------------------|-----------------------------------------------------------------------------|
+| `RubricEngine`           | Orchestrates evaluation using repository and evaluator                      |
+| `RubricRepository`       | Stores rubric definitions (in-memory by default)                            |
+| `RubricEvaluator`        | Evaluates output against criteria                                           |
+| `DefaultRubricEvaluator` | Self-evaluation: extracts scores from agent's own JSON output               |
+| `LLMRubricEvaluator`     | External evaluation: uses a separate agent to assess output                 |
+| `Rubric`                 | Immutable definition with pass threshold and weighted criteria              |
+| `Criterion`              | Single evaluation dimension with weight, minimum score, and evaluation type |
 
 ### Self-Evaluation (Default)
 
@@ -527,11 +527,11 @@ Supports static or LLM-generated step-by-step plan execution within nodes.
 
 ### Planning Modes
 
-| Mode | Description |
-|------|-------------|
+| Mode       | Description                                   |
+|------------|-----------------------------------------------|
 | `DISABLED` | No planning, direct agent execution (default) |
-| `STATIC` | Predefined plan from DSL `plan { }` block |
-| `DYNAMIC` | LLM generates plan at runtime based on goal |
+| `STATIC`   | Predefined plan from DSL `plan { }` block     |
+| `DYNAMIC`  | LLM generates plan at runtime based on goal   |
 
 ### Static Plan Execution
 
@@ -551,12 +551,12 @@ if (result.isSuccess()) {
 
 Plan execution emits events for monitoring:
 
-| Event | Description |
-|-------|-------------|
-| `PlanCreated` | Plan created and ready to execute |
-| `StepStarted` | Individual step execution starting |
+| Event           | Description                        |
+|-----------------|------------------------------------|
+| `PlanCreated`   | Plan created and ready to execute  |
+| `StepStarted`   | Individual step execution starting |
 | `StepCompleted` | Step finished (success or failure) |
-| `PlanCompleted` | All steps finished |
+| `PlanCompleted` | All steps finished                 |
 
 Register observers via `PlanExecutor.addObserver(PlanObserver)`.
 
@@ -695,17 +695,17 @@ When implementing `AgentProvider` for a new AI backend:
 
 ### Quick Reference
 
-| Pattern | Safe | Unsafe |
-|---------|------|--------|
-| `new MyClass()` | Yes | — |
-| `Class.forName(...)` | — | Yes |
-| `field.setAccessible(true)` | — | Yes (unless registered) |
-| `ServiceLoader.load(...)` | Quarkus only | Yes (standalone) |
-| Jackson `SimpleModule` | Yes | — |
-| Jackson `@JsonTypeInfo(use = CLASS)` | — | Yes |
-| `Proxy.newProxyInstance(...)` | — | Yes (unless registered) |
-| Sealed interface `switch` | Yes | — |
-| Builder pattern | Yes | — |
+| Pattern                              | Safe         | Unsafe                  |
+|--------------------------------------|--------------|-------------------------|
+| `new MyClass()`                      | Yes          | —                       |
+| `Class.forName(...)`                 | —            | Yes                     |
+| `field.setAccessible(true)`          | —            | Yes (unless registered) |
+| `ServiceLoader.load(...)`            | Quarkus only | Yes (standalone)        |
+| Jackson `SimpleModule`               | Yes          | —                       |
+| Jackson `@JsonTypeInfo(use = CLASS)` | —            | Yes                     |
+| `Proxy.newProxyInstance(...)`        | —            | Yes (unless registered) |
+| Sealed interface `switch`            | Yes          | —                       |
+| Builder pattern                      | Yes          | —                       |
 
 ## Credentials Management
 
@@ -742,41 +742,41 @@ HensuFactory.builder()
 
 ### Supported Environment Variables
 
-| Variable | Provider |
-|----------|----------|
-| `ANTHROPIC_API_KEY` | Anthropic Claude |
-| `OPENAI_API_KEY` | OpenAI GPT |
-| `GOOGLE_API_KEY` | Google Gemini |
-| `DEEPSEEK_API_KEY` | DeepSeek |
-| `OPENROUTER_API_KEY` | OpenRouter |
-| `AZURE_OPENAI_KEY` | Azure OpenAI |
+| Variable             | Provider         |
+|----------------------|------------------|
+| `ANTHROPIC_API_KEY`  | Anthropic Claude |
+| `OPENAI_API_KEY`     | OpenAI GPT       |
+| `GOOGLE_API_KEY`     | Google Gemini    |
+| `DEEPSEEK_API_KEY`   | DeepSeek         |
+| `OPENROUTER_API_KEY` | OpenRouter       |
+| `AZURE_OPENAI_KEY`   | Azure OpenAI     |
 
 Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` patterns are auto-discovered.
 
 ## Key Files Reference
 
-| File | Description |
-|------|-------------|
-| `HensuFactory.java` | Bootstrap and environment creation |
-| `HensuEnvironment.java` | Container for all core components |
-| `HensuConfig.java` | Configuration (threading, storage) |
-| `agent/AgentFactory.java` | Creates agents from explicit providers |
-| `agent/spi/AgentProvider.java` | Provider interface for pluggable AI backends |
-| `agent/AgentRegistry.java` | Agent lookup interface |
-| `agent/DefaultAgentRegistry.java` | Thread-safe agent registry |
-| `agent/stub/StubAgentProvider.java` | Testing provider (priority 1000 when enabled) |
-| `execution/WorkflowExecutor.java` | Main execution engine |
-| `execution/executor/GenericNodeHandler.java` | Generic node handler interface |
-| `execution/action/ActionHandler.java` | Action handler interface |
-| `execution/action/ActionExecutor.java` | Action dispatch interface |
-| `execution/result/ExecutionResult.java` | Workflow execution outcome |
-| `workflow/Workflow.java` | Core data model |
-| `rubric/RubricEngine.java` | Quality evaluation engine |
-| `rubric/model/Rubric.java` | Rubric definition model |
-| `tool/ToolDefinition.java` | Protocol-agnostic tool descriptor |
-| `tool/ToolRegistry.java` | Tool registration/lookup interface |
-| `plan/PlanExecutor.java` | Step-by-step plan execution |
-| `plan/Plan.java` | Plan model (steps + constraints) |
-| `template/SimpleTemplateResolver.java` | `{variable}` substitution |
-| `review/ReviewHandler.java` | Human review interface |
-| `state/ExecutionSnapshot.java` | Serializable execution state |
+| File                                         | Description                                   |
+|----------------------------------------------|-----------------------------------------------|
+| `HensuFactory.java`                          | Bootstrap and environment creation            |
+| `HensuEnvironment.java`                      | Container for all core components             |
+| `HensuConfig.java`                           | Configuration (threading, storage)            |
+| `agent/AgentFactory.java`                    | Creates agents from explicit providers        |
+| `agent/spi/AgentProvider.java`               | Provider interface for pluggable AI backends  |
+| `agent/AgentRegistry.java`                   | Agent lookup interface                        |
+| `agent/DefaultAgentRegistry.java`            | Thread-safe agent registry                    |
+| `agent/stub/StubAgentProvider.java`          | Testing provider (priority 1000 when enabled) |
+| `execution/WorkflowExecutor.java`            | Main execution engine                         |
+| `execution/executor/GenericNodeHandler.java` | Generic node handler interface                |
+| `execution/action/ActionHandler.java`        | Action handler interface                      |
+| `execution/action/ActionExecutor.java`       | Action dispatch interface                     |
+| `execution/result/ExecutionResult.java`      | Workflow execution outcome                    |
+| `workflow/Workflow.java`                     | Core data model                               |
+| `rubric/RubricEngine.java`                   | Quality evaluation engine                     |
+| `rubric/model/Rubric.java`                   | Rubric definition model                       |
+| `tool/ToolDefinition.java`                   | Protocol-agnostic tool descriptor             |
+| `tool/ToolRegistry.java`                     | Tool registration/lookup interface            |
+| `plan/PlanExecutor.java`                     | Step-by-step plan execution                   |
+| `plan/Plan.java`                             | Plan model (steps + constraints)              |
+| `template/SimpleTemplateResolver.java`       | `{variable}` substitution                     |
+| `review/ReviewHandler.java`                  | Human review interface                        |
+| `state/ExecutionSnapshot.java`               | Serializable execution state                  |

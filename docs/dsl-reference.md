@@ -19,6 +19,10 @@ This document provides a complete reference for the Hensu Kotlin DSL used to def
 - [Parameter Extraction](#parameter-extraction)
 - [Rubrics](#rubrics)
 - [Human Review](#human-review)
+- [Planning](#planning)
+  - [Static Plans](#static-plans)
+  - [Dynamic Plans](#dynamic-plans)
+  - [Planning Properties](#planning-properties)
 - [Available Models](#available-models)
 - [External Prompt Files](#external-prompt-files)
 - [Running Workflows](#running-workflows)
@@ -49,10 +53,10 @@ fun myWorkflow() = workflow("WorkflowName") {
 
 ### Properties
 
-| Property | Type | Required | Default | Description |
-|----------|------|----------|---------|-------------|
-| `description` | String? | No | null | Human-readable description of the workflow |
-| `version` | String | No | "1.0.0" | Semantic version of the workflow |
+| Property      | Type    | Required | Default | Description                                |
+|---------------|---------|----------|---------|--------------------------------------------|
+| `description` | String? | No       | null    | Human-readable description of the workflow |
+| `version`     | String  | No       | "1.0.0" | Semantic version of the workflow           |
 
 ## Agents
 
@@ -73,19 +77,19 @@ agents {
 
 ### Agent Properties
 
-| Property | Type | Required | Default | Description |
-|----------|------|----------|---------|-------------|
-| `role` | String | Yes | - | Agent role description used in the system prompt |
-| `model` | String | Yes | - | Model identifier (use `Models.*` constants or string) |
-| `temperature` | Double | No | 0.7 | Sampling temperature (0.0-2.0) |
-| `maxTokens` | Int? | No | null | Maximum tokens in response (null = model default) |
-| `tools` | List<String> | No | emptyList() | Tool identifiers available to this agent |
-| `maintainContext` | Boolean | No | false | Whether to maintain conversation context across executions |
-| `instructions` | String? | No | null | Additional system instructions appended to role |
-| `topP` | Double? | No | null | Top-p (nucleus) sampling parameter (0.0-1.0) |
-| `frequencyPenalty` | Double? | No | null | Frequency penalty for repetition (-2.0 to 2.0, OpenAI/DeepSeek only) |
-| `presencePenalty` | Double? | No | null | Presence penalty for repetition (-2.0 to 2.0, OpenAI/DeepSeek only) |
-| `timeout` | Long? | No | null | Request timeout in seconds |
+| Property           | Type         | Required | Default     | Description                                                          |
+|--------------------|--------------|----------|-------------|----------------------------------------------------------------------|
+| `role`             | String       | Yes      | -           | Agent role description used in the system prompt                     |
+| `model`            | String       | Yes      | -           | Model identifier (use `Models.*` constants or string)                |
+| `temperature`      | Double       | No       | 0.7         | Sampling temperature (0.0-2.0)                                       |
+| `maxTokens`        | Int?         | No       | null        | Maximum tokens in response (null = model default)                    |
+| `tools`            | List<String> | No       | emptyList() | Tool identifiers available to this agent                             |
+| `maintainContext`  | Boolean      | No       | false       | Whether to maintain conversation context across executions           |
+| `instructions`     | String?      | No       | null        | Additional system instructions appended to role                      |
+| `topP`             | Double?      | No       | null        | Top-p (nucleus) sampling parameter (0.0-1.0)                         |
+| `frequencyPenalty` | Double?      | No       | null        | Frequency penalty for repetition (-2.0 to 2.0, OpenAI/DeepSeek only) |
+| `presencePenalty`  | Double?      | No       | null        | Presence penalty for repetition (-2.0 to 2.0, OpenAI/DeepSeek only)  |
+| `timeout`          | Long?        | No       | null        | Request timeout in seconds                                           |
 
 ## Graph
 
@@ -105,16 +109,16 @@ graph {
 
 ### Graph Functions
 
-| Function | Description |
-|----------|-------------|
-| `start at "nodeId"` | Sets the workflow entry point node |
-| `node(id) { }` | Defines a standard agent-based node |
-| `parallel(id) { }` | Defines a parallel node with consensus |
-| `fork(id) { }` | Defines a fork node for parallel execution |
-| `join(id) { }` | Defines a join node to await forked paths |
-| `generic(id) { }` | Defines a generic node with custom executor |
-| `action(id) { }` | Defines an action node for executing commands mid-workflow |
-| `end(id)` | Defines an end node (workflow termination) |
+| Function            | Description                                                |
+|---------------------|------------------------------------------------------------|
+| `start at "nodeId"` | Sets the workflow entry point node                         |
+| `node(id) { }`      | Defines a standard agent-based node                        |
+| `parallel(id) { }`  | Defines a parallel node with consensus                     |
+| `fork(id) { }`      | Defines a fork node for parallel execution                 |
+| `join(id) { }`      | Defines a join node to await forked paths                  |
+| `generic(id) { }`   | Defines a generic node with custom executor                |
+| `action(id) { }`    | Defines an action node for executing commands mid-workflow |
+| `end(id)`           | Defines an end node (workflow termination)                 |
 
 ## Nodes
 
@@ -138,12 +142,12 @@ node("node-id") {
 
 #### Standard Node Properties
 
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `agent` | String? | Yes | ID of the agent to execute |
-| `prompt` | String? | Yes | Prompt template or `.md` file reference |
-| `rubric` | String? | No | ID of rubric to evaluate output quality |
-| `outputParams` | List<String> | No | Parameters to extract from JSON output |
+| Property       | Type         | Required | Description                             |
+|----------------|--------------|----------|-----------------------------------------|
+| `agent`        | String?      | Yes      | ID of the agent to execute              |
+| `prompt`       | String?      | Yes      | Prompt template or `.md` file reference |
+| `rubric`       | String?      | No       | ID of rubric to evaluate output quality |
+| `outputParams` | List<String> | No       | Parameters to extract from JSON output  |
 
 ### Parallel Node
 
@@ -176,29 +180,29 @@ parallel("review-committee") {
 
 #### Branch Properties
 
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `agent` | String | Yes | ID of the agent to execute |
-| `prompt` | String? | No | Prompt template or `.md` file reference |
-| `rubric` | String? | No | ID of rubric for branch evaluation |
-| `weight` | Double | No | Weight for weighted voting (default: 1.0) |
+| Property | Type    | Required | Description                               |
+|----------|---------|----------|-------------------------------------------|
+| `agent`  | String  | Yes      | ID of the agent to execute                |
+| `prompt` | String? | No       | Prompt template or `.md` file reference   |
+| `rubric` | String? | No       | ID of rubric for branch evaluation        |
+| `weight` | Double  | No       | Weight for weighted voting (default: 1.0) |
 
 #### Consensus Configuration
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `strategy` | ConsensusStrategy | MAJORITY_VOTE | How to determine consensus |
-| `judge` | String? | null | Agent ID for JUDGE_DECIDES strategy |
-| `threshold` | Double? | null | Threshold for MAJORITY_VOTE or WEIGHTED_VOTE |
+| Property    | Type              | Default       | Description                                  |
+|-------------|-------------------|---------------|----------------------------------------------|
+| `strategy`  | ConsensusStrategy | MAJORITY_VOTE | How to determine consensus                   |
+| `judge`     | String?           | null          | Agent ID for JUDGE_DECIDES strategy          |
+| `threshold` | Double?           | null          | Threshold for MAJORITY_VOTE or WEIGHTED_VOTE |
 
 #### Consensus Strategies
 
-| Strategy | Description |
-|----------|-------------|
+| Strategy        | Description                                        |
+|-----------------|----------------------------------------------------|
 | `MAJORITY_VOTE` | Requires threshold percentage of branches to agree |
-| `WEIGHTED_VOTE` | Uses branch weights to calculate consensus |
-| `UNANIMOUS` | All branches must agree |
-| `JUDGE_DECIDES` | A judge agent makes the final decision |
+| `WEIGHTED_VOTE` | Uses branch weights to calculate consensus         |
+| `UNANIMOUS`     | All branches must agree                            |
+| `JUDGE_DECIDES` | A judge agent makes the final decision             |
 
 ### Fork Node
 
@@ -215,10 +219,10 @@ fork("parallel-research") {
 
 #### Fork Node Properties
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `targets(...)` | vararg String | - | Node IDs to execute in parallel |
-| `waitAll` | Boolean | false | Whether to wait for all targets (usually false, use join) |
+| Property       | Type          | Default | Description                                               |
+|----------------|---------------|---------|-----------------------------------------------------------|
+| `targets(...)` | vararg String | -       | Node IDs to execute in parallel                           |
+| `waitAll`      | Boolean       | false   | Whether to wait for all targets (usually false, use join) |
 
 ### Join Node
 
@@ -239,21 +243,21 @@ join("merge-results") {
 
 #### Join Node Properties
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `await(...)` | vararg String | - | Fork node IDs to await |
-| `mergeStrategy` | MergeStrategy | COLLECT_ALL | How to merge forked outputs |
-| `outputField` | String | "fork_results" | Context field for merged output |
-| `timeout` | Long | 0 | Timeout in ms (0 = no timeout) |
-| `failOnError` | Boolean | true | Fail join if any forked path fails |
+| Property        | Type          | Default        | Description                        |
+|-----------------|---------------|----------------|------------------------------------|
+| `await(...)`    | vararg String | -              | Fork node IDs to await             |
+| `mergeStrategy` | MergeStrategy | COLLECT_ALL    | How to merge forked outputs        |
+| `outputField`   | String        | "fork_results" | Context field for merged output    |
+| `timeout`       | Long          | 0              | Timeout in ms (0 = no timeout)     |
+| `failOnError`   | Boolean       | true           | Fail join if any forked path fails |
 
 #### Merge Strategies
 
-| Strategy | Description |
-|----------|-------------|
-| `COLLECT_ALL` | Collect all outputs into a list |
+| Strategy        | Description                     |
+|-----------------|---------------------------------|
+| `COLLECT_ALL`   | Collect all outputs into a list |
 | `FIRST_SUCCESS` | Use the first successful result |
-| `CONCATENATE` | Concatenate all outputs as text |
+| `CONCATENATE`   | Concatenate all outputs as text |
 
 ### Generic Node
 
@@ -278,11 +282,11 @@ generic("validate-input") {
 
 #### Generic Node Properties
 
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `executorType` | String | Yes | Handler identifier for lookup |
-| `config { }` | Block | No | Configuration map passed to handler |
-| `rubric` | String? | No | ID of rubric for output evaluation |
+| Property       | Type    | Required | Description                         |
+|----------------|---------|----------|-------------------------------------|
+| `executorType` | String  | Yes      | Handler identifier for lookup       |
+| `config { }`   | Block   | No       | Configuration map passed to handler |
+| `rubric`       | String? | No       | ID of rubric for output evaluation  |
 
 #### Config Block Syntax
 
@@ -295,7 +299,7 @@ config {
 }
 ```
 
-See [Generic Nodes](../../hensu-core/docs/developer-guide.md#generic-nodes) in the Core Developer Guide for implementing handlers.
+See [Generic Nodes](../docs/developer-guide-core.md#generic-nodes) in the Core Developer Guide for implementing handlers.
 
 ### Action Node
 
@@ -313,10 +317,10 @@ action("commit-changes") {
 
 #### Action Node Functions
 
-| Function | Description |
-|----------|-------------|
-| `execute(commandId)` | Execute command by ID from commands.yaml |
-| `send(handlerId)` | Send to registered action handler |
+| Function                   | Description                                  |
+|----------------------------|----------------------------------------------|
+| `execute(commandId)`       | Execute command by ID from commands.yaml     |
+| `send(handlerId)`          | Send to registered action handler            |
 | `send(handlerId, payload)` | Send with payload data to registered handler |
 
 #### Send Action
@@ -344,7 +348,7 @@ action("notify") {
 }
 ```
 
-See [Action Handlers](../../hensu-core/docs/developer-guide.md#action-handlers) in the Core Developer Guide for implementing handlers.
+See [Action Handlers](../docs/developer-guide-core.md#action-handlers) in the Core Developer Guide for implementing handlers.
 
 #### Example: CI/CD Pipeline with Actions
 
@@ -398,11 +402,11 @@ end("cancelled", ExitStatus.CANCELLED)
 
 #### Exit Status Types
 
-| Type | Description |
-|------|-------------|
-| `ExitStatus.SUCCESS` | Successful completion (default) |
-| `ExitStatus.FAILURE` | Failed completion |
-| `ExitStatus.CANCELLED` | Cancelled execution |
+| Type                   | Description                     |
+|------------------------|---------------------------------|
+| `ExitStatus.SUCCESS`   | Successful completion (default) |
+| `ExitStatus.FAILURE`   | Failed completion               |
+| `ExitStatus.CANCELLED` | Cancelled execution             |
 
 ## Transitions
 
@@ -435,13 +439,13 @@ onScore {
 
 ### Score Operators
 
-| Operator | Description |
-|----------|-------------|
-| `greaterThan` | Score > value |
-| `greaterThanOrEqual` | Score >= value |
-| `lessThan` | Score < value |
-| `lessThanOrEqual` | Score <= value |
-| `` `in` `` | Score within range (use backticks) |
+| Operator             | Description                        |
+|----------------------|------------------------------------|
+| `greaterThan`        | Score > value                      |
+| `greaterThanOrEqual` | Score >= value                     |
+| `lessThan`           | Score < value                      |
+| `lessThanOrEqual`    | Score <= value                     |
+| `` `in` ``           | Score within range (use backticks) |
 
 ### Consensus Transitions (Parallel Nodes)
 
@@ -584,19 +588,106 @@ node("critical-step") {
 
 ### Review Modes
 
-| Mode | Description |
-|------|-------------|
-| `ReviewMode.DISABLED` | No human review |
-| `ReviewMode.OPTIONAL` | Review only on failure |
+| Mode                  | Description                 |
+|-----------------------|-----------------------------|
+| `ReviewMode.DISABLED` | No human review             |
+| `ReviewMode.OPTIONAL` | Review only on failure      |
 | `ReviewMode.REQUIRED` | Always require human review |
 
 ### Review Properties
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `mode` | ReviewMode | DISABLED | When to require review |
-| `allowBacktrack` | Boolean | false | Allow returning to previous nodes |
-| `allowEdit` | Boolean | false | Allow editing the output |
+| Property         | Type       | Default  | Description                       |
+|------------------|------------|----------|-----------------------------------|
+| `mode`           | ReviewMode | DISABLED | When to require review            |
+| `allowBacktrack` | Boolean    | false    | Allow returning to previous nodes |
+| `allowEdit`      | Boolean    | false    | Allow editing the output          |
+
+## Planning
+
+Nodes can execute multi-step tool invocations via plans. Plans come in two flavors: **static** (predefined at compile time) and **dynamic** (generated by an LLM at runtime).
+
+### Static Plans
+
+Static plans define a fixed sequence of tool invocations. Each step calls a tool with specified arguments. Use `plan { }` inside a node:
+
+```kotlin
+node("process-order") {
+    agent = "processor"
+    prompt = "Process the order"
+
+    plan {
+        step("get_order") {
+            args("id" to "{orderId}")
+            description = "Fetch order details"
+        }
+        step("validate_order") {
+            description = "Validate order data"
+        }
+        step("process_payment") {
+            args("amount" to "{orderTotal}", "currency" to "USD")
+            description = "Process payment"
+        }
+    }
+
+    onSuccess goto "confirmation"
+}
+```
+
+Step arguments support `{variable}` placeholders resolved from workflow context.
+
+### Dynamic Plans
+
+Dynamic plans let an LLM generate the execution plan at runtime based on the node's prompt and available tools. Use `planning { }` inside a node:
+
+```kotlin
+node("research") {
+    agent = "researcher"
+    prompt = "Research and analyze topic X"
+
+    planning {
+        dynamic()                              // LLM generates the plan
+        maxSteps = 15                          // Up to 15 steps
+        maxReplans = 5                         // Revise plan up to 5 times on failure
+        maxDuration = Duration.ofMinutes(10)   // Timeout
+    }
+
+    onSuccess goto "synthesize"
+}
+```
+
+Convenience methods simplify common configurations:
+
+```kotlin
+planning {
+    dynamic()          // Sets DYNAMIC mode with sensible defaults
+    withReview()       // Pause for human review before execution
+    noReplan()         // Disable automatic replanning on failure
+}
+
+planning {
+    static()           // Sets STATIC mode (use with plan { } block)
+}
+```
+
+### Planning Properties
+
+| Property              | Type         | Default   | Description                                     |
+|-----------------------|--------------|-----------|-------------------------------------------------|
+| `mode`                | PlanningMode | DISABLED  | DISABLED, STATIC, or DYNAMIC                    |
+| `maxSteps`            | Int          | 10        | Maximum steps allowed in a plan                 |
+| `maxReplans`          | Int          | 3         | Maximum plan revisions on failure               |
+| `allowReplan`         | Boolean      | true      | Whether plan revision is allowed                |
+| `reviewBeforeExecute` | Boolean      | false     | Pause for human review before execution         |
+| `maxDuration`         | Duration     | 5 minutes | Maximum total execution time                    |
+| `maxTokenBudget`      | Int          | 10000     | Maximum LLM tokens for planning (0 = unlimited) |
+
+### Planning Modes
+
+| Mode                    | Description                                   |
+|-------------------------|-----------------------------------------------|
+| `PlanningMode.DISABLED` | No planning, direct agent execution (default) |
+| `PlanningMode.STATIC`   | Use predefined plan from `plan { }` block     |
+| `PlanningMode.DYNAMIC`  | LLM generates plan at runtime                 |
 
 ## Available Models
 
