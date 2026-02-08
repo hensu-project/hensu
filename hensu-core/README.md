@@ -318,7 +318,7 @@ When enabled, `StubAgentProvider` (priority 1000) intercepts all model requests,
 
 | Document                                           | Description                                                |
 |----------------------------------------------------|------------------------------------------------------------|
-| [Developer Guide](../docs/core-developer-guide.md) | Architecture deep-dive, extension points, testing patterns |
+| [Developer Guide](../docs/developer-guide-core.md) | Architecture deep-dive, extension points, testing patterns |
 
 ## Dependencies
 

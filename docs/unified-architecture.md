@@ -1,13 +1,23 @@
 Hensu Unified Architecture
 
-Vision Statement
+**Hensu** is an autonomous **infrastructure ecosystem** for the end-to-end lifecycle of agentic workflows. It provides a
+strict separation between the **authoring environment** (local) and the **execution environment** (remote/native).
 
-Hensu is an Autonomous Orchestration Server that executes AI agent workflows. The core engine is pure Java with zero external
-dependencies. Protocol handling (MCP), LLM integration, and multi-tenancy live at the server layer.
+**The system operates as a decoupled stack:**
 
-Workflows operate at two levels:
-- Macro-Graph: Static flow defined in Kotlin DSL (business logic)
-- Micro-Plan: Dynamic or predefined steps within a node (task execution)
+- **The Definition Layer:** A type-safe, developer-centric environment where business logic is codified via the
+  **Kotlin DSL**.
+- **The Orchestration Layer:** A high-performance, **native-image engine** that interprets compiled workflows with
+  industrial-grade isolation.
+
+**Workflows operate at two levels:**
+
+- **Macro-Graph:** The static, declarative flow defined in the DSL (The Strategy).
+- **Micro-Plan:** The dynamic, step-by-step execution logic handled by the engine (The Tactics).
+
+**The Architectural Core:** The engine remains **pure Java** with **zero external dependencies**. All specific protocol
+handling (MCP), provider integrations (LLMs), and security constraints (Multi-tenancy/ScopedValues) are implemented as
+pluggable modules at the infrastructure layer.
 
 ---
 
@@ -64,6 +74,7 @@ AgentRegistry agents = env.getAgentRegistry();
 ```
 
 **NEVER** bypass HensuFactory:
+
 ```java
 // WRONG - bypasses configuration, stub mode, SPI discovery
 WorkflowExecutor executor = new WorkflowExecutor(nodeRegistry, actionHandler);
@@ -112,6 +123,7 @@ public ActionResult execute(Action action, Map<String, Object> context) {
 ---
 
 ## Architecture Overview
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              hensu-server                                   │
@@ -164,6 +176,7 @@ MCP Protocol (JSON-RPC)
 ### hensu-core (Pure Execution Runtime)
 
 Zero-dependency Java library. Contains:
+
 - `HensuFactory` / `HensuEnvironment` - Builder and container for core components
 - `WorkflowExecutor` - Graph traversal and node dispatch
 - `NodeExecutorRegistry` - Pluggable node type executors
@@ -179,6 +192,7 @@ Zero-dependency Java library. Contains:
 ### hensu-dsl (Kotlin DSL)
 
 Kotlin DSL for workflow definitions. Contains:
+
 - `HensuDSL.kt` - Top-level `workflow { }` entry point
 - `KotlinScriptParser` - Compiles `.kt` files via embedded Kotlin compiler
 - Type-safe builders for all node types, transitions, and configurations
@@ -189,6 +203,7 @@ Kotlin DSL for workflow definitions. Contains:
 ### hensu-server (Quarkus Native Image)
 
 Extends core with HTTP, MCP, multi-tenancy, and persistence:
+
 - `HensuEnvironmentProducer` - CDI producer using HensuFactory.builder()
 - `ServerActionExecutor` - MCP-only action executor (rejects local execution)
 - `ServerConfiguration` - CDI delegation of HensuEnvironment components
@@ -202,6 +217,7 @@ Extends core with HTTP, MCP, multi-tenancy, and persistence:
 ### hensu-serialization (JSON Serialization)
 
 Jackson-based JSON serialization shared by CLI and server:
+
 - `WorkflowSerializer` - Entry point: `toJson()`, `fromJson()`, `createMapper()`
 - `HensuJacksonModule` - Custom serializers/deserializers for Node, TransitionRule, Action type hierarchies
 - Jackson mixins for builder-based deserialization (Workflow, AgentConfig)
@@ -210,6 +226,7 @@ Jackson-based JSON serialization shared by CLI and server:
 ### hensu-cli (Quarkus CLI)
 
 Developer-facing CLI tool:
+
 - Uses `hensu-dsl` for Kotlin DSL compilation (workflow.kt → JSON)
 - `hensu build` - Compile DSL to JSON (`{working-dir}/build/`)
 - `hensu push` / `pull` / `delete` / `list` - Server workflow management
@@ -245,6 +262,7 @@ workflow("OrderProcessing") {
 Internal execution strategy within a node. Two modes:
 
 **Predefined Plan (Static):**
+
 ```kotlin
 node("process-order") {
     agent = "processor"
@@ -262,6 +280,7 @@ node("process-order") {
 ```
 
 **Dynamic Plan (LLM-Generated):**
+
 ```kotlin
 node("research-topic") {
     agent = "researcher"
@@ -281,6 +300,7 @@ node("research-topic") {
 ```
 
 ### 3. The Execution Loop
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                     Node Execution                           │
@@ -330,7 +350,7 @@ The server wires core infrastructure through CDI:
                        │
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ ServerConfiguration (@ApplicationScoped)                     │
+│ ServerConfiguration (@ApplicationScoped)                    │
 │                                                             │
 │  Delegates from HensuEnvironment for CDI injection:         │
 │  - WorkflowExecutor (from env)                              │

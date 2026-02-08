@@ -2,7 +2,7 @@
 
 # Hensu
 
-### Open-Source Infrastructure for AI Agent Workflows
+### The high-performance orchestration engine for declarative AI workflows.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Java](https://img.shields.io/badge/Java-25-ED8B00?logo=openjdk&logoColor=white)](https://jdk.java.net/)
@@ -19,13 +19,14 @@ Self-hosted. Developer-friendly. Zero lock-in.
 
 ---
 
-**Hensu** is a modular infrastructure stack for building and running multi-agent AI workflows. It separates the *
-*definition of intelligence** (via a type-safe Kotlin DSL) from the **execution of intelligence** (via a
-high-performance, native-image server).
+**Hensu** is a modular infrastructure platform for the declarative orchestration of multi-agent systems. This repository
+implements a Build-Then-Push architecture — analogous to Terraform — that decouples the **Definition of Intelligence**
+from its **Runtime Execution**.
 
-Unlike monolithic frameworks, Hensu provides a "Build-Then-Push" architecture similar to Terraform or Docker. Workflows
-are compiled locally into portable JSON execution definitions and pushed to a stateless, multi-tenant runtime that
-manages the complex orchestration of LLMs, MCP tools, and human-in-the-loop gates.
+While workflows are authored and compiled locally via a **type-safe Kotlin DSL**, the underlying engine is a
+high-performance, **native-image server** designed for multi-tenant SaaS environments. It leverages Java `ScopedValues`
+to ensure rigorous execution isolation while managing the complex orchestration of LLMs, MCP-based tool calling, and
+human-in-the-loop gates.
 
 ## Key Capabilities
 
@@ -34,7 +35,7 @@ manages the complex orchestration of LLMs, MCP tools, and human-in-the-loop gate
 | **Pure Java Core**   | Zero-dependency execution engine built on Java 25 virtual threads.                               |
 | **Type-Safe DSL**    | Describe, don't implement. Define complex agent behaviors using a type-safe, declarative syntax. |
 | **MCP Native**       | The server acts as an MCP Gateway. It **never** executes tools locally, ensuring security.       |
-| **Multi-Tenancy**    | rigorous isolation using Java `ScopedValues` for safe SaaS deployment.                           |
+| **Multi-Tenancy**    | Rigorous isolation using Java `ScopedValues` for safe SaaS deployment.                           |
 | **Resilience**       | Distributed state architecture allows workflows to be paused, resumed, and migrated.             |
 | **Agentic Planning** | Supports both static (pre-defined) and dynamic (LLM-generated) execution plans.                  |
 
@@ -191,6 +192,8 @@ fun contentPipeline() = workflow("ContentPipeline") {
 - JDK 25+ (for building source)
 - Docker (optional, for running the native server)
 - API Keys (Anthropic, Gemini, OpenAI, etc.)
+- Pommel (mandatory for AI-assisted development to ensure proper context retrieval via the pm search
+  protocol) [Installation Guide](https://github.com/dbinky/Pommel)
 
 ### 1. Installation
 
@@ -237,10 +240,12 @@ Hensu is designed for Zero-Trust environments.
 - Tenant Isolation: Workflow execution contexts are isolated using Java ScopedValues, preventing data leakage between
   concurrent executions.
 
+---
+
 <div align="center">
 
 Built with
 
-Java 25+ • Kotlin DSL • Quarkus • GraalVM Native Image • MCP Protocol
+Java 25 • Kotlin DSL • Quarkus • GraalVM Native Image • MCP Protocol
 
 </div>

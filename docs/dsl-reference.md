@@ -299,7 +299,7 @@ config {
 }
 ```
 
-See [Generic Nodes](../hensu-core/docs/developer-guide.md#generic-nodes) in the Core Developer Guide for implementing handlers.
+See [Generic Nodes](../docs/developer-guide-core.md#generic-nodes) in the Core Developer Guide for implementing handlers.
 
 ### Action Node
 
@@ -348,7 +348,7 @@ action("notify") {
 }
 ```
 
-See [Action Handlers](../hensu-core/docs/developer-guide.md#action-handlers) in the Core Developer Guide for implementing handlers.
+See [Action Handlers](../docs/developer-guide-core.md#action-handlers) in the Core Developer Guide for implementing handlers.
 
 #### Example: CI/CD Pipeline with Actions
 

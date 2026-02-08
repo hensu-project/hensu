@@ -515,7 +515,7 @@ class MyResourceIT {
 
 ## GraalVM Native Image
 
-The server is deployed as a GraalVM native image via Quarkus. All server code — and any dependency it pulls in — must be native-image safe. See the [hensu-core Developer Guide](../../hensu-core/docs/developer-guide.md#graalvm-native-image-constraints) for the foundational rules (no reflection, no classpath scanning, no dynamic proxies, no runtime bytecode generation). This section covers **server-specific** concerns.
+The server is deployed as a GraalVM native image via Quarkus. All server code — and any dependency it pulls in — must be native-image safe. See the [hensu-core Developer Guide](developer-guide-core.md#graalvm-native-image-constraints) for the foundational rules (no reflection, no classpath scanning, no dynamic proxies, no runtime bytecode generation). This section covers **server-specific** concerns.
 
 ### How Quarkus Changes the Picture
 
@@ -688,5 +688,5 @@ public class MyComponent {
 
 - [README.md](../hensu-server/README.md) - Module overview and quick start
 - [Unified Architecture](unified-architecture.md) - Architecture decisions and vision
-- [hensu-core Developer Guide](../../hensu-core/docs/developer-guide.md) - Core engine documentation
-- [DSL Reference](../../hensu-dsl/docs/dsl-reference.md) - Workflow DSL syntax
+- [hensu-core Developer Guide](developer-guide-core.md) - Core engine documentation
+- [DSL Reference](dsl-reference.md) - Workflow DSL syntax

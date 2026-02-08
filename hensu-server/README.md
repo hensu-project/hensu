@@ -327,4 +327,4 @@ hensu-server/
 - [hensu-core README](../hensu-core/README.md) - Core engine documentation
 - [Unified Architecture](../docs/unified-architecture.md) - Architecture decisions and vision
 - [DSL Reference](../docs/dsl-reference.md) - Workflow DSL syntax
-- [Developer Guide](../docs/server-developer-guide.md) - Server development patterns
+- [Developer Guide](../docs/developer-guide-server.md) - Server development patterns

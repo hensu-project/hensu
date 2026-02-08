@@ -19,7 +19,7 @@ This guide covers API usage, adapter development, extension points, and testing 
 - [Testing](#testing)
 - [GraalVM Native Image Constraints](#graalvm-native-image-constraints)
 - [Credentials Management](#credentials-management)
-- [Key Files Reference](#key-files-reference)
+- [Key Classes Reference](#key-files-reference)
 
 ## API Usage
 
