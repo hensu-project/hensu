@@ -1,0 +1,66 @@
+{
+  "id" : "rubric-backtrack-moderate",
+  "version" : "1.0.0",
+  "startNode" : "research",
+  "agents" : {
+    "researcher" : {
+      "id" : "researcher",
+      "role" : "researcher",
+      "model" : "stub",
+      "temperature" : 0.5
+    },
+    "writer" : {
+      "id" : "writer",
+      "role" : "writer",
+      "model" : "stub",
+      "temperature" : 0.7
+    },
+    "editor" : {
+      "id" : "editor",
+      "role" : "editor",
+      "model" : "stub",
+      "temperature" : 0.3
+    }
+  },
+  "rubrics" : {
+    "quality" : "quality-moderate"
+  },
+  "nodes" : {
+    "research" : {
+      "id" : "research",
+      "nodeType" : "STANDARD",
+      "agentId" : "researcher",
+      "prompt" : "Research the topic: {topic}",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "draft"
+      } ]
+    },
+    "draft" : {
+      "id" : "draft",
+      "nodeType" : "STANDARD",
+      "agentId" : "writer",
+      "prompt" : "Write an article based on the research",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "edit"
+      } ]
+    },
+    "edit" : {
+      "id" : "edit",
+      "nodeType" : "STANDARD",
+      "agentId" : "editor",
+      "prompt" : "Edit and finalize the article",
+      "rubricId" : "quality",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

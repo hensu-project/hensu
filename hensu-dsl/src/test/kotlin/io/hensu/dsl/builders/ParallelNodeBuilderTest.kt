@@ -102,6 +102,45 @@ class ParallelNodeBuilderTest {
         }
 
         @Test
+        fun `should set branch weight`() {
+            // Given
+            val builder = ParallelNodeBuilder("parallel-1", workingDir)
+
+            // When
+            builder.apply {
+                branch("branch-1") {
+                    agent = "reviewer"
+                    prompt = "Review"
+                    weight = 2.5
+                }
+                onConsensus goto "next"
+            }
+            val node = builder.build()
+
+            // Then
+            assertThat(node.branches[0].weight()).isEqualTo(2.5)
+        }
+
+        @Test
+        fun `should default branch weight to one`() {
+            // Given
+            val builder = ParallelNodeBuilder("parallel-1", workingDir)
+
+            // When
+            builder.apply {
+                branch("branch-1") {
+                    agent = "reviewer"
+                    prompt = "Review"
+                }
+                onConsensus goto "next"
+            }
+            val node = builder.build()
+
+            // Then
+            assertThat(node.branches[0].weight()).isEqualTo(1.0)
+        }
+
+        @Test
         fun `should throw when no branches defined`() {
             // Given
             val builder = ParallelNodeBuilder("empty", workingDir)

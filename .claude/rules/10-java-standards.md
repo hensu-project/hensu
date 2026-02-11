@@ -7,6 +7,39 @@ This document defines the strict coding standards for the Hensu engine. Adherenc
 
 ---
 
+## Engineering Philosophy (SOLID, KISS, YAGNI, DRY)
+
+You must justify every architectural change against these principles:
+
+### SOLID Protocol
+
+* **S (Single Responsibility):** One class, one reason to change. Split executors from coordinators.
+* **O (Open/Closed):** Extend via interfaces. Do not modify the core orchestration loop for new providers.
+* **L (Liskov Substitution):** All `Agent` implementations must be interchangeable. No vendor-specific "if/else" logic
+  in the Core.
+* **I (Interface Segregation):** Favor many specific interfaces (e.g., `ToolCapable`, `Streamable`) over one "God"
+  interface.
+* **D (Dependency Inversion):** High-level logic must depend on abstractions. No direct dependencies on vendor SDKs in
+  `hensu-core`.
+
+### KISS & YAGNI
+
+* **Zero-Dependency Core:** No new libraries in `hensu-core` unless standard JVM (Java 25) is insufficient.
+* **Feature Restraint:** Do not build "future-proof" abstractions. Implement only what is required for the current
+  logic.
+
+### DRY (Don't Repeat Yourself) & Single Source of Truth
+
+* **Logic Duplication:** If the same orchestration logic appears in both `hensu-core` and `hensu-server`, it must be
+  extracted into a shared internal utility or a base provider.
+* **Core Constants:** Do not hardcode strings for repeated constants. Use a shared `Constants` or `Schema` object
+  in the `core` module to ensure the CLI and Server speak the same language.
+* **The "Rule of Three":** Do not abstract code the first time it is repeated. Wait for the third occurrence to ensure
+  the abstraction is actually reusable and not a "leaky" coupling.
+* **SSOT (Single Source of Truth):** The `AGENTS.md` and the module rules are the SSOT for project intent.
+
+---
+
 ## Security: ScopedValues Over ThreadLocal
 
 To support high-concurrency Virtual Threads (Project Loom) and safe SaaS deployment, **`ScopedValues`** are mandatory
@@ -29,12 +62,17 @@ Hensu leverages the latest JVM features to reduce boilerplate and increase type 
 * **Pattern Matching:** Use `switch` expression pattern matching for processing node types and workflow events.
 * **Immutability:** All domain models must be immutable. Use the builder pattern provided by the `hensu-serialization`
   mixins.
+* **Try-With-Resources:** Always wrap AutoCloseable engine components in a try-with-resources block, even in tests, to
+  prevent memory leaks in the Virtual Thread carrier threads.
 
 ### **Kotlin (DSL Layer)**
+
 * **DslMarker:** Define `@WorkflowDsl` (meta-annotated with `@DslMarker`) and apply it to all Builder classes.
-* **Scope Isolation:** This prevents **Scope Leakage**, ensuring that nested builders cannot access methods from parent scopes incorrectly.
-  * *Example:* An `agent { ... }` block should not be able to call `node { ... }` from the parent graph.
-* **Builder Pattern:** Annotate `WorkflowBuilder`, `GraphBuilder`, and `NodeBuilder` with `@WorkflowDsl` to enforce this boundary.
+* **Scope Isolation:** This prevents **Scope Leakage**, ensuring that nested builders cannot access methods from parent
+  scopes incorrectly.
+    * *Example:* An `agent { ... }` block should not be able to call `node { ... }` from the parent graph.
+* **Builder Pattern:** Annotate `WorkflowBuilder`, `GraphBuilder`, and `NodeBuilder` with `@WorkflowDsl` to enforce this
+  boundary.
 * **Context Receivers:** Use context receivers where appropriate for cleaner DSL building logic.
 
 ---

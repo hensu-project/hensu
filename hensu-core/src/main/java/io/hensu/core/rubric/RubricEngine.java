@@ -50,6 +50,14 @@ public final class RubricEngine {
         repository.save(rubric);
     }
 
+    /// Checks if a rubric is already registered.
+    ///
+    /// @param rubricId the rubric identifier to check, not null
+    /// @return true if a rubric with this ID exists in the repository
+    public boolean exists(String rubricId) {
+        return repository.exists(rubricId);
+    }
+
     /// Evaluates a node result against a registered rubric.
     ///
     /// Calculates weighted scores for each criterion and produces an overall

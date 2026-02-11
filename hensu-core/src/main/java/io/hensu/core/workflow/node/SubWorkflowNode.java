@@ -48,7 +48,7 @@ public final class SubWorkflowNode extends Node {
 
     @Override
     public String getRubricId() {
-        return "";
+        return null;
     }
 
     @Override

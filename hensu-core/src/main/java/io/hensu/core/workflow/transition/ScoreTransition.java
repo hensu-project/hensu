@@ -43,6 +43,15 @@ public record ScoreTransition(List<ScoreCondition> conditions) implements Transi
 
     /// Extracts score from rubric evaluation or self-reported context values.
     ///
+    /// Priority order:
+    /// 1. Rubric evaluation score (from the current node's rubric, if any)
+    /// 2. Self-reported score from context keys: "score", "final_score",
+    ///    "quality_score", "evaluation_score"
+    ///
+    /// The self-reported fallback enables onScore transitions on nodes without
+    /// rubrics. Use outputParams to extract a "score" key from agent JSON output,
+    /// and onScore conditions will pick it up automatically.
+    ///
     /// @param state current workflow state, not null
     /// @return extracted score, or null if no score available
     private Double extractScore(HensuState state) {

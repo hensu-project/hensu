@@ -39,12 +39,12 @@ public final class EndNode extends Node {
         return status;
     }
 
-    /// Returns the rubric ID (always empty for end nodes).
+    /// Returns the rubric ID (always null for end nodes).
     ///
-    /// @return empty string, never null
+    /// @return null, end nodes do not support rubric evaluation
     @Override
     public String getRubricId() {
-        return "";
+        return null;
     }
 
     /// Returns the node type for executor dispatch.

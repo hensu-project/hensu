@@ -130,8 +130,11 @@ public record HensuSnapshot(
 
     /// Returns whether the workflow was completed when this snapshot was taken.
     ///
-    /// @return true if currentNodeId is null (no next node to execute)
+    /// A snapshot is considered completed when either there is no current node
+    /// to resume from, or the checkpoint reason explicitly indicates completion.
+    ///
+    /// @return true if the workflow has finished execution
     public boolean isCompleted() {
-        return currentNodeId == null;
+        return currentNodeId == null || "completed".equals(checkpointReason);
     }
 }

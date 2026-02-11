@@ -1,0 +1,35 @@
+{
+  "id" : "action-node",
+  "version" : "1.0.0",
+  "startNode" : "notify",
+  "nodes" : {
+    "notify" : {
+      "id" : "notify",
+      "nodeType" : "ACTION",
+      "actions" : [ {
+        "type" : "send",
+        "handlerId" : "test-tool",
+        "payload" : {
+          "channel" : "#general",
+          "message" : "Workflow started"
+        }
+      }, {
+        "type" : "send",
+        "handlerId" : "test-tool",
+        "payload" : {
+          "action" : "log",
+          "level" : "info"
+        }
+      } ],
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

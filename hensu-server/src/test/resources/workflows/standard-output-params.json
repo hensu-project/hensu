@@ -1,0 +1,31 @@
+{
+  "id" : "standard-output-params",
+  "version" : "1.0.0",
+  "startNode" : "analyze",
+  "agents" : {
+    "analyzer" : {
+      "id" : "analyzer",
+      "role" : "analyzer",
+      "model" : "stub",
+      "temperature" : 0.3
+    }
+  },
+  "nodes" : {
+    "analyze" : {
+      "id" : "analyze",
+      "nodeType" : "STANDARD",
+      "agentId" : "analyzer",
+      "prompt" : "Analyze the sentiment of: {text}",
+      "outputParams" : [ "sentiment", "confidence", "keywords" ],
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "id" : "fork-join",
+  "version" : "1.0.0",
+  "startNode" : "fork",
+  "agents" : {
+    "processor-a" : {
+      "id" : "processor-a",
+      "role" : "processor",
+      "model" : "stub",
+      "temperature" : 0.5
+    },
+    "processor-b" : {
+      "id" : "processor-b",
+      "role" : "processor",
+      "model" : "stub",
+      "temperature" : 0.5
+    }
+  },
+  "nodes" : {
+    "fork" : {
+      "id" : "fork",
+      "nodeType" : "FORK",
+      "targets" : [ "process-a", "process-b" ],
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "join"
+      } ]
+    },
+    "process-a" : {
+      "id" : "process-a",
+      "nodeType" : "STANDARD",
+      "agentId" : "processor-a",
+      "prompt" : "Process part A of: {input}",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "join"
+      } ]
+    },
+    "process-b" : {
+      "id" : "process-b",
+      "nodeType" : "STANDARD",
+      "agentId" : "processor-b",
+      "prompt" : "Process part B of: {input}",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "join"
+      } ]
+    },
+    "join" : {
+      "id" : "join",
+      "nodeType" : "JOIN",
+      "awaitTargets" : [ "fork" ],
+      "mergeStrategy" : "COLLECT_ALL",
+      "outputField" : "results",
+      "timeoutMs" : 30000,
+      "failOnAnyError" : true,
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

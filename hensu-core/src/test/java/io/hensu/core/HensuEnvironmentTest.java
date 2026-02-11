@@ -7,6 +7,8 @@ import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
 import io.hensu.core.rubric.RubricRepository;
+import io.hensu.core.state.WorkflowStateRepository;
+import io.hensu.core.workflow.WorkflowRepository;
 import java.util.concurrent.ExecutorService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +29,10 @@ class HensuEnvironmentTest {
 
     @Mock private ExecutorService executorService;
 
+    @Mock private WorkflowRepository workflowRepository;
+
+    @Mock private WorkflowStateRepository workflowStateRepository;
+
     private HensuEnvironment environment;
 
     @BeforeEach
@@ -38,7 +44,9 @@ class HensuEnvironmentTest {
                         agentRegistry,
                         rubricRepository,
                         executorService,
-                        null);
+                        null,
+                        workflowRepository,
+                        workflowStateRepository);
     }
 
     @Test
@@ -93,7 +101,9 @@ class HensuEnvironmentTest {
                         agentRegistry,
                         rubricRepository,
                         executorService,
-                        null)) {
+                        null,
+                        workflowRepository,
+                        workflowStateRepository)) {
             assertThat(env.getWorkflowExecutor()).isNotNull();
         }
 

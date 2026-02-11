@@ -19,25 +19,29 @@ Self-hosted. Developer-friendly. Zero lock-in.
 
 ---
 
-**Hensu** is a modular infrastructure platform for the declarative orchestration of multi-agent systems. This repository
-implements a Build-Then-Push architecture — analogous to Terraform — that decouples the **Definition of Intelligence**
-from its **Runtime Execution**.
+Most AI orchestration frameworks couple workflow logic to application code, making multi-agent systems
+hard to version, test, and deploy independently. **Hensu** solves this with a Build-Then-Push architecture — analogous
+to Terraform — that decouples the **Definition of Intelligence** from its **Runtime Execution**.
 
-While workflows are authored and compiled locally via a **type-safe Kotlin DSL**, the underlying engine is a
-high-performance, **native-image server** designed for multi-tenant SaaS environments. It leverages Java `ScopedValues`
-to ensure rigorous execution isolation while managing the complex orchestration of LLMs, MCP-based tool calling, and
-human-in-the-loop gates.
+Workflows are authored and compiled locally via a **type-safe Kotlin DSL**, producing portable JSON definitions.
+The underlying engine is a high-performance, **native-image server** designed for multi-tenant SaaS environments.
+It leverages Java `ScopedValues` to ensure rigorous execution isolation while managing the complex orchestration
+of LLMs, MCP-based tool calling, and human-in-the-loop gates.
 
 ## Key Capabilities
 
-| Feature              | Description                                                                                      |
-|:---------------------|:-------------------------------------------------------------------------------------------------|
-| **Pure Java Core**   | Zero-dependency execution engine built on Java 25 virtual threads.                               |
-| **Type-Safe DSL**    | Describe, don't implement. Define complex agent behaviors using a type-safe, declarative syntax. |
-| **MCP Native**       | The server acts as an MCP Gateway. It **never** executes tools locally, ensuring security.       |
-| **Multi-Tenancy**    | Rigorous isolation using Java `ScopedValues` for safe SaaS deployment.                           |
-| **Resilience**       | Distributed state architecture allows workflows to be paused, resumed, and migrated.             |
-| **Agentic Planning** | Supports both static (pre-defined) and dynamic (LLM-generated) execution plans.                  |
+| Feature               | Description                                                                                                                                  |
+|:----------------------|:---------------------------------------------------------------------------------------------------------------------------------------------|
+| **Pure Java Core**    | Zero-dependency execution engine built on Java 25 virtual threads.                                                                           |
+| **Type-Safe DSL**     | Describe, don't implement. Define complex agent behaviors using a type-safe, declarative syntax.                                             |
+| **Non-Linear Flow**   | Support for loops, conditional branches, and jump-to-node logic, moving beyond simple sequential chains.                                     |
+| **Sub-Workflows**     | Hierarchical composition via `SubWorkflowNode` with input/output mapping for reusable, modular workflow definitions.                         |
+| **MCP Gateway**       | Provides seamless remote tool execution. Connects to any remote MCP server to run tools externally, keeping the engine core secure and lean. |
+| **Multi-Tenancy**     | Rigorous isolation using Java `ScopedValues` for safe SaaS deployment.                                                                       |
+| **Resilience**        | Distributed state architecture allows workflows to be paused, resumed, and migrated.                                                         |
+| **Agentic Planning**  | Supports both static (pre-defined) and dynamic (LLM-generated) execution plans.                                                              |
+| **Human in the Loop** | Integrated "Checkpoints" allowing manual approval or intervention before high-stakes node transitions.                                       |
+| **Rubric Evaluation** | Automated quality gates that verify node outputs against defined criteria before allowing workflow progression.                              |
 
 ---
 
@@ -61,6 +65,12 @@ Hensu strictly separates **Development** (managed by you) from **Execution** (ma
   tool execution on tenant clients without requiring open inbound ports. It also exposes REST APIs for triggering
   instances and standard SSE for event monitoring.
 
+### 3. Shared Infrastructure
+
+* **[hensu-serialization](hensu-serialization/README.md):** The Wire Format. Jackson mixins and serializers that
+  convert between in-memory domain objects and their JSON representation. Used by both the CLI (to produce definitions)
+  and the Server (to hydrate them).
+
 ---
 
 ## Architecture
@@ -69,28 +79,24 @@ The architecture follows a strict **Split-Pipe** model:
 
 1. **Compilation:** The CLI compiles Kotlin DSL into a static **Workflow Definition** (JSON).
 2. **Distribution:** The Definition is pushed to the Server's persistence layer.
-3. **Execution:** The Server hydrates the Definition into an active instance. When a tool is needed, it uses the *
-   *Split-Pipe** transport:
+3. **Execution:** The Server hydrates the Definition into an active instance. When a tool is needed, it uses the
+   **Split-Pipe** transport:
     * **Downstream (SSE):** The Server pushes a JSON-RPC tool request to the connected tenant client.
     * **Upstream (HTTP):** The Client executes the tool locally and `POST`s the result back.
 
 **No user code runs on the server.** The server is a pure orchestrator; all side effects happen on the client via MCP.
 
-```mermaid
-graph LR
-    User[Developer] -->|1 . Write| DSL[Kotlin DSL]
-    DSL -->|2 . hensu build| JSON[JSON Definition]
-    JSON -->|3 . hensu push| Server[Hensu Server]
-
-    subgraph "Hensu Runtime"
-        Server -->|Orchestrate| Core[Core Engine]
-        Core -->|Stream Events| SSE[Observability]
-    end
-
-    subgraph "External Ecosystem"
-        Server <-->|MCP Protocol| Tools[Databases / APIs]
-        Server <-->|API| LLMs[Claude / GPT / Gemini]
-    end
+```
+  Developer (local)                                    Hensu Runtime              External
+ ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌─────────────────────┐    ┌──────────────┐
+ │ Kotlin   │───>│  hensu   │───>│   JSON   │───>│  Hensu Server       │<──>│ LLMs (Claude │
+ │ DSL      │    │  build   │    │   Def.   │    │  (GraalVM Native)   │    │ GPT, Gemini) │
+ └──────────┘    └──────────┘    └──────────┘    │                     │    └──────────────┘
+                                   hensu push    │  Core Engine        │    ┌──────────────┐
+                                                 │  ├ State Manager    │<──>│ MCP Tool     │
+                                                 │  ├ Rubric Evaluator │    │ Servers      │
+                                                 │  └ Consensus Engine │    └──────────────┘
+                                                 └─────────────────────┘
 ```
 
 ---
@@ -192,13 +198,11 @@ fun contentPipeline() = workflow("ContentPipeline") {
 - JDK 25+ (for building source)
 - Docker (optional, for running the native server)
 - API Keys (Anthropic, Gemini, OpenAI, etc.)
-- Pommel (mandatory for AI-assisted development to ensure proper context retrieval via the pm search
-  protocol) [Installation Guide](https://github.com/dbinky/Pommel)
 
 ### 1. Installation
 
 ```shell
-git clone [https://github.com/hensu-project/hensu.git](https://github.com/hensu-project/hensu.git) && cd hensu
+git clone https://github.com/hensu-project/hensu.git && cd hensu
 ./gradlew build -x test
 ```
 
@@ -229,27 +233,32 @@ curl -X POST http://localhost:8080/api/v1/executions \
   -d '{"workflowId": "hello", "context": {"topic": "AI Agents"}}'
 ```
 
-### 5. Agent-Native Development
+### Agent-Native Workflow
 
-Hensu is pre-configured for AI-assisted engineering. You do not need to create custom instructions or CLAUDE.md files.
-Because the project includes standardized rules in .cursor/rules/ and .claude/rules/, your coding assistant will
-automatically inherit the project’s architectural constraints, Java 25 standards, and the Pommel search protocol the
-moment you open the workspace.
+Hensu is pre-configured with architectural rules in `.claude/rules/` and `.cursor/rules/`. You do not need to create
+custom instructions or CLAUDE.md files.
 
-The only requirement is to have Pommel installed to enable the mandatory context-retrieval features.
+**Context Retrieval:**
 
----
-
-## Security & MCP
-
-Hensu is designed for Zero-Trust environments.
-
-- No Local Execution: The server does not support local shell execution. All side effects must be routed through the
-  Model Context Protocol (MCP).
-- Tenant Isolation: Workflow execution contexts are isolated using Java ScopedValues, preventing data leakage between
-  concurrent executions.
+* **Recommended:** Install **[Pommel](https://github.com/dbinky/Pommel)** for the highest accuracy. The agent will use
+  it to understand the codebase semantically.
+* **Optional:** If you do not install Pommel, the agent is configured to **automatically fall back** to standard tools
+  (`grep`, `find`). No configuration is required; the agent will simply warn you about reduced context accuracy.
 
 ---
+
+## Security Model
+
+Hensu is designed for Zero-Trust environments. The server is a **pure orchestrator** — it never executes
+user-supplied code.
+
+| Principle              | Implementation                                                                                                |
+|:-----------------------|:--------------------------------------------------------------------------------------------------------------|
+| **No Local Execution** | The server has no shell, no `eval`, no script runner. All side effects route through MCP to tenant clients.   |
+| **Tenant Isolation**   | Every execution runs inside a Java `ScopedValue` boundary. No data leaks between concurrent workflows.        |
+| **No Inbound Ports**   | The Split-Pipe transport means tenant clients connect *outbound* via SSE. No firewall rules required.         |
+| **Stateless Server**   | Workflow state is externalized to pluggable repositories. The server can be killed and restarted at any time. |
+| **Native Binary**      | GraalVM native image eliminates classpath scanning, reflection, and dynamic class loading attack surfaces.    |
 
 <div align="center">
 

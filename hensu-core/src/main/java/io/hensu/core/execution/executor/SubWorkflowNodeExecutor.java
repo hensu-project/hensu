@@ -1,24 +1,26 @@
 package io.hensu.core.execution.executor;
 
 import io.hensu.core.execution.WorkflowExecutor;
-import io.hensu.core.execution.WorkflowRegistry;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
+import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.core.workflow.node.SubWorkflowNode;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.logging.Logger;
 
-/// Executes sub-workflow nodes by loading and executing nested workflows.
+/// Executes sub-workflow nodes by loading and running nested workflow definitions.
 ///
-/// ### This executor
+/// Resolves sub-workflows via the {@link WorkflowRepository} from the execution
+/// context, maps parent state into the child context, executes the child workflow,
+/// and maps outputs back to the parent state.
 ///
-/// - Loads the sub-workflow from the registry
-/// - Maps inputs from parent to sub-workflow context
-/// - Executes the sub-workflow
-/// - Maps outputs back to parent context
+/// @implNote Reads tenant ID from `_tenant_id` in the execution state context
+/// for tenant-scoped workflow lookup.
+///
+/// @see WorkflowRepository for tenant-scoped workflow storage
 public class SubWorkflowNodeExecutor implements NodeExecutor<SubWorkflowNode> {
 
     private static final Logger logger = Logger.getLogger(SubWorkflowNodeExecutor.class.getName());
@@ -35,8 +37,9 @@ public class SubWorkflowNodeExecutor implements NodeExecutor<SubWorkflowNode> {
 
         logger.info("Executing sub-workflow: " + node.getWorkflowId());
 
-        // Load sub-workflow
-        Workflow subWorkflow = loadSubWorkflow(node.getWorkflowId());
+        // Load sub-workflow from repository using tenant ID from state context
+        String tenantId = (String) state.getContext().get("_tenant_id");
+        Workflow subWorkflow = loadSubWorkflow(node.getWorkflowId(), tenantId, context);
 
         // Map input context
         Map<String, Object> subContext = new HashMap<>();
@@ -75,7 +78,15 @@ public class SubWorkflowNodeExecutor implements NodeExecutor<SubWorkflowNode> {
         }
     }
 
-    private Workflow loadSubWorkflow(String workflowId) {
-        return WorkflowRegistry.load(workflowId);
+    private Workflow loadSubWorkflow(String workflowId, String tenantId, ExecutionContext context) {
+        WorkflowRepository repository = context.getWorkflowRepository();
+        if (repository == null) {
+            throw new IllegalStateException(
+                    "No WorkflowRepository configured — cannot load sub-workflow: " + workflowId);
+        }
+        return repository
+                .findById(tenantId != null ? tenantId : "default", workflowId)
+                .orElseThrow(
+                        () -> new IllegalStateException("Sub-workflow not found: " + workflowId));
     }
 }

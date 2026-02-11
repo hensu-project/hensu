@@ -1,7 +1,7 @@
 package io.hensu.server.api;
 
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.persistence.WorkflowRepository;
+import io.hensu.core.workflow.WorkflowRepository;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;

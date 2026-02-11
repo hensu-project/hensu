@@ -18,7 +18,7 @@ import java.util.Map;
 ///
 /// @see AgentRegistry for agent lifecycle management
 /// @see AgentFactory for agent instantiation
-/// @see io.hensu.core.agent.spi.AgentProvider for implementing custom agent backends
+/// @see AgentProvider for implementing custom agent backends
 public interface Agent {
 
     /// Executes an agent task with the given prompt and execution context.

@@ -28,8 +28,8 @@ import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.server.planner.LlmPlanner;
 import jakarta.enterprise.inject.Instance;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
@@ -70,7 +70,7 @@ class AgenticNodeExecutorTest {
         agent = mock(Agent.class);
 
         HensuState state = mock(HensuState.class);
-        when(state.getContext()).thenReturn(Map.of());
+        when(state.getContext()).thenReturn(new HashMap<>());
 
         Workflow workflow = mock(Workflow.class);
 
@@ -105,7 +105,7 @@ class AgenticNodeExecutorTest {
         }
 
         @Test
-        void shouldFailWhenAgentNotFound() throws Exception {
+        void shouldFailWhenAgentNotFound() {
             when(node.hasPlanningEnabled()).thenReturn(false);
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.empty());
 
@@ -116,7 +116,7 @@ class AgenticNodeExecutorTest {
         }
 
         @Test
-        void shouldHandleAgentError() throws Exception {
+        void shouldHandleAgentError() {
             when(node.hasPlanningEnabled()).thenReturn(false);
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(agent));
             when(agent.execute(anyString(), any()))
@@ -133,7 +133,7 @@ class AgenticNodeExecutorTest {
     class StaticPlanExecution {
 
         @Test
-        void shouldExecuteStaticPlan() throws Exception {
+        void shouldExecuteStaticPlan() {
             Plan staticPlan =
                     Plan.staticPlan(
                             "test-node", List.of(PlannedStep.simple(0, "tool", "Do something")));
@@ -151,7 +151,7 @@ class AgenticNodeExecutorTest {
         }
 
         @Test
-        void shouldFailWhenStaticPlanNotDefined() throws Exception {
+        void shouldFailWhenStaticPlanNotDefined() {
             PlanningConfig config = PlanningConfig.forStatic();
 
             when(node.hasPlanningEnabled()).thenReturn(true);
@@ -210,7 +210,7 @@ class AgenticNodeExecutorTest {
     class PlanReview {
 
         @Test
-        void shouldPauseForReviewWhenRequired() throws Exception {
+        void shouldPauseForReviewWhenRequired() {
             Plan staticPlan =
                     Plan.staticPlan(
                             "test-node", List.of(PlannedStep.simple(0, "tool", "Do something")));
@@ -233,7 +233,7 @@ class AgenticNodeExecutorTest {
     class PlanFailureHandling {
 
         @Test
-        void shouldUseFailureTargetWhenSet() throws Exception {
+        void shouldUseFailureTargetWhenSet() {
             Plan staticPlan =
                     Plan.staticPlan(
                             "test-node", List.of(PlannedStep.simple(0, "tool", "Do something")));

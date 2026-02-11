@@ -61,6 +61,8 @@ Key features:
 - Rubric-Driven Quality Gates - Evaluate outputs against defined criteria with score-based routing
 - Human Review Integration - Optional or required review at any workflow step
 - Multi-Provider Support - Claude, GPT, Gemini, DeepSeek via pluggable adapters
+- Pause / Resume - Workflows can pause at checkpoints and resume (potentially on a different server instance)
+- Sub-Workflows - Hierarchical composition via `SubWorkflowNode` with input/output mapping
 - Time-Travel Debugging - Execution history with backtracking support
 - Zero Lock-In - Self-hosted, pure code, no proprietary formats
 
@@ -94,6 +96,8 @@ hensu-langchain4j-adapter     # LangChain4j integration (Claude, GPT, Gemini, De
 - `TemplateResolver` - Resolves `{placeholder}` syntax in prompts
 - `ReviewHandler` - Handles human review checkpoints (optional)
 - `ActionExecutor` - Executes workflow actions (CLI: local bash, Server: MCP-only)
+- `WorkflowRepository` - Tenant-scoped storage for workflow definitions (defaults to in-memory)
+- `WorkflowStateRepository` - Tenant-scoped storage for execution state snapshots (defaults to in-memory)
 
 **Server-Specific Components** (in `hensu-server`):
 
@@ -101,11 +105,10 @@ hensu-langchain4j-adapter     # LangChain4j integration (Claude, GPT, Gemini, De
 - `ServerActionExecutor` - MCP-only action executor (rejects local execution)
 - `WorkflowResource` - REST API for workflow definitions (push/pull/delete/list)
 - `ExecutionResource` - REST API for execution runtime (start/resume/status/plan)
-- `WorkflowRepository` / `WorkflowStateRepository` - Server-specific persistence
 
 **AI Provider Interface**:
 
-- `AgentProvider` interface in `io.hensu.core.agent.spi`
+- `AgentProvider` interface in `io.hensu.core.agent`
 - Providers wired explicitly via `HensuFactory.builder().agentProviders(...)` — no classpath scanning, GraalVM-safe
 - Priority system: higher `getPriority()` wins when multiple providers support same model
 - `StubAgentProvider` (priority 1000) always auto-included by `build()` for testing
@@ -140,11 +143,34 @@ Workflow
 - `ScoreTransition` - Conditional on rubric score (e.g., score >= 80 → approve)
 - `AlwaysTransition` - Unconditional
 
+### State Model
+
+Execution state flows through three types:
+
+- `HensuState` — Mutable runtime state during execution. Holds `executionId`, `workflowId`, `currentNode`, `context`
+  (Map), and `ExecutionHistory`. Created by `WorkflowExecutor` at execution start; mutated during node transitions.
+- `HensuSnapshot` — Immutable checkpoint record. Created from `HensuState.toSnapshot()` at pause points and completion.
+  Stored in `WorkflowStateRepository`. Contains `checkpointReason` ("paused", "completed", etc.).
+- `ExecutionHistory` — Tracks executed steps and backtracks. Its `copy()` returns mutable copies (not `List.copyOf()`)
+  so resumed executions can continue appending steps.
+
+**Pause / Resume lifecycle:**
+
+1. Node returns `ResultStatus.PENDING` → `WorkflowExecutor` returns `ExecutionResult.Paused(state)`
+2. `WorkflowService` saves snapshot with reason `"paused"`
+3. Later: `WorkflowService.resumeExecution()` loads snapshot → restores `HensuState` → calls
+   `WorkflowExecutor.executeFrom()` → saves final snapshot
+
+**Key context keys** (set by `WorkflowService.startExecution()`):
+
+- `_tenant_id` — tenant identifier, read by `SubWorkflowNodeExecutor` for loading child workflows
+- `_execution_id` — ensures `WorkflowExecutor` uses the same ID the service layer tracks
+
 ### Patterns & Conventions
 
 1. **Builder pattern** for all domain models: `Workflow.builder().id(...).build()`
 2. **Constructor injection** - No @Autowired, explicit dependency wiring
-3. **Sealed interfaces** for results: `ExecutionResult` → `Completed | Rejected`
+3. **Sealed interfaces** for results: `ExecutionResult` → `Completed | Paused | Rejected | Failure | Success`
 4. **Template resolution**: `{variable}` syntax in prompts, resolved via `SimpleTemplateResolver`
 5. **@DslMarker** on Kotlin builders to prevent scope leakage
 
@@ -214,8 +240,9 @@ JSON by workflow ID (not the .kt file).
 4. **Shared serialization**: Both CLI and server use `hensu-serialization` for JSON format —
    `WorkflowSerializer.createMapper()` is the single ObjectMapper factory
 5. **Server MCP-only**: Server never executes bash commands locally, only sends MCP requests to external tools
-6. **Storage separation**: Core has NO persistence interfaces; storage is server-specific (
-   `io.hensu.server.persistence`)
+6. **Storage in core**: Repository interfaces (`WorkflowRepository`, `WorkflowStateRepository`) and in-memory defaults
+   live in `hensu-core`. Server delegates from `HensuEnvironment` via `@Produces @Singleton` — never creates instances
+   directly
 7. **API separation**: Workflow definitions (`/api/v1/workflows`) and executions (`/api/v1/executions`) are distinct
    REST resources
 
@@ -225,6 +252,31 @@ JSON by workflow ID (not the .kt file).
 - Stub mode for testing without API calls: `HENSU_STUB_ENABLED=true`
 - Mock agents for unit testing
 - Core module testable in complete isolation (no AI dependencies)
+
+### Integration Tests (`hensu-server`)
+
+All integration tests extend `IntegrationTestBase` and run under `@QuarkusTest` with stub mode enabled. The base class
+provides:
+
+- `loadWorkflow("fixture.json")` — Loads a JSON fixture from `test/resources/workflows/`
+- `registerStub("nodeId", "response")` — Registers a programmatic stub response
+- `registerStub("scenario", "nodeId", "response")` — Registers a scenario-specific stub
+- `pushAndExecute(workflow, context)` — Saves workflow to repository and executes via `WorkflowService`
+- `pushAndExecuteWithMcp(workflow, context, endpoint)` — Same but within a `TenantContext` with MCP endpoint
+- `resolveRubricPath("quality.md")` — Copies a classpath rubric to a temp file (required by `RubricParser`)
+
+Per-test cleanup (`@BeforeEach`): clears `StubResponseRegistry`, `InMemoryWorkflowRepository`,
+`InMemoryWorkflowStateRepository`.
+
+**Test handlers** (`@ApplicationScoped` beans auto-discovered by Quarkus):
+
+- `TestActionHandler` — `GenericNodeHandler` for `type="test-action"`, captures invocations
+- `TestReviewHandler` — Configurable `ReviewHandler` returning approve/reject/backtrack
+- `TestPauseHandler` — `GenericNodeHandler` for `type="pause"`, returns PENDING on first call, SUCCESS on second
+- `TestValidatorHandler` — `GenericNodeHandler` for `type="test-validator"`, validates context keys
+
+**Stub resolution order**: programmatic → `/stubs/{scenario}/{nodeId}.txt` → `/stubs/default/{nodeId}.txt` → echo
+fallback.
 
 ## Key Files to Understand
 
@@ -238,6 +290,8 @@ JSON by workflow ID (not the .kt file).
 - `hensu-core/.../rubric/RubricEngine.java` - Quality evaluation engine
 - `hensu-core/.../tool/ToolRegistry.java` - Protocol-agnostic tool descriptors
 - `hensu-core/.../plan/PlanExecutor.java` - Step-by-step plan execution
+- `hensu-core/.../workflow/WorkflowRepository.java` - Tenant-scoped workflow storage interface
+- `hensu-core/.../state/WorkflowStateRepository.java` - Tenant-scoped execution state storage interface
 
 **DSL:**
 
@@ -262,8 +316,6 @@ JSON by workflow ID (not the .kt file).
 - `hensu-server/.../action/ServerActionExecutor.java` - MCP-only action executor
 - `hensu-server/.../api/WorkflowResource.java` - Workflow definition management REST API
 - `hensu-server/.../api/ExecutionResource.java` - Execution runtime REST API
-- `hensu-server/.../persistence/WorkflowRepository.java` - Workflow storage interface
-- `hensu-server/.../persistence/WorkflowStateRepository.java` - Execution state storage interface
 
 **CLI:**
 

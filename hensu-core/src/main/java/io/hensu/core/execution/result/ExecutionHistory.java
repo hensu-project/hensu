@@ -106,13 +106,13 @@ public class ExecutionHistory {
         return List.copyOf(backtracks);
     }
 
-    /// Creates an immutable copy of this history.
+    /// Creates a mutable copy of this history.
     ///
     /// @return a new ExecutionHistory with copied data, never null
     public ExecutionHistory copy() {
         ExecutionHistory history = new ExecutionHistory();
-        history.steps = List.copyOf(steps);
-        history.backtracks = List.copyOf(backtracks);
+        history.steps = new ArrayList<>(steps);
+        history.backtracks = new ArrayList<>(backtracks);
         return history;
     }
 }

@@ -6,6 +6,7 @@ import io.hensu.core.HensuEnvironment;
 import io.hensu.core.HensuFactory;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.GenericNodeHandler;
+import io.hensu.core.review.ReviewHandler;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
@@ -52,6 +53,8 @@ public class HensuEnvironmentProducer {
 
     @Inject Instance<GenericNodeHandler> genericNodeHandlers;
 
+    @Inject Instance<ReviewHandler> reviewHandlerInstance;
+
     @Inject ActionExecutor actionExecutor;
 
     /// Produces the Hensu runtime environment for CDI injection.
@@ -66,13 +69,19 @@ public class HensuEnvironmentProducer {
     public HensuEnvironment hensuEnvironment() {
         Properties properties = extractHensuProperties();
 
-        hensuEnvironment =
+        HensuFactory.Builder factoryBuilder =
                 HensuFactory.builder()
                         .config(HensuConfig.builder().useVirtualThreads(true).build())
                         .loadCredentials(properties)
                         .agentProviders(List.of(new LangChain4jProvider()))
-                        .actionExecutor(actionExecutor)
-                        .build();
+                        .actionExecutor(actionExecutor);
+
+        if (reviewHandlerInstance.isResolvable()) {
+            factoryBuilder.reviewHandler(reviewHandlerInstance.get());
+            LOG.info("Using CDI-provided ReviewHandler");
+        }
+
+        hensuEnvironment = factoryBuilder.build();
 
         LOG.info("Configured HensuEnvironment via HensuFactory");
 

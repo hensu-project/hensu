@@ -75,8 +75,23 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
         transitionBuilder.createRetryBuilder(count)
 
     /**
-     * Define score-based transitions. Usage: onScore { whenScore greaterThan 80.0 goto "success"
-     * whenScore lessThan 60.0 goto "failure" }
+     * Define score-based transitions.
+     *
+     * Scores are resolved in priority order:
+     * 1. Rubric evaluation score (if this node has [rubric] set)
+     * 2. Self-reported score from context keys: "score", "final_score", "quality_score",
+     *    "evaluation_score" (useful with [outputParams])
+     *
+     * When a node has both a rubric and onScore transitions, the onScore transitions take
+     * precedence over auto-backtrack for failed rubrics.
+     *
+     * Usage:
+     * ```kotlin
+     * onScore {
+     *     whenScore greaterThan 80.0 goto "success"
+     *     whenScore lessThan 60.0 goto "failure"
+     * }
+     * ```
      */
     fun onScore(block: ScoreTransitionBuilder.() -> Unit) {
         transitionBuilder.onScore(block)

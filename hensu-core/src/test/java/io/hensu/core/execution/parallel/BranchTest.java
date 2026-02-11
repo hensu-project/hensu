@@ -9,7 +9,8 @@ class BranchTest {
     @Test
     void shouldCreateBranchWithAllFields() {
         // When
-        Branch branch = new Branch("branch-1", "reviewer", "Review this code", "quality-rubric");
+        Branch branch =
+                new Branch("branch-1", "reviewer", "Review this code", "quality-rubric", 2.5);
 
         // Then
         assertThat(branch.id()).isEqualTo("branch-1");
@@ -19,6 +20,18 @@ class BranchTest {
         assertThat(branch.prompt()).isEqualTo("Review this code");
         assertThat(branch.getPrompt()).isEqualTo("Review this code");
         assertThat(branch.rubricId()).isEqualTo("quality-rubric");
+        assertThat(branch.weight()).isEqualTo(2.5);
+        assertThat(branch.getWeight()).isEqualTo(2.5);
+    }
+
+    @Test
+    void shouldDefaultWeightToOne() {
+        // When
+        Branch branch = new Branch("branch-1", "reviewer", "Review this code", null);
+
+        // Then
+        assertThat(branch.weight()).isEqualTo(1.0);
+        assertThat(branch.getWeight()).isEqualTo(1.0);
     }
 
     @Test

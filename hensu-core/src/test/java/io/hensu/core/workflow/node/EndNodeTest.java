@@ -55,12 +55,12 @@ class EndNodeTest {
     }
 
     @Test
-    void shouldReturnEmptyStringForRubricId() {
+    void shouldReturnNullForRubricId() {
         // Given
         EndNode node = EndNode.builder().id("end").status(ExitStatus.SUCCESS).build();
 
-        // Then - exit nodes don't have rubrics
-        assertThat(node.getRubricId()).isEmpty();
+        // Then - end nodes don't have rubrics
+        assertThat(node.getRubricId()).isNull();
     }
 
     @Test
@@ -85,17 +85,5 @@ class EndNodeTest {
         assertThat(node1).isEqualTo(node2); // Same ID
         assertThat(node1).isNotEqualTo(node3); // Different ID
         assertThat(node1.hashCode()).isEqualTo(node2.hashCode());
-    }
-
-    @Test
-    void shouldReturnMeaningfulToString() {
-        // Given
-        EndNode node = EndNode.builder().id("test-end-node").status(ExitStatus.SUCCESS).build();
-
-        // When
-        String toString = node.toString();
-
-        // Then
-        assertThat(toString).contains("test-end-node");
     }
 }

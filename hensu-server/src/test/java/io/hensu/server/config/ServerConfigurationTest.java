@@ -2,22 +2,25 @@ package io.hensu.server.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hensu.core.HensuEnvironment;
+import io.hensu.core.agent.Agent;
+import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
 import io.hensu.core.plan.PlanExecutor;
+import io.hensu.core.state.WorkflowStateRepository;
+import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.server.mcp.McpConnectionFactory;
 import io.hensu.server.mcp.McpException;
-import io.hensu.server.persistence.InMemoryWorkflowRepository;
-import io.hensu.server.persistence.InMemoryWorkflowStateRepository;
-import io.hensu.server.persistence.WorkflowRepository;
-import io.hensu.server.persistence.WorkflowStateRepository;
 import io.hensu.server.planner.LlmPlanner;
 import java.time.Duration;
 import java.util.Optional;
@@ -47,14 +50,16 @@ class ServerConfigurationTest {
 
         @Test
         void shouldProduceWorkflowRepository() {
-            WorkflowRepository repo = config.workflowRepository();
-            assertThat(repo).isInstanceOf(InMemoryWorkflowRepository.class);
+            WorkflowRepository mockRepo = mock(WorkflowRepository.class);
+            when(env.getWorkflowRepository()).thenReturn(mockRepo);
+            assertThat(config.workflowRepository(env)).isSameAs(mockRepo);
         }
 
         @Test
         void shouldProduceWorkflowStateRepository() {
-            WorkflowStateRepository repo = config.workflowStateRepository();
-            assertThat(repo).isInstanceOf(InMemoryWorkflowStateRepository.class);
+            WorkflowStateRepository mockRepo = mock(WorkflowStateRepository.class);
+            when(env.getWorkflowStateRepository()).thenReturn(mockRepo);
+            assertThat(config.workflowStateRepository(env)).isSameAs(mockRepo);
         }
     }
 
@@ -99,10 +104,29 @@ class ServerConfigurationTest {
         }
 
         @Test
-        void shouldProduceLlmPlannerWithStubAgent() {
+        void shouldProduceLlmPlannerRegisteringDefaultAgent() {
+            Agent mockAgent = mock(Agent.class);
             AgentRegistry mockRegistry = mock(AgentRegistry.class);
             when(env.getAgentRegistry()).thenReturn(mockRegistry);
-            when(mockRegistry.getAgent("_planning_agent")).thenReturn(Optional.empty());
+            when(mockRegistry.hasAgent("_planning_agent")).thenReturn(false);
+            when(mockRegistry.registerAgent(eq("_planning_agent"), any(AgentConfig.class)))
+                    .thenReturn(mockAgent);
+            when(mockRegistry.getAgent("_planning_agent")).thenReturn(Optional.of(mockAgent));
+
+            ObjectMapper mapper = config.objectMapper();
+            LlmPlanner planner = config.llmPlanner(env, mapper);
+
+            assertThat(planner).isNotNull();
+            verify(mockRegistry).registerAgent(eq("_planning_agent"), any(AgentConfig.class));
+        }
+
+        @Test
+        void shouldProduceLlmPlannerWithExistingAgent() {
+            Agent mockAgent = mock(Agent.class);
+            AgentRegistry mockRegistry = mock(AgentRegistry.class);
+            when(env.getAgentRegistry()).thenReturn(mockRegistry);
+            when(mockRegistry.hasAgent("_planning_agent")).thenReturn(true);
+            when(mockRegistry.getAgent("_planning_agent")).thenReturn(Optional.of(mockAgent));
 
             ObjectMapper mapper = config.objectMapper();
             LlmPlanner planner = config.llmPlanner(env, mapper);
@@ -127,19 +151,21 @@ class ServerConfigurationTest {
     }
 
     @Nested
-    class StubPlanningAgent {
+    class PlanningAgentRegistration {
 
         @Test
-        void shouldReturnErrorResponse() {
+        void shouldRegisterDefaultAgentWithExpectedConfig() {
+            Agent mockAgent = mock(Agent.class);
             AgentRegistry mockRegistry = mock(AgentRegistry.class);
             when(env.getAgentRegistry()).thenReturn(mockRegistry);
-            when(mockRegistry.getAgent("_planning_agent")).thenReturn(Optional.empty());
+            when(mockRegistry.hasAgent("_planning_agent")).thenReturn(false);
+            when(mockRegistry.registerAgent(eq("_planning_agent"), any(AgentConfig.class)))
+                    .thenReturn(mockAgent);
+            when(mockRegistry.getAgent("_planning_agent")).thenReturn(Optional.of(mockAgent));
 
-            ObjectMapper mapper = config.objectMapper();
-            LlmPlanner planner = config.llmPlanner(env, mapper);
+            config.llmPlanner(env, config.objectMapper());
 
-            // The stub agent inside returns Error response — validated via planner usage
-            assertThat(planner).isNotNull();
+            verify(mockRegistry).registerAgent(eq("_planning_agent"), any(AgentConfig.class));
         }
     }
 }

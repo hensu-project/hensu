@@ -1,0 +1,69 @@
+{
+  "id" : "parallel-unanimous",
+  "version" : "1.0.0",
+  "startNode" : "parallel",
+  "agents" : {
+    "reviewer-1" : {
+      "id" : "reviewer-1",
+      "role" : "reviewer",
+      "model" : "stub",
+      "temperature" : 0.3
+    },
+    "reviewer-2" : {
+      "id" : "reviewer-2",
+      "role" : "reviewer",
+      "model" : "stub",
+      "temperature" : 0.3
+    },
+    "reviewer-3" : {
+      "id" : "reviewer-3",
+      "role" : "reviewer",
+      "model" : "stub",
+      "temperature" : 0.3
+    }
+  },
+  "nodes" : {
+    "parallel" : {
+      "id" : "parallel",
+      "nodeType" : "PARALLEL",
+      "branches" : [ {
+        "id" : "branch-1",
+        "agentId" : "reviewer-1",
+        "prompt" : "Review this content: {content}",
+        "weight" : 1.0
+      }, {
+        "id" : "branch-2",
+        "agentId" : "reviewer-2",
+        "prompt" : "Review this content: {content}",
+        "weight" : 1.0
+      }, {
+        "id" : "branch-3",
+        "agentId" : "reviewer-3",
+        "prompt" : "Review this content: {content}",
+        "weight" : 1.0
+      } ],
+      "consensusConfig" : {
+        "strategy" : "UNANIMOUS",
+        "threshold" : 1.0
+      },
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "consensus-reached"
+      }, {
+        "type" : "failure",
+        "retryCount" : 0,
+        "targetNode" : "no-consensus"
+      } ]
+    },
+    "consensus-reached" : {
+      "id" : "consensus-reached",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    },
+    "no-consensus" : {
+      "id" : "no-consensus",
+      "nodeType" : "END",
+      "status" : "FAILURE"
+    }
+  }
+}

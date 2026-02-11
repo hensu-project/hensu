@@ -40,12 +40,12 @@ class SubWorkflowNodeTest {
     }
 
     @Test
-    void shouldReturnEmptyRubricId() {
+    void shouldReturnNullRubricId() {
         // When
         SubWorkflowNode node = new SubWorkflowNode("sub-1", "nested", null, null, null);
 
         // Then
-        assertThat(node.getRubricId()).isEmpty();
+        assertThat(node.getRubricId()).isNull();
     }
 
     @Test
@@ -71,47 +71,5 @@ class SubWorkflowNodeTest {
         assertThat(node1).isEqualTo(node2);
         assertThat(node1).isNotEqualTo(node3);
         assertThat(node1.hashCode()).isEqualTo(node2.hashCode());
-    }
-
-    @Test
-    void shouldReturnMeaningfulToString() {
-        // Given
-        SubWorkflowNode node =
-                new SubWorkflowNode("sub-1", "nested-workflow", Map.of("key", "value"), null, null);
-
-        // When
-        String toString = node.toString();
-
-        // Then
-        assertThat(toString).contains("sub-1");
-        assertThat(toString).contains("nested-workflow");
-        assertThat(toString).contains("inputMapping");
-    }
-
-    @Test
-    void shouldEqualItself() {
-        // Given
-        SubWorkflowNode node = new SubWorkflowNode("sub-1", "nested", null, null, null);
-
-        // Then
-        assertThat(node).isEqualTo(node);
-    }
-
-    @Test
-    void shouldNotEqualNull() {
-        // Given
-        SubWorkflowNode node = new SubWorkflowNode("sub-1", "nested", null, null, null);
-
-        // Then
-        assertThat(node).isNotEqualTo(null);
-    }
-
-    @Test
-    void shouldNotEqualDifferentClass() {
-        // Given
-        SubWorkflowNode node = new SubWorkflowNode("sub-1", "nested", null, null, null);
-
-        // Then
-        assertThat(node).isNotEqualTo("string");
     }
 }

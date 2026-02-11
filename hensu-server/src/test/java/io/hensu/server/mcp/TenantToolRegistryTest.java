@@ -33,7 +33,7 @@ class TenantToolRegistryTest {
             registry.register(tool);
 
             assertThat(registry.get("search")).isPresent();
-            assertThat(registry.get("search").get().name()).isEqualTo("search");
+            assertThat(registry.get("search").orElseThrow().name()).isEqualTo("search");
         }
 
         @Test

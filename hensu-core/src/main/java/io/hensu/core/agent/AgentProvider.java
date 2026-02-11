@@ -1,7 +1,5 @@
-package io.hensu.core.agent.spi;
+package io.hensu.core.agent;
 
-import io.hensu.core.agent.Agent;
-import io.hensu.core.agent.AgentConfig;
 import java.util.List;
 import java.util.Map;
 

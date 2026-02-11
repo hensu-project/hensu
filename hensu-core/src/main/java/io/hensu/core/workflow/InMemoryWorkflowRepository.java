@@ -1,6 +1,5 @@
-package io.hensu.server.persistence;
+package io.hensu.core.workflow;
 
-import io.hensu.core.workflow.Workflow;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;

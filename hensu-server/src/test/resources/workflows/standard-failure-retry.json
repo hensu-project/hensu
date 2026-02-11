@@ -1,0 +1,39 @@
+{
+  "id" : "standard-failure-retry",
+  "version" : "1.0.0",
+  "startNode" : "process",
+  "agents" : {
+    "writer" : {
+      "id" : "writer",
+      "role" : "writer",
+      "model" : "stub",
+      "temperature" : 0.7
+    }
+  },
+  "nodes" : {
+    "process" : {
+      "id" : "process",
+      "nodeType" : "STANDARD",
+      "agentId" : "writer",
+      "prompt" : "Write content about {topic}",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      }, {
+        "type" : "failure",
+        "retryCount" : 2,
+        "targetNode" : "error-end"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    },
+    "error-end" : {
+      "id" : "error-end",
+      "nodeType" : "END",
+      "status" : "FAILURE"
+    }
+  }
+}

@@ -6,6 +6,7 @@ import io.hensu.core.state.HensuState;
 ///
 /// ### Permitted Subtypes
 /// - {@link Completed} - Workflow reached an end node successfully
+/// - {@link Paused} - Workflow paused at a node returning {@link ResultStatus#PENDING}
 /// - {@link Rejected} - Workflow was rejected during human review
 /// - {@link Failure} - Workflow failed due to an unrecoverable error
 /// - {@link Success} - Intermediate success state (internal use)
@@ -33,6 +34,14 @@ public sealed interface ExecutionResult {
             return exitStatus;
         }
     }
+
+    /// Workflow paused at a node that returned {@link ResultStatus#PENDING}.
+    ///
+    /// The execution state is preserved and can be resumed later via
+    /// {@link io.hensu.core.execution.WorkflowExecutor#executeFrom}.
+    ///
+    /// @param state the workflow state at pause point, not null
+    record Paused(HensuState state) implements ExecutionResult {}
 
     /// Workflow was rejected during human review.
     ///
