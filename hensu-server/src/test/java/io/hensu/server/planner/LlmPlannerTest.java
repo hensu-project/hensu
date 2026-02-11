@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -203,8 +205,13 @@ class LlmPlannerTest {
             planner.createPlan(
                     new PlanRequest("Search goal", tools, Map.of(), PlanConstraints.defaults()));
 
-            // Verify prompt contains tool info (captured via mock)
-            // The actual prompt is passed to the agent
+            verify(planningAgent)
+                    .execute(
+                            argThat(
+                                    prompt ->
+                                            prompt.contains("search")
+                                                    && prompt.contains("Search the web")),
+                            any());
         }
     }
 

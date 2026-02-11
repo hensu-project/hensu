@@ -174,6 +174,7 @@ class BranchBuilder(private val id: String, private val workingDirectory: Workin
             agent ?: throw IllegalStateException("Branch '$id' must have an agent"),
             prompt.resolveAsPrompt(workingDirectory) ?: "",
             rubric,
+            weight,
         )
 }
 

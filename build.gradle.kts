@@ -37,12 +37,18 @@ subprojects {
         options.encoding = "UTF-8"
     }
 
+    // Java 24+ JVM args required across all execution modes:
+    //   --enable-native-access: Foreign Function & Memory API (Project Panama)
+    //   --add-opens java.base/java.lang: Vert.x / JBoss Threads thread-local reset
+    // See: https://github.com/quarkusio/quarkus/discussions/51041
+    val jvm24Args = listOf("--enable-native-access=ALL-UNNAMED", "--add-opens", "java.base/java.lang=ALL-UNNAMED")
+
     tasks.withType<JavaExec> {
-        jvmArgs("--enable-native-access=ALL-UNNAMED")
+        jvmArgs(jvm24Args)
     }
 
     tasks.test {
-        jvmArgs("--enable-native-access=ALL-UNNAMED")
+        jvmArgs(jvm24Args)
         useJUnitPlatform()
     }
 

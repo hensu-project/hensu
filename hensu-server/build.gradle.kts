@@ -1,6 +1,14 @@
+import io.quarkus.gradle.tasks.QuarkusDev
+
 plugins {
     id("io.quarkus") version "3.30.8"
     kotlin("jvm")
+}
+
+// Quarkus dev mode forks its own JVM — pass Java 24+ args via QuarkusDev task API
+tasks.named<QuarkusDev>("quarkusDev") {
+    openJavaLang.set(true)
+    jvmArguments.add("--enable-native-access=ALL-UNNAMED")
 }
 
 dependencies {

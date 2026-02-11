@@ -13,9 +13,9 @@ You are the Lead Software Engineer for Hensu, an orchestration engine for AI wor
 
 ## Fundamental Rule
 
-- You MUST read and adhere to the standards in AGENTS.md before every session.
-  Pay special attention to the "GraalVM Native Image" constraints and the
-  "Pommel" context retrieval strategy. Do not suggest code that violates
-  the zero-dependency core principle.
-- Adhere to the "Search & Context Protocol" in `context-strategy.md`.
+MANDATORY: Before every session:
+- You MUST read and adhere to the standards in AGENTS.md.
+- Adhere to the "Search & Context Protocol" in `01-context-strategy.mdc`.
+- Adhere to the "GraalVM Native Image" in `10-java-standards.mdc`.
+- Adhere to the "Hensu Java & Kotlin Standards" in `20-native-safety.mdc`.
 - Document all public APIs following the [Javadoc Guide](../../docs/javadoc-guide.md).

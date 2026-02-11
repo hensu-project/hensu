@@ -1,0 +1,72 @@
+{
+  "id" : "plan-static",
+  "version" : "1.0.0",
+  "startNode" : "execute",
+  "agents" : {
+    "planner" : {
+      "id" : "planner",
+      "role" : "planner",
+      "model" : "stub",
+      "temperature" : 0.3
+    }
+  },
+  "nodes" : {
+    "execute" : {
+      "id" : "execute",
+      "nodeType" : "STANDARD",
+      "agentId" : "planner",
+      "prompt" : "Execute the plan for: {task}",
+      "planningConfig" : {
+        "mode" : "STATIC",
+        "constraints" : {
+          "maxSteps" : 10,
+          "maxReplans" : 0,
+          "maxDuration" : "PT5M",
+          "maxTokenBudget" : 0,
+          "allowReplan" : false
+        },
+        "reviewBeforeExecute" : false
+      },
+      "staticPlan" : {
+        "id" : "static-plan-001",
+        "nodeId" : "execute",
+        "source" : "STATIC",
+        "steps" : [ {
+          "index" : 0,
+          "toolName" : "test-tool",
+          "arguments" : {
+            "action" : "search",
+            "query" : "test data"
+          },
+          "description" : "Search for relevant data",
+          "status" : "PENDING"
+        }, {
+          "index" : 1,
+          "toolName" : "test-tool",
+          "arguments" : {
+            "action" : "process",
+            "format" : "json"
+          },
+          "description" : "Process the search results",
+          "status" : "PENDING"
+        } ],
+        "constraints" : {
+          "maxSteps" : 10,
+          "maxReplans" : 0,
+          "maxDuration" : "PT5M",
+          "maxTokenBudget" : 0,
+          "allowReplan" : false
+        }
+      },
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "id" : "multi-step-chain",
+  "version" : "1.0.0",
+  "startNode" : "step-a",
+  "agents" : {
+    "agent-a" : {
+      "id" : "agent-a",
+      "role" : "researcher",
+      "model" : "stub",
+      "temperature" : 0.5
+    },
+    "agent-b" : {
+      "id" : "agent-b",
+      "role" : "writer",
+      "model" : "stub",
+      "temperature" : 0.7
+    },
+    "agent-c" : {
+      "id" : "agent-c",
+      "role" : "editor",
+      "model" : "stub",
+      "temperature" : 0.3
+    }
+  },
+  "nodes" : {
+    "step-a" : {
+      "id" : "step-a",
+      "nodeType" : "STANDARD",
+      "agentId" : "agent-a",
+      "prompt" : "Research the topic: {topic}",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "step-b"
+      } ]
+    },
+    "step-b" : {
+      "id" : "step-b",
+      "nodeType" : "STANDARD",
+      "agentId" : "agent-b",
+      "prompt" : "Write an article based on the research",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "step-c"
+      } ]
+    },
+    "step-c" : {
+      "id" : "step-c",
+      "nodeType" : "STANDARD",
+      "agentId" : "agent-c",
+      "prompt" : "Edit and polish the article",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

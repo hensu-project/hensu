@@ -1,0 +1,35 @@
+{
+  "id" : "review-approve",
+  "version" : "1.0.0",
+  "startNode" : "draft",
+  "agents" : {
+    "writer" : {
+      "id" : "writer",
+      "role" : "writer",
+      "model" : "stub",
+      "temperature" : 0.7
+    }
+  },
+  "nodes" : {
+    "draft" : {
+      "id" : "draft",
+      "nodeType" : "STANDARD",
+      "agentId" : "writer",
+      "prompt" : "Write content about {topic}",
+      "reviewConfig" : {
+        "mode" : "REQUIRED",
+        "allowBacktrack" : true,
+        "allowEdit" : false
+      },
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

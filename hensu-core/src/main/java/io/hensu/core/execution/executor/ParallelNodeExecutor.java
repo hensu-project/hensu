@@ -3,14 +3,21 @@ package io.hensu.core.execution.executor;
 import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.agent.AgentResponse;
+import io.hensu.core.execution.parallel.Branch;
 import io.hensu.core.execution.parallel.BranchResult;
 import io.hensu.core.execution.parallel.ConsensusConfig;
 import io.hensu.core.execution.parallel.ConsensusEvaluator;
 import io.hensu.core.execution.parallel.ConsensusResult;
 import io.hensu.core.execution.result.ResultStatus;
+import io.hensu.core.rubric.RubricEngine;
+import io.hensu.core.rubric.RubricParser;
+import io.hensu.core.rubric.evaluator.RubricEvaluation;
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.template.TemplateResolver;
+import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.ParallelNode;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -22,12 +29,22 @@ import java.util.stream.Collectors;
 /// ### This executor
 ///
 /// - Executes branches in parallel using ExecutorService
+/// - Evaluates branch outputs against rubrics when `Branch.rubricId` is set
 /// - Aggregates results from all branches
 /// - Evaluates consensus if configured (majority, unanimous, weighted, judge)
 ///
+/// ### Rubric Integration
+/// When a branch declares a `rubricId`, the executor evaluates the branch output
+/// against the rubric after execution completes. The rubric score and pass/fail
+/// status are stored in the branch result metadata (`rubric_score`, `rubric_passed`),
+/// where they take priority over text-parsing heuristics during consensus voting.
 ///
-/// Note: The ExecutorService is obtained from ExecutionContext and is NOT shut down by this
-/// executor - lifecycle is managed by the owner.
+/// @implNote The ExecutorService is obtained from ExecutionContext and is NOT shut down
+/// by this executor — lifecycle is managed by the owner. Rubric evaluation runs
+/// sequentially after all branch futures resolve.
+///
+/// @see ConsensusEvaluator for vote extraction and strategy evaluation
+/// @see RubricEngine for rubric-based quality evaluation
 public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
 
     private static final Logger logger = Logger.getLogger(ParallelNodeExecutor.class.getName());
@@ -145,6 +162,12 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
             state.getContext().put("failed_branches", failedBranches);
         }
 
+        // Inject branch-level weights into result metadata for ConsensusEvaluator
+        branchResults = enrichWithBranchWeights(branchResults, node);
+
+        // Evaluate branch rubrics before consensus (rubric scores override text heuristics)
+        branchResults = enrichWithRubricScores(branchResults, node, context);
+
         // Consensus evaluation if configured
         NodeResult finalResult;
         if (node.getConsensusConfig() != null) {
@@ -176,6 +199,144 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
 
         logger.info("Parallel execution completed: " + node.getId());
         return finalResult;
+    }
+
+    /// Injects branch-level weights from the node definition into result metadata.
+    ///
+    /// The {@link ConsensusEvaluator} reads `"weight"` from result metadata during
+    /// vote extraction. This method propagates the weight declared in each
+    /// {@link Branch} definition so that DSL-configured weights reach the evaluator.
+    ///
+    /// @param branchResults collected branch execution results, not null
+    /// @param node the parallel node containing branch definitions, not null
+    /// @return branch results with weight metadata injected, never null
+    private List<BranchResult> enrichWithBranchWeights(
+            List<BranchResult> branchResults, ParallelNode node) {
+
+        Map<String, Branch> branchMap = new HashMap<>();
+        for (Branch branch : node.getBranches()) {
+            branchMap.put(branch.getId(), branch);
+        }
+
+        List<BranchResult> enriched = new ArrayList<>(branchResults.size());
+        for (BranchResult br : branchResults) {
+            Branch branch = branchMap.get(br.getBranchId());
+            if (branch != null && branch.getWeight() != 1.0) {
+                Map<String, Object> metadata = new HashMap<>(br.getResult().getMetadata());
+                metadata.put("weight", branch.getWeight());
+                NodeResult enrichedResult =
+                        new NodeResult(
+                                br.getResult().getStatus(), br.getResult().getOutput(), metadata);
+                enriched.add(new BranchResult(br.getBranchId(), enrichedResult));
+            } else {
+                enriched.add(br);
+            }
+        }
+        return enriched;
+    }
+
+    /// Evaluates branch outputs against rubrics and enriches result metadata.
+    ///
+    /// For each branch that declares a `rubricId` and completed successfully,
+    /// evaluates the output against the rubric and stores `rubric_score`,
+    /// `rubric_passed`, and `rubric_id` in the result metadata. These metadata
+    /// fields take priority over text-parsing heuristics in
+    /// {@link ConsensusEvaluator#extractVotes}.
+    ///
+    /// Branches without a rubricId or with non-SUCCESS status are returned unchanged.
+    /// Rubric evaluation failures are logged and the original result is preserved.
+    ///
+    /// @param branchResults collected branch execution results, not null
+    /// @param node the parallel node containing branch definitions, not null
+    /// @param context execution context with rubric engine and workflow, not null
+    /// @return enriched branch results with rubric metadata where applicable, never null
+    private List<BranchResult> enrichWithRubricScores(
+            List<BranchResult> branchResults, ParallelNode node, ExecutionContext context) {
+
+        RubricEngine rubricEngine = context.getRubricEngine();
+        if (rubricEngine == null) {
+            return branchResults;
+        }
+
+        Map<String, Branch> branchMap = new HashMap<>();
+        for (Branch branch : node.getBranches()) {
+            branchMap.put(branch.getId(), branch);
+        }
+
+        Workflow workflow = context.getWorkflow();
+        List<BranchResult> enriched = new ArrayList<>(branchResults.size());
+
+        for (BranchResult br : branchResults) {
+            Branch branch = branchMap.get(br.getBranchId());
+
+            if (branch != null
+                    && branch.rubricId() != null
+                    && br.getResult().getStatus() == ResultStatus.SUCCESS) {
+
+                String rubricId = branch.rubricId();
+                try {
+                    registerRubricIfAbsent(rubricEngine, rubricId, workflow);
+
+                    RubricEvaluation evaluation =
+                            rubricEngine.evaluate(
+                                    rubricId, br.getResult(), context.getState().getContext());
+
+                    Map<String, Object> enrichedMetadata =
+                            new HashMap<>(br.getResult().getMetadata());
+                    enrichedMetadata.put("rubric_score", evaluation.getScore());
+                    enrichedMetadata.put("rubric_passed", evaluation.isPassed());
+                    enrichedMetadata.put("rubric_id", rubricId);
+
+                    NodeResult enrichedResult =
+                            new NodeResult(
+                                    br.getResult().getStatus(),
+                                    br.getResult().getOutput(),
+                                    enrichedMetadata);
+
+                    enriched.add(new BranchResult(br.getBranchId(), enrichedResult));
+
+                    logger.info(
+                            "Branch "
+                                    + br.getBranchId()
+                                    + " rubric '"
+                                    + rubricId
+                                    + "': score="
+                                    + evaluation.getScore()
+                                    + ", passed="
+                                    + evaluation.isPassed());
+                } catch (Exception e) {
+                    logger.warning(
+                            "Rubric evaluation failed for branch "
+                                    + br.getBranchId()
+                                    + ": "
+                                    + e.getMessage());
+                    enriched.add(br);
+                }
+            } else {
+                enriched.add(br);
+            }
+        }
+
+        return enriched;
+    }
+
+    /// Registers a rubric in the engine if not already present.
+    ///
+    /// Reuses the lazy-registration pattern from {@link io.hensu.core.execution.WorkflowExecutor}
+    /// to avoid redundant file parsing on retries.
+    ///
+    /// @param rubricEngine rubric engine to register with, not null
+    /// @param rubricId rubric identifier, not null
+    /// @param workflow workflow containing rubric path mappings, not null
+    private void registerRubricIfAbsent(
+            RubricEngine rubricEngine, String rubricId, Workflow workflow) {
+        if (!rubricEngine.exists(rubricId)) {
+            String rubricPath = workflow.getRubrics().get(rubricId);
+            if (rubricPath != null) {
+                Rubric rubric = RubricParser.parse(Path.of(rubricPath));
+                rubricEngine.registerRubric(rubric);
+            }
+        }
     }
 
     private NodeResult toNodeResult(AgentResponse response) {

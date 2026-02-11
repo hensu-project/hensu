@@ -199,10 +199,9 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── Agent.java                 # Core agent interface
 │   ├── AgentConfig.java           # Agent configuration (model, temperature, etc.)
 │   ├── AgentFactory.java          # Creates agents from explicit providers
+│   ├── AgentProvider.java         # Provider interface for pluggable AI backends
 │   ├── AgentRegistry.java         # Agent lookup interface
 │   ├── DefaultAgentRegistry.java  # Thread-safe ConcurrentHashMap implementation
-│   └── spi/
-│       └── AgentProvider.java     # Provider interface for pluggable AI backends
 │   └── stub/
 │       ├── StubAgentProvider.java # Testing provider (priority 1000 when enabled)
 │       ├── StubAgent.java         # Mock agent returning stub responses

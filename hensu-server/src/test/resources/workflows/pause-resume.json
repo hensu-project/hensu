@@ -1,0 +1,50 @@
+{
+  "id" : "pause-resume",
+  "version" : "1.0.0",
+  "startNode" : "step-a",
+  "agents" : {
+    "worker" : {
+      "id" : "worker",
+      "role" : "worker",
+      "model" : "stub",
+      "temperature" : 0.5
+    }
+  },
+  "nodes" : {
+    "step-a" : {
+      "id" : "step-a",
+      "nodeType" : "STANDARD",
+      "agentId" : "worker",
+      "prompt" : "Process first step: {input}",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "pause-point"
+      } ]
+    },
+    "pause-point" : {
+      "id" : "pause-point",
+      "nodeType" : "GENERIC",
+      "executorType" : "pause",
+      "config" : {},
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "step-b"
+      } ]
+    },
+    "step-b" : {
+      "id" : "step-b",
+      "nodeType" : "STANDARD",
+      "agentId" : "worker",
+      "prompt" : "Process second step with context from step-a: {step-a}",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

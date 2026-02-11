@@ -125,6 +125,10 @@ public class AgenticNodeExecutor implements NodeExecutor<StandardNode> {
         }
 
         String prompt = resolvePrompt(node.getPrompt(), context);
+
+        // Propagate current node ID into context for agent awareness and stub resolution
+        context.getState().getContext().put("current_node", node.getId());
+
         AgentResponse response = agent.execute(prompt, context.getState().getContext());
 
         return switch (response) {

@@ -69,6 +69,28 @@ class ParallelNodeTest {
         }
 
         @Test
+        void shouldBuildWithBranchWeight() {
+            // Given
+            Branch branch = new Branch("b1", "agent-1", "Prompt 1", null, 2.5);
+
+            // When
+            ParallelNode node = ParallelNode.builder("parallel-1").branch(branch).build();
+
+            // Then
+            assertThat(node.getBranches()[0].getWeight()).isEqualTo(2.5);
+        }
+
+        @Test
+        void shouldDefaultBranchWeightToOne() {
+            // When
+            ParallelNode node =
+                    ParallelNode.builder("parallel-1").branch("b1", "agent-1", "Prompt 1").build();
+
+            // Then
+            assertThat(node.getBranches()[0].getWeight()).isEqualTo(1.0);
+        }
+
+        @Test
         void shouldBuildWithBranchesList() {
             // Given
             List<Branch> branches =

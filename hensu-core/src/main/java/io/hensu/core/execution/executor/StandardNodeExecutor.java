@@ -65,6 +65,9 @@ public class StandardNodeExecutor implements NodeExecutor<StandardNode> {
 
         logger.info("Executing node: " + node.getId() + " with agent: " + node.getAgentId());
 
+        // Propagate current node ID into context for agent awareness
+        state.getContext().put("current_node", node.getId());
+
         // Notify listener before agent execution
         listener.onAgentStart(node.getId(), node.getAgentId(), resolvedPrompt);
 

@@ -2,6 +2,7 @@ package io.hensu.server.mcp;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.smallrye.mutiny.Uni;
@@ -162,14 +163,13 @@ class McpSessionManagerTest {
         @Test
         void shouldIgnoreResponseWithoutId() {
             // Should not throw
-            sessionManager.handleResponse("{}");
+            assertDoesNotThrow(() -> sessionManager.handleResponse("{}"));
         }
 
         @Test
         void shouldIgnoreResponseForUnknownId() {
             String response = jsonRpc.createResponse("unknown-id", Map.of());
-            // Should not throw
-            sessionManager.handleResponse(response);
+            assertDoesNotThrow(() -> sessionManager.handleResponse(response));
         }
     }
 
@@ -201,7 +201,7 @@ class McpSessionManagerTest {
 
             sessionManager.disconnect("client-1");
 
-            subscriber.awaitCompletion(Duration.ofSeconds(1));
+            assertDoesNotThrow(() -> subscriber.awaitCompletion(Duration.ofSeconds(1)));
         }
     }
 }

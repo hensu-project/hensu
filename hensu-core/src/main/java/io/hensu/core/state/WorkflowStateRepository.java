@@ -1,13 +1,12 @@
-package io.hensu.server.persistence;
+package io.hensu.core.state;
 
-import io.hensu.core.state.HensuSnapshot;
 import java.util.List;
 import java.util.Optional;
 
 /// Repository for workflow execution state persistence.
 ///
 /// Provides checkpoint/restore operations for long-running workflows.
-/// Uses {@link HensuSnapshot} from hensu-core for state representation.
+/// Uses {@link HensuSnapshot} for state representation.
 ///
 /// ### Multi-Tenancy
 /// All operations are tenant-scoped. The repository associates each

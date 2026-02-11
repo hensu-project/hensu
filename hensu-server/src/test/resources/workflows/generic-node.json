@@ -1,0 +1,26 @@
+{
+  "id" : "generic-node",
+  "version" : "1.0.0",
+  "startNode" : "validate",
+  "nodes" : {
+    "validate" : {
+      "id" : "validate",
+      "nodeType" : "GENERIC",
+      "executorType" : "validator",
+      "config" : {
+        "minLength" : 10,
+        "maxLength" : 1000,
+        "required" : true
+      },
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

@@ -1,7 +1,9 @@
 package io.hensu.core.workflow;
 
 import io.hensu.core.agent.AgentConfig;
+import io.hensu.core.execution.parallel.Branch;
 import io.hensu.core.workflow.node.Node;
+import io.hensu.core.workflow.node.ParallelNode;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
@@ -58,6 +60,35 @@ public final class Workflow {
         if (!nodes.containsKey(startNode)) {
             throw new IllegalStateException(
                     "Start node '" + startNode + "' not found in workflow nodes");
+        }
+
+        for (Map.Entry<String, Node> entry : nodes.entrySet()) {
+            String rubricId = entry.getValue().getRubricId();
+            if (rubricId != null && !rubricId.isEmpty() && !rubrics.containsKey(rubricId)) {
+                throw new IllegalStateException(
+                        "Node '"
+                                + entry.getKey()
+                                + "' references rubric '"
+                                + rubricId
+                                + "' which is not declared in workflow rubrics");
+            }
+
+            if (entry.getValue() instanceof ParallelNode pn) {
+                for (Branch branch : pn.getBranches()) {
+                    if (branch.rubricId() != null
+                            && !branch.rubricId().isEmpty()
+                            && !rubrics.containsKey(branch.rubricId())) {
+                        throw new IllegalStateException(
+                                "Branch '"
+                                        + branch.id()
+                                        + "' in parallel node '"
+                                        + entry.getKey()
+                                        + "' references rubric '"
+                                        + branch.rubricId()
+                                        + "' which is not declared in workflow rubrics");
+                    }
+                }
+            }
         }
     }
 

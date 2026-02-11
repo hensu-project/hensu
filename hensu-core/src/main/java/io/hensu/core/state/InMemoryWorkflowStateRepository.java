@@ -1,6 +1,5 @@
-package io.hensu.server.persistence;
+package io.hensu.core.state;
 
-import io.hensu.core.state.HensuSnapshot;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;

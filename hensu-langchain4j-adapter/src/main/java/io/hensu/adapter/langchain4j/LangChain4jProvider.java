@@ -6,7 +6,7 @@ import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentConfig;
-import io.hensu.core.agent.spi.AgentProvider;
+import io.hensu.core.agent.AgentProvider;
 import java.time.Duration;
 import java.util.Map;
 import java.util.logging.Logger;

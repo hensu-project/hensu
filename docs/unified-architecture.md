@@ -1,23 +1,26 @@
-Hensu Unified Architecture
+# Hensu Unified Architecture
 
-**Hensu** is an autonomous **infrastructure ecosystem** for the end-to-end lifecycle of agentic workflows. It provides a
-strict separation between the **authoring environment** (local) and the **execution environment** (remote/native).
+**Hensu** separates the **authoring** of AI workflows from their **execution**. Developers describe agent behavior in a
+type-safe Kotlin DSL. A compiler produces portable JSON definitions. A stateless, GraalVM native-image server executes
+them. No user code ever runs on the server.
 
-**The system operates as a decoupled stack:**
+**Two layers, strictly decoupled:**
 
-- **The Definition Layer:** A type-safe, developer-centric environment where business logic is codified via the
-  **Kotlin DSL**.
-- **The Orchestration Layer:** A high-performance, **native-image engine** that interprets compiled workflows with
-  industrial-grade isolation.
+| Layer             | Responsibility                                   | Technology                            |
+|:------------------|:-------------------------------------------------|:--------------------------------------|
+| **Definition**    | Author and compile workflow logic                | Kotlin DSL → JSON artifacts           |
+| **Orchestration** | Execute compiled workflows with tenant isolation | Pure Java core + Quarkus native image |
 
 **Workflows operate at two levels:**
 
-- **Macro-Graph:** The static, declarative flow defined in the DSL (The Strategy).
-- **Micro-Plan:** The dynamic, step-by-step execution logic handled by the engine (The Tactics).
+- **Macro-Graph:** The static, declarative flow defined in the DSL — which nodes run, in what order, with what
+  transitions. This is the **strategy**.
+- **Micro-Plan:** The dynamic, step-by-step execution logic within a single node — tool calls, replanning, reflection
+  loops. This is the **tactics**.
 
-**The Architectural Core:** The engine remains **pure Java** with **zero external dependencies**. All specific protocol
-handling (MCP), provider integrations (LLMs), and security constraints (Multi-tenancy/ScopedValues) are implemented as
-pluggable modules at the infrastructure layer.
+**The Architectural Core:** The engine is **pure Java** with **zero external dependencies**. Protocol handling (MCP),
+provider integrations (LLMs), persistence, and security (multi-tenancy via `ScopedValues`) are pluggable modules wired
+explicitly via `HensuFactory.builder()`.
 
 ---
 
@@ -56,54 +59,62 @@ hensu list ◄──────────────────────
     └────────────────────────────────► POST /api/v1/executions
 ```
 
-### 2. HensuFactory → HensuEnvironment Pattern
+### 2. Centralized Bootstrap (`HensuFactory`)
 
-**ALWAYS** use `HensuFactory.builder()` to create core infrastructure:
+All core components are assembled through a single builder — `HensuFactory.builder()` — that produces an immutable
+`HensuEnvironment` container. This enforces a consistent wiring strategy across both CLI and Server deployments:
+agent providers, action executors, repositories, and configuration are resolved once at startup.
 
-```java
-// Correct approach - both CLI and Server
-HensuEnvironment env = HensuFactory.builder()
-    .config(HensuConfig.builder().useVirtualThreads(true).build())
-    .loadCredentials(properties)
-    .actionExecutor(customExecutor)  // Server provides MCP-only executor
-    .build();
+The builder is the only place where deployment-specific behavior diverges: the CLI wires a local bash executor and
+the LangChain4j provider; the server wires an MCP-only executor and delegates all components via CDI producers.
 
-// Access components from environment
-WorkflowExecutor executor = env.getWorkflowExecutor();
-AgentRegistry agents = env.getAgentRegistry();
-```
+See [Core Developer Guide](developer-guide-core.md) for usage patterns.
 
-**NEVER** bypass HensuFactory:
+### 3. Zero-Trust Execution (MCP Only)
 
-```java
-// WRONG - bypasses configuration, stub mode, SPI discovery
-WorkflowExecutor executor = new WorkflowExecutor(nodeRegistry, actionHandler);
-```
+The server is a **pure orchestrator** — it has no shell, no `eval`, no script runner. All side effects
+(tool calls, database writes, API requests) are routed to tenant-owned MCP servers via the **Split-Pipe**
+transport:
 
-### 3. Server Execution Model (MCP Only)
+- **Downstream (SSE):** The server pushes JSON-RPC tool requests to the connected tenant client.
+- **Upstream (HTTP POST):** The client executes the tool locally and returns the result.
 
-The server **NEVER executes commands locally**. It only sends requests to external MCP servers:
+This means tenant clients connect *outbound* — no inbound ports, no firewall rules, no VPN.
+The server never sees raw credentials or executes user-supplied code.
 
-```java
-// ServerActionExecutor - server-specific implementation
-@Override
-public ActionResult execute(Action action, Map<String, Object> context) {
-    return switch (action) {
-        case Action.Send send -> executeSend(send, context);  // MCP tool calls
-        case Action.Execute exec -> ActionResult.failure(
-            "Server mode does not support local command execution");
-    };
-}
-```
+### 4. Non-Linear Graph Execution
 
-### 4. Storage Separation
+Workflows are not limited to linear chains. The graph engine supports:
 
-- **hensu-core**: Pure execution runtime (no persistence interfaces)
-- **hensu-server/persistence/**: Server-specific storage
-  - `WorkflowRepository` - Workflow definition storage (push/pull/delete)
-  - `WorkflowStateRepository` - Execution state storage (snapshots)
+| Capability                | Mechanism                                                                                                  |
+|:--------------------------|:-----------------------------------------------------------------------------------------------------------|
+| **Conditional branching** | `ScoreTransition` routes based on rubric scores; `SuccessTransition` / `FailureTransition` route on result |
+| **Loops**                 | `LoopNode` with configurable break conditions and max iterations                                           |
+| **Parallel fan-out**      | `ParallelNode` executes branches concurrently on virtual threads                                           |
+| **Fork / Join**           | `ForkNode` spawns independent parallel paths; `JoinNode` awaits and merges results                         |
+| **Consensus**             | Majority vote, unanimous, weighted vote, or judge-decides strategies                                       |
+| **Backtracking**          | Review decisions can jump to any previous node, restoring state from execution history                     |
+| **Sub-workflows**         | `SubWorkflowNode` with input/output mapping for hierarchical composition                                   |
+| **Pause / Resume**        | Any node returning `PENDING` checkpoints state; `executeFrom()` resumes from snapshot                      |
 
-### 5. REST API Separation
+### 5. Quality Gates (Rubric Evaluation)
+
+Node outputs can be evaluated against markdown rubric definitions before the workflow transitions. The
+`RubricEngine` scores outputs on configurable dimensions, and `ScoreTransition` rules route based on
+thresholds — enabling self-correcting loops where low-scoring outputs are sent back for revision.
+
+### 6. Storage Architecture
+
+Repository interfaces and in-memory defaults live in **hensu-core**:
+
+- `WorkflowRepository` (`io.hensu.core.workflow`) — Tenant-scoped workflow definition storage
+- `WorkflowStateRepository` (`io.hensu.core.state`) — Tenant-scoped execution state snapshots
+
+`HensuFactory.builder()` wires in-memory implementations by default. The server delegates these from
+`HensuEnvironment` via `@Produces @Singleton` — it never creates instances directly. Production deployments can
+substitute database-backed implementations through the builder.
+
+### 7. REST API Separation
 
 ```
 /api/v1/workflows    → WorkflowResource (definition management - CLI integration)
@@ -138,10 +149,6 @@ public ActionResult execute(Action action, Map<String, Object> context) {
 │  │  │ ServerAction │  │ AgenticNode  │  │ TenantContext│                 │  │
 │  │  │ Executor     │  │ Executor     │  │ (ScopedValue)│                 │  │
 │  │  └──────────────┘  └──────────────┘  └──────────────┘                 │  │
-│  │  ┌──────────────┐  ┌──────────────┐                                   │  │
-│  │  │ Workflow     │  │ WorkflowState│                                   │  │
-│  │  │ Repository   │  │ Repository   │                                   │  │
-│  │  └──────────────┘  └──────────────┘                                   │  │
 │  └───────────────────────────────────────────────────────────────────────┘  │
 │                                    │                                        │
 │  ┌─────────────────────────────────┴─────────────────────────────────────┐  │
@@ -153,9 +160,14 @@ public ActionResult execute(Action action, Map<String, Object> context) {
 │  │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘   │  │
 │  │                                                                       │  │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │  │
-│  │  │   State     │  │    Tool     │  │   Agent     │  │   Event     │   │  │
-│  │  │  Manager    │  │  Registry   │  │  Registry   │  │    Bus      │   │  │
+│  │  │   Rubric    │  │    Tool     │  │   Agent     │  │   Event     │   │  │
+│  │  │   Engine    │  │  Registry   │  │  Registry   │  │    Bus      │   │  │
 │  │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘   │  │
+│  │                                                                       │  │
+│  │  ┌─────────────┐  ┌──────────────────────────────┐                    │  │
+│  │  │  Workflow   │  │  WorkflowState               │                    │  │
+│  │  │  Repository │  │  Repository                  │                    │  │
+│  │  └─────────────┘  └──────────────────────────────┘                    │  │
 │  └───────────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────────┘
 │
@@ -177,17 +189,17 @@ MCP Protocol (JSON-RPC)
 
 Zero-dependency Java library. Contains:
 
-- `HensuFactory` / `HensuEnvironment` - Builder and container for core components
-- `WorkflowExecutor` - Graph traversal and node dispatch
-- `NodeExecutorRegistry` - Pluggable node type executors
-- `AgentRegistry` / `AgentFactory` - Agent management with explicit provider wiring
-- `ActionExecutor` - Pluggable action dispatch (Send/Execute)
-- `PlanExecutor` - Step-by-step plan execution
-- `ToolRegistry` / `ToolDefinition` - Protocol-agnostic tool descriptors for MCP integration
-- `RubricEngine` - Quality evaluation (rubrics embedded in workflow JSON)
-- Workflow model, Node types, Transition rules
-
-**Core has NO persistence.** It is a pure execution runtime.
+- `HensuFactory` / `HensuEnvironment` — Builder and container for all core components
+- `WorkflowExecutor` — Graph traversal, node dispatch, pause/resume via `executeFrom()`
+- `NodeExecutorRegistry` — Pluggable node type executors
+- `AgentRegistry` / `AgentFactory` — Agent management with explicit provider wiring
+- `ActionExecutor` — Pluggable action dispatch (Send/Execute)
+- `PlanExecutor` — Step-by-step plan execution
+- `ToolRegistry` / `ToolDefinition` — Protocol-agnostic tool descriptors for MCP integration
+- `RubricEngine` — Quality evaluation (rubrics embedded in workflow JSON)
+- `WorkflowRepository` / `WorkflowStateRepository` — Tenant-scoped storage interfaces with in-memory defaults
+- `HensuState` / `HensuSnapshot` / `ExecutionHistory` — Mutable runtime state, immutable checkpoints, execution trace
+- Workflow model, Node types (including `SubWorkflowNode`), Transition rules
 
 ### hensu-dsl (Kotlin DSL)
 
@@ -202,17 +214,17 @@ Kotlin DSL for workflow definitions. Contains:
 
 ### hensu-server (Quarkus Native Image)
 
-Extends core with HTTP, MCP, multi-tenancy, and persistence:
+Extends core with HTTP, MCP, and multi-tenancy:
 
-- `HensuEnvironmentProducer` - CDI producer using HensuFactory.builder()
-- `ServerActionExecutor` - MCP-only action executor (rejects local execution)
-- `ServerConfiguration` - CDI delegation of HensuEnvironment components
-- `WorkflowResource` - Workflow definition management (push/pull/delete/list)
-- `ExecutionResource` - Execution runtime (start/resume/status/plan)
-- `WorkflowRepository` / `WorkflowStateRepository` - Server-specific persistence
-- `McpSidecar` / `McpGateway` - MCP protocol integration
-- `LlmPlanner` - LLM-based plan generation
-- `TenantContext` - ScopedValue-based tenant isolation
+- `HensuEnvironmentProducer` — CDI producer using `HensuFactory.builder()`
+- `ServerConfiguration` — Delegates core components from `HensuEnvironment` via `@Produces @Singleton`
+- `ServerActionExecutor` — MCP-only action executor (rejects local execution)
+- `WorkflowService` — Service layer: start/resume executions, snapshot management
+- `WorkflowResource` — Workflow definition management (push/pull/delete/list)
+- `ExecutionResource` — Execution runtime (start/resume/status/plan)
+- `McpSidecar` / `McpGateway` — MCP protocol integration
+- `LlmPlanner` — LLM-based plan generation
+- `TenantContext` — `ScopedValue`-based tenant isolation
 
 ### hensu-serialization (JSON Serialization)
 
@@ -319,8 +331,8 @@ node("research-topic") {
 │  │   │Execute │───▶│Observe │───▶│Reflect │──┐          │    │
 │  │   │ Step   │    │ Result │    │        │  │          │    │
 │  │   └────────┘    └────────┘    └────────┘  │          │    │
-│  │        ▲                                   │         │    │
-│  │        └───────────────────────────────────┘         │    │
+│  │        ▲                                  │          │    │
+│  │        └──────────────────────────────────┘          │    │
 │  │                    (next step or replan)             │    │
 │  └──────────────────────────────────────────────────────┘    │
 │                              │                               │
@@ -350,17 +362,17 @@ The server wires core infrastructure through CDI:
                        │
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ ServerConfiguration (@ApplicationScoped)                    │
+│ ServerConfiguration (@Singleton producers)                  │
 │                                                             │
-│  Delegates from HensuEnvironment for CDI injection:         │
+│  Delegates ALL core components from HensuEnvironment:       │
 │  - WorkflowExecutor (from env)                              │
 │  - AgentRegistry (from env)                                 │
 │  - NodeExecutorRegistry (from env)                          │
 │  - PlanExecutor (from env)                                  │
+│  - WorkflowRepository (from env, defaults to InMemory)      │
+│  - WorkflowStateRepository (from env, defaults to InMemory) │
 │                                                             │
 │  Produces server-specific beans:                            │
-│  - WorkflowRepository (InMemory for MVP)                    │
-│  - WorkflowStateRepository (InMemory for MVP)               │
 │  - ObjectMapper, LlmPlanner, McpConnectionFactory           │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -371,14 +383,17 @@ The server wires core infrastructure through CDI:
 
 The unified architecture provides:
 
-1. **Pure Core** - No external dependencies, protocol-agnostic
-2. **HensuFactory Pattern** - Single entry point for all core infrastructure
-3. **Shared Serialization** - `hensu-serialization` provides consistent JSON format for CLI and server
-4. **Build-Then-Push** - `hensu build` compiles DSL to JSON; `hensu push` sends compiled JSON to server
-5. **MCP-Only Server** - Server never executes locally, only sends MCP requests
-6. **Flexible Planning** - Static (predefined) or Dynamic (LLM-generated)
-7. **Multi-Tenancy** - Scoped Values for safe context propagation
-8. **Storage Separation** - Persistence is server-specific, core is stateless
-9. **API Separation** - Workflow definitions and executions are distinct resources
-10. **Observability** - Plan events for debugging and monitoring
-11. **Human Review** - At both plan and execution levels
+1. **Pure Core** — Zero-dependency Java engine, protocol-agnostic
+2. **Build-Then-Push** — Client-side compilation (Kotlin DSL → JSON); server receives pre-compiled artifacts
+3. **Centralized Bootstrap** — `HensuFactory.builder()` as the single entry point for all core infrastructure
+4. **Zero-Trust Execution** — Server has no shell; all side effects route through MCP to tenant clients
+5. **Non-Linear Graphs** — Loops, conditional branches, fork/join, parallel fan-out with consensus, backtracking
+6. **Rubric Evaluation** — Quality gates that score outputs and route on thresholds for self-correcting loops
+7. **Pause / Resume** — Workflows checkpoint at any node and resume (potentially on a different instance)
+8. **Sub-Workflows** — Hierarchical composition via `SubWorkflowNode` with input/output mapping
+9. **Flexible Planning** — Static (predefined) or Dynamic (LLM-generated) execution plans within nodes
+10. **Human Review** — Checkpoints for manual approval at both plan and execution levels
+11. **Multi-Tenancy** — `ScopedValues` for safe context propagation and tenant isolation
+12. **Storage in Core** — Repository interfaces with in-memory defaults; server delegates via CDI
+13. **Shared Serialization** — `hensu-serialization` provides consistent JSON format for CLI and server
+14. **API Separation** — Workflow definitions and executions are distinct REST resources

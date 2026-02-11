@@ -13,7 +13,7 @@ public final class LoopNode extends Node {
 
     @Override
     public String getRubricId() {
-        return "";
+        return null;
     }
 
     @Override

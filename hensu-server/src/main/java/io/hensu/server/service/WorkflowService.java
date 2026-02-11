@@ -4,8 +4,9 @@ import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.HensuState;
+import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.persistence.WorkflowStateRepository;
+import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import io.hensu.server.tenant.TenantContext;
@@ -13,11 +14,7 @@ import io.hensu.server.tenant.TenantContext.TenantInfo;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.Serial;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 import org.jboss.logging.Logger;
 
 /// Service for workflow execution and state management.
@@ -39,18 +36,22 @@ public class WorkflowService {
     private final WorkflowExecutor workflowExecutor;
     private final WorkflowStateRepository stateRepository;
     private final ExecutionEventBroadcaster eventBroadcaster;
+    private final WorkflowRepository workflowRepository;
 
     @Inject
     public WorkflowService(
             WorkflowExecutor workflowExecutor,
             WorkflowStateRepository stateRepository,
-            ExecutionEventBroadcaster eventBroadcaster) {
+            ExecutionEventBroadcaster eventBroadcaster,
+            WorkflowRepository workflowRepository) {
         this.workflowExecutor =
                 Objects.requireNonNull(workflowExecutor, "workflowExecutor must not be null");
         this.stateRepository =
                 Objects.requireNonNull(stateRepository, "stateRepository must not be null");
         this.eventBroadcaster =
                 Objects.requireNonNull(eventBroadcaster, "eventBroadcaster must not be null");
+        this.workflowRepository =
+                Objects.requireNonNull(workflowRepository, "workflowRepository must not be null");
     }
 
     /// Starts a new workflow execution.
@@ -71,7 +72,12 @@ public class WorkflowService {
 
         String executionId = UUID.randomUUID().toString();
 
-        TenantInfo tenant = TenantInfo.simple(tenantId);
+        // Preserve existing tenant context (e.g., with MCP endpoint) if already bound;
+        // otherwise create a simple context for this tenant.
+        TenantInfo tenant =
+                TenantContext.isBound() && TenantContext.current().tenantId().equals(tenantId)
+                        ? TenantContext.current()
+                        : TenantInfo.simple(tenantId);
 
         // Publish execution started event
         eventBroadcaster.publish(
@@ -86,7 +92,14 @@ public class WorkflowService {
                     tenant,
                     () -> {
                         Workflow workflow = loadWorkflow(workflowId);
-                        ExecutionResult result = workflowExecutor.execute(workflow, context);
+
+                        // Inject tenant ID into context for sub-workflow resolution
+                        Map<String, Object> executionContext = new HashMap<>(context);
+                        executionContext.put("_tenant_id", tenantId);
+                        executionContext.put("_execution_id", executionId);
+
+                        ExecutionResult result =
+                                workflowExecutor.execute(workflow, executionContext);
 
                         // Save final state and publish completion event
                         if (result instanceof ExecutionResult.Completed completed) {
@@ -109,6 +122,13 @@ public class WorkflowService {
                                             executionId,
                                             workflowId,
                                             rejected.state().getCurrentNode()));
+                        } else if (result instanceof ExecutionResult.Paused(HensuState state)) {
+                            HensuSnapshot snapshot = HensuSnapshot.from(state, "paused");
+                            stateRepository.save(tenantId, snapshot);
+                            eventBroadcaster.publish(
+                                    executionId,
+                                    ExecutionEvent.ExecutionCompleted.failure(
+                                            executionId, workflowId, state.getCurrentNode()));
                         } else if (result
                                 instanceof
                                 ExecutionResult.Failure(
@@ -174,11 +194,39 @@ public class WorkflowService {
                     () -> {
                         HensuState state = snapshot.toState();
 
-                        // TODO: Apply decision and resume execution
-                        // This requires workflow to be loaded and executor to support resume
-                        LOG.infov(
-                                "Restored state for execution: {0}, currentNode={1}",
-                                executionId, state.getCurrentNode());
+                        // Apply modifications from resume decision
+                        if (decision != null && decision.modifications() != null) {
+                            state.getContext().putAll(decision.modifications());
+                        }
+
+                        // Load the workflow for re-execution
+                        Workflow workflow = loadWorkflow(snapshot.workflowId());
+
+                        // Resume execution from saved state
+                        ExecutionResult result = workflowExecutor.executeFrom(workflow, state);
+
+                        // Save final state
+                        if (result instanceof ExecutionResult.Completed completed) {
+                            HensuSnapshot finalSnapshot =
+                                    HensuSnapshot.from(completed.finalState(), "completed");
+                            stateRepository.save(tenantId, finalSnapshot);
+                        } else if (result
+                                instanceof ExecutionResult.Paused(HensuState pausedState)) {
+                            HensuSnapshot pausedSnapshot =
+                                    HensuSnapshot.from(pausedState, "paused");
+                            stateRepository.save(tenantId, pausedSnapshot);
+                        } else if (result instanceof ExecutionResult.Rejected rejected) {
+                            HensuSnapshot rejectedSnapshot =
+                                    HensuSnapshot.from(rejected.state(), "rejected");
+                            stateRepository.save(tenantId, rejectedSnapshot);
+                        } else if (result
+                                instanceof ExecutionResult.Failure(HensuState failedState, _)) {
+                            HensuSnapshot failedSnapshot =
+                                    HensuSnapshot.from(failedState, "failed");
+                            stateRepository.save(tenantId, failedSnapshot);
+                        }
+
+                        return null;
                     });
         } catch (Exception e) {
             LOG.errorv(e, "Resume execution failed: executionId={0}", executionId);
@@ -266,8 +314,11 @@ public class WorkflowService {
     /// @return the workflow
     /// @throws WorkflowNotFoundException if not found
     private Workflow loadWorkflow(String workflowId) {
-        // TODO: Load from workflow registry
-        throw new WorkflowNotFoundException("Workflow loading not yet implemented: " + workflowId);
+        String tenantId = TenantContext.current().tenantId();
+        return workflowRepository
+                .findById(tenantId, workflowId)
+                .orElseThrow(
+                        () -> new WorkflowNotFoundException("Workflow not found: " + workflowId));
     }
 
     // --- Result types ---

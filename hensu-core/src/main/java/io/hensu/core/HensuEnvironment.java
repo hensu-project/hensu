@@ -5,6 +5,8 @@ import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
 import io.hensu.core.rubric.RubricRepository;
+import io.hensu.core.state.WorkflowStateRepository;
+import io.hensu.core.workflow.WorkflowRepository;
 import java.util.concurrent.ExecutorService;
 
 /// Container holding all core Hensu components required for workflow execution.
@@ -35,6 +37,8 @@ public final class HensuEnvironment implements AutoCloseable {
     private final RubricRepository rubricRepository;
     private final ExecutorService executorService;
     private final ActionExecutor actionExecutor;
+    private final WorkflowRepository workflowRepository;
+    private final WorkflowStateRepository workflowStateRepository;
 
     /// Creates a new Hensu environment with the specified components.
     ///
@@ -44,19 +48,25 @@ public final class HensuEnvironment implements AutoCloseable {
     /// @param rubricRepository storage for rubric definitions, not null
     /// @param executorService thread pool for parallel execution, not null
     /// @param actionExecutor executor for executable actions, may be null for logging-only mode
+    /// @param workflowRepository tenant-scoped storage for workflow definitions, not null
+    /// @param workflowStateRepository tenant-scoped storage for execution state snapshots, not null
     public HensuEnvironment(
             WorkflowExecutor workflowExecutor,
             NodeExecutorRegistry nodeExecutorRegistry,
             AgentRegistry agentRegistry,
             RubricRepository rubricRepository,
             ExecutorService executorService,
-            ActionExecutor actionExecutor) {
+            ActionExecutor actionExecutor,
+            WorkflowRepository workflowRepository,
+            WorkflowStateRepository workflowStateRepository) {
         this.workflowExecutor = workflowExecutor;
         this.nodeExecutorRegistry = nodeExecutorRegistry;
         this.agentRegistry = agentRegistry;
         this.rubricRepository = rubricRepository;
         this.executorService = executorService;
         this.actionExecutor = actionExecutor;
+        this.workflowRepository = workflowRepository;
+        this.workflowStateRepository = workflowStateRepository;
     }
 
     /// Returns the workflow executor for running workflow definitions.
@@ -92,6 +102,26 @@ public final class HensuEnvironment implements AutoCloseable {
     /// @return the action executor, may be null if running in logging-only mode
     public ActionExecutor getActionExecutor() {
         return actionExecutor;
+    }
+
+    /// Returns the repository for storing and retrieving workflow definitions.
+    ///
+    /// Defaults to {@link io.hensu.core.workflow.InMemoryWorkflowRepository} when
+    /// no custom implementation is registered via {@link HensuFactory.Builder}.
+    ///
+    /// @return the workflow repository, never null
+    public WorkflowRepository getWorkflowRepository() {
+        return workflowRepository;
+    }
+
+    /// Returns the repository for persisting workflow execution state snapshots.
+    ///
+    /// Defaults to {@link io.hensu.core.state.InMemoryWorkflowStateRepository} when
+    /// no custom implementation is registered via {@link HensuFactory.Builder}.
+    ///
+    /// @return the workflow state repository, never null
+    public WorkflowStateRepository getWorkflowStateRepository() {
+        return workflowStateRepository;
     }
 
     /// Shuts down the underlying executor service gracefully.

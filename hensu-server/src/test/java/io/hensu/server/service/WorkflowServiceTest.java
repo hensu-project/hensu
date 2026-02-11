@@ -2,13 +2,16 @@ package io.hensu.server.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.state.HensuSnapshot;
-import io.hensu.server.persistence.WorkflowStateRepository;
+import io.hensu.core.state.WorkflowStateRepository;
+import io.hensu.core.workflow.Workflow;
+import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.server.service.WorkflowService.ExecutionNotFoundException;
 import io.hensu.server.service.WorkflowService.ExecutionStatus;
 import io.hensu.server.service.WorkflowService.ExecutionSummary;
@@ -26,6 +29,7 @@ class WorkflowServiceTest {
     private WorkflowExecutor workflowExecutor;
     private WorkflowStateRepository stateRepository;
     private ExecutionEventBroadcaster eventBroadcaster;
+    private WorkflowRepository workflowRepository;
     private WorkflowService service;
 
     @BeforeEach
@@ -33,7 +37,10 @@ class WorkflowServiceTest {
         workflowExecutor = mock(WorkflowExecutor.class);
         stateRepository = mock(WorkflowStateRepository.class);
         eventBroadcaster = mock(ExecutionEventBroadcaster.class);
-        service = new WorkflowService(workflowExecutor, stateRepository, eventBroadcaster);
+        workflowRepository = mock(WorkflowRepository.class);
+        service =
+                new WorkflowService(
+                        workflowExecutor, stateRepository, eventBroadcaster, workflowRepository);
     }
 
     private HensuSnapshot createSnapshot(
@@ -125,10 +132,13 @@ class WorkflowServiceTest {
     class ResumeExecution {
 
         @Test
-        void shouldLoadStateForResume() {
+        void shouldLoadStateForResume() throws Exception {
             HensuSnapshot snapshot = createSnapshot("wf-1", "exec-1", "node-1");
             when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
                     .thenReturn(Optional.of(snapshot));
+            when(workflowRepository.findById("tenant-1", "wf-1"))
+                    .thenReturn(Optional.of(mock(Workflow.class)));
+            when(workflowExecutor.executeFrom(any(), any())).thenReturn(null);
 
             service.resumeExecution("tenant-1", "exec-1", null);
 
@@ -174,23 +184,54 @@ class WorkflowServiceTest {
 
         @Test
         void shouldRejectNullWorkflowExecutor() {
-            assertThatThrownBy(() -> new WorkflowService(null, stateRepository, eventBroadcaster))
+            assertThatThrownBy(
+                            () ->
+                                    new WorkflowService(
+                                            null,
+                                            stateRepository,
+                                            eventBroadcaster,
+                                            workflowRepository))
                     .isInstanceOf(NullPointerException.class)
                     .hasMessageContaining("workflowExecutor");
         }
 
         @Test
         void shouldRejectNullStateRepository() {
-            assertThatThrownBy(() -> new WorkflowService(workflowExecutor, null, eventBroadcaster))
+            assertThatThrownBy(
+                            () ->
+                                    new WorkflowService(
+                                            workflowExecutor,
+                                            null,
+                                            eventBroadcaster,
+                                            workflowRepository))
                     .isInstanceOf(NullPointerException.class)
                     .hasMessageContaining("stateRepository");
         }
 
         @Test
         void shouldRejectNullEventBroadcaster() {
-            assertThatThrownBy(() -> new WorkflowService(workflowExecutor, stateRepository, null))
+            assertThatThrownBy(
+                            () ->
+                                    new WorkflowService(
+                                            workflowExecutor,
+                                            stateRepository,
+                                            null,
+                                            workflowRepository))
                     .isInstanceOf(NullPointerException.class)
                     .hasMessageContaining("eventBroadcaster");
+        }
+
+        @Test
+        void shouldRejectNullWorkflowRepository() {
+            assertThatThrownBy(
+                            () ->
+                                    new WorkflowService(
+                                            workflowExecutor,
+                                            stateRepository,
+                                            eventBroadcaster,
+                                            null))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("workflowRepository");
         }
     }
 }

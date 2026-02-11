@@ -1,6 +1,5 @@
 package io.hensu.core.agent;
 
-import io.hensu.core.agent.spi.AgentProvider;
 import java.util.*;
 import java.util.logging.Logger;
 

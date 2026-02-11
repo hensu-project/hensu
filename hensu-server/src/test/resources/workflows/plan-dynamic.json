@@ -1,0 +1,41 @@
+{
+  "id" : "plan-dynamic",
+  "version" : "1.0.0",
+  "startNode" : "execute",
+  "agents" : {
+    "planner" : {
+      "id" : "planner",
+      "role" : "planner",
+      "model" : "stub",
+      "temperature" : 0.3
+    }
+  },
+  "nodes" : {
+    "execute" : {
+      "id" : "execute",
+      "nodeType" : "STANDARD",
+      "agentId" : "planner",
+      "prompt" : "Plan and execute: {task}",
+      "planningConfig" : {
+        "mode" : "DYNAMIC",
+        "constraints" : {
+          "maxSteps" : 10,
+          "maxReplans" : 2,
+          "maxDuration" : "PT5M",
+          "maxTokenBudget" : 0,
+          "allowReplan" : true
+        },
+        "reviewBeforeExecute" : false
+      },
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

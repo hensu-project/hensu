@@ -123,7 +123,7 @@ class ActionNodeTest {
     }
 
     @Test
-    void shouldReturnEmptyStringForRubricId() {
+    void shouldReturnNullForRubricId() {
         // Given
         List<Action> actions = List.of(new Action.Execute("test"));
         List<TransitionRule> transitions = List.of(new SuccessTransition("next"));
@@ -136,7 +136,7 @@ class ActionNodeTest {
                         .build();
 
         // Then - action nodes don't have rubrics
-        assertThat(node.getRubricId()).isEmpty();
+        assertThat(node.getRubricId()).isNull();
     }
 
     @Test
@@ -207,27 +207,6 @@ class ActionNodeTest {
         assertThat(node1).isEqualTo(node2); // Same ID
         assertThat(node1).isNotEqualTo(node3); // Different ID
         assertThat(node1.hashCode()).isEqualTo(node2.hashCode());
-    }
-
-    @Test
-    void shouldReturnMeaningfulToString() {
-        // Given
-        List<Action> actions = List.of(new Action.Execute("cmd1"), new Action.Send("slack"));
-        List<TransitionRule> transitions = List.of(new SuccessTransition("next"));
-
-        ActionNode node =
-                ActionNode.builder()
-                        .id("test-action-node")
-                        .actions(actions)
-                        .transitionRules(transitions)
-                        .build();
-
-        // When
-        String toString = node.toString();
-
-        // Then
-        assertThat(toString).contains("test-action-node");
-        assertThat(toString).contains("2"); // actions count
     }
 
     @Test

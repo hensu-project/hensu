@@ -1,9 +1,8 @@
-package io.hensu.server.persistence;
+package io.hensu.core.state;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.hensu.core.state.HensuSnapshot;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -60,9 +59,17 @@ class InMemoryWorkflowStateRepositoryTest {
             repository.save("tenant-1", snapshot1);
             repository.save("tenant-2", snapshot2);
 
-            assertThat(repository.findByExecutionId("tenant-1", "exec-1").get().currentNodeId())
+            assertThat(
+                            repository
+                                    .findByExecutionId("tenant-1", "exec-1")
+                                    .orElseThrow()
+                                    .currentNodeId())
                     .isEqualTo("node-1");
-            assertThat(repository.findByExecutionId("tenant-2", "exec-1").get().currentNodeId())
+            assertThat(
+                            repository
+                                    .findByExecutionId("tenant-2", "exec-1")
+                                    .orElseThrow()
+                                    .currentNodeId())
                     .isEqualTo("node-2");
         }
 

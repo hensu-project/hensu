@@ -28,11 +28,14 @@ coverage/
 
 # Project Metadata (Noise for AI)
 .git/
+.github/
 .idea/
 .vscode/
 .settings/
 .pommel/
 .claudecode/
+.claude/
+.cursor/
 
 # Large Binary Files & Media
 *.jar
