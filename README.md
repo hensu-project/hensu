@@ -87,16 +87,16 @@ The architecture follows a strict **Split-Pipe** model:
 **No user code runs on the server.** The server is a pure orchestrator; all side effects happen on the client via MCP.
 
 ```
-  Developer (local)                                    Hensu Runtime              External
- ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌─────────────────────┐    ┌──────────────┐
- │ Kotlin   │───>│  hensu   │───>│   JSON   │───>│  Hensu Server       │<──>│ LLMs (Claude │
- │ DSL      │    │  build   │    │   Def.   │    │  (GraalVM Native)   │    │ GPT, Gemini) │
- └──────────┘    └──────────┘    └──────────┘    │                     │    └──────────────┘
-                                   hensu push    │  Core Engine        │    ┌──────────────┐
-                                                 │  ├ State Manager    │<──>│ MCP Tool     │
-                                                 │  ├ Rubric Evaluator │    │ Servers      │
-                                                 │  └ Consensus Engine │    └──────────────┘
-                                                 └─────────────────────┘
+ Developer (local)                                               Hensu Runtime               External
+ +——————————+    +——————————+    +——————————+    +——————————+    +——————————————————————+    +——————————————+
+ │ Kotlin   │    │  hensu   │    │   JSON   │    │  hensu   │    │  Hensu Server        │    │ LLMs (Claude │
+ │ DSL      │———>│  build   │———>│   Def.   │———>│  push    │———>│  (GraalVM Native)    │<——>│ GPT, Gemini) │
+ +——————————+    +——————————+    +——————————+    +——————————+    │                      │    +——————————————+
+                                                                 │  Core Engine         │    +——————————————+
+                                                                 │  +— State Manager    │<——>│ MCP Tool     │
+                                                                 │  +— Rubric Evaluator │    │ Servers      │
+                                                                 │  +— Consensus Engine │    +——————————————+
+                                                                 +——————————————————————+
 ```
 
 ---

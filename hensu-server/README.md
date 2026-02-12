@@ -20,28 +20,28 @@ It initializes core infrastructure via `HensuFactory.builder()` and delegates al
 to external MCP servers.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
++—————————————————————————————————————————————————————————————————+
 │                         hensu-server                            │
-│  ┌──────────────────┐  ┌─────────────┐  ┌───────────────────┐   │
+│  +——————————————————+  +—————————————+  +———————————————————+   │
 │  │  REST API        │  │ MCP Gateway │  │  Agentic Executor │   │
 │  │  (Workflows +    │  │ (JSON-RPC)  │  │  (Plan + Execute) │   │
 │  │   Executions)    │  │             │  │                   │   │
-│  └────────┬─────────┘  └──────┬──────┘  └────────┬──────────┘   │
+│  +————————+—————————+  +——————+——————+  +————————+——————————+   │
 │           │                   │                  │              │
-│  ┌────────┴───────────────────┴──────────────────┴───────────┐  │
+│  +————————+———————————————————+——————————————————+———————————+  │
 │  │  Server Runtime                                           │  │
-│  │  ┌────────────────┐  ┌──────────────┐                     │  │
+│  │  +————————————————+  +——————————————+                     │  │
 │  │  │ ServerAction   │  │ TenantContext│                     │  │
 │  │  │ Executor (MCP) │  │ (ScopedValue)│                     │  │
-│  │  └────────────────┘  └──────────────┘                     │  │
-│  └───────────────────────────┬───────────────────────────────┘  │
+│  │  +————————————————+  +——————————————+                     │  │
+│  +———————————————————————————+———————————————————————————————+  │
 │                              │                                  │
-│  ┌───────────────────────────┴───────────────────────────────┐  │
+│  +———————————————————————————+———————————————————————————————+  │
 │  │  hensu-core (HensuEnvironment via HensuFactory)           │  │
-│  │  WorkflowExecutor │ AgentRegistry │ PlanExecutor │        │  │
+│  │  WorkflowExecutor │ AgentRegistry │ PlanExecutor          │  │
 │  │  RubricEngine │ WorkflowRepository │ StateRepository      │  │
-│  └───────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+│  +———————————————————————————————————————————————————————————+  │
++—————————————————————————————————————————————————————————————————+
 ```
 
 ## Quick Start
@@ -121,15 +121,15 @@ Implements MCP (Model Context Protocol) over SSE using a "split-pipe" architectu
 - **Upstream (HTTP POST)**: Clients send JSON-RPC responses back
 
 ```
-┌─────────────────┐                    ┌─────────────────┐
++—————————————————+                    +—————————————————+
 │  Hensu Engine   │                    │  Tenant Client  │
 │                 │                    │  (MCP Server)   │
-│  sendRequest()  │──── SSE ──────────>│  EventSource    │
+│  sendRequest()  │———— SSE ——————————>│  EventSource    │
 │                 │  (tools/call)      │                 │
 │                 │                    │                 │
-│  handleResponse │<─── POST ──────────│  POST /message  │
+│  handleResponse │<——— POST ——————————│  POST /message  │
 │  (Future.done)  │  (result/error)    │                 │
-└─────────────────┘                    └─────────────────┘
++—————————————————+                    +—————————————————+
 ```
 
 | Method | Path                        | Description                                          |
@@ -245,20 +245,20 @@ hensu.planning.default-timeout=5m
 ```
 hensu-server/
 ├── src/main/java/io/hensu/server/
-│   ├── action/                # Server-specific action execution
-│   │   └── ServerActionExecutor.java    # MCP-only (rejects local execution)
-│   ├── api/                   # REST and SSE endpoints
-│   │   ├── WorkflowResource.java        # Workflow definition management
-│   │   ├── ExecutionResource.java       # Execution runtime operations
-│   │   ├── ExecutionEventResource.java  # SSE endpoint for execution events
-│   │   └── McpGatewayResource.java      # MCP SSE/POST endpoints
-│   ├── config/                # CDI configuration
+│   ├── action/                            # Server-specific action execution
+│   │   └── ServerActionExecutor.java      # MCP-only (rejects local execution)
+│   ├── api/                               # REST and SSE endpoints
+│   │   ├── WorkflowResource.java          # Workflow definition management
+│   │   ├── ExecutionResource.java         # Execution runtime operations
+│   │   ├── ExecutionEventResource.java    # SSE endpoint for execution events
+│   │   └── McpGatewayResource.java        # MCP SSE/POST endpoints
+│   ├── config/                            # CDI configuration
 │   │   ├── HensuEnvironmentProducer.java  # HensuFactory → HensuEnvironment
 │   │   ├── ServerBootstrap.java           # Startup registrations
 │   │   └── ServerConfiguration.java       # CDI delegation + server beans
-│   ├── executor/              # Planning-aware execution
+│   ├── executor/                          # Planning-aware execution
 │   │   └── AgenticNodeExecutor.java
-│   ├── mcp/                   # MCP integration (SSE split-pipe transport)
+│   ├── mcp/                               # MCP integration (SSE split-pipe transport)
 │   │   ├── JsonRpc.java
 │   │   ├── McpConnection.java
 │   │   ├── McpConnectionFactory.java
