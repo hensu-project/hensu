@@ -125,7 +125,7 @@ hensu-dsl/src/main/kotlin/io/hensu/dsl/
 ├── runners/
 │   └── SimpleRunner.kt           # Standalone execution entry point
 └── internal/
-    └── DSLContext.kt              # Internal DSL state management
+    └── DSLContext.kt             # Internal DSL state management
 ```
 
 ## Key Concepts

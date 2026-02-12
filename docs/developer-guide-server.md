@@ -24,41 +24,41 @@ The server module extends `hensu-core` with HTTP capabilities. Core infrastructu
 via `HensuFactory.builder()` - **never** by constructing components directly.
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
++——————————————————————————————————————————————————————————————————————+
 │                            hensu-server                              │
 │                                                                      │
-│  ┌───────────────────────────────────────────────────────────────┐   │
+│  +———————————————————————————————————————————————————————————————+   │
 │  │                       api/ (REST + SSE)                       │   │
 │  │  WorkflowResource │ ExecutionResource │ ExecutionEventResource│   │
-│  └───────────────────────────────────────────────────────────────┘   │
+│  +—————————————————————————————+—————————————————————————————————+   │
 │                                │                                     │
-│  ┌─────────────────────────────┼─────────────────────────────────┐   │
+│  +—————————————————————————————+—————————————————————————————————+   │
 │  │                      service/                                 │   │
 │  │                       WorkflowService                         │   │
-│  └─────────────────────────────┼─────────────────────────────────┘   │
+│  +—————————————————————————————+—————————————————————————————————+   │
 │                                │                                     │
-│  ┌─────────────────────────────┼─────────────────────────────────┐   │
+│  +—————————————————————————————+—————————————————————————————————+   │
 │  │  streaming/                 │        mcp/                     │   │
 │  │  (SSE Events)               │  (MCP Split-Pipe)               │   │
-│  └─────────────────────────────┴─────────────────────────────────┘   │
+│  +—————————————————————————————+—————————————————————————————————+   │
 │                                │                                     │
-│  ┌────────────┬────────────────┴────────────────┬────────────────┐   │
+│  +————————————+————————————————+————————————————+————————————————+   │
 │  │ action/    │          config/                │   tenant/      │   │
 │  │ Server     │  HensuEnvironmentProducer       │  TenantContext │   │
 │  │ Action     │  ServerConfiguration            │  (ScopedValue) │   │
 │  │ Executor   │  ServerBootstrap                │                │   │
-│  └────────────┴─────────────────────────────────┴────────────────┘   │
+│  +————————————+—————————————————————————————————+————————————————+   │
 │                                │                                     │
-└────────────────────────────────┼─────────────────────────────────────┘
++————————————————————————————————+—————————————————————————————————————+
                                  │
-                      ┌──────────┴──────────┐
+                      +——————————+——————————+
                       │     hensu-core      │
                       │  (HensuEnvironment) │
                       │  WorkflowExecutor   │
                       │  AgentRegistry      │
                       │  PlanExecutor       │
                       │  ToolRegistry       │
-                      └─────────────────────┘
+                      +—————————————————————+
 ```
 
 ### Request Flow
@@ -777,7 +777,7 @@ public Object dynamicBean() {
 
 ```bash
 # Full native build (slow — run before releases, not on every change)
-./gradlew hensu-server:build -Dquarkus.native.enabled=true
+./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native
 
 # Quick JVM-mode test (catches most issues except native-specific ones)
 ./gradlew hensu-server:test

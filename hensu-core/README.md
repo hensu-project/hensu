@@ -20,29 +20,29 @@ The `hensu-core` module is the execution engine at the heart of Hensu. It provid
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
++——————————————————————————————————————————————————————————————————————+
 │  HensuFactory.builder()                                              │
 │                                                                      │
-│  ┌────────────────┐  ┌────────────────┐  ┌──────────────────────┐    │
+│  +————————————————+  +————————————————+  +——————————————————————+    │
 │  │WorkflowExecutor│  │ AgentRegistry  │  │ RubricEngine         │    │
 │  │(graph engine)  │  │ (agent lookup) │  │ (quality gates)      │    │
-│  └───────┬────────┘  └───────┬────────┘  └──────────┬───────────┘    │
+│  +———————+————————+  +———————+————————+  +——————————+———————————+    │
 │          │                   │                      │                │
-│  ┌───────┴───────────────────┴──────────────────────┴─────────────┐  │
+│  +———————+———————————————————+——————————————————————+—————————————+  │
 │  │  Node Executors                                                │  │
 │  │  Standard │ Parallel │ Fork/Join │ Loop │ Action │ Generic     │  │
-│  └────────────────────────────────────────────────────────────────┘  │
+│  +————————————————————————————————————————————————————————————————+  │
 │                                                                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐               │
+│  +——————————————+  +——————————————+  +———————————————+               │
 │  │ AgentFactory │  │ PlanExecutor │  │ ActionExecutor│               │
 │  │ (providers)  │  │ (step exec)  │  │ (send/execute)│               │
-│  └──────────────┘  └──────────────┘  └───────────────┘               │
+│  +——————————————+  +——————————————+  +———————————————+               │
 │                                                                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────────┐   │
+│  +——————————————+  +——————————————+  +———————————————————————————+   │
 │  │ ToolRegistry │  │ TemplateRes. │  │ ReviewHandler             │   │
 │  │ (tool defs)  │  │ ({var} subst)│  │ (human-in-the-loop)       │   │
-│  └──────────────┘  └──────────────┘  └───────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────────┘
+│  +——————————————+  +——————————————+  +———————————————————————————+   │
++——————————————————————————————————————————————————————————————————————+
 ```
 
 ## Key Design Principles
@@ -78,25 +78,25 @@ Quality evaluation engine for rubric-based output assessment. Evaluates workflow
 rubrics to determine quality scores and pass/fail status.
 
 ```
-┌──────────────────────────────────────────────────────────┐
++——————————————————————————————————————————————————————————+
 │  RubricEngine                                            │
 │                                                          │
-│  ┌────────────────────┐   ┌──────────────────────────┐   │
+│  +————————————————————+   +——————————————————————————+   │
 │  │  RubricRepository  │   │   RubricEvaluator        │   │
-│  │  (rubric storage)  │   │  ┌────────────────────┐  │   │
-│  │  ┌──────────────┐  │   │  │DefaultRubricEval.  │  │   │
+│  │  (rubric storage)  │   │  +————————————————————+  │   │
+│  │  +——————————————+  │   │  │DefaultRubricEval.  │  │   │
 │  │  │InMemoryRubric│  │   │  │(self-evaluation)   │  │   │
-│  │  │Repository    │  │   │  ├────────────────────┤  │   │
-│  │  └──────────────┘  │   │  │LLMRubricEvaluator  │  │   │
-│  └────────────────────┘   │  │(external agent)    │  │   │
-│                           │  └────────────────────┘  │   │
-│  ┌────────────────────┐   └──────────────────────────┘   │
+│  │  │Repository    │  │   │  +————————————————————+  │   │
+│  │  +——————————————+  │   │  │LLMRubricEvaluator  │  │   │
+│  +————————————————————+   │  │(external agent)    │  │   │
+│                           │  +————————————————————+  │   │
+│  +————————————————————+   +——————————————————————————+   │
 │  │  Rubric Model      │                                  │
-│  │  ├─ Rubric         │   Scores normalized to 0-100     │
-│  │  ├─ Criterion      │   Weighted criteria evaluation   │
-│  │  └─ CriterionEval  │   Per-criterion feedback         │
-│  └────────────────────┘                                  │
-└──────────────────────────────────────────────────────────┘
+│  │  +— Rubric         │   Scores normalized to 0-100     │
+│  │  +— Criterion      │   Weighted criteria evaluation   │
+│  │  +— CriterionEval  │   Per-criterion feedback         │
+│  +————————————————————+                                  │
++——————————————————————————————————————————————————————————+
 ```
 
 **Key types:**
@@ -119,26 +119,28 @@ Supports static or LLM-generated step-by-step plan execution within nodes. Plans
 achieve a goal.
 
 ```
-┌─────────────────────────────────────────────────┐
-│  Node with Planning                             │
-│                                                 │
-│  Goal ──► Planner ──► Plan [S1, S2, S3, ...]    │
-│           │                    │                │
-│           │  ┌─────────────────┘                │
-│           │  ▼                                  │
-│           │  PlanExecutor                       │
-│           │  ┌──────┐  ┌───────┐  ┌───────┐     │
-│           │  │Exec  │─►│Observe│─►│Reflect│──┐  │
-│           │  │Step  │  │Result │  │       │  │  │
-│           │  └──────┘  └───────┘  └───────┘  │  │
-│           │      ▲                           │  │
-│           │      └───────────────────────────┘  │
-│           │            (next step or replan)    │
-│  ┌────────┴───────┐                             │
-│  │ StaticPlanner  │  (from DSL plan {} block)   │
-│  │ LLM Planner   │  (server-side, dynamic)      │
-│  └────────────────┘                             │
-└─────────────────────────────────────────────────┘
++————————————————————————————————————————————————————+
+│  Node with Planning                                │
+│                                                    │
+│  Goal ———> Planner ———> Plan [S1, S2, S3, ...]     │
+│            │                    │                  │
+│            │  +—————————————————+                  │
+│            │  │                                    │
+│            │  V                                    │
+│            │  PlanExecutor                         │
+│            │  +——————+   +———————+   +———————+     │
+│            │  │Exec  │——>│Observe│——>│Reflect│——+  │
+│            │  │Step  │   │Result │   │       │  │  │
+│            │  +——————+   +———————+   +———————+  │  │
+│            │      ^                             │  │
+│            │      │                             │  │
+│            │      +—————————————————————————————+  │
+│            │            (next step or replan)      │
+│  +—————————+——————+                                │
+│  │ StaticPlanner  │  (from DSL plan {} block)      │
+│  │ LLM Planner    │  (server-side, dynamic)        │
+│  +————————————————+                                │
++————————————————————————————————————————————————————+
 ```
 
 **Planning modes:**
@@ -207,9 +209,9 @@ hensu-core/src/main/java/io/hensu/core/
 │       ├── StubAgent.java         # Mock agent returning stub responses
 │       └── StubResponseRegistry.java
 ├── execution/
-│   ├── WorkflowExecutor.java      # Main graph traversal engine
+│   ├── WorkflowExecutor.java          # Main graph traversal engine
 │   ├── executor/
-│   │   ├── NodeExecutor.java      # Interface for node type executors
+│   │   ├── NodeExecutor.java          # Interface for node type executors
 │   │   ├── StandardNodeExecutor.java  # LLM prompt execution
 │   │   ├── ParallelNodeExecutor.java  # Concurrent branch execution
 │   │   ├── ForkNodeExecutor.java      # Fork into parallel paths
