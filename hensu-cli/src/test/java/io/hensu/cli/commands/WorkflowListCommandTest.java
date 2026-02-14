@@ -24,7 +24,7 @@ class WorkflowListCommandTest extends BaseWorkflowCommandTest {
     void setUp() throws Exception {
         command = spy(new WorkflowListCommand());
         injectField(command, "serverUrl", "http://localhost:8080");
-        injectField(command, "tenantId", "test-tenant");
+        injectField(command, "token", "test-tenant");
     }
 
     @Test

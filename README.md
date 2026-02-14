@@ -6,7 +6,8 @@
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Java](https://img.shields.io/badge/Java-25-ED8B00?logo=openjdk&logoColor=white)](https://jdk.java.net/)
-[![Build](https://img.shields.io/badge/Build-Native%20Image-success)](https://graalvm.org/)
+[![CI](https://github.com/hensu-project/hensu/actions/workflows/ci.yml/badge.svg)](https://github.com/hensu-project/hensu/actions/workflows/ci.yml)
+[![Native Image](https://github.com/hensu-project/hensu/actions/workflows/native.yml/badge.svg)](https://github.com/hensu-project/hensu/actions/workflows/native.yml)
 [![Protocol](https://img.shields.io/badge/Protocol-MCP-green)](https://modelcontextprotocol.io/)
 [![Status](https://img.shields.io/badge/Status-Alpha-red)]()
 
@@ -38,7 +39,7 @@ of LLMs, MCP-based tool calling, and human-in-the-loop gates.
 | **Sub-Workflows**     | Hierarchical composition via `SubWorkflowNode` with input/output mapping for reusable, modular workflow definitions.                         |
 | **MCP Gateway**       | Provides seamless remote tool execution. Connects to any remote MCP server to run tools externally, keeping the engine core secure and lean. |
 | **Multi-Tenancy**     | Rigorous isolation using Java `ScopedValues` for safe SaaS deployment.                                                                       |
-| **Resilience**        | Distributed state architecture allows workflows to be paused, resumed, and migrated.                                                         |
+| **Resilience**        | PostgreSQL-backed checkpoint persistence allows workflows to be paused, resumed, and recovered after server failure.                         |
 | **Agentic Planning**  | Supports both static (pre-defined) and dynamic (LLM-generated) execution plans.                                                              |
 | **Human in the Loop** | Integrated "Checkpoints" allowing manual approval or intervention before high-stakes node transitions.                                       |
 | **Rubric Evaluation** | Automated quality gates that verify node outputs against defined criteria before allowing workflow progression.                              |
@@ -229,7 +230,7 @@ echo 'fun flow() = workflow("hello") { ... }' > hello.kt
 
 ```shell
 curl -X POST http://localhost:8080/api/v1/executions \
-  -H "X-Tenant-ID: tenant-1" \
+  -H "Authorization: Bearer <jwt>" \
   -d '{"workflowId": "hello", "context": {"topic": "AI Agents"}}'
 ```
 
@@ -237,13 +238,6 @@ curl -X POST http://localhost:8080/api/v1/executions \
 
 Hensu is pre-configured with architectural rules in `.claude/rules/` and `.cursor/rules/`. You do not need to create
 custom instructions or CLAUDE.md files.
-
-**Context Retrieval:**
-
-* **Recommended:** Install **[Pommel](https://github.com/dbinky/Pommel)** for the highest accuracy. The agent will use
-  it to understand the codebase semantically.
-* **Optional:** If you do not install Pommel, the agent is configured to **automatically fall back** to standard tools
-  (`grep`, `find`). No configuration is required; the agent will simply warn you about reduced context accuracy.
 
 ---
 

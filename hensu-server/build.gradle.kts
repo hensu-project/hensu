@@ -39,13 +39,18 @@ dependencies {
     implementation("io.quarkus:quarkus-arc")
     implementation("io.quarkus:quarkus-kotlin")
 
-    // Persistence (optional, can be enabled when needed)
-    // implementation("io.quarkus:quarkus-hibernate-orm-panache")
-    // implementation("io.quarkus:quarkus-jdbc-postgresql")
+    // Persistence — plain JDBC + Flyway (no ORM, virtual threads handle concurrency)
+    implementation("io.quarkus:quarkus-jdbc-postgresql")
+    implementation("io.quarkus:quarkus-flyway")
+
+    // Security — JWT bearer token authentication
+    implementation("io.quarkus:quarkus-smallrye-jwt")
 
     // Testing
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("io.rest-assured:rest-assured")
-    testImplementation("org.mockito:mockito-junit-jupiter:5.15.2")
-    testImplementation("org.assertj:assertj-core:3.27.3")
+    testImplementation("org.testcontainers:postgresql")
+    testImplementation("org.testcontainers:junit-jupiter")
+    testImplementation("org.flywaydb:flyway-database-postgresql")
+    testImplementation("io.quarkus:quarkus-test-security-jwt")
 }

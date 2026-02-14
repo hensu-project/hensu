@@ -15,7 +15,7 @@ import picocli.CommandLine.Parameters;
 /// ### Usage
 /// ```
 /// hensu push my-workflow          # reads build/my-workflow.json
-/// hensu push my-workflow --server http://prod:8080 --tenant acme
+/// hensu push my-workflow --server http://prod:8080 --token "$TOKEN"
 /// ```
 ///
 /// @see WorkflowBuildCommand for compiling workflows
@@ -44,14 +44,7 @@ public class WorkflowPushCommand extends ServerCommand {
             return;
         }
 
-        System.out.println(
-                "Pushing "
-                        + workflowId
-                        + " to "
-                        + getServerUrl()
-                        + " (tenant: "
-                        + getTenantId()
-                        + ")");
+        System.out.println("Pushing " + workflowId + " to " + getServerUrl());
 
         HttpResponse<String> response = httpPost("/api/v1/workflows", json);
 

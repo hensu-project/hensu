@@ -67,7 +67,7 @@ hensu push my-workflow
 # Or directly via curl
 curl -X POST http://localhost:8080/api/v1/workflows \
   -H "Content-Type: application/json" \
-  -H "X-Tenant-ID: tenant-123" \
+  -H "Authorization: Bearer <jwt>" \
   -d @workflow.json
 
 # Response (201 Created)
@@ -79,7 +79,7 @@ curl -X POST http://localhost:8080/api/v1/workflows \
 ```bash
 curl -X POST http://localhost:8080/api/v1/executions \
   -H "Content-Type: application/json" \
-  -H "X-Tenant-ID: tenant-123" \
+  -H "Authorization: Bearer <jwt>" \
   -d '{"workflowId": "order-processing", "context": {"orderId": "ORD-456"}}'
 
 # Response (202 Accepted)
@@ -88,7 +88,9 @@ curl -X POST http://localhost:8080/api/v1/executions \
 
 ## REST API
 
-All endpoints require the `X-Tenant-ID` header for multi-tenant isolation.
+All API and MCP endpoints require a valid JWT bearer token (`Authorization: Bearer <jwt>`).
+Tenant identity is extracted from the `tenant_id` claim. In dev/test mode, authentication
+is disabled and a default tenant is used (see [Local Development Tokens](#local-development-tokens)).
 
 ### Workflow Definition Management
 
@@ -162,18 +164,18 @@ Implements MCP (Model Context Protocol) over SSE using a "split-pipe" architectu
 ```bash
 # 1. Start execution (pauses for plan review)
 curl -X POST http://localhost:8080/api/v1/executions \
-  -H "X-Tenant-ID: tenant-123" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"workflowId": "research", "context": {"topic": "quantum computing"}}'
 
 # 2. Check pending plan
 curl http://localhost:8080/api/v1/executions/exec-123/plan \
-  -H "X-Tenant-ID: tenant-123"
+  -H "Authorization: Bearer $TOKEN"
 
 # Response: {"planId": "plan-456", "totalSteps": 5, "currentStep": 0}
 
 # 3. Approve and resume
 curl -X POST http://localhost:8080/api/v1/executions/exec-123/resume \
-  -H "X-Tenant-ID: tenant-123" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"approved": true}'
 ```
 
@@ -213,11 +215,17 @@ Planning-aware executor for StandardNodes:
 
 ### Persistence
 
-Repository interfaces and in-memory defaults live in `hensu-core`. The server delegates them from
-`HensuEnvironment` via `@Produces @Singleton` — it never creates instances directly.
+Repository interfaces and in-memory defaults live in `hensu-core`. The server provides PostgreSQL
+implementations via plain JDBC + Flyway. `HensuEnvironmentProducer` conditionally wires JDBC repos
+when a DataSource is available, otherwise falls back to in-memory. Repositories are delegated from
+`HensuEnvironment` via `@Produces @Singleton` — never created directly in CDI producers.
 
 - `WorkflowRepository` (`io.hensu.core.workflow`) — Workflow definition storage
-- `WorkflowStateRepository` (`io.hensu.core.state`) — Execution state snapshots (pause/resume)
+- `WorkflowStateRepository` (`io.hensu.core.state`) — Execution state snapshots (checkpoint/pause/resume)
+- `JdbcWorkflowRepository` / `JdbcWorkflowStateRepository` — PostgreSQL implementations (JSONB columns)
+- **Checkpoint hook**: `WorkflowExecutor` calls `listener.onCheckpoint(state)` before each node execution,
+  enabling inter-node state persistence for failover recovery
+- **`inmem` profile**: `quarkus.datasource.active=false` disables PostgreSQL for in-memory-only operation
 
 ## Configuration
 
@@ -235,9 +243,63 @@ hensu.mcp.pool-size=10
 hensu.planning.default-max-steps=10
 hensu.planning.default-max-replans=3
 hensu.planning.default-timeout=5m
-# Database (optional)
-# quarkus.datasource.db-kind=postgresql
-# quarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/hensu
+# PostgreSQL (Dev Services auto-starts a container in dev/test mode)
+quarkus.datasource.db-kind=postgresql
+%prod.quarkus.datasource.username=hensu
+%prod.quarkus.datasource.password=hensu
+%prod.quarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/hensu
+# Flyway schema migrations
+quarkus.flyway.migrate-at-start=true
+quarkus.flyway.schemas=hensu
+# In-memory profile (no PostgreSQL)
+%inmem.quarkus.datasource.active=false
+%inmem.quarkus.datasource.devservices.enabled=false
+%inmem.quarkus.flyway.migrate-at-start=false
+```
+
+### Local Development Tokens
+
+In **dev mode** (`quarkusDev`), JWT auth is permissive and `RequestTenantResolver` falls back to the
+`hensu.tenant.default` property. No token is required for local development.
+
+For **production-like testing** with real JWT validation, generate an RSA key pair and a signed token
+outside the repository:
+
+```bash
+# 1. Generate RSA 2048-bit key pair (store outside the repo, e.g., ~/.hensu/)
+mkdir -p ~/.hensu
+openssl genrsa -out ~/.hensu/privateKey.pem 2048
+openssl rsa -in ~/.hensu/privateKey.pem -pubout -out ~/.hensu/publicKey.pem
+
+# 2. Point the server at the public key via environment variable
+export HENSU_JWT_PUBLIC_KEY=~/.hensu/publicKey.pem
+
+# 3. Generate a signed dev JWT
+#    Required claims:
+#      - "iss": must match mp.jwt.verify.issuer (default: "https://hensu.io")
+#      - "sub": any subject identifier
+#      - "tenant_id": tenant claim read by RequestTenantResolver
+#      - "exp": expiration timestamp
+HEADER=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 -w0 | tr '+/' '-_' | tr -d '=')
+PAYLOAD=$(echo -n "{\"iss\":\"https://hensu.io\",\"sub\":\"dev-user\",\"tenant_id\":\"dev-tenant\",\"exp\":$(($(date +%s) + 86400))}" | base64 -w0 | tr '+/' '-_' | tr -d '=')
+SIGNATURE=$(echo -n "$HEADER.$PAYLOAD" | openssl dgst -sha256 -sign ~/.hensu/privateKey.pem | base64 -w0 | tr '+/' '-_' | tr -d '=')
+export TOKEN="$HEADER.$PAYLOAD.$SIGNATURE"
+
+# 4. Use the token
+curl -X POST http://localhost:8080/api/v1/workflows \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @workflow.json
+
+# Or pass to CLI
+hensu push my-workflow --token "$TOKEN"
+```
+
+**Server JWT configuration** (in `application.properties`):
+
+```properties
+mp.jwt.verify.publickey.location=${HENSU_JWT_PUBLIC_KEY:publicKey.pem}
+mp.jwt.verify.issuer=${HENSU_JWT_ISSUER:https://hensu.io}
 ```
 
 ## Module Structure
@@ -266,6 +328,10 @@ hensu-server/
 │   │   ├── McpSessionManager.java
 │   │   ├── McpSidecar.java
 │   │   └── SseMcpConnection.java
+│   ├── persistence/                       # PostgreSQL persistence (plain JDBC)
+│   │   ├── JdbcWorkflowRepository.java    # Workflow definitions (JSONB)
+│   │   ├── JdbcWorkflowStateRepository.java # Execution state snapshots (JSONB)
+│   │   └── PersistenceException.java      # Unchecked wrapper for SQLException
 │   ├── planner/               # LLM planning
 │   │   └── LlmPlanner.java
 │   ├── service/               # Business logic
@@ -283,8 +349,9 @@ hensu-server/
         ├── api/
         ├── config/
         ├── executor/
-        ├── integration/       # Full-stack tests via IntegrationTestBase
+        ├── integration/       # Full-stack tests via IntegrationTestBase (inmem profile)
         ├── mcp/
+        ├── persistence/       # JDBC repo tests via Testcontainers PostgreSQL
         ├── planner/
         ├── service/
         ├── streaming/
@@ -300,8 +367,11 @@ hensu-server/
 # Run specific test class
 ./gradlew :hensu-server:test --tests "*.AgenticNodeExecutorTest"
 
-# Run integration tests
+# Run integration tests (inmem profile, no Docker required)
 ./gradlew :hensu-server:test --tests "*.integration.*"
+
+# Run JDBC repo tests (requires Docker for Testcontainers PostgreSQL)
+./gradlew :hensu-server:test --tests "*.persistence.*"
 ```
 
 ## Dependencies
@@ -313,6 +383,8 @@ hensu-server/
 - **Quarkus REST**: JAX-RS implementation
 - **Quarkus Arc**: CDI container
 - **Quarkus Scheduler**: Background tasks
+- **Quarkus JDBC PostgreSQL**: PostgreSQL connection pooling (Agroal)
+- **Quarkus Flyway**: Schema migration management
 
 ## See Also
 

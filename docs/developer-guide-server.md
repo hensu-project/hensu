@@ -64,7 +64,7 @@ via `HensuFactory.builder()` - **never** by constructing components directly.
 ### Request Flow
 
 1. HTTP request arrives at REST resource (`api/`)
-2. Tenant ID extracted from `X-Tenant-ID` header
+2. Tenant ID extracted from the JWT `tenant_id` claim via `RequestTenantResolver`
 3. `TenantContext` established for the request scope
 4. Service layer processes business logic
 5. Core engine executes workflow
@@ -79,18 +79,31 @@ This is wired through CDI in three classes:
 
 ### HensuEnvironmentProducer
 
-Creates the `HensuEnvironment` singleton via `HensuFactory`:
+Creates the `HensuEnvironment` singleton via `HensuFactory`. Conditionally wires
+JDBC repositories when a DataSource is available (default), or falls back to in-memory
+when the `inmem` profile disables the datasource:
 
 ```java
 @Produces
 @ApplicationScoped
 public HensuEnvironment hensuEnvironment() {
     Properties properties = extractHensuProperties();
-    hensuEnvironment = HensuFactory.builder()
+    HensuFactory.Builder factoryBuilder = HensuFactory.builder()
             .config(HensuConfig.builder().useVirtualThreads(true).build())
             .loadCredentials(properties)
-            .actionExecutor(actionExecutor)  // ServerActionExecutor (MCP-only)
-            .build();
+            .actionExecutor(actionExecutor);  // ServerActionExecutor (MCP-only)
+
+    // Conditional persistence: JDBC when DataSource available, in-memory otherwise
+    boolean dsActive = config.getOptionalValue("quarkus.datasource.active", Boolean.class)
+            .orElse(true);
+    if (dsActive && dataSourceInstance.isResolvable()) {
+        DataSource ds = dataSourceInstance.get();
+        factoryBuilder
+                .workflowRepository(new JdbcWorkflowRepository(ds))
+                .workflowStateRepository(new JdbcWorkflowStateRepository(ds, objectMapper));
+    }
+
+    hensuEnvironment = factoryBuilder.build();
     registerGenericHandlers();
     return hensuEnvironment;
 }
@@ -99,8 +112,8 @@ public HensuEnvironment hensuEnvironment() {
 ### ServerConfiguration
 
 Delegates `HensuEnvironment` components for CDI injection and produces server-specific beans.
-Repository instances are created inside `HensuFactory` (defaulting to in-memory implementations)
-and exposed here as CDI beans via delegation:
+Repository instances are created by `HensuEnvironmentProducer` (JDBC or in-memory depending on
+profile) and exposed here as CDI beans via delegation:
 
 ```java
 // Core components delegated from HensuEnvironment
@@ -186,6 +199,11 @@ io.hensu.server/
 │   ├── McpConnectionPool        # Connection pooling
 │   ├── McpSidecar               # ActionHandler for MCP tools
 │   └── SseMcpConnection         # SSE-based connection impl
+│
+├── persistence/           # PostgreSQL persistence (plain JDBC)
+│   ├── JdbcWorkflowRepository   # Workflow definitions (JSONB)
+│   ├── JdbcWorkflowStateRepository # Execution state snapshots (JSONB)
+│   └── PersistenceException     # Unchecked wrapper for SQLException
 │
 ├── planner/               # LLM planning
 │   └── LlmPlanner              # LLM-based plan generation
@@ -273,24 +291,17 @@ public class MyResource {
         this.service = service;
     }
 
+    @Inject RequestTenantResolver tenantResolver;
+
     @GET
     @Path("/{id}")
-    public Response get(
-            @PathParam("id") String id,
-            @HeaderParam("X-Tenant-ID") String tenantId) {
-
-        validateTenantId(tenantId);
+    public Response get(@PathParam("id") String id) {
+        String tenantId = tenantResolver.tenantId();
 
         // Business logic via service layer
         MyEntity entity = service.findById(tenantId, id);
 
         return Response.ok(entity).build();
-    }
-
-    private void validateTenantId(String tenantId) {
-        if (tenantId == null || tenantId.isBlank()) {
-            throw new BadRequestException("X-Tenant-ID header is required");
-        }
     }
 }
 ```
@@ -467,10 +478,11 @@ class MyResourceTest {
     }
 
     @Test
-    void shouldReturn400WhenTenantIdMissing() {
-        assertThatThrownBy(() -> resource.get("id-1", null))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("X-Tenant-ID");
+    void shouldReturn403WhenNoTenantContext() {
+        // RequestTenantResolver throws ForbiddenException when no JWT tenant_id claim
+        assertThatThrownBy(() -> resource.get("id-1"))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("No tenant context");
     }
 }
 ```
@@ -484,7 +496,7 @@ class MyResourceIT {
     @Test
     void shouldPushWorkflow() {
         given()
-            .header("X-Tenant-ID", "test-tenant")
+            .auth().preemptive().oauth2("test-token")
             .contentType(ContentType.JSON)
             .body(workflowJson)
         .when()
@@ -498,7 +510,7 @@ class MyResourceIT {
     @Test
     void shouldStartExecution() {
         given()
-            .header("X-Tenant-ID", "test-tenant")
+            .auth().preemptive().oauth2("test-token")
             .contentType(ContentType.JSON)
             .body(Map.of("workflowId", "my-workflow", "context", Map.of()))
         .when()
@@ -512,17 +524,18 @@ class MyResourceIT {
 
 ### Integration Testing
 
-Full-stack integration tests exercise the workflow engine end-to-end within a bootstrapped Quarkus context, using the [Stub Agent System](developer-guide-core.md#stub-agent-system) to intercept all model requests.
+Full-stack integration tests exercise the workflow engine end-to-end within a bootstrapped Quarkus context, using the [Stub Agent System](developer-guide-core.md#stub-agent-system) to intercept all model requests. Behavior tests use the `inmem` profile (no Docker required); repository tests use Testcontainers PostgreSQL.
 
 #### Test Infrastructure
 
-| Class                  | Role                                                             |
-|------------------------|------------------------------------------------------------------|
-| `IntegrationTestBase`  | Abstract base: CDI injection, state cleanup, helper methods      |
-| `TestActionHandler`    | Records action payloads for plan/action dispatch assertions      |
-| `TestReviewHandler`    | Scriptable review decisions (approve, backtrack, reject)         |
-| `TestValidatorHandler` | Generic node handler for `"validator"` type nodes                |
-| `TestPauseHandler`     | Generic node handler that pauses on first call, succeeds on next |
+| Class                  | Role                                                                                                    |
+|------------------------|---------------------------------------------------------------------------------------------------------|
+| `IntegrationTestBase`  | Abstract base: CDI injection, state cleanup, helper methods (`@TestProfile(InMemoryTestProfile.class)`) |
+| `InMemoryTestProfile`  | Quarkus test profile activating `inmem` — disables PostgreSQL and Flyway                                |
+| `TestActionHandler`    | Records action payloads for plan/action dispatch assertions                                             |
+| `TestReviewHandler`    | Scriptable review decisions (approve, backtrack, reject)                                                |
+| `TestValidatorHandler` | Generic node handler for `"validator"` type nodes                                                       |
+| `TestPauseHandler`     | Generic node handler that pauses on first call, succeeds on next                                        |
 
 All infrastructure lives in `io.hensu.server.integration` (package-private).
 
@@ -692,6 +705,43 @@ private Rubric parseAndRegisterRubric(String rubricId, String resourceName) {
 
 Place rubric markdown files in `src/test/resources/rubrics/`.
 
+#### Repository Tests (Testcontainers)
+
+JDBC repository tests live in `io.hensu.server.persistence` and use Testcontainers PostgreSQL (no Quarkus context). They extend `JdbcRepositoryTestBase` which provides:
+
+- A shared PostgreSQL container per test class
+- Flyway migration (same `V1__create_persistence_tables.sql` used in production)
+- Pre-configured `DataSource` and `ObjectMapper`
+
+```java
+class JdbcWorkflowRepositoryTest extends JdbcRepositoryTestBase {
+
+    private JdbcWorkflowRepository repo;
+
+    @BeforeEach
+    void setUp() {
+        repo = new JdbcWorkflowRepository(dataSource);
+        repo.deleteAllForTenant(TENANT);
+    }
+
+    @Test
+    void saveAndFindById_roundTrip() {
+        Workflow workflow = buildWorkflow("wf-1");
+        repo.save(TENANT, workflow);
+
+        Optional<Workflow> found = repo.findById(TENANT, "wf-1");
+        assertThat(found).isPresent();
+        assertThat(found.get().getId()).isEqualTo("wf-1");
+    }
+}
+```
+
+These tests require Docker for Testcontainers. Run them separately:
+
+```bash
+./gradlew :hensu-server:test --tests "*.persistence.*"
+```
+
 ---
 
 ## GraalVM Native Image
@@ -819,6 +869,21 @@ hensu.planning.default-max-steps=10
 hensu.planning.default-max-replans=3
 hensu.planning.default-timeout=5m
 
+# PostgreSQL (Dev Services auto-starts a container in dev/test mode)
+quarkus.datasource.db-kind=postgresql
+%prod.quarkus.datasource.username=hensu
+%prod.quarkus.datasource.password=hensu
+%prod.quarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/hensu
+
+# Flyway schema migrations
+quarkus.flyway.migrate-at-start=true
+quarkus.flyway.schemas=hensu
+
+# In-memory profile (no PostgreSQL)
+%inmem.quarkus.datasource.active=false
+%inmem.quarkus.datasource.devservices.enabled=false
+%inmem.quarkus.flyway.migrate-at-start=false
+
 # Logging
 quarkus.log.category."io.hensu".level=DEBUG
 ```
@@ -843,7 +908,7 @@ public class MyComponent {
 
 ### Do
 
-- Always validate `X-Tenant-ID` header in REST resources
+- Inject `RequestTenantResolver` for tenant identity (resolved from JWT `tenant_id` claim)
 - Use `HensuFactory.builder()` for core infrastructure (never construct directly)
 - Keep workflow definition management separate from execution operations
 - Use service layer for business logic, resources for HTTP concerns

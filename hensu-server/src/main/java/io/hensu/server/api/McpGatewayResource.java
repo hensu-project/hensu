@@ -30,7 +30,7 @@ import org.jboss.resteasy.reactive.RestStreamElementType;
 /// ```
 ///
 /// ### Client Connection Flow
-/// 1. Client connects to `GET /mcp/connect?clientId=tenant-123`
+/// 1. Client authenticates and connects to `GET /mcp/connect?clientId=client-123`
 /// 2. Client receives JSON-RPC requests via SSE (e.g., `tools/call`)
 /// 3. Client executes the tool locally
 /// 4. Client POSTs result to `POST /mcp/message`
@@ -38,8 +38,8 @@ import org.jboss.resteasy.reactive.RestStreamElementType;
 ///
 /// ### Example Client (JavaScript)
 /// ```javascript
-/// // Connect to SSE stream
-/// const events = new EventSource('/mcp/connect?clientId=my-tenant');
+/// // Connect to SSE stream (with JWT auth)
+/// const events = new EventSource('/mcp/connect?clientId=my-client');
 /// events.onmessage = async (e) => {
 ///     const request = JSON.parse(e.data);
 ///     if (request.method === 'tools/call') {
@@ -74,7 +74,8 @@ public class McpGatewayResource {
     ///
     /// ### Request
     /// ```
-    /// GET /mcp/connect?clientId=tenant-123
+    /// GET /mcp/connect?clientId=client-123
+    /// Authorization: Bearer <jwt>
     /// Accept: text/event-stream
     /// ```
     ///
@@ -85,7 +86,7 @@ public class McpGatewayResource {
     /// data: {"jsonrpc":"2.0","id":"uuid-1","method":"tools/call","params":{...}}
     /// ```
     ///
-    /// @param clientId unique client identifier (typically tenant ID)
+    /// @param clientId unique client identifier for session management
     /// @return SSE stream of JSON-RPC messages
     @GET
     @Path("/connect")
@@ -121,6 +122,7 @@ public class McpGatewayResource {
     /// ### Request
     /// ```
     /// POST /mcp/message
+    /// Authorization: Bearer <jwt>
     /// Content-Type: application/json
     ///
     /// {"jsonrpc":"2.0","id":"uuid-1","result":{"content":"file contents..."}}
