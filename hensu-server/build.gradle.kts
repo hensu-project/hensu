@@ -47,10 +47,11 @@ dependencies {
     implementation("io.quarkus:quarkus-smallrye-jwt")
 
     // Testing
+    val testcontainersVersion = "1.21.4"
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("io.rest-assured:rest-assured")
-    testImplementation("org.testcontainers:postgresql")
-    testImplementation("org.testcontainers:junit-jupiter")
+    testImplementation("org.testcontainers:postgresql:${testcontainersVersion}")
+    testImplementation("org.testcontainers:junit-jupiter:${testcontainersVersion}")
     testImplementation("org.flywaydb:flyway-database-postgresql")
     testImplementation("io.quarkus:quarkus-test-security-jwt")
 }

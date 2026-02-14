@@ -820,7 +820,7 @@ When implementing `AgentProvider` for a new AI backend:
 
 2. **Use `SimpleModule` for custom Jackson types.** Any new model or DTO must be explicitly serializable without `@JsonAutoDetect` or field-level reflection.
 
-3. **Test with native image.** Run `./gradlew hensu-server:build -Dquarkus.native.enabled=true` to verify. Failures manifest as `ClassNotFoundException` or `NoSuchMethodException` at runtime.
+3. **Test with native image.** Run `./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native` to verify. Failures manifest as `ClassNotFoundException` or `NoSuchMethodException` at runtime.
 
 ### Quick Reference
 

@@ -148,7 +148,11 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
 
         assertThat(stateRepo.findByExecutionId(TENANT, "exec-shared").orElseThrow().currentNodeId())
                 .isEqualTo("process");
-        assertThat(stateRepo.findByExecutionId(OTHER_TENANT, "exec-shared").orElseThrow().currentNodeId())
+        assertThat(
+                        stateRepo
+                                .findByExecutionId(OTHER_TENANT, "exec-shared")
+                                .orElseThrow()
+                                .currentNodeId())
                 .isEqualTo("done");
 
         stateRepo.deleteAllForTenant(TENANT);

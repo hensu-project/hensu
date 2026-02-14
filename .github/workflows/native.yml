@@ -26,7 +26,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Build native server binary
-        run: ./gradlew hensu-server:build -Dquarkus.native.enabled=true -x test
+        run: ./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native -x test
 
       - name: Upload native binary
         uses: actions/upload-artifact@v4
