@@ -3,6 +3,7 @@ package io.hensu.server.api;
 import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
+import io.hensu.server.validation.ValidId;
 import io.smallrye.mutiny.Multi;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
@@ -91,7 +92,8 @@ public class ExecutionEventResource {
     @Path("/{executionId}/events")
     @Produces(MediaType.SERVER_SENT_EVENTS)
     @RestStreamElementType(MediaType.APPLICATION_JSON)
-    public Multi<ExecutionEvent> streamEvents(@PathParam("executionId") String executionId) {
+    public Multi<ExecutionEvent> streamEvents(
+            @PathParam("executionId") @ValidId String executionId) {
 
         String tenantId = tenantResolver.tenantId();
 

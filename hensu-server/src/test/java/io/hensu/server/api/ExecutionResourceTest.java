@@ -17,7 +17,6 @@ import io.hensu.server.service.WorkflowService.ExecutionStatus;
 import io.hensu.server.service.WorkflowService.ExecutionSummary;
 import io.hensu.server.service.WorkflowService.ResumeDecision;
 import io.hensu.server.service.WorkflowService.WorkflowNotFoundException;
-import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.time.Instant;
@@ -74,19 +73,6 @@ class ExecutionResourceTest {
                             })
                     .isInstanceOf(NotFoundException.class)
                     .hasMessageContaining("Not found");
-        }
-
-        @Test
-        void shouldReturn400WhenWorkflowIdMissing() {
-            var request = new ExecutionResource.ExecutionStartRequest(null, Map.of());
-            assertThatThrownBy(
-                            () -> {
-                                try (var _ = resource.startExecution(request)) {
-                                    // No-op
-                                }
-                            })
-                    .isInstanceOf(BadRequestException.class)
-                    .hasMessageContaining("workflowId");
         }
     }
 

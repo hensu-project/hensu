@@ -1,6 +1,7 @@
 package io.hensu.server.integration;
 
 import io.quarkus.test.junit.QuarkusTestProfile;
+import java.util.HashMap;
 import java.util.Map;
 
 /// Quarkus test profile that activates the `inmem` configuration profile.
@@ -23,10 +24,15 @@ public class InMemoryTestProfile implements QuarkusTestProfile {
 
     @Override
     public Map<String, String> getConfigOverrides() {
-        return Map.of(
-                "quarkus.datasource.active", "false",
-                "quarkus.datasource.devservices.enabled", "false",
-                "quarkus.flyway.migrate-at-start", "false",
-                "hensu.tenant.default", "test-tenant");
+        Map<String, String> config = new HashMap<>();
+        config.put("quarkus.datasource.active", "false");
+        config.put("quarkus.datasource.devservices.enabled", "false");
+        config.put("quarkus.flyway.migrate-at-start", "false");
+        config.put("hensu.tenant.default", "test-tenant");
+
+        // Disable JWT verification — tests use @TestSecurity to bypass auth
+        config.put("quarkus.smallrye-jwt.enabled", "false");
+
+        return config;
     }
 }

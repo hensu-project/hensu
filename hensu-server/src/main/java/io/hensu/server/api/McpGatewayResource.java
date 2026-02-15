@@ -1,16 +1,12 @@
 package io.hensu.server.api;
 
 import io.hensu.server.mcp.McpSessionManager;
+import io.hensu.server.validation.ValidId;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
-import jakarta.ws.rs.BadRequestException;
-import jakarta.ws.rs.Consumes;
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.POST;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.Produces;
-import jakarta.ws.rs.QueryParam;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.Map;
@@ -92,10 +88,7 @@ public class McpGatewayResource {
     @Path("/connect")
     @Produces(MediaType.SERVER_SENT_EVENTS)
     @RestStreamElementType(MediaType.APPLICATION_JSON)
-    public Multi<String> connect(@QueryParam("clientId") String clientId) {
-        if (clientId == null || clientId.isBlank()) {
-            throw new BadRequestException("clientId query parameter is required");
-        }
+    public Multi<String> connect(@QueryParam("clientId") @ValidId String clientId) {
 
         LOG.infov("MCP connection request: clientId={0}", clientId);
 
@@ -137,14 +130,8 @@ public class McpGatewayResource {
     @POST
     @Path("/message")
     @Consumes(MediaType.APPLICATION_JSON)
-    public Uni<Response> receiveMessage(String jsonMessage) {
-        if (jsonMessage == null || jsonMessage.isBlank()) {
-            return Uni.createFrom()
-                    .item(
-                            Response.status(Response.Status.BAD_REQUEST)
-                                    .entity(Map.of("error", "Empty message body"))
-                                    .build());
-        }
+    public Uni<Response> receiveMessage(
+            @NotBlank(message = "Message body is required") String jsonMessage) {
 
         LOG.debugv(
                 "Received MCP message: {0}",
@@ -189,7 +176,7 @@ public class McpGatewayResource {
     @GET
     @Path("/clients/{clientId}/status")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response clientStatus(@jakarta.ws.rs.PathParam("clientId") String clientId) {
+    public Response clientStatus(@PathParam("clientId") @ValidId String clientId) {
         boolean connected = sessionManager.isConnected(clientId);
         McpSessionManager.ClientInfo info = sessionManager.getClientInfo(clientId);
 

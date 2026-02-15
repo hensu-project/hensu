@@ -147,6 +147,21 @@ Implements MCP (Model Context Protocol) over SSE using a "split-pipe" architectu
 | `GET`  | `/api/v1/executions/{executionId}/events` | SSE stream for execution events  |
 | `GET`  | `/api/v1/executions/events`               | SSE stream for all tenant events |
 
+### Input Validation & Error Responses
+
+All identifiers in path and query parameters (`workflowId`, `executionId`, `clientId`) are
+validated with the `@ValidId` constraint: alphanumeric start, followed by alphanumeric characters,
+dots, hyphens, or underscores (1–255 chars). Request bodies are validated with standard
+Bean Validation annotations (`@NotNull`, `@NotBlank`).
+
+Invalid input returns `400 Bad Request` with a JSON error body:
+
+```json
+{"error": "workflowId: must be a valid identifier (alphanumeric, dots, hyphens, underscores; 1-255 chars)", "status": 400}
+```
+
+See the [Server Developer Guide — Input Validation](../docs/developer-guide-server.md#input-validation) for details.
+
 ### Execution Event Types
 
 - `execution.started` - Execution began
@@ -314,6 +329,10 @@ hensu-server/
 │   │   ├── ExecutionResource.java         # Execution runtime operations
 │   │   ├── ExecutionEventResource.java    # SSE endpoint for execution events
 │   │   └── McpGatewayResource.java        # MCP SSE/POST endpoints
+│   ├── validation/                        # Input validation (Bean Validation)
+│   │   ├── ValidId.java                    # Custom identifier constraint
+│   │   ├── ValidIdValidator.java           # Regex-based validator
+│   │   └── ConstraintViolationExceptionMapper.java  # Global 400 error mapper
 │   ├── config/                            # CDI configuration
 │   │   ├── HensuEnvironmentProducer.java  # HensuFactory → HensuEnvironment
 │   │   ├── ServerBootstrap.java           # Startup registrations

@@ -184,6 +184,11 @@ io.hensu.server/
 │   ├── ExecutionEventResource   # Execution monitoring SSE
 │   └── McpGatewayResource       # MCP split-pipe SSE/POST
 │
+├── validation/            # Input validation (Bean Validation)
+│   ├── ValidId                   # Custom identifier constraint annotation
+│   ├── ValidIdValidator          # Regex-based validator implementation
+│   └── ConstraintViolationExceptionMapper  # Global 400 error mapper
+│
 ├── config/                # CDI configuration
 │   ├── HensuEnvironmentProducer # HensuFactory → HensuEnvironment
 │   ├── ServerBootstrap          # Startup registrations
@@ -317,6 +322,75 @@ public class MyResource {
 | 400 Bad Request           | Invalid input, missing headers            |
 | 404 Not Found             | Resource not found                        |
 | 500 Internal Server Error | Unexpected errors                         |
+
+### Input Validation
+
+The server uses Bean Validation (Hibernate Validator via Quarkus) to enforce input
+constraints declaratively on REST endpoint parameters and request DTOs.
+
+#### Components
+
+| Class                                | Role                                                                  |
+|--------------------------------------|-----------------------------------------------------------------------|
+| `@ValidId`                           | Custom constraint for path/query identifiers                          |
+| `ValidIdValidator`                   | Validates against `[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}`                  |
+| `ConstraintViolationExceptionMapper` | Global `@Provider` — translates violations into standardized 400 JSON |
+
+All classes live in `io.hensu.server.validation`.
+
+#### `@ValidId` Constraint
+
+Apply `@ValidId` to every path parameter and query parameter that accepts a user-provided
+identifier (`workflowId`, `executionId`, `clientId`, etc.). The constraint rejects null,
+blank, and malformed strings — preventing path traversal, injection, and overly long IDs
+at the API boundary.
+
+Valid identifiers:
+- Start with an alphanumeric character (`a-z`, `A-Z`, `0-9`)
+- Contain only alphanumeric characters, dots (`.`), hyphens (`-`), and underscores (`_`)
+- Are 1–255 characters long
+
+#### Applying Validation
+
+```java
+// Path parameter — @ValidId validates the raw string
+@GET
+@Path("/{workflowId}")
+public Response get(@PathParam("workflowId") @ValidId String workflowId) {
+    // workflowId is guaranteed safe here
+}
+
+// Request body DTO — @Valid triggers nested validation, @NotNull rejects missing body
+@POST
+public Response create(@Valid @NotNull CreateRequest request) { ... }
+
+// DTO record with field-level constraints
+public record CreateRequest(
+        @NotBlank(message = "workflowId is required") @ValidId String workflowId) {}
+```
+
+Validation is triggered automatically by the JAX-RS pipeline — no manual checks needed.
+
+#### Error Response Format
+
+`ConstraintViolationExceptionMapper` catches all `ConstraintViolationException`s and returns
+a standardized JSON response consistent with the `GlobalExceptionMapper` format:
+
+```json
+{"error": "workflowId: must be a valid identifier (alphanumeric, dots, hyphens, underscores; 1-255 chars)", "status": 400}
+```
+
+Multiple violations are joined with `; `.
+
+#### Adding Validation to New Endpoints
+
+1. Add `@ValidId` to all path/query params accepting identifiers
+2. Add `@Valid @NotNull` to request body parameters
+3. Add field-level constraints (`@NotBlank`, `@ValidId`, `@Size`, etc.) to DTO records
+4. Write a test in `InputValidationIntegrationTest` covering the new constraints
+
+See `hensu-server/src/test/java/io/hensu/server/integration/InputValidationIntegrationTest.java` for
+comprehensive examples.
 
 ---
 

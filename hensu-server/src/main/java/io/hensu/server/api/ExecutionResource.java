@@ -3,7 +3,11 @@ package io.hensu.server.api;
 import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.service.WorkflowService;
 import io.hensu.server.service.WorkflowService.*;
+import io.hensu.server.validation.ValidId;
 import jakarta.inject.Inject;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
@@ -56,13 +60,9 @@ public class ExecutionResource {
     /// {"executionId": "exec-abc", "workflowId": "order-processing"}
     /// ```
     @POST
-    public Response startExecution(ExecutionStartRequest request) {
+    public Response startExecution(@Valid @NotNull ExecutionStartRequest request) {
 
         String tenantId = tenantResolver.tenantId();
-
-        if (request == null || request.workflowId() == null || request.workflowId().isBlank()) {
-            throw new BadRequestException("workflowId is required");
-        }
 
         LOG.infov(
                 "Start execution request: workflow={0}, tenant={1}",
@@ -107,7 +107,7 @@ public class ExecutionResource {
     /// ```
     @GET
     @Path("/{executionId}")
-    public Response getExecution(@PathParam("executionId") String executionId) {
+    public Response getExecution(@PathParam("executionId") @ValidId String executionId) {
 
         String tenantId = tenantResolver.tenantId();
 
@@ -151,7 +151,8 @@ public class ExecutionResource {
     /// ```
     @POST
     @Path("/{executionId}/resume")
-    public Response resume(@PathParam("executionId") String executionId, ResumeRequest request) {
+    public Response resume(
+            @PathParam("executionId") @ValidId String executionId, @Valid ResumeRequest request) {
 
         String tenantId = tenantResolver.tenantId();
 
@@ -189,7 +190,7 @@ public class ExecutionResource {
     /// ```
     @GET
     @Path("/{executionId}/plan")
-    public Response getPlan(@PathParam("executionId") String executionId) {
+    public Response getPlan(@PathParam("executionId") @ValidId String executionId) {
 
         String tenantId = tenantResolver.tenantId();
 
@@ -258,8 +259,16 @@ public class ExecutionResource {
     }
 
     /// Request body for starting an execution.
-    public record ExecutionStartRequest(String workflowId, Map<String, Object> context) {}
+    ///
+    /// @param workflowId the workflow to execute, not null, not blank
+    /// @param context initial execution context variables, may be null
+    public record ExecutionStartRequest(
+            @NotBlank(message = "workflowId is required") @ValidId String workflowId,
+            Map<String, Object> context) {}
 
-    /// Request body for resume endpoint.
+    /// Request body for resuming a paused execution.
+    ///
+    /// @param approved whether the pending plan is approved
+    /// @param modifications optional context modifications, may be null
     public record ResumeRequest(boolean approved, Map<String, Object> modifications) {}
 }

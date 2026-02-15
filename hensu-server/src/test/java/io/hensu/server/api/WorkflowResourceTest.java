@@ -9,7 +9,6 @@ import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.core.workflow.node.EndNode;
 import io.hensu.server.security.RequestTenantResolver;
-import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
@@ -79,18 +78,6 @@ class WorkflowResourceTest {
                 entity = (Map<String, Object>) response.getEntity();
             }
             assertThat(entity.get("created")).isEqualTo(false);
-        }
-
-        @Test
-        void shouldReturn400WhenWorkflowNull() {
-            assertThatThrownBy(
-                            () -> {
-                                try (var _ = resource.pushWorkflow(null)) {
-                                    // No-op
-                                }
-                            })
-                    .isInstanceOf(BadRequestException.class)
-                    .hasMessageContaining("Workflow definition");
         }
     }
 

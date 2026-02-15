@@ -3,7 +3,9 @@ package io.hensu.server.api;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.server.security.RequestTenantResolver;
+import io.hensu.server.validation.ValidId;
 import jakarta.inject.Inject;
+import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
@@ -73,13 +75,10 @@ public class WorkflowResource {
     /// {"id": "order-processing", "version": "1.0.0", "created": true}
     /// ```
     @POST
-    public Response pushWorkflow(Workflow workflow) {
+    public Response pushWorkflow(
+            @NotNull(message = "Workflow definition is required") Workflow workflow) {
 
         String tenantId = tenantResolver.tenantId();
-
-        if (workflow == null) {
-            throw new BadRequestException("Workflow definition is required");
-        }
 
         LOG.infov(
                 "Push workflow: id={0}, version={1}, tenant={2}",
@@ -120,7 +119,7 @@ public class WorkflowResource {
     /// ```
     @GET
     @Path("/{workflowId}")
-    public Response pullWorkflow(@PathParam("workflowId") String workflowId) {
+    public Response pullWorkflow(@PathParam("workflowId") @ValidId String workflowId) {
 
         String tenantId = tenantResolver.tenantId();
 
@@ -178,7 +177,7 @@ public class WorkflowResource {
     /// ### Response (204 No Content)
     @DELETE
     @Path("/{workflowId}")
-    public Response deleteWorkflow(@PathParam("workflowId") String workflowId) {
+    public Response deleteWorkflow(@PathParam("workflowId") @ValidId String workflowId) {
 
         String tenantId = tenantResolver.tenantId();
 
