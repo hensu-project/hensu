@@ -20,7 +20,7 @@ dependencies {
     implementation("io.quarkus:quarkus-arc")
     implementation("io.quarkus:quarkus-kotlin")
 
-    val kotlinVersion = "2.3.0"
+    val kotlinVersion = "2.3.10"
     runtimeOnly("org.jetbrains.kotlin:kotlin-scripting-common:$kotlinVersion")
     runtimeOnly("org.jetbrains.kotlin:kotlin-scripting-jvm:$kotlinVersion")
     runtimeOnly("org.jetbrains.kotlin:kotlin-scripting-jvm-host:$kotlinVersion")

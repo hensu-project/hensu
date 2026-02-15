@@ -2,7 +2,7 @@ plugins {
     kotlin("jvm")
 }
 
-val kotlinVersion: String = "2.3.0"
+val kotlinVersion: String = "2.3.10"
 
 dependencies {
     implementation(project(":hensu-core"))
