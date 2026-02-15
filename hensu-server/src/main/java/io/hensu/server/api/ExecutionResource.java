@@ -3,12 +3,19 @@ package io.hensu.server.api;
 import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.service.WorkflowService;
 import io.hensu.server.service.WorkflowService.*;
+import io.hensu.server.validation.LogSanitizer;
 import io.hensu.server.validation.ValidId;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.ws.rs.*;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.NotFoundException;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
@@ -129,7 +136,7 @@ public class ExecutionResource {
                                     status.hasPendingPlan()))
                     .build();
         } catch (ExecutionNotFoundException e) {
-            LOG.warnv("Execution not found: {0}", executionId);
+            LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());
         }
     }
@@ -156,7 +163,9 @@ public class ExecutionResource {
 
         String tenantId = tenantResolver.tenantId();
 
-        LOG.infov("Resume execution request: executionId={0}, tenant={1}", executionId, tenantId);
+        LOG.infov(
+                "Resume execution request: executionId={0}, tenant={1}",
+                LogSanitizer.sanitize(executionId), tenantId);
 
         try {
             ResumeDecision decision =
@@ -171,7 +180,7 @@ public class ExecutionResource {
 
             return Response.ok().entity(Map.of("status", "resumed")).build();
         } catch (ExecutionNotFoundException e) {
-            LOG.warnv("Execution not found: {0}", executionId);
+            LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());
         }
     }
@@ -212,7 +221,7 @@ public class ExecutionResource {
                                     "currentStep", planInfo.currentStep()))
                     .build();
         } catch (ExecutionNotFoundException e) {
-            LOG.warnv("Execution not found: {0}", executionId);
+            LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());
         }
     }

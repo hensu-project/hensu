@@ -10,7 +10,6 @@ import jakarta.validation.ConstraintValidatorContext;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /// Validates a {@link Workflow} at the REST API boundary.
 ///
@@ -25,15 +24,9 @@ import java.util.regex.Pattern;
 ///
 /// @see ValidWorkflow
 /// @see ValidId for the identifier pattern definition
+/// @see InputValidator for shared validation predicates
 /// @see LogSanitizer for defense-in-depth at log call sites
 public class ValidWorkflowValidator implements ConstraintValidator<ValidWorkflow, Workflow> {
-
-    private static final Pattern SAFE_ID = Pattern.compile("[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}");
-
-    /// Control characters that are never legitimate in workflow content.
-    /// Excludes TAB (0x09), LF (0x0A), CR (0x0D) which are valid in free text.
-    private static final Pattern DANGEROUS_CONTROL =
-            Pattern.compile("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]");
 
     @Override
     public boolean isValid(Workflow workflow, ConstraintValidatorContext ctx) {
@@ -183,19 +176,19 @@ public class ValidWorkflowValidator implements ConstraintValidator<ValidWorkflow
     // ———————————————— Helpers ————————————————
 
     private static void requireSafeId(List<String> errors, String field, String value) {
-        if (value == null || !SAFE_ID.matcher(value).matches()) {
+        if (!InputValidator.isSafeId(value)) {
             errors.add(field + ": invalid identifier");
         }
     }
 
     private static void optionalSafeId(List<String> errors, String field, String value) {
-        if (value != null && !SAFE_ID.matcher(value).matches()) {
+        if (value != null && !InputValidator.isSafeId(value)) {
             errors.add(field + ": invalid identifier");
         }
     }
 
     private static void rejectDangerousChars(List<String> errors, String field, String value) {
-        if (value != null && DANGEROUS_CONTROL.matcher(value).find()) {
+        if (InputValidator.containsDangerousChars(value)) {
             errors.add(field + ": contains illegal control characters");
         }
     }

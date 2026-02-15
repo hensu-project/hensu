@@ -1,12 +1,19 @@
 package io.hensu.server.api;
 
 import io.hensu.server.mcp.McpSessionManager;
+import io.hensu.server.validation.LogSanitizer;
 import io.hensu.server.validation.ValidId;
+import io.hensu.server.validation.ValidMessage;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.ws.rs.*;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.Map;
@@ -95,14 +102,23 @@ public class McpGatewayResource {
         return sessionManager
                 .createSession(clientId)
                 .onSubscription()
-                .invoke(() -> LOG.debugv("SSE stream started for: {0}", clientId))
+                .invoke(
+                        () ->
+                                LOG.debugv(
+                                        "SSE stream started for: {0}",
+                                        LogSanitizer.sanitize(clientId)))
                 .onTermination()
                 .invoke(
                         (t, _) -> {
                             if (t != null) {
-                                LOG.warnv(t, "SSE stream error for: {0}", clientId);
+                                LOG.warnv(
+                                        t,
+                                        "SSE stream error for: {0}",
+                                        LogSanitizer.sanitize(clientId));
                             } else {
-                                LOG.debugv("SSE stream ended for: {0}", clientId);
+                                LOG.debugv(
+                                        "SSE stream ended for: {0}",
+                                        LogSanitizer.sanitize(clientId));
                             }
                         });
     }
@@ -111,6 +127,11 @@ public class McpGatewayResource {
     ///
     /// Clients POST JSON-RPC responses here after executing tool calls.
     /// The response is correlated to the pending request by JSON-RPC `id`.
+    ///
+    /// The {@link ValidMessage} constraint enforces:
+    /// - Non-blank body
+    /// - Size within {@link io.hensu.server.validation.InputValidator#MAX_JSON_MESSAGE_BYTES}
+    /// - No dangerous control characters
     ///
     /// ### Request
     /// ```
@@ -123,19 +144,19 @@ public class McpGatewayResource {
     ///
     /// ### Response
     /// - 204 No Content: Response accepted
-    /// - 400 Bad Request: Invalid JSON-RPC format
+    /// - 400 Bad Request: Empty body, oversized payload, or illegal characters
     ///
     /// @param jsonMessage the JSON-RPC response
     /// @return empty response on success
     @POST
     @Path("/message")
     @Consumes(MediaType.APPLICATION_JSON)
-    public Uni<Response> receiveMessage(
-            @NotBlank(message = "Message body is required") String jsonMessage) {
+    public Uni<Response> receiveMessage(@ValidMessage String jsonMessage) {
 
         LOG.debugv(
                 "Received MCP message: {0}",
-                jsonMessage.substring(0, Math.min(200, jsonMessage.length())));
+                LogSanitizer.sanitize(
+                        jsonMessage.substring(0, Math.min(200, jsonMessage.length()))));
 
         sessionManager.handleResponse(jsonMessage);
 

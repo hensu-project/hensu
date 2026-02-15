@@ -185,8 +185,11 @@ io.hensu.server/
 │   └── McpGatewayResource       # MCP split-pipe SSE/POST
 │
 ├── validation/            # Input validation (Bean Validation)
+│   ├── InputValidator            # Shared validation predicates (safe-ID, dangerous chars, size)
 │   ├── ValidId                   # Custom identifier constraint annotation
 │   ├── ValidIdValidator          # Regex-based validator implementation
+│   ├── ValidMessage              # Custom constraint for raw message body strings
+│   ├── ValidMessageValidator     # Size-limit + control-character validator
 │   ├── ValidWorkflow             # Custom constraint for Workflow request bodies
 │   ├── ValidWorkflowValidator    # Deep-validates workflow object graph
 │   ├── LogSanitizer              # Strips CR/LF for log injection prevention
@@ -333,14 +336,17 @@ constraints declaratively on REST endpoint parameters and request DTOs.
 
 #### Components
 
-| Class                                | Role                                                                  |
-|--------------------------------------|-----------------------------------------------------------------------|
-| `@ValidId`                           | Custom constraint for path/query identifiers                          |
-| `ValidIdValidator`                   | Validates against `[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}`                  |
-| `@ValidWorkflow`                     | Custom constraint for full `Workflow` request bodies                  |
-| `ValidWorkflowValidator`             | Deep-validates the entire workflow object graph (IDs + free text)     |
-| `LogSanitizer`                       | Strips CR/LF from values before logging (defense-in-depth)            |
-| `ConstraintViolationExceptionMapper` | Global `@Provider` — translates violations into standardized 400 JSON |
+| Class                                | Role                                                                     |
+|--------------------------------------|--------------------------------------------------------------------------|
+| `InputValidator`                     | Shared predicates: safe-ID pattern, dangerous-char detection, size limit |
+| `@ValidId`                           | Custom constraint for path/query identifiers                             |
+| `ValidIdValidator`                   | Validates against `[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}`                     |
+| `@ValidMessage`                      | Custom constraint for raw `String` message bodies                        |
+| `ValidMessageValidator`              | Checks non-blank, UTF-8 byte size limit, and dangerous control chars     |
+| `@ValidWorkflow`                     | Custom constraint for full `Workflow` request bodies                     |
+| `ValidWorkflowValidator`             | Deep-validates the entire workflow object graph (IDs + free text)        |
+| `LogSanitizer`                       | Strips CR/LF from values before logging (defense-in-depth)               |
+| `ConstraintViolationExceptionMapper` | Global `@Provider` — translates violations into standardized 400 JSON    |
 
 All classes live in `io.hensu.server.validation`.
 
@@ -376,6 +382,35 @@ public record CreateRequest(
 ```
 
 Validation is triggered automatically by the JAX-RS pipeline — no manual checks needed.
+
+#### `@ValidMessage` Constraint
+
+Apply `@ValidMessage` to raw `String` body parameters that receive free-text content (e.g., MCP
+messages, chat inputs). The constraint enforces three checks:
+
+1. **Not null or blank** — rejects missing bodies
+2. **UTF-8 byte size** — must not exceed `maxBytes` (default 1 MB)
+3. **No dangerous control characters** — rejects U+0000–U+0008, U+000B, U+000C, U+000E–U+001F,
+   U+007F. TAB, LF, and CR are permitted since they are legitimate in free text.
+
+Each failing condition produces a distinct violation message:
+
+| Condition          | Violation message                             |
+|--------------------|-----------------------------------------------|
+| Null or blank      | `Message body is required`                    |
+| Exceeds byte limit | `Message exceeds maximum allowed size`        |
+| Control characters | `Message contains illegal control characters` |
+
+```java
+// Default 1 MB limit
+@POST
+@Consumes(MediaType.APPLICATION_JSON)
+public Uni<Response> receive(@ValidMessage String body) { ... }
+
+// Custom size limit (64 KB)
+@POST
+public Uni<Response> receive(@ValidMessage(maxBytes = 65_536) String body) { ... }
+```
 
 #### Error Response Format
 
@@ -423,10 +458,11 @@ LOG.infov("Processing workflow: id={0}", LogSanitizer.sanitize(workflowId));
 #### Adding Validation to New Endpoints
 
 1. Add `@ValidId` to all path/query params accepting identifiers
-2. Add `@ValidWorkflow` to `Workflow` body parameters (or `@Valid @NotNull` for other DTOs)
-3. Add field-level constraints (`@NotBlank`, `@ValidId`, `@Size`, etc.) to DTO records
-4. Use `LogSanitizer.sanitize()` when logging any user-provided string
-5. Write a test in `InputValidationIntegrationTest` covering the new constraints
+2. Add `@ValidMessage` to raw `String` body params receiving free-text content
+3. Add `@ValidWorkflow` to `Workflow` body parameters (or `@Valid @NotNull` for other DTOs)
+4. Add field-level constraints (`@NotBlank`, `@ValidId`, `@Size`, etc.) to DTO records
+5. Use `LogSanitizer.sanitize()` when logging any user-provided string
+6. Write a test in `InputValidationIntegrationTest` covering the new constraints
 
 See `hensu-server/src/test/java/io/hensu/server/integration/InputValidationIntegrationTest.java` for
 comprehensive examples.

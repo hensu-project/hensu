@@ -333,8 +333,11 @@ hensu-server/
 │   │   ├── ExecutionEventResource.java    # SSE endpoint for execution events
 │   │   └── McpGatewayResource.java        # MCP SSE/POST endpoints
 │   ├── validation/                        # Input validation (Bean Validation)
+│   │   ├── InputValidator                  # Shared validation predicates (safe-ID, dangerous chars, size)
 │   │   ├── ValidId.java                    # Custom identifier constraint
 │   │   ├── ValidIdValidator.java           # Regex-based validator
+│   │   ├── ValidMessage                    # Custom constraint for raw message body strings
+│   │   ├── ValidMessageValidator     # Size-limit + control-character validator
 │   │   ├── ValidWorkflow.java              # Custom constraint for Workflow bodies
 │   │   ├── ValidWorkflowValidator.java     # Deep-validates workflow object graph
 │   │   ├── LogSanitizer.java               # Strips CR/LF for log injection prevention

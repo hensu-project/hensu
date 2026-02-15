@@ -3,10 +3,14 @@ package io.hensu.server.api;
 import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
+import io.hensu.server.validation.LogSanitizer;
 import io.hensu.server.validation.ValidId;
 import io.smallrye.mutiny.Multi;
 import jakarta.inject.Inject;
-import jakarta.ws.rs.*;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import org.jboss.logging.Logger;
 import org.jboss.resteasy.reactive.RestStreamElementType;
@@ -97,21 +101,34 @@ public class ExecutionEventResource {
 
         String tenantId = tenantResolver.tenantId();
 
-        LOG.infov("SSE subscription: executionId={0}, tenant={1}", executionId, tenantId);
+        LOG.infov(
+                "SSE subscription: executionId={0}, tenant={1}",
+                LogSanitizer.sanitize(executionId), tenantId);
 
         return broadcaster
                 .subscribe(executionId)
                 .onSubscription()
-                .invoke(() -> LOG.debugv("Client subscribed to execution: {0}", executionId))
+                .invoke(
+                        () ->
+                                LOG.debugv(
+                                        "Client subscribed to execution: {0}",
+                                        LogSanitizer.sanitize(executionId)))
                 .onTermination()
                 .invoke(
                         (t, c) -> {
                             if (t != null) {
-                                LOG.warnv(t, "SSE stream error for execution: {0}", executionId);
+                                LOG.warnv(
+                                        t,
+                                        "SSE stream error for execution: {0}",
+                                        LogSanitizer.sanitize(executionId));
                             } else if (c) {
-                                LOG.debugv("SSE stream cancelled for execution: {0}", executionId);
+                                LOG.debugv(
+                                        "SSE stream cancelled for execution: {0}",
+                                        LogSanitizer.sanitize(executionId));
                             } else {
-                                LOG.debugv("SSE stream completed for execution: {0}", executionId);
+                                LOG.debugv(
+                                        "SSE stream completed for execution: {0}",
+                                        LogSanitizer.sanitize(executionId));
                             }
                         });
     }
