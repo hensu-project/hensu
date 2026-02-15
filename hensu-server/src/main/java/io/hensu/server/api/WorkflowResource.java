@@ -3,7 +3,9 @@ package io.hensu.server.api;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.server.security.RequestTenantResolver;
+import io.hensu.server.validation.LogSanitizer;
 import io.hensu.server.validation.ValidId;
+import io.hensu.server.validation.ValidWorkflow;
 import jakarta.inject.Inject;
 import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.*;
@@ -76,13 +78,16 @@ public class WorkflowResource {
     /// ```
     @POST
     public Response pushWorkflow(
-            @NotNull(message = "Workflow definition is required") Workflow workflow) {
+            @NotNull(message = "Workflow definition is required") @ValidWorkflow
+                    Workflow workflow) {
 
         String tenantId = tenantResolver.tenantId();
 
         LOG.infov(
                 "Push workflow: id={0}, version={1}, tenant={2}",
-                workflow.getId(), workflow.getVersion(), tenantId);
+                LogSanitizer.sanitize(workflow.getId()),
+                LogSanitizer.sanitize(workflow.getVersion()),
+                tenantId);
 
         boolean exists = workflowRepository.exists(tenantId, workflow.getId());
         workflowRepository.save(tenantId, workflow);
@@ -123,7 +128,8 @@ public class WorkflowResource {
 
         String tenantId = tenantResolver.tenantId();
 
-        LOG.debugv("Pull workflow: id={0}, tenant={1}", workflowId, tenantId);
+        LOG.debugv(
+                "Pull workflow: id={0}, tenant={1}", LogSanitizer.sanitize(workflowId), tenantId);
 
         Workflow workflow =
                 workflowRepository
@@ -181,7 +187,8 @@ public class WorkflowResource {
 
         String tenantId = tenantResolver.tenantId();
 
-        LOG.infov("Delete workflow: id={0}, tenant={1}", workflowId, tenantId);
+        LOG.infov(
+                "Delete workflow: id={0}, tenant={1}", LogSanitizer.sanitize(workflowId), tenantId);
 
         boolean deleted = workflowRepository.delete(tenantId, workflowId);
 

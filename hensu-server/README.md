@@ -151,8 +151,11 @@ Implements MCP (Model Context Protocol) over SSE using a "split-pipe" architectu
 
 All identifiers in path and query parameters (`workflowId`, `executionId`, `clientId`) are
 validated with the `@ValidId` constraint: alphanumeric start, followed by alphanumeric characters,
-dots, hyphens, or underscores (1–255 chars). Request bodies are validated with standard
-Bean Validation annotations (`@NotNull`, `@NotBlank`).
+dots, hyphens, or underscores (1–255 chars). Workflow request bodies are deep-validated by
+`@ValidWorkflow`, which walks the entire object graph to ensure all embedded identifiers are
+well-formed and free-text fields (prompts, instructions, rubric content) are free of dangerous
+control characters. `LogSanitizer` provides defense-in-depth by stripping CR/LF from user-derived
+values at log call sites.
 
 Invalid input returns `400 Bad Request` with a JSON error body:
 
@@ -332,6 +335,9 @@ hensu-server/
 │   ├── validation/                        # Input validation (Bean Validation)
 │   │   ├── ValidId.java                    # Custom identifier constraint
 │   │   ├── ValidIdValidator.java           # Regex-based validator
+│   │   ├── ValidWorkflow.java              # Custom constraint for Workflow bodies
+│   │   ├── ValidWorkflowValidator.java     # Deep-validates workflow object graph
+│   │   ├── LogSanitizer.java               # Strips CR/LF for log injection prevention
 │   │   └── ConstraintViolationExceptionMapper.java  # Global 400 error mapper
 │   ├── config/                            # CDI configuration
 │   │   ├── HensuEnvironmentProducer.java  # HensuFactory → HensuEnvironment

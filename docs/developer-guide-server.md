@@ -187,6 +187,9 @@ io.hensu.server/
 ├── validation/            # Input validation (Bean Validation)
 │   ├── ValidId                   # Custom identifier constraint annotation
 │   ├── ValidIdValidator          # Regex-based validator implementation
+│   ├── ValidWorkflow             # Custom constraint for Workflow request bodies
+│   ├── ValidWorkflowValidator    # Deep-validates workflow object graph
+│   ├── LogSanitizer              # Strips CR/LF for log injection prevention
 │   └── ConstraintViolationExceptionMapper  # Global 400 error mapper
 │
 ├── config/                # CDI configuration
@@ -334,6 +337,9 @@ constraints declaratively on REST endpoint parameters and request DTOs.
 |--------------------------------------|-----------------------------------------------------------------------|
 | `@ValidId`                           | Custom constraint for path/query identifiers                          |
 | `ValidIdValidator`                   | Validates against `[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}`                  |
+| `@ValidWorkflow`                     | Custom constraint for full `Workflow` request bodies                  |
+| `ValidWorkflowValidator`             | Deep-validates the entire workflow object graph (IDs + free text)     |
+| `LogSanitizer`                       | Strips CR/LF from values before logging (defense-in-depth)            |
 | `ConstraintViolationExceptionMapper` | Global `@Provider` — translates violations into standardized 400 JSON |
 
 All classes live in `io.hensu.server.validation`.
@@ -382,12 +388,45 @@ a standardized JSON response consistent with the `GlobalExceptionMapper` format:
 
 Multiple violations are joined with `; `.
 
+#### Workflow Body Validation
+
+When a `Workflow` object is submitted via `POST /api/v1/workflows`, the `@ValidWorkflow` constraint
+triggers `ValidWorkflowValidator`, which deep-validates the entire object graph:
+
+- **Identifier fields** (workflow ID, node IDs, agent IDs, branch IDs, rubric keys, etc.) must match
+  the safe-ID pattern `[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}`
+- **Free-text fields** (prompts, instructions, rubric content, metadata) are scanned for dangerous
+  control characters (U+0000–U+0008, U+000B, U+000C, U+000E–U+001F, U+007F). Tabs, newlines, and
+  carriage returns are permitted since they are legitimate in prompt text.
+
+The validator walks all node types via pattern matching (`StandardNode`, `ParallelNode`,
+`SubWorkflowNode`, `ForkNode`, `JoinNode`, `GenericNode`, `EndNode`) and validates type-specific
+fields (e.g., branch prompts, input/output mappings, await targets).
+
+```java
+@POST
+public Response push(@ValidWorkflow Workflow workflow) {
+    // workflow is guaranteed safe here — all IDs and text fields validated
+}
+```
+
+#### Log Sanitizer (Defense-in-Depth)
+
+`LogSanitizer.sanitize()` strips CR/LF characters from user-derived values before they reach log
+output, preventing log injection attacks. Apply it at every log call site that includes
+user-controlled input:
+
+```java
+LOG.infov("Processing workflow: id={0}", LogSanitizer.sanitize(workflowId));
+```
+
 #### Adding Validation to New Endpoints
 
 1. Add `@ValidId` to all path/query params accepting identifiers
-2. Add `@Valid @NotNull` to request body parameters
+2. Add `@ValidWorkflow` to `Workflow` body parameters (or `@Valid @NotNull` for other DTOs)
 3. Add field-level constraints (`@NotBlank`, `@ValidId`, `@Size`, etc.) to DTO records
-4. Write a test in `InputValidationIntegrationTest` covering the new constraints
+4. Use `LogSanitizer.sanitize()` when logging any user-provided string
+5. Write a test in `InputValidationIntegrationTest` covering the new constraints
 
 See `hensu-server/src/test/java/io/hensu/server/integration/InputValidationIntegrationTest.java` for
 comprehensive examples.
