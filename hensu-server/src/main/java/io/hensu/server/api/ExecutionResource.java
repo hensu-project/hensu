@@ -1,17 +1,16 @@
 package io.hensu.server.api;
 
+import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.service.WorkflowService;
-import io.hensu.server.service.WorkflowService.ExecutionNotFoundException;
-import io.hensu.server.service.WorkflowService.ExecutionStartResult;
-import io.hensu.server.service.WorkflowService.ExecutionStatus;
-import io.hensu.server.service.WorkflowService.ExecutionSummary;
-import io.hensu.server.service.WorkflowService.PlanInfo;
-import io.hensu.server.service.WorkflowService.ResumeDecision;
-import io.hensu.server.service.WorkflowService.WorkflowNotFoundException;
+import io.hensu.server.service.WorkflowService.*;
+import io.hensu.server.validation.LogSanitizer;
+import io.hensu.server.validation.ValidId;
 import jakarta.inject.Inject;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
-import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
@@ -30,7 +29,8 @@ import org.jboss.logging.Logger;
 /// - Resuming paused executions
 /// - Querying execution status and plans
 ///
-/// All endpoints require `X-Tenant-ID` header for multi-tenant isolation.
+/// Tenant identity is resolved from the JWT `tenant_id` claim via
+/// {@link RequestTenantResolver}. In dev/test mode, a default tenant is used.
 ///
 /// @see WorkflowService for business logic
 /// @see WorkflowResource for workflow definition management
@@ -42,10 +42,13 @@ public class ExecutionResource {
     private static final Logger LOG = Logger.getLogger(ExecutionResource.class);
 
     private final WorkflowService workflowService;
+    private final RequestTenantResolver tenantResolver;
 
     @Inject
-    public ExecutionResource(WorkflowService workflowService) {
+    public ExecutionResource(
+            WorkflowService workflowService, RequestTenantResolver tenantResolver) {
         this.workflowService = workflowService;
+        this.tenantResolver = tenantResolver;
     }
 
     /// Starts a new workflow execution.
@@ -53,7 +56,7 @@ public class ExecutionResource {
     /// ### Request
     /// ```
     /// POST /api/v1/executions
-    /// X-Tenant-ID: tenant-123
+    /// Authorization: Bearer <jwt>
     /// Content-Type: application/json
     ///
     /// {"workflowId": "order-processing", "context": {"orderId": "123"}}
@@ -64,14 +67,9 @@ public class ExecutionResource {
     /// {"executionId": "exec-abc", "workflowId": "order-processing"}
     /// ```
     @POST
-    public Response startExecution(
-            @HeaderParam("X-Tenant-ID") String tenantId, ExecutionStartRequest request) {
+    public Response startExecution(@Valid @NotNull ExecutionStartRequest request) {
 
-        validateTenantId(tenantId);
-
-        if (request == null || request.workflowId() == null || request.workflowId().isBlank()) {
-            throw new jakarta.ws.rs.BadRequestException("workflowId is required");
-        }
+        String tenantId = tenantResolver.tenantId();
 
         LOG.infov(
                 "Start execution request: workflow={0}, tenant={1}",
@@ -101,7 +99,7 @@ public class ExecutionResource {
     /// ### Request
     /// ```
     /// GET /api/v1/executions/{executionId}
-    /// X-Tenant-ID: tenant-123
+    /// Authorization: Bearer <jwt>
     /// ```
     ///
     /// ### Response (200 OK)
@@ -116,11 +114,9 @@ public class ExecutionResource {
     /// ```
     @GET
     @Path("/{executionId}")
-    public Response getExecution(
-            @PathParam("executionId") String executionId,
-            @HeaderParam("X-Tenant-ID") String tenantId) {
+    public Response getExecution(@PathParam("executionId") @ValidId String executionId) {
 
-        validateTenantId(tenantId);
+        String tenantId = tenantResolver.tenantId();
 
         try {
             ExecutionStatus status = workflowService.getExecutionStatus(tenantId, executionId);
@@ -128,17 +124,19 @@ public class ExecutionResource {
             return Response.ok()
                     .entity(
                             Map.of(
-                                    "executionId", status.executionId(),
-                                    "workflowId", status.workflowId(),
-                                    "status", status.status(),
+                                    "executionId",
+                                    status.executionId(),
+                                    "workflowId",
+                                    status.workflowId(),
+                                    "status",
+                                    status.status(),
                                     "currentNodeId",
-                                            status.currentNodeId() != null
-                                                    ? status.currentNodeId()
-                                                    : "",
-                                    "hasPendingPlan", status.hasPendingPlan()))
+                                    status.currentNodeId() != null ? status.currentNodeId() : "",
+                                    "hasPendingPlan",
+                                    status.hasPendingPlan()))
                     .build();
         } catch (ExecutionNotFoundException e) {
-            LOG.warnv("Execution not found: {0}", executionId);
+            LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());
         }
     }
@@ -148,7 +146,7 @@ public class ExecutionResource {
     /// ### Request
     /// ```
     /// POST /api/v1/executions/{executionId}/resume
-    /// X-Tenant-ID: tenant-123
+    /// Authorization: Bearer <jwt>
     /// Content-Type: application/json
     ///
     /// {"approved": true, "modifications": {}}
@@ -161,13 +159,13 @@ public class ExecutionResource {
     @POST
     @Path("/{executionId}/resume")
     public Response resume(
-            @PathParam("executionId") String executionId,
-            @HeaderParam("X-Tenant-ID") String tenantId,
-            ResumeRequest request) {
+            @PathParam("executionId") @ValidId String executionId, @Valid ResumeRequest request) {
 
-        validateTenantId(tenantId);
+        String tenantId = tenantResolver.tenantId();
 
-        LOG.infov("Resume execution request: executionId={0}, tenant={1}", executionId, tenantId);
+        LOG.infov(
+                "Resume execution request: executionId={0}, tenant={1}",
+                LogSanitizer.sanitize(executionId), tenantId);
 
         try {
             ResumeDecision decision =
@@ -182,7 +180,7 @@ public class ExecutionResource {
 
             return Response.ok().entity(Map.of("status", "resumed")).build();
         } catch (ExecutionNotFoundException e) {
-            LOG.warnv("Execution not found: {0}", executionId);
+            LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());
         }
     }
@@ -192,7 +190,7 @@ public class ExecutionResource {
     /// ### Request
     /// ```
     /// GET /api/v1/executions/{executionId}/plan
-    /// X-Tenant-ID: tenant-123
+    /// Authorization: Bearer <jwt>
     /// ```
     ///
     /// ### Response (200 OK)
@@ -201,11 +199,9 @@ public class ExecutionResource {
     /// ```
     @GET
     @Path("/{executionId}/plan")
-    public Response getPlan(
-            @PathParam("executionId") String executionId,
-            @HeaderParam("X-Tenant-ID") String tenantId) {
+    public Response getPlan(@PathParam("executionId") @ValidId String executionId) {
 
-        validateTenantId(tenantId);
+        String tenantId = tenantResolver.tenantId();
 
         try {
             PlanInfo planInfo =
@@ -225,7 +221,7 @@ public class ExecutionResource {
                                     "currentStep", planInfo.currentStep()))
                     .build();
         } catch (ExecutionNotFoundException e) {
-            LOG.warnv("Execution not found: {0}", executionId);
+            LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());
         }
     }
@@ -235,7 +231,7 @@ public class ExecutionResource {
     /// ### Request
     /// ```
     /// GET /api/v1/executions/paused
-    /// X-Tenant-ID: tenant-123
+    /// Authorization: Bearer <jwt>
     /// ```
     ///
     /// ### Response (200 OK)
@@ -247,9 +243,9 @@ public class ExecutionResource {
     /// ```
     @GET
     @Path("/paused")
-    public Response listPausedExecutions(@HeaderParam("X-Tenant-ID") String tenantId) {
+    public Response listPausedExecutions() {
 
-        validateTenantId(tenantId);
+        String tenantId = tenantResolver.tenantId();
 
         List<ExecutionSummary> paused = workflowService.listPausedExecutions(tenantId);
 
@@ -258,27 +254,30 @@ public class ExecutionResource {
                         .map(
                                 s ->
                                         Map.<String, Object>of(
-                                                "executionId", s.executionId(),
-                                                "workflowId", s.workflowId(),
+                                                "executionId",
+                                                s.executionId(),
+                                                "workflowId",
+                                                s.workflowId(),
                                                 "currentNodeId",
-                                                        s.currentNodeId() != null
-                                                                ? s.currentNodeId()
-                                                                : "",
-                                                "createdAt", s.createdAt().toString()))
+                                                s.currentNodeId() != null ? s.currentNodeId() : "",
+                                                "createdAt",
+                                                s.createdAt().toString()))
                         .toList();
 
         return Response.ok().entity(response).build();
     }
 
-    private void validateTenantId(String tenantId) {
-        if (tenantId == null || tenantId.isBlank()) {
-            throw new jakarta.ws.rs.BadRequestException("X-Tenant-ID header is required");
-        }
-    }
-
     /// Request body for starting an execution.
-    public record ExecutionStartRequest(String workflowId, Map<String, Object> context) {}
+    ///
+    /// @param workflowId the workflow to execute, not null, not blank
+    /// @param context initial execution context variables, may be null
+    public record ExecutionStartRequest(
+            @NotBlank(message = "workflowId is required") @ValidId String workflowId,
+            Map<String, Object> context) {}
 
-    /// Request body for resume endpoint.
+    /// Request body for resuming a paused execution.
+    ///
+    /// @param approved whether the pending plan is approved
+    /// @param modifications optional context modifications, may be null
     public record ResumeRequest(boolean approved, Map<String, Object> modifications) {}
 }

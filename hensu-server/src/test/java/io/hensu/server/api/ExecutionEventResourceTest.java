@@ -1,16 +1,15 @@
 package io.hensu.server.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.helpers.test.AssertSubscriber;
-import jakarta.ws.rs.BadRequestException;
 import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -24,7 +23,9 @@ class ExecutionEventResourceTest {
     @BeforeEach
     void setUp() {
         broadcaster = mock(ExecutionEventBroadcaster.class);
-        resource = new ExecutionEventResource(broadcaster);
+        RequestTenantResolver tenantResolver = mock(RequestTenantResolver.class);
+        when(tenantResolver.tenantId()).thenReturn("tenant-1");
+        resource = new ExecutionEventResource(broadcaster, tenantResolver);
     }
 
     @Nested
@@ -41,24 +42,10 @@ class ExecutionEventResourceTest {
                                             "exec-1", "plan-1", 0, "tool", "desc", Instant.now()));
             when(broadcaster.subscribe("exec-1")).thenReturn(mockStream);
 
-            Multi<ExecutionEvent> result = resource.streamEvents("exec-1", "tenant-1");
+            Multi<ExecutionEvent> result = resource.streamEvents("exec-1");
 
             assertThat(result).isNotNull();
             verify(broadcaster).subscribe("exec-1");
-        }
-
-        @Test
-        void shouldReturn400WhenTenantIdMissing() {
-            assertThatThrownBy(() -> resource.streamEvents("exec-1", null))
-                    .isInstanceOf(BadRequestException.class)
-                    .hasMessageContaining("X-Tenant-ID");
-        }
-
-        @Test
-        void shouldReturn400WhenTenantIdBlank() {
-            assertThatThrownBy(() -> resource.streamEvents("exec-1", "   "))
-                    .isInstanceOf(BadRequestException.class)
-                    .hasMessageContaining("X-Tenant-ID");
         }
 
         @Test
@@ -75,7 +62,7 @@ class ExecutionEventResourceTest {
             Multi<ExecutionEvent> mockStream = Multi.createFrom().items(event1, event2, event3);
             when(broadcaster.subscribe("exec-1")).thenReturn(mockStream);
 
-            Multi<ExecutionEvent> result = resource.streamEvents("exec-1", "tenant-1");
+            Multi<ExecutionEvent> result = resource.streamEvents("exec-1");
 
             AssertSubscriber<ExecutionEvent> subscriber =
                     result.subscribe().withSubscriber(AssertSubscriber.create(10));
@@ -100,24 +87,10 @@ class ExecutionEventResourceTest {
                                             "exec-1", "wf-1", "tenant-1"));
             when(broadcaster.subscribe("tenant:tenant-1")).thenReturn(mockStream);
 
-            Multi<ExecutionEvent> result = resource.streamAllEvents("tenant-1");
+            Multi<ExecutionEvent> result = resource.streamAllEvents();
 
             assertThat(result).isNotNull();
             verify(broadcaster).subscribe("tenant:tenant-1");
-        }
-
-        @Test
-        void shouldReturn400WhenTenantIdMissingForAllEvents() {
-            assertThatThrownBy(() -> resource.streamAllEvents(null))
-                    .isInstanceOf(BadRequestException.class)
-                    .hasMessageContaining("X-Tenant-ID");
-        }
-
-        @Test
-        void shouldReturn400WhenTenantIdBlankForAllEvents() {
-            assertThatThrownBy(() -> resource.streamAllEvents(""))
-                    .isInstanceOf(BadRequestException.class)
-                    .hasMessageContaining("X-Tenant-ID");
         }
 
         @Test
@@ -130,7 +103,7 @@ class ExecutionEventResourceTest {
             Multi<ExecutionEvent> mockStream = Multi.createFrom().items(event1, event2);
             when(broadcaster.subscribe("tenant:tenant-1")).thenReturn(mockStream);
 
-            Multi<ExecutionEvent> result = resource.streamAllEvents("tenant-1");
+            Multi<ExecutionEvent> result = resource.streamAllEvents();
 
             AssertSubscriber<ExecutionEvent> subscriber =
                     result.subscribe().withSubscriber(AssertSubscriber.create(10));

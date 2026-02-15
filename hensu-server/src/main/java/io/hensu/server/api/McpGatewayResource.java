@@ -1,14 +1,17 @@
 package io.hensu.server.api;
 
 import io.hensu.server.mcp.McpSessionManager;
+import io.hensu.server.validation.LogSanitizer;
+import io.hensu.server.validation.ValidId;
+import io.hensu.server.validation.ValidMessage;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
-import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
@@ -30,7 +33,7 @@ import org.jboss.resteasy.reactive.RestStreamElementType;
 /// ```
 ///
 /// ### Client Connection Flow
-/// 1. Client connects to `GET /mcp/connect?clientId=tenant-123`
+/// 1. Client authenticates and connects to `GET /mcp/connect?clientId=client-123`
 /// 2. Client receives JSON-RPC requests via SSE (e.g., `tools/call`)
 /// 3. Client executes the tool locally
 /// 4. Client POSTs result to `POST /mcp/message`
@@ -38,8 +41,8 @@ import org.jboss.resteasy.reactive.RestStreamElementType;
 ///
 /// ### Example Client (JavaScript)
 /// ```javascript
-/// // Connect to SSE stream
-/// const events = new EventSource('/mcp/connect?clientId=my-tenant');
+/// // Connect to SSE stream (with JWT auth)
+/// const events = new EventSource('/mcp/connect?clientId=my-client');
 /// events.onmessage = async (e) => {
 ///     const request = JSON.parse(e.data);
 ///     if (request.method === 'tools/call') {
@@ -74,7 +77,8 @@ public class McpGatewayResource {
     ///
     /// ### Request
     /// ```
-    /// GET /mcp/connect?clientId=tenant-123
+    /// GET /mcp/connect?clientId=client-123
+    /// Authorization: Bearer <jwt>
     /// Accept: text/event-stream
     /// ```
     ///
@@ -85,30 +89,36 @@ public class McpGatewayResource {
     /// data: {"jsonrpc":"2.0","id":"uuid-1","method":"tools/call","params":{...}}
     /// ```
     ///
-    /// @param clientId unique client identifier (typically tenant ID)
+    /// @param clientId unique client identifier for session management
     /// @return SSE stream of JSON-RPC messages
     @GET
     @Path("/connect")
     @Produces(MediaType.SERVER_SENT_EVENTS)
     @RestStreamElementType(MediaType.APPLICATION_JSON)
-    public Multi<String> connect(@QueryParam("clientId") String clientId) {
-        if (clientId == null || clientId.isBlank()) {
-            throw new BadRequestException("clientId query parameter is required");
-        }
+    public Multi<String> connect(@QueryParam("clientId") @ValidId String clientId) {
 
         LOG.infov("MCP connection request: clientId={0}", clientId);
 
         return sessionManager
                 .createSession(clientId)
                 .onSubscription()
-                .invoke(() -> LOG.debugv("SSE stream started for: {0}", clientId))
+                .invoke(
+                        () ->
+                                LOG.debugv(
+                                        "SSE stream started for: {0}",
+                                        LogSanitizer.sanitize(clientId)))
                 .onTermination()
                 .invoke(
                         (t, _) -> {
                             if (t != null) {
-                                LOG.warnv(t, "SSE stream error for: {0}", clientId);
+                                LOG.warnv(
+                                        t,
+                                        "SSE stream error for: {0}",
+                                        LogSanitizer.sanitize(clientId));
                             } else {
-                                LOG.debugv("SSE stream ended for: {0}", clientId);
+                                LOG.debugv(
+                                        "SSE stream ended for: {0}",
+                                        LogSanitizer.sanitize(clientId));
                             }
                         });
     }
@@ -118,9 +128,15 @@ public class McpGatewayResource {
     /// Clients POST JSON-RPC responses here after executing tool calls.
     /// The response is correlated to the pending request by JSON-RPC `id`.
     ///
+    /// The {@link ValidMessage} constraint enforces:
+    /// - Non-blank body
+    /// - Size within {@link io.hensu.server.validation.InputValidator#MAX_JSON_MESSAGE_BYTES}
+    /// - No dangerous control characters
+    ///
     /// ### Request
     /// ```
     /// POST /mcp/message
+    /// Authorization: Bearer <jwt>
     /// Content-Type: application/json
     ///
     /// {"jsonrpc":"2.0","id":"uuid-1","result":{"content":"file contents..."}}
@@ -128,25 +144,19 @@ public class McpGatewayResource {
     ///
     /// ### Response
     /// - 204 No Content: Response accepted
-    /// - 400 Bad Request: Invalid JSON-RPC format
+    /// - 400 Bad Request: Empty body, oversized payload, or illegal characters
     ///
     /// @param jsonMessage the JSON-RPC response
     /// @return empty response on success
     @POST
     @Path("/message")
     @Consumes(MediaType.APPLICATION_JSON)
-    public Uni<Response> receiveMessage(String jsonMessage) {
-        if (jsonMessage == null || jsonMessage.isBlank()) {
-            return Uni.createFrom()
-                    .item(
-                            Response.status(Response.Status.BAD_REQUEST)
-                                    .entity(Map.of("error", "Empty message body"))
-                                    .build());
-        }
+    public Uni<Response> receiveMessage(@ValidMessage String jsonMessage) {
 
         LOG.debugv(
                 "Received MCP message: {0}",
-                jsonMessage.substring(0, Math.min(200, jsonMessage.length())));
+                LogSanitizer.sanitize(
+                        jsonMessage.substring(0, Math.min(200, jsonMessage.length()))));
 
         sessionManager.handleResponse(jsonMessage);
 
@@ -187,7 +197,7 @@ public class McpGatewayResource {
     @GET
     @Path("/clients/{clientId}/status")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response clientStatus(@jakarta.ws.rs.PathParam("clientId") String clientId) {
+    public Response clientStatus(@PathParam("clientId") @ValidId String clientId) {
         boolean connected = sessionManager.isConnected(clientId);
         McpSessionManager.ClientInfo info = sessionManager.getClientInfo(clientId);
 

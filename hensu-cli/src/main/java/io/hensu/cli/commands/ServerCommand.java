@@ -11,7 +11,7 @@ import picocli.CommandLine.Option;
 
 /// Base class for CLI commands that interact with the Hensu server.
 ///
-/// Provides shared HTTP client utilities and server/tenant options.
+/// Provides shared HTTP client utilities and server/token options.
 /// Extends `WorkflowCommand` to inherit banner display and working directory resolution.
 ///
 /// @see WorkflowPushCommand
@@ -26,17 +26,17 @@ public abstract class ServerCommand extends WorkflowCommand {
     private String serverUrl;
 
     @Option(
-            names = {"--tenant"},
-            description = "Tenant ID (default: ${DEFAULT-VALUE})")
-    private String tenantId;
+            names = {"--token"},
+            description = "JWT bearer token for server authentication")
+    private String token;
 
     @Inject
     @ConfigProperty(name = "hensu.server.url", defaultValue = "http://localhost:8080")
     private Optional<String> defaultServerUrl;
 
     @Inject
-    @ConfigProperty(name = "hensu.tenant.id", defaultValue = "default")
-    private Optional<String> defaultTenantId;
+    @ConfigProperty(name = "hensu.server.token", defaultValue = "")
+    private Optional<String> defaultToken;
 
     /// Returns the effective server base URL.
     protected String getServerUrl() {
@@ -46,12 +46,12 @@ public abstract class ServerCommand extends WorkflowCommand {
         return defaultServerUrl.orElse("http://localhost:8080");
     }
 
-    /// Returns the effective tenant ID.
-    protected String getTenantId() {
-        if (tenantId != null && !tenantId.isBlank()) {
-            return tenantId;
+    /// Returns the effective JWT bearer token, or empty if none configured.
+    protected Optional<String> getToken() {
+        if (token != null && !token.isBlank()) {
+            return Optional.of(token);
         }
-        return defaultTenantId.orElse("default");
+        return defaultToken.filter(t -> !t.isBlank());
     }
 
     /// Sends an HTTP POST request.
@@ -61,13 +61,13 @@ public abstract class ServerCommand extends WorkflowCommand {
     /// @return HTTP response, never null
     /// @throws RuntimeException if the request fails
     protected HttpResponse<String> httpPost(String path, String jsonBody) {
-        return sendRequest(
+        var builder =
                 HttpRequest.newBuilder()
                         .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
                         .uri(URI.create(getServerUrl() + path))
-                        .header("Content-Type", "application/json")
-                        .header("X-Tenant-ID", getTenantId())
-                        .build());
+                        .header("Content-Type", "application/json");
+        getToken().ifPresent(t -> builder.header("Authorization", "Bearer " + t));
+        return sendRequest(builder.build());
     }
 
     /// Sends an HTTP GET request.
@@ -76,13 +76,13 @@ public abstract class ServerCommand extends WorkflowCommand {
     /// @return HTTP response, never null
     /// @throws RuntimeException if the request fails
     protected HttpResponse<String> httpGet(String path) {
-        return sendRequest(
+        var builder =
                 HttpRequest.newBuilder()
                         .GET()
                         .uri(URI.create(getServerUrl() + path))
-                        .header("Accept", "application/json")
-                        .header("X-Tenant-ID", getTenantId())
-                        .build());
+                        .header("Accept", "application/json");
+        getToken().ifPresent(t -> builder.header("Authorization", "Bearer " + t));
+        return sendRequest(builder.build());
     }
 
     /// Sends an HTTP DELETE request.
@@ -91,12 +91,9 @@ public abstract class ServerCommand extends WorkflowCommand {
     /// @return HTTP response, never null
     /// @throws RuntimeException if the request fails
     protected HttpResponse<String> httpDelete(String path) {
-        return sendRequest(
-                HttpRequest.newBuilder()
-                        .DELETE()
-                        .uri(URI.create(getServerUrl() + path))
-                        .header("X-Tenant-ID", getTenantId())
-                        .build());
+        var builder = HttpRequest.newBuilder().DELETE().uri(URI.create(getServerUrl() + path));
+        getToken().ifPresent(t -> builder.header("Authorization", "Bearer " + t));
+        return sendRequest(builder.build());
     }
 
     private HttpResponse<String> sendRequest(HttpRequest request) {
@@ -116,6 +113,9 @@ public abstract class ServerCommand extends WorkflowCommand {
         String message =
                 switch (statusCode) {
                     case 400 -> "Bad request: " + body;
+                    case 401 ->
+                            "Authentication required — provide a JWT via --token or hensu.server.token";
+                    case 403 -> "Access denied — JWT missing required tenant_id claim";
                     case 404 -> "Not found";
                     case 500 -> "Server error: " + body;
                     default -> "HTTP " + statusCode + ": " + body;
