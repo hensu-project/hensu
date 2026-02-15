@@ -19,13 +19,7 @@ seamless GraalVM native-image execution.
 
 ## How to Contribute
 
-### 1. Repository Intelligence (Pommel)
-
-Hensu uses **Pommel** for semantic context retrieval. If you are using an AI coding agent (Claude, Cursor, etc.), ensure
-it utilizes the project's semantic rulesets to scan for relevant logic. This ensures the agent understands the
-architecture before suggesting changes.
-
-### 2. The Pull Request Process
+### 1. The Pull Request Process
 
 To maintain our 70% (and climbing) verification rate, we follow a strict PR process:
 
@@ -34,7 +28,7 @@ To maintain our 70% (and climbing) verification rate, we follow a strict PR proc
 - **Native Verification:** If your change affects the `core` or `server`, you must verify that the project still
   compiles to a GraalVM native image.
 
-### 3. Development Standards
+### 2. Development Standards
 
 - **Conventional Commits:** Use `feat:`, `fix:`, `docs:`, `refactor:`, or `chore:`.
 - **Documentation:** If you add a feature to the `dsl` or `core`, the corresponding documentation in `/docs` must be

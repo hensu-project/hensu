@@ -3,6 +3,7 @@ package io.hensu.core.execution.executor;
 import io.hensu.core.execution.result.ResultStatus;
 import java.time.Instant;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 
 /// Immutable result of node execution containing status, output, and metadata.
@@ -176,7 +177,7 @@ public final class NodeResult {
         /// @param metadata key-value pairs, not null
         /// @return this builder for chaining
         public Builder metadata(Map<String, Object> metadata) {
-            this.metadata = Map.copyOf(metadata);
+            this.metadata = Collections.unmodifiableMap(new HashMap<>(metadata));
             return this;
         }
 

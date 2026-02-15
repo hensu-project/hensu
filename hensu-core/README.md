@@ -42,6 +42,11 @@ The `hensu-core` module is the execution engine at the heart of Hensu. It provid
 │  │ ToolRegistry │  │ TemplateRes. │  │ ReviewHandler             │   │
 │  │ (tool defs)  │  │ ({var} subst)│  │ (human-in-the-loop)       │   │
 │  +——————————————+  +——————————————+  +———————————————————————————+   │
+│                                                                      │
+│  +————————————————————+  +———————————————————————————————————————+   │
+│  │ WorkflowRepository │  │ WorkflowStateRepository               │   │
+│  │ (workflow storage) │  │ (snapshots, pause/resume)             │   │
+│  +————————————————————+  +———————————————————————————————————————+   │
 +——————————————————————————————————————————————————————————————————————+
 ```
 
@@ -53,7 +58,7 @@ The `hensu-core` module is the execution engine at the heart of Hensu. It provid
   modules
 - **GraalVM native-image safe** — no reflection, no classpath scanning, explicit wiring only
 - **Thread-safe after construction** — immutable components wired via `HensuFactory`
-- **No persistence** — core is a pure execution runtime; persistence is handled at the server layer
+- **Storage interfaces in core** — `WorkflowRepository` and `WorkflowStateRepository` with in-memory defaults; server delegates via CDI
 
 ## Quick Start
 
@@ -209,7 +214,7 @@ hensu-core/src/main/java/io/hensu/core/
 │       ├── StubAgent.java         # Mock agent returning stub responses
 │       └── StubResponseRegistry.java
 ├── execution/
-│   ├── WorkflowExecutor.java          # Main graph traversal engine
+│   ├── WorkflowExecutor.java          # Main graph traversal engine (execute + executeFrom for resume)
 │   ├── executor/
 │   │   ├── NodeExecutor.java          # Interface for node type executors
 │   │   ├── StandardNodeExecutor.java  # LLM prompt execution
@@ -219,6 +224,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── LoopNodeExecutor.java      # Iterative execution
 │   │   ├── ActionNodeExecutor.java    # Action dispatch
 │   │   ├── GenericNodeExecutor.java   # Custom node handlers
+│   │   ├── SubWorkflowNodeExecutor.java # Nested workflow execution
 │   │   └── EndNodeExecutor.java       # Terminal nodes
 │   ├── action/
 │   │   ├── Action.java            # Sealed interface: Send | Execute
@@ -234,6 +240,8 @@ hensu-core/src/main/java/io/hensu/core/
 │       └── ForkJoinContext.java   # Shared fork/join state
 ├── workflow/
 │   ├── Workflow.java              # Workflow definition (agents + graph)
+│   ├── WorkflowRepository.java   # Tenant-scoped workflow storage interface
+│   ├── InMemoryWorkflowRepository.java  # Default in-memory implementation
 │   ├── node/                      # Node types: Standard, Parallel, Fork, etc.
 │   └── transition/                # Transition rules: Success, Score, Always, etc.
 ├── rubric/                        # Quality evaluation engine
@@ -259,7 +267,11 @@ hensu-core/src/main/java/io/hensu/core/
 │   └── PlanEvent.java             # Plan lifecycle events
 ├── review/                        # Human review support
 ├── template/                      # {variable} placeholder resolution
-└── state/                         # Execution state snapshots
+└── state/                         # Execution state and persistence
+    ├── HensuState.java            # Mutable runtime state during execution
+    ├── HensuSnapshot.java         # Immutable checkpoint record for persistence
+    ├── WorkflowStateRepository.java     # Tenant-scoped state storage interface
+    └── InMemoryWorkflowStateRepository.java  # Default in-memory implementation
 ```
 
 ## Node Types

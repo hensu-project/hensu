@@ -30,7 +30,7 @@ class WorkflowPushCommandTest extends BaseWorkflowCommandTest {
         injectField(command, "workflowId", "my-workflow");
         injectField(command, "workingDirPath", tempDir);
         injectField(command, "serverUrl", "http://localhost:8080");
-        injectField(command, "tenantId", "test-tenant");
+        injectField(command, "token", "test-tenant");
     }
 
     @Test

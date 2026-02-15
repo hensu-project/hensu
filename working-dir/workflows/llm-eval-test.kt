@@ -31,7 +31,7 @@ fun llmEvalTestWorkflow() = workflow("llm-eval-test") {
     }
 
     rubrics {
-        rubric("content_quality", "content-quality.md")
+        rubric("content-quality", "content-quality.md")
     }
 
     graph {
@@ -47,7 +47,7 @@ fun llmEvalTestWorkflow() = workflow("llm-eval-test") {
         node("evaluate") {
             agent = "evaluator"
             prompt = "Evaluate this article: {write}. Return JSON with score (0-100), reasoning, and improvements array."
-            rubric = "content_quality"
+            rubric = "content-quality"
             outputParams = listOf("score", "improvements", "reasoning")
 
             onScore {

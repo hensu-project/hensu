@@ -107,9 +107,6 @@ public final class HensuFactory {
         // Create AgentRegistry using the factory
         AgentRegistry agentRegistry = new DefaultAgentRegistry(agentFactory);
 
-        // Create TemplateResolver
-        TemplateResolver templateResolver = createTemplateResolver();
-
         ExecutorService executorService =
                 config.isUseVirtualThreads()
                         ? Executors.newVirtualThreadPerTaskExecutor()
@@ -255,6 +252,9 @@ public final class HensuFactory {
         // Create engines
         RubricEngine rubricEngine = new RubricEngine(rubricRepository, rubricEvaluator);
 
+        // Create TemplateResolver
+        TemplateResolver templateResolver = createTemplateResolver();
+
         // Create workflow executor with review handler, action executor, and workflow repository
         WorkflowExecutor workflowExecutor =
                 new WorkflowExecutor(
@@ -264,7 +264,7 @@ public final class HensuFactory {
                         rubricEngine,
                         reviewHandler,
                         actionExecutor,
-                        new SimpleTemplateResolver(),
+                        templateResolver,
                         workflowRepository);
 
         return new HensuEnvironment(

@@ -96,15 +96,18 @@ hensu-langchain4j-adapter     # LangChain4j integration (Claude, GPT, Gemini, De
 - `TemplateResolver` - Resolves `{placeholder}` syntax in prompts
 - `ReviewHandler` - Handles human review checkpoints (optional)
 - `ActionExecutor` - Executes workflow actions (CLI: local bash, Server: MCP-only)
-- `WorkflowRepository` - Tenant-scoped storage for workflow definitions (defaults to in-memory)
-- `WorkflowStateRepository` - Tenant-scoped storage for execution state snapshots (defaults to in-memory)
+- `WorkflowRepository` - Tenant-scoped storage for workflow definitions (defaults to in-memory; JDBC impl in server)
+- `WorkflowStateRepository` - Tenant-scoped storage for execution state snapshots (defaults to in-memory; JDBC impl in server)
+- `ExecutionListener` - Lifecycle callbacks including `onCheckpoint(HensuState)` for inter-node persistence
 
 **Server-Specific Components** (in `hensu-server`):
 
-- `HensuEnvironmentProducer` - CDI producer using HensuFactory.builder()
+- `HensuEnvironmentProducer` - CDI producer using HensuFactory.builder(); conditionally wires JDBC or in-memory repos
 - `ServerActionExecutor` - MCP-only action executor (rejects local execution)
 - `WorkflowResource` - REST API for workflow definitions (push/pull/delete/list)
 - `ExecutionResource` - REST API for execution runtime (start/resume/status/plan)
+- `JdbcWorkflowRepository` - PostgreSQL-backed workflow storage (plain class, not CDI bean)
+- `JdbcWorkflowStateRepository` - PostgreSQL-backed execution state storage (plain class, not CDI bean)
 
 **AI Provider Interface**:
 
@@ -153,6 +156,12 @@ Execution state flows through three types:
   Stored in `WorkflowStateRepository`. Contains `checkpointReason` ("paused", "completed", etc.).
 - `ExecutionHistory` — Tracks executed steps and backtracks. Its `copy()` returns mutable copies (not `List.copyOf()`)
   so resumed executions can continue appending steps.
+
+**Checkpoint lifecycle** (inter-node persistence for failover):
+
+1. `WorkflowExecutor.executeLoop()` calls `listener.onCheckpoint(state)` before each non-end node
+2. `WorkflowService` implements `ExecutionListener.onCheckpoint()` to save a `HensuSnapshot` with reason `"checkpoint"`
+3. If server dies mid-execution → restart → `findPaused()` returns interrupted executions → resume from last checkpoint
 
 **Pause / Resume lifecycle:**
 
@@ -241,10 +250,15 @@ JSON by workflow ID (not the .kt file).
    `WorkflowSerializer.createMapper()` is the single ObjectMapper factory
 5. **Server MCP-only**: Server never executes bash commands locally, only sends MCP requests to external tools
 6. **Storage in core**: Repository interfaces (`WorkflowRepository`, `WorkflowStateRepository`) and in-memory defaults
-   live in `hensu-core`. Server delegates from `HensuEnvironment` via `@Produces @Singleton` — never creates instances
-   directly
+   live in `hensu-core`. JDBC implementations live in `hensu-server/persistence/` as plain classes (not CDI beans).
+   `HensuEnvironmentProducer` conditionally creates JDBC repos when DataSource is available, otherwise falls back to
+   in-memory. Server delegates from `HensuEnvironment` via `@Produces @Singleton` — never creates instances directly
 7. **API separation**: Workflow definitions (`/api/v1/workflows`) and executions (`/api/v1/executions`) are distinct
    REST resources
+8. **JWT authentication**: Server uses SmallRye JWT (`quarkus-smallrye-jwt`) for bearer token auth. Tenant identity
+   is extracted from the `tenant_id` claim via `RequestTenantResolver`. CLI sends `Authorization: Bearer <token>`
+   header via `--token` option or `hensu.server.token` config. In dev/test mode, auth is disabled and a default tenant
+   is used (`hensu.tenant.default`). RSA keys are stored externally (e.g., `~/.hensu/`), never in the repository.
 
 ## Testing
 
@@ -255,8 +269,8 @@ JSON by workflow ID (not the .kt file).
 
 ### Integration Tests (`hensu-server`)
 
-All integration tests extend `IntegrationTestBase` and run under `@QuarkusTest` with stub mode enabled. The base class
-provides:
+**Integration tests** extend `IntegrationTestBase` and run under `@QuarkusTest` with `@TestProfile(InMemoryTestProfile.class)`.
+The `inmem` profile disables PostgreSQL (no Docker required). The base class provides:
 
 - `loadWorkflow("fixture.json")` — Loads a JSON fixture from `test/resources/workflows/`
 - `registerStub("nodeId", "response")` — Registers a programmatic stub response
@@ -265,8 +279,9 @@ provides:
 - `pushAndExecuteWithMcp(workflow, context, endpoint)` — Same but within a `TenantContext` with MCP endpoint
 - `resolveRubricPath("quality.md")` — Copies a classpath rubric to a temp file (required by `RubricParser`)
 
-Per-test cleanup (`@BeforeEach`): clears `StubResponseRegistry`, `InMemoryWorkflowRepository`,
-`InMemoryWorkflowStateRepository`.
+Per-test cleanup (`@BeforeEach`): clears `StubResponseRegistry`, deletes all tenant data via
+`WorkflowStateRepository.deleteAllForTenant()` and `WorkflowRepository.deleteAllForTenant()` (execution states first
+due to FK constraint).
 
 **Test handlers** (`@ApplicationScoped` beans auto-discovered by Quarkus):
 
@@ -277,6 +292,10 @@ Per-test cleanup (`@BeforeEach`): clears `StubResponseRegistry`, `InMemoryWorkfl
 
 **Stub resolution order**: programmatic → `/stubs/{scenario}/{nodeId}.txt` → `/stubs/default/{nodeId}.txt` → echo
 fallback.
+
+**Repository tests** (`io.hensu.server.persistence`) use plain JUnit 5 + Testcontainers PostgreSQL (no Quarkus context).
+`JdbcRepositoryTestBase` starts a PostgreSQL container, runs Flyway migrations, and provides a DataSource. Tests verify
+CRUD operations, UPSERT semantics, FK constraints, tenant isolation, and serialization round-trips.
 
 ## Key Files to Understand
 
@@ -310,12 +329,15 @@ fallback.
 
 **Server:**
 
-- `hensu-server/.../config/HensuEnvironmentProducer.java` - CDI producer (HensuFactory → HensuEnvironment)
+- `hensu-server/.../config/HensuEnvironmentProducer.java` - CDI producer (HensuFactory → HensuEnvironment); conditional JDBC/in-memory wiring
 - `hensu-server/.../config/ServerConfiguration.java` - CDI delegation + server beans (ObjectMapper via
   `WorkflowSerializer.createMapper()`)
 - `hensu-server/.../action/ServerActionExecutor.java` - MCP-only action executor
 - `hensu-server/.../api/WorkflowResource.java` - Workflow definition management REST API
 - `hensu-server/.../api/ExecutionResource.java` - Execution runtime REST API
+- `hensu-server/.../persistence/JdbcWorkflowRepository.java` - PostgreSQL workflow storage (plain JDBC, JSONB)
+- `hensu-server/.../persistence/JdbcWorkflowStateRepository.java` - PostgreSQL execution state storage (plain JDBC, JSONB)
+- `hensu-server/src/main/resources/db/migration/V1__create_persistence_tables.sql` - Flyway schema migration
 
 **CLI:**
 
@@ -323,7 +345,7 @@ fallback.
 - `hensu-cli/.../commands/WorkflowBuildCommand.java` - Compile DSL → JSON (`hensu build`)
 - `hensu-cli/.../commands/WorkflowPushCommand.java` - Push compiled JSON to server (`hensu push`)
 - `hensu-cli/.../commands/ServerCommand.java` - Base class for server-interacting commands (HTTP client,
-  --server/--tenant options)
+  --server/--token options, JWT bearer authentication)
 
 **Examples:**
 

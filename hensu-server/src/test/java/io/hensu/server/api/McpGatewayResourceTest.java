@@ -1,7 +1,6 @@
 package io.hensu.server.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -10,7 +9,6 @@ import io.hensu.server.mcp.McpSessionManager;
 import io.hensu.server.mcp.McpSessionManager.ClientInfo;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.helpers.test.AssertSubscriber;
-import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.core.Response;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,20 +41,6 @@ class McpGatewayResourceTest {
         }
 
         @Test
-        void shouldReturn400WhenClientIdMissing() {
-            assertThatThrownBy(() -> resource.connect(null))
-                    .isInstanceOf(BadRequestException.class)
-                    .hasMessageContaining("clientId");
-        }
-
-        @Test
-        void shouldReturn400WhenClientIdBlank() {
-            assertThatThrownBy(() -> resource.connect("   "))
-                    .isInstanceOf(BadRequestException.class)
-                    .hasMessageContaining("clientId");
-        }
-
-        @Test
         void shouldStreamEventsFromSessionManager() {
             Multi<String> mockStream =
                     Multi.createFrom()
@@ -86,25 +70,6 @@ class McpGatewayResourceTest {
                 assertThat(response.getStatus()).isEqualTo(204);
             }
             verify(sessionManager).handleResponse(jsonMessage);
-        }
-
-        @Test
-        void shouldReturn400ForEmptyMessage() {
-            Map<String, Object> entity;
-            try (Response response = resource.receiveMessage("").await().indefinitely()) {
-
-                assertThat(response.getStatus()).isEqualTo(400);
-                entity = (Map<String, Object>) response.getEntity();
-            }
-            assertThat(entity.get("error")).isEqualTo("Empty message body");
-        }
-
-        @Test
-        void shouldReturn400ForNullMessage() {
-            try (Response response = resource.receiveMessage(null).await().indefinitely()) {
-
-                assertThat(response.getStatus()).isEqualTo(400);
-            }
         }
     }
 

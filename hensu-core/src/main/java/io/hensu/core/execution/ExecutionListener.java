@@ -2,20 +2,33 @@ package io.hensu.core.execution;
 
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.execution.executor.NodeResult;
+import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.node.Node;
 
-/// Listener for workflow execution events.
+/// Listener for workflow execution lifecycle events.
 ///
-/// Provides hooks for observability, debugging, and logging during workflow execution.
-/// All methods have default no-op implementations, allowing listeners to override
-/// only the events they care about.
+/// Provides hooks for observability, crash-recovery checkpointing, and debugging
+/// during workflow execution. All methods have default no-op implementations,
+/// allowing listeners to override only the events they care about.
+///
+/// ### Callback Lifecycle
+/// Each non-end node in the execution loop triggers callbacks in this order:
+///
+/// ```
+/// onCheckpoint(state)          — state is consistent, safe to persist
+/// onNodeStart(node)            — about to execute node
+/// onAgentStart(nodeId, ...)    — about to call LLM (from node executor)
+/// onAgentComplete(nodeId, ...) — LLM returned result
+/// onNodeComplete(node, result) — node execution finished (state NOT yet updated)
+/// [state mutations: output → history → review → rubric → transitions]
+/// ```
 ///
 /// ### Usage
 /// Implement this interface to receive callbacks during workflow execution:
+/// - Checkpoint state for crash recovery ({@link #onCheckpoint})
 /// - Track agent invocations and responses
 /// - Log node execution progress
 /// - Collect metrics for monitoring
-/// - Debug workflow behavior
 ///
 /// @implNote All methods must be thread-safe if used with parallel node execution.
 /// The listener may receive callbacks from multiple threads simultaneously.
@@ -47,6 +60,15 @@ public interface ExecutionListener {
     /// @param node the node that completed execution, not null
     /// @param result the execution result containing status and output, not null
     default void onNodeComplete(Node node, NodeResult result) {}
+
+    /// Called when workflow state is fully consistent and safe to persist.
+    ///
+    /// Fires once per loop iteration, after all state mutations from the previous
+    /// node (output, history, review, rubric, transitions) are applied, and before
+    /// the next node begins execution. Intended for crash-recovery checkpointing.
+    ///
+    /// @param state the current workflow state with consistent position and context, not null
+    default void onCheckpoint(HensuState state) {}
 
     /// No-op listener instance that ignores all events.
     ///

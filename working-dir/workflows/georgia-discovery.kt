@@ -28,7 +28,7 @@ fun georgiaDiscoveryWorkflow() = workflow("GeorgiaDiscovery") {
 
         node("mountain") {
             agent = "explorer"
-            prompt = "../prompts/georgian-mountain.md"
+            prompt = "georgian-mountain.md"
 
             onSuccess goto "end"
         }

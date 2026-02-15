@@ -1,0 +1,36 @@
+name: Native Image
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-build:
+    name: GraalVM Native Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+          native-image-job-reports: 'true'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build native server binary
+        run: ./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native -x test
+
+      - name: Upload native binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: hensu-server-native
+          path: hensu-server/build/*-runner
+          retention-days: 3

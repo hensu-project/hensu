@@ -48,12 +48,12 @@ hensu build workflow.kt -d working-dir
 
 ### Server Commands
 
-All server commands support `--server` and `--tenant` options:
+All server commands support `--server` and `--token` options:
 
 ```bash
 # Push compiled workflow to server (requires prior `hensu build`)
 hensu push <workflow-id>
-hensu push <workflow-id> --server http://prod:8080 --tenant acme
+hensu push <workflow-id> --server http://prod:8080 --token "$TOKEN"
 
 # Pull workflow definition from server
 hensu pull <workflow-id>
