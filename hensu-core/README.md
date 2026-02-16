@@ -226,6 +226,17 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── GenericNodeExecutor.java   # Custom node handlers
 │   │   ├── SubWorkflowNodeExecutor.java # Nested workflow execution
 │   │   └── EndNodeExecutor.java       # Terminal nodes
+│   ├── pipeline/
+│   │   ├── NodeExecutionProcessor.java          # Base processor interface
+│   │   ├── PreNodeExecutionProcessor.java       # Pre-execution processor interface
+│   │   ├── PostNodeExecutionProcessor.java      # Post-execution processor interface
+│   │   ├── ProcessorContext.java                # Per-iteration context (node + result + state)
+│   │   ├── ProcessorPipeline.java               # Orchestrates pre/post processor chains
+│   │   ├── OutputExtractionPostProcessor.java   # Stores node output in state context
+│   │   ├── HistoryPostProcessor.java            # Records execution steps for audit
+│   │   ├── ReviewPostProcessor.java             # Human-in-the-loop review checkpoints
+│   │   ├── RubricPostProcessor.java             # Quality evaluation + auto-backtrack
+│   │   └── TransitionPostProcessor.java         # Evaluates transition rules, sets next node
 │   ├── action/
 │   │   ├── Action.java            # Sealed interface: Send | Execute
 │   │   ├── ActionExecutor.java    # Action dispatch interface

@@ -14,6 +14,8 @@ public final class JsonUtil {
 
     private JsonUtil() {}
 
+    private static final Object NULL_SENTINEL = new Object();
+
     /// Extract a string field value from JSON. Handles escaped quotes within the value.
     public static String extractJsonField(String json, String fieldName) {
         // Pattern handles escaped quotes: "field": "value with \" inside"
@@ -69,7 +71,10 @@ public final class JsonUtil {
 
         for (String param : paramNames) {
             Object value = extractJsonValue(json, param);
-            if (value != null) {
+            if (value == NULL_SENTINEL) {
+                context.put(param, null);
+                logger.info("Extracted parameter: " + param + " = null");
+            } else if (value != null) {
                 context.put(param, value);
                 logger.info("Extracted parameter: " + param + " = " + value);
             } else {
@@ -146,7 +151,7 @@ public final class JsonUtil {
         // Try null
         Pattern nullPattern = Pattern.compile("\"" + Pattern.quote(key) + "\"\\s*:\\s*null");
         if (nullPattern.matcher(json).find()) {
-            return null; // Explicitly found null
+            return NULL_SENTINEL;
         }
 
         return null;

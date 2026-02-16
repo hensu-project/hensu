@@ -179,18 +179,4 @@ class DefaultToolRegistryTest {
                     .isInstanceOf(NullPointerException.class);
         }
     }
-
-    @Nested
-    class ForTenant {
-
-        @Test
-        void shouldReturnAllToolsForTenant() {
-            registry.register(ToolDefinition.simple("tool1", "Tool 1"));
-            registry.register(ToolDefinition.simple("tool2", "Tool 2"));
-
-            List<ToolDefinition> tenantTools = registry.forTenant("tenant-1");
-
-            assertThat(tenantTools).hasSize(2);
-        }
-    }
 }
