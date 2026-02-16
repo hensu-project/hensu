@@ -8,6 +8,9 @@ This guide covers API usage, adapter development, extension points, and testing 
   - [Quick Start](#quick-start)
   - [Using HensuFactory.Builder](#using-hensufactorybuilder)
   - [Executing Workflows](#executing-workflows)
+- [Execution Pipeline](#execution-pipeline)
+  - [Pre-Execution Pipeline](#pre-execution-pipeline)
+  - [Post-Execution Pipeline](#post-execution-pipeline)
 - [Creating Custom Adapters](#creating-custom-adapters)
 - [Generic Nodes](#generic-nodes)
 - [Action Handlers](#action-handlers)
@@ -109,6 +112,74 @@ if (result instanceof ExecutionResult.Completed completed) {
     System.out.println("Rejected: " + rejected.getReason());
 }
 ```
+
+## Execution Pipeline
+
+The `WorkflowExecutor` processes each node through a standardized, three-phase lifecycle orchestrated by processor
+pipelines. This model decouples the core node logic (e.g., agent calls) from cross-cutting concerns like state
+management, history, and quality evaluation.
+
+The lifecycle for every node is:
+
+1. **Pre-Execution Pipeline** — processors that run *before* the node's main logic
+2. **Node Execution** — the appropriate `NodeExecutor` is invoked
+3. **Post-Execution Pipeline** — processors that run *after* the node's main logic to process its result
+
+If any processor in a pipeline returns a terminal result (e.g., `Rejected`, `Failure`), the entire workflow execution
+halts immediately (short-circuit).
+
+```
++——————————————————————————————————————————————————————————————————————+
+│                    WorkflowExecutor.executeLoop()                    │
+│                                                                      │
+│  +———————————————+     +———————————————+     +————————————————————+  │
+│  │ Pre-Execution │————>│ Node Executor │————>│ Post-Execution     │  │
+│  │ Pipeline      │     │               │     │ Pipeline           │  │
+│  │ (placeholder) │     │ (agent call)  │     │ (5 processors)     │  │
+│  +———————————————+     +———————————————+     +————————————————————+  │
+│                                                                      │
+│  Short-circuit: any processor returning a terminal result            │
+│  stops the entire pipeline and returns immediately.                  │
++——————————————————————————————————————————————————————————————————————+
+```
+
+### Pre-Execution Pipeline
+
+This pipeline is an architectural placeholder for future features like input validation, context injection, or
+pre-execution guards. Currently no `PreNodeExecutionProcessor` implementations exist.
+
+### Post-Execution Pipeline
+
+This is where the majority of the workflow's state management and decision-making occurs. The processors run in a
+**fixed, critical order** — changing the order breaks invariants downstream processors depend on:
+
+| Order | Processor                       | Responsibility                                       |
+|-------|---------------------------------|------------------------------------------------------|
+| 1     | `OutputExtractionPostProcessor` | Stores node output in state context                  |
+| 2     | `HistoryPostProcessor`          | Records execution step for audit and backtracking    |
+| 3     | `ReviewPostProcessor`           | Human-in-the-loop checkpoints                        |
+| 4     | `RubricPostProcessor`           | Automated quality evaluation and self-correction     |
+| 5     | `TransitionPostProcessor`       | Determines next node via `TransitionRule` evaluation |
+
+**`OutputExtractionPostProcessor`** — Puts the raw output string into the context map keyed by node ID. For
+`StandardNode`s with `outputParams` defined, it also parses the output as JSON and extracts the specified fields into
+the context map for use by subsequent nodes.
+
+**`HistoryPostProcessor`** — Appends an immutable `ExecutionStep` (containing a state snapshot, the node result, and a
+timestamp) to the `ExecutionHistory`. This is the foundation for time-travel debugging and backtracking.
+
+**`ReviewPostProcessor`** — If a node has a `reviewConfig`, this processor invokes the registered `ReviewHandler`.
+Based on the human's decision, it can allow the workflow to continue (`Approve`), reject it terminating execution
+(`Reject`), or backtrack to a previous node (`Backtrack`).
+
+**`RubricPostProcessor`** — If a node has a `rubricId`, this processor evaluates the output against the rubric's
+criteria using the `RubricEngine`. It stores the evaluation result in the state for use by `ScoreTransition` rules. If
+the evaluation fails and no explicit transition handles the low score, it can trigger an **auto-backtrack** to a prior
+step, enabling self-correcting loops.
+
+**`TransitionPostProcessor`** — The final step. Evaluates the current node's `TransitionRule` list in order. The first
+rule that returns a valid target node ID wins, and the state is updated to point to that next node. Throws
+`IllegalStateException` if no rule matches, preventing the workflow from silently getting stuck.
 
 ## Creating Custom Adapters
 
@@ -884,33 +955,43 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 
 ## Key Files Reference
 
-| File                                         | Description                                                       |
-|----------------------------------------------|-------------------------------------------------------------------|
-| `HensuFactory.java`                          | Bootstrap and environment creation                                |
-| `HensuEnvironment.java`                      | Container for all core components                                 |
-| `HensuConfig.java`                           | Configuration (threading, storage)                                |
-| `agent/AgentFactory.java`                    | Creates agents from explicit providers                            |
-| `agent/AgentProvider.java`                   | Provider interface for pluggable AI backends                      |
-| `agent/AgentRegistry.java`                   | Agent lookup interface                                            |
-| `agent/DefaultAgentRegistry.java`            | Thread-safe agent registry                                        |
-| `agent/stub/StubAgentProvider.java`          | Testing provider (priority 1000 when enabled)                     |
-| `execution/WorkflowExecutor.java`            | Main execution engine                                             |
-| `execution/executor/GenericNodeHandler.java` | Generic node handler interface                                    |
-| `execution/action/ActionHandler.java`        | Action handler interface                                          |
-| `execution/action/ActionExecutor.java`       | Action dispatch interface                                         |
-| `execution/result/ExecutionResult.java`      | Workflow execution outcome (Completed, Paused, Rejected, Failure) |
-| `workflow/Workflow.java`                     | Core data model                                                   |
-| `workflow/WorkflowRepository.java`           | Workflow definition persistence interface                         |
-| `workflow/InMemoryWorkflowRepository.java`   | In-memory workflow repository (default)                           |
-| `state/HensuState.java`                      | Mutable workflow execution state                                  |
-| `state/HensuSnapshot.java`                   | Immutable state snapshot for persistence                          |
-| `state/WorkflowStateRepository.java`         | Execution state persistence interface                             |
-| `state/InMemoryWorkflowStateRepository.java` | In-memory state repository (default)                              |
-| `rubric/RubricEngine.java`                   | Quality evaluation engine                                         |
-| `rubric/model/Rubric.java`                   | Rubric definition model                                           |
-| `tool/ToolDefinition.java`                   | Protocol-agnostic tool descriptor                                 |
-| `tool/ToolRegistry.java`                     | Tool registration/lookup interface                                |
-| `plan/PlanExecutor.java`                     | Step-by-step plan execution                                       |
-| `plan/Plan.java`                             | Plan model (steps + constraints)                                  |
-| `template/SimpleTemplateResolver.java`       | `{variable}` substitution                                         |
-| `review/ReviewHandler.java`                  | Human review interface                                            |
+| File                                                    | Description                                                       |
+|---------------------------------------------------------|-------------------------------------------------------------------|
+| `HensuFactory.java`                                     | Bootstrap and environment creation                                |
+| `HensuEnvironment.java`                                 | Container for all core components                                 |
+| `HensuConfig.java`                                      | Configuration (threading, storage)                                |
+| `agent/AgentFactory.java`                               | Creates agents from explicit providers                            |
+| `agent/AgentProvider.java`                              | Provider interface for pluggable AI backends                      |
+| `agent/AgentRegistry.java`                              | Agent lookup interface                                            |
+| `agent/DefaultAgentRegistry.java`                       | Thread-safe agent registry                                        |
+| `agent/stub/StubAgentProvider.java`                     | Testing provider (priority 1000 when enabled)                     |
+| `execution/WorkflowExecutor.java`                       | Main execution engine                                             |
+| `execution/executor/GenericNodeHandler.java`            | Generic node handler interface                                    |
+| `execution/action/ActionHandler.java`                   | Action handler interface                                          |
+| `execution/action/ActionExecutor.java`                  | Action dispatch interface                                         |
+| `execution/result/ExecutionResult.java`                 | Workflow execution outcome (Completed, Paused, Rejected, Failure) |
+| `workflow/Workflow.java`                                | Core data model                                                   |
+| `workflow/WorkflowRepository.java`                      | Workflow definition persistence interface                         |
+| `workflow/InMemoryWorkflowRepository.java`              | In-memory workflow repository (default)                           |
+| `state/HensuState.java`                                 | Mutable workflow execution state                                  |
+| `state/HensuSnapshot.java`                              | Immutable state snapshot for persistence                          |
+| `state/WorkflowStateRepository.java`                    | Execution state persistence interface                             |
+| `state/InMemoryWorkflowStateRepository.java`            | In-memory state repository (default)                              |
+| `rubric/RubricEngine.java`                              | Quality evaluation engine                                         |
+| `rubric/model/Rubric.java`                              | Rubric definition model                                           |
+| `tool/ToolDefinition.java`                              | Protocol-agnostic tool descriptor                                 |
+| `tool/ToolRegistry.java`                                | Tool registration/lookup interface                                |
+| `plan/PlanExecutor.java`                                | Step-by-step plan execution                                       |
+| `plan/Plan.java`                                        | Plan model (steps + constraints)                                  |
+| `template/SimpleTemplateResolver.java`                  | `{variable}` substitution                                         |
+| `review/ReviewHandler.java`                             | Human review interface                                            |
+| `execution/pipeline/ProcessorPipeline.java`             | Orchestrates pre/post processor chains                            |
+| `execution/pipeline/ProcessorContext.java`              | Per-iteration context carrier (node + result + execution context) |
+| `execution/pipeline/PreNodeExecutionProcessor.java`     | Pre-execution processor interface                                 |
+| `execution/pipeline/PostNodeExecutionProcessor.java`    | Post-execution processor interface                                |
+| `execution/pipeline/NodeExecutionProcessor.java`        | Base processor interface                                          |
+| `execution/pipeline/OutputExtractionPostProcessor.java` | Extracts node output into state context                           |
+| `execution/pipeline/HistoryPostProcessor.java`          | Records execution steps for audit/backtracking                    |
+| `execution/pipeline/ReviewPostProcessor.java`           | Human-in-the-loop review checkpoints                              |
+| `execution/pipeline/RubricPostProcessor.java`           | Quality evaluation and auto-backtrack                             |
+| `execution/pipeline/TransitionPostProcessor.java`       | Evaluates transition rules, sets next node                        |

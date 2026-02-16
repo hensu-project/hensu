@@ -66,3 +66,4 @@ local.properties
 **/embeddings/
 **/chunks/
 .anthropic/
+.mem/
