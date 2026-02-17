@@ -1,0 +1,10 @@
+# Set default behavior to normalize all text files to LF in the repo
+* text=auto
+
+# Force Windows batch files to use CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Force Unix shell scripts and the wrapper to use LF
+gradlew text eol=lf
+*.sh text eol=lf
