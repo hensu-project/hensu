@@ -1,178 +1,156 @@
 package io.hensu.core.agent;
 
+import io.hensu.core.plan.PlannedStep;
 import java.time.Instant;
-import java.util.Collections;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
-/// Immutable result of an agent execution.
+/// Sealed hierarchy for agent execution responses.
 ///
-/// Captures the outcome of an {@link Agent#execute(String, Map)} call, including
-/// success/failure status, output text, metadata, and timing information.
+/// Represents the different types of responses an agent can produce:
+/// - {@link TextResponse}: Standard text output (most common)
+/// - {@link ToolRequest}: Agent requests to call a tool
+/// - {@link PlanProposal}: Agent proposes a multi-step plan
+/// - {@link Error}: Execution failed with an error
 ///
-/// Use the static factory methods for common cases:
-/// - {@link #success(String)} - successful execution with output
-/// - {@link #success(String, Map)} - successful execution with output and metadata
-/// - {@link #failure(Throwable)} - failed execution with error
+/// ### Pattern Matching Usage
+/// {@snippet :
+/// AgentResponse response = agent.execute(prompt, context);
+/// String result = switch (response) {
+///     case TextResponse t -> t.content();
+///     case ToolRequest r -> "Tool call: " + r.toolName();
+///     case PlanProposal p -> "Plan with " + p.steps().size() + " steps";
+///     case Error e -> "Error: " + e.message();
+/// };
+/// }
 ///
-/// @implNote Thread-safe. All fields are immutable after construction.
-/// The metadata map is defensively copied.
-///
-/// @see Agent#execute(String, Map) for the execution entry point
-public final class AgentResponse {
+/// @see Agent#execute for the execution entry point
+/// @see io.hensu.core.plan.Planner for plan generation
+public sealed interface AgentResponse
+        permits AgentResponse.TextResponse,
+                AgentResponse.ToolRequest,
+                AgentResponse.PlanProposal,
+                AgentResponse.Error {
 
-    private final boolean success;
-    private final String output;
-    private final Map<String, Object> metadata;
-    private final Instant timestamp;
-    private final Throwable error;
+    /// Returns when this response was created.
+    Instant timestamp();
 
-    private AgentResponse(Builder builder) {
-        this.success = builder.success;
-        this.output = builder.output;
-        this.metadata = Collections.unmodifiableMap(builder.metadata);
-        this.timestamp = builder.timestamp;
-        this.error = builder.error;
-    }
-
-    /// Returns whether the agent execution completed successfully.
+    /// Standard text output from agent execution.
     ///
-    /// @return `true` if successful, `false` if an error occurred
-    public boolean isSuccess() {
-        return success;
-    }
+    /// @param content the agent's text output, not null
+    /// @param metadata additional execution metadata (tokens, latency), not null
+    /// @param timestamp when the response was created, not null
+    record TextResponse(String content, Map<String, Object> metadata, Instant timestamp)
+            implements AgentResponse {
 
-    /// Returns the agent's output text.
-    ///
-    /// @return output string, may be empty for failures, never null
-    public String getOutput() {
-        return output;
-    }
-
-    /// Returns execution metadata.
-    ///
-    /// Common metadata keys include:
-    /// - `model` - the model used
-    /// - `tokens_used` - token count
-    /// - `latency_ms` - execution time
-    ///
-    /// @return unmodifiable metadata map, never null (may be empty)
-    public Map<String, Object> getMetadata() {
-        return metadata;
-    }
-
-    /// Returns when the execution completed.
-    ///
-    /// @return completion timestamp, never null
-    public Instant getTimestamp() {
-        return timestamp;
-    }
-
-    /// Returns the error that caused execution failure.
-    ///
-    /// @return the exception if {@link #isSuccess()} is `false`, null otherwise
-    public Throwable getError() {
-        return error;
-    }
-
-    /// Creates a successful response with the given output.
-    ///
-    /// @param output the agent's output text, not null
-    /// @return a success response with current timestamp, never null
-    public static AgentResponse success(String output) {
-        return builder().success(true).output(output).timestamp(Instant.now()).build();
-    }
-
-    /// Creates a successful response with output and metadata.
-    ///
-    /// @param output the agent's output text, not null
-    /// @param metadata additional execution metadata, not null
-    /// @return a success response with current timestamp, never null
-    public static AgentResponse success(String output, Map<String, Object> metadata) {
-        return builder()
-                .success(true)
-                .output(output)
-                .metadata(metadata)
-                .timestamp(Instant.now())
-                .build();
-    }
-
-    /// Creates a failure response with the given error.
-    ///
-    /// @param error the exception that caused failure, not null
-    /// @return a failure response with current timestamp, never null
-    public static AgentResponse failure(Throwable error) {
-        return builder().success(false).error(error).timestamp(Instant.now()).build();
-    }
-
-    /// Creates a new builder for constructing AgentResponse instances.
-    ///
-    /// @return a new builder instance, never null
-    public static Builder builder() {
-        return new Builder();
-    }
-
-    /// Builder for constructing immutable {@link AgentResponse} instances.
-    ///
-    /// @implNote Not thread-safe. Create one builder per thread or synchronize externally.
-    public static final class Builder {
-        private boolean success = true;
-        private String output = "";
-        private Map<String, Object> metadata = Map.of();
-        private Instant timestamp = Instant.now();
-        private Throwable error;
-
-        private Builder() {}
-
-        /// Sets the success status.
-        ///
-        /// @param success `true` for successful execution, `false` for failure
-        /// @return this builder for chaining
-        public Builder success(boolean success) {
-            this.success = success;
-            return this;
+        public TextResponse {
+            Objects.requireNonNull(content, "content must not be null");
+            metadata = metadata != null ? Map.copyOf(metadata) : Map.of();
+            timestamp = timestamp != null ? timestamp : Instant.now();
         }
 
-        /// Sets the output text.
-        ///
-        /// @param output the agent's response text, may be empty
-        /// @return this builder for chaining
-        public Builder output(String output) {
-            this.output = output;
-            return this;
+        public static TextResponse of(String content) {
+            return new TextResponse(content, Map.of(), Instant.now());
         }
 
-        /// Sets the execution metadata.
-        ///
-        /// @param metadata map of metadata key-value pairs, not null
-        /// @return this builder for chaining
-        public Builder metadata(Map<String, Object> metadata) {
-            this.metadata = Map.copyOf(metadata);
-            return this;
+        public static TextResponse of(String content, Map<String, Object> metadata) {
+            return new TextResponse(content, metadata, Instant.now());
+        }
+    }
+
+    /// Agent requests to invoke a tool.
+    ///
+    /// Emitted when an agent determines it needs to call an external tool
+    /// to complete its task. The executor should invoke the tool and
+    /// continue the conversation with the result.
+    ///
+    /// @param toolName the tool to invoke, not null
+    /// @param arguments tool parameters, not null
+    /// @param reasoning agent's explanation for why this tool is needed
+    /// @param timestamp when the response was created, not null
+    record ToolRequest(
+            String toolName, Map<String, Object> arguments, String reasoning, Instant timestamp)
+            implements AgentResponse {
+
+        public ToolRequest {
+            Objects.requireNonNull(toolName, "toolName must not be null");
+            arguments = arguments != null ? Map.copyOf(arguments) : Map.of();
+            reasoning = reasoning != null ? reasoning : "";
+            timestamp = timestamp != null ? timestamp : Instant.now();
         }
 
-        /// Sets the completion timestamp.
-        ///
-        /// @param timestamp when execution completed, not null
-        /// @return this builder for chaining
-        public Builder timestamp(Instant timestamp) {
-            this.timestamp = timestamp;
-            return this;
+        public static ToolRequest of(String toolName, Map<String, Object> arguments) {
+            return new ToolRequest(toolName, arguments, "", Instant.now());
         }
 
-        /// Sets the failure error.
-        ///
-        /// @param error the exception that caused failure, may be null
-        /// @return this builder for chaining
-        public Builder error(Throwable error) {
-            this.error = error;
-            return this;
+        public static ToolRequest of(
+                String toolName, Map<String, Object> arguments, String reasoning) {
+            return new ToolRequest(toolName, arguments, reasoning, Instant.now());
+        }
+    }
+
+    /// Agent proposes a multi-step execution plan.
+    ///
+    /// Emitted when an agent generates a plan for achieving a goal.
+    /// The executor can review, modify, or execute the plan.
+    ///
+    /// @param steps the proposed execution steps, not null
+    /// @param reasoning agent's explanation of the plan strategy
+    /// @param timestamp when the response was created, not null
+    record PlanProposal(List<PlannedStep> steps, String reasoning, Instant timestamp)
+            implements AgentResponse {
+
+        public PlanProposal {
+            steps = steps != null ? List.copyOf(steps) : List.of();
+            reasoning = reasoning != null ? reasoning : "";
+            timestamp = timestamp != null ? timestamp : Instant.now();
         }
 
-        /// Builds an immutable AgentResponse instance.
-        ///
-        /// @return the constructed response, never null
-        public AgentResponse build() {
-            return new AgentResponse(this);
+        public static PlanProposal of(List<PlannedStep> steps, String reasoning) {
+            return new PlanProposal(steps, reasoning, Instant.now());
+        }
+    }
+
+    /// Agent execution failed with an error.
+    ///
+    /// @param message error description, not null
+    /// @param errorType classification of the error, not null
+    /// @param cause the underlying exception, may be null
+    /// @param timestamp when the error occurred, not null
+    record Error(String message, ErrorType errorType, Throwable cause, Instant timestamp)
+            implements AgentResponse {
+
+        public enum ErrorType {
+            TOOL_NOT_FOUND,
+            INVALID_ARGUMENTS,
+            TIMEOUT,
+            RATE_LIMITED,
+            UNKNOWN
+        }
+
+        public Error {
+            Objects.requireNonNull(message, "message must not be null");
+            errorType = errorType != null ? errorType : ErrorType.UNKNOWN;
+            timestamp = timestamp != null ? timestamp : Instant.now();
+        }
+
+        public static Error from(Throwable cause) {
+            return new Error(
+                    cause.getMessage() != null
+                            ? cause.getMessage()
+                            : cause.getClass().getSimpleName(),
+                    ErrorType.UNKNOWN,
+                    cause,
+                    Instant.now());
+        }
+
+        public static Error of(String message) {
+            return new Error(message, ErrorType.UNKNOWN, null, Instant.now());
+        }
+
+        public static Error of(String message, ErrorType type) {
+            return new Error(message, type, null, Instant.now());
         }
     }
 }

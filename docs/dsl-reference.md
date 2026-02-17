@@ -294,47 +294,52 @@ config {
 
 ### Action Node
 
-Action nodes execute commands mid-workflow and continue to the next node. Use action nodes to run git commands, deploy, send notifications, or call webhooks at any point during workflow execution.
+Action nodes execute commands or send data to external systems mid-workflow, then continue to the next node. Use action nodes to run git commands, send notifications, trigger webhooks, or publish events at any point during workflow execution.
 
 ```kotlin
 action("commit-changes") {
     execute("git-commit")  // Command ID from commands.yaml
-    notify("Changes committed", "slack")
+    send("slack", mapOf("message" to "Changes committed"))
 
     onSuccess goto "deploy"
     onFailure retry 2 otherwise "rollback"
 }
 ```
 
-#### Action Node Properties
+#### Action Node Functions
 
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `execute(commandId)` | Function | No | Execute command by ID from commands.yaml |
-| `notify(message, channel)` | Function | No | Send notification (supports `{placeholder}` syntax) |
-| `http(endpoint, commandId)` | Function | No | Make HTTP call |
-
-#### Action Functions
-
-| Action | Description |
-|--------|-------------|
+| Function | Description |
+|----------|-------------|
 | `execute(commandId)` | Execute command by ID from commands.yaml |
-| `notify(message, channel)` | Send notification (supports `{placeholder}` syntax) |
-| `http(endpoint, commandId)` | Make HTTP call |
-| `http { ... }` | HTTP call with full configuration |
+| `send(handlerId)` | Send to registered action handler |
+| `send(handlerId, payload)` | Send with payload data to registered handler |
 
-#### HTTP Call Configuration
+#### Send Action
+
+The `send()` function delegates to registered `ActionHandler` implementations. Handlers encapsulate all configuration (endpoints, auth, protocols) and can implement any integration: HTTP calls, messaging (Slack, email), event publishing (Kafka, RabbitMQ), etc.
+
+Payload values support `{variable}` template syntax, resolved from workflow context:
 
 ```kotlin
-http {
-    endpoint = "https://api.example.com/webhook"
-    method = "POST"
-    commandId = "workflow-complete"
-    headers = mapOf("Authorization" to "Bearer token")
-    body = """{"status": "success"}"""
-    timeout = 30000
+action("notify") {
+    // Simple send
+    send("slack")
+
+    // Send with payload
+    send("slack", mapOf(
+        "message" to "Build completed: {status}",
+        "channel" to "#deployments"
+    ))
+
+    // Multiple handlers
+    send("email", mapOf("to" to "team@example.com", "subject" to "Build done"))
+    send("github-dispatch", mapOf("event_type" to "deploy", "ref" to "{branch}"))
+
+    onSuccess goto "end"
 }
 ```
+
+See [Action Handlers](developer-guide.md#action-handlers) in the Developer Guide for implementing handlers.
 
 #### Example: CI/CD Pipeline with Actions
 
@@ -362,8 +367,8 @@ graph {
 
     action("deploy") {
         execute("deploy-prod")
-        notify("Deployed to production", "slack")
-        http("https://webhook.example.com/deployed", "deploy-hook")
+        send("slack", mapOf("message" to "Deployed to production"))
+        send("webhook", mapOf("event" to "deployed", "env" to "prod"))
         onSuccess goto "end_success"
     }
 

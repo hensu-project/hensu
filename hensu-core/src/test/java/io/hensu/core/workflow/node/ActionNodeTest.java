@@ -8,6 +8,7 @@ import io.hensu.core.workflow.transition.FailureTransition;
 import io.hensu.core.workflow.transition.SuccessTransition;
 import io.hensu.core.workflow.transition.TransitionRule;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class ActionNodeTest {
@@ -39,8 +40,8 @@ class ActionNodeTest {
         List<Action> actions =
                 List.of(
                         new Action.Execute("git-commit"),
-                        new Action.Notify("Build completed", "slack"),
-                        new Action.HttpCall("https://webhook.example.com", "build-done"));
+                        new Action.Send("slack", Map.of("message", "Build completed")),
+                        new Action.Send("webhook"));
         List<TransitionRule> transitions = List.of(new SuccessTransition("next"));
 
         // When
@@ -54,8 +55,8 @@ class ActionNodeTest {
         // Then
         assertThat(node.getActions()).hasSize(3);
         assertThat(node.getActions().get(0)).isInstanceOf(Action.Execute.class);
-        assertThat(node.getActions().get(1)).isInstanceOf(Action.Notify.class);
-        assertThat(node.getActions().get(2)).isInstanceOf(Action.HttpCall.class);
+        assertThat(node.getActions().get(1)).isInstanceOf(Action.Send.class);
+        assertThat(node.getActions().get(2)).isInstanceOf(Action.Send.class);
     }
 
     @Test
@@ -211,8 +212,7 @@ class ActionNodeTest {
     @Test
     void shouldReturnMeaningfulToString() {
         // Given
-        List<Action> actions =
-                List.of(new Action.Execute("cmd1"), new Action.Notify("msg", "channel"));
+        List<Action> actions = List.of(new Action.Execute("cmd1"), new Action.Send("slack"));
         List<TransitionRule> transitions = List.of(new SuccessTransition("next"));
 
         ActionNode node =
@@ -228,5 +228,27 @@ class ActionNodeTest {
         // Then
         assertThat(toString).contains("test-action-node");
         assertThat(toString).contains("2"); // actions count
+    }
+
+    @Test
+    void shouldCreateSendActionWithPayload() {
+        // Given
+        Map<String, Object> payload = Map.of("message", "Hello", "channel", "#general");
+        Action.Send send = new Action.Send("slack", payload);
+
+        // Then
+        assertThat(send.getHandlerId()).isEqualTo("slack");
+        assertThat(send.getPayload()).containsEntry("message", "Hello");
+        assertThat(send.getPayload()).containsEntry("channel", "#general");
+    }
+
+    @Test
+    void shouldCreateSendActionWithEmptyPayload() {
+        // Given
+        Action.Send send = new Action.Send("webhook");
+
+        // Then
+        assertThat(send.getHandlerId()).isEqualTo("webhook");
+        assertThat(send.getPayload()).isEmpty();
     }
 }

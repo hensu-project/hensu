@@ -6,8 +6,12 @@ import io.hensu.core.workflow.node.ActionNode
 /**
  * DSL builder for action nodes.
  *
- * Action nodes execute commands, notifications, or HTTP calls at any point in the workflow, then
+ * Action nodes execute commands or send data to external systems at any point in the workflow, then
  * transition to the next node. Unlike end nodes, action nodes continue workflow execution.
+ *
+ * ### Action Handler Pattern
+ * Send actions use registered [io.hensu.core.execution.action.ActionHandler] implementations. All
+ * configuration (endpoints, auth, protocols) is encapsulated in handlers.
  *
  * Example:
  * ```kotlin
@@ -17,16 +21,22 @@ import io.hensu.core.workflow.node.ActionNode
  * }
  *
  * action("notify-team") {
- *     notify("Build completed: {result}")
- *     http("https://webhook.example.com", "build-done")
+ *     send("slack", mapOf("message" to "Build completed: {result}"))
+ *     send("email", mapOf("to" to "team@example.com", "subject" to "Build done"))
  *     onSuccess goto "deploy"
  *     onFailure retry 2 otherwise "error"
+ * }
+ *
+ * action("trigger-deploy") {
+ *     send("github-dispatch", mapOf("event_type" to "deploy", "ref" to "{branch}"))
+ *     onSuccess goto "monitor"
  * }
  * ```
  *
  * @property id unique identifier for this action node
  * @see ActionNode for the compiled node type
  * @see Action for available action types
+ * @see io.hensu.core.execution.action.ActionHandler for action handler implementation
  */
 @WorkflowDsl
 class ActionNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMarkers {
@@ -34,13 +44,50 @@ class ActionNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMar
     private val transitionBuilder = TransitionBuilder()
 
     /**
-     * Adds a notification action.
+     * Adds a send action by handler ID.
      *
-     * @param message notification message, supports `{variable}` template syntax
-     * @param channel notification channel identifier. Default: "default"
+     * The handler ID must match a registered [io.hensu.core.execution.action.ActionHandler]. All
+     * configuration (endpoint, auth, protocol) is encapsulated in the handler.
+     *
+     * Example:
+     * ```kotlin
+     * send("slack")
+     * send("webhook")
+     * ```
+     *
+     * @param handlerId identifier of the registered action handler
      */
-    fun notify(message: String, channel: String = "default") {
-        actions.add(Action.Notify(message, channel))
+    fun send(handlerId: String) {
+        actions.add(Action.Send(handlerId))
+    }
+
+    /**
+     * Adds a send action with payload data.
+     *
+     * The payload is passed to the [io.hensu.core.execution.action.ActionHandler] which decides how
+     * to use it (e.g., as HTTP body, message content, event data).
+     *
+     * Payload values support `{variable}` template syntax, resolved from workflow context
+     * including:
+     * - Initial context passed at workflow start
+     * - Output parameters from previous agent steps via `outputParams`
+     * - Values stored by previous nodes
+     *
+     * Example:
+     * ```kotlin
+     * send("slack", mapOf("message" to "Build status: {status}"))
+     * send("github-dispatch", mapOf(
+     *     "repo" to "myrepo",
+     *     "event_type" to "deploy",
+     *     "client_payload" to mapOf("env" to "{environment}")
+     * ))
+     * ```
+     *
+     * @param handlerId identifier of the registered action handler
+     * @param payload action-specific data passed to the handler
+     */
+    fun send(handlerId: String, payload: Map<String, Any>) {
+        actions.add(Action.Send(handlerId, payload))
     }
 
     /**
@@ -52,39 +99,6 @@ class ActionNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMar
      */
     fun execute(commandId: String) {
         actions.add(Action.Execute(commandId))
-    }
-
-    /**
-     * Adds an HTTP call action with minimal configuration.
-     *
-     * @param endpoint target URL for the HTTP request
-     * @param commandId command identifier for this action
-     */
-    fun http(endpoint: String, commandId: String) {
-        actions.add(Action.HttpCall(endpoint, commandId))
-    }
-
-    /**
-     * Adds an HTTP call action with full configuration.
-     *
-     * Example:
-     * ```kotlin
-     * http {
-     *     endpoint = "https://api.example.com/webhook"
-     *     method = "POST"
-     *     commandId = "workflow-complete"
-     *     headers = mapOf("Authorization" to "Bearer token")
-     *     body = """{"status": "success"}"""
-     *     timeout = 30000
-     * }
-     * ```
-     *
-     * @param block configuration block for HTTP call properties
-     */
-    fun http(block: HttpCallBuilder.() -> Unit) {
-        val builder = HttpCallBuilder()
-        builder.apply(block)
-        actions.add(builder.build())
     }
 
     /** Define transition on success. Usage: `onSuccess goto "next_node"` */
@@ -110,46 +124,5 @@ class ActionNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMar
             .actions(actions.toList())
             .transitionRules(transitionBuilder.build())
             .build()
-    }
-}
-
-/**
- * DSL builder for HTTP call action configuration.
- *
- * Configures HTTP requests to be executed as workflow actions, typically for webhook notifications
- * or API integrations.
- *
- * @see ActionNodeBuilder.http for usage
- */
-@WorkflowDsl
-class HttpCallBuilder {
-    /** Target URL for the HTTP request. Required. */
-    var endpoint: String = ""
-
-    /** HTTP method to use. Default: "POST". */
-    var method: String = "POST"
-
-    /** Command identifier for this action. Required. */
-    var commandId: String = ""
-
-    /** HTTP headers to include in the request. */
-    var headers: Map<String, String> = emptyMap()
-
-    /** Request body content, may be null for requests without body. */
-    var body: String? = null
-
-    /** Request timeout in milliseconds. Default: 30000 (30 seconds). */
-    var timeout: Long = 30000
-
-    /**
-     * Builds the [Action.HttpCall] from this builder.
-     *
-     * @return compiled HTTP call action
-     * @throws IllegalArgumentException if [endpoint] or [commandId] is blank
-     */
-    fun build(): Action.HttpCall {
-        require(endpoint.isNotBlank()) { "HTTP endpoint is required" }
-        require(commandId.isNotBlank()) { "HTTP commandId is required" }
-        return Action.HttpCall(endpoint, method, commandId, headers, body, timeout)
     }
 }

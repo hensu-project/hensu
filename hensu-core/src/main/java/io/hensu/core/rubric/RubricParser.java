@@ -1,4 +1,4 @@
-package io.hensu.core.rubric.repository;
+package io.hensu.core.rubric;
 
 import io.hensu.core.rubric.model.Criterion;
 import io.hensu.core.rubric.model.EvaluationType;
@@ -133,8 +133,11 @@ public class RubricParser {
 
     private static RubricType parseType(String value) {
         return switch (value.toLowerCase()) {
-            // TODO not implemented
-            case "pr_review", "content_review", "security" -> RubricType.STANDARD;
+            case "code_quality", "code-quality", "pr_review" -> RubricType.CODE_QUALITY;
+            case "security", "security_review" -> RubricType.SECURITY;
+            case "performance", "performance_review" -> RubricType.PERFORMANCE;
+            case "documentation", "docs", "content_review" -> RubricType.DOCUMENTATION;
+            case "custom" -> RubricType.CUSTOM;
             default -> RubricType.STANDARD;
         };
     }
