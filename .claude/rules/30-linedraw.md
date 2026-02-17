@@ -1,0 +1,20 @@
+# 30-linedraw.md
+
+# Hensu Linedraw Standard
+
+Standards for drawing architectural diagrams in Javadoc and Markdown to ensure cross-browser/mobile rendering.
+
+## Character Palette
+- **Corners/Junctions:** Use `+` exclusively.
+- **Horizontal Lines:** Use typographic Em Dash `—` (U+2014).
+- **Vertical Walls:** Use Box-Drawing Pipe `│` (U+2502).
+- **Flow:** Use `————>` for horizontal and `V`/`^` for vertical.
+
+## Prohibited Characters
+- Do NOT use rounded Unicode corners: `┌`, `└`, `╭`, `╰`.
+- Do NOT use emojis within box structures (they break fixed-width alignment).
+- Do NOT use standard hyphens `-` or standard pipes `|` for structural boundaries.
+
+## Fencing
+- **Standard:** Use triple backticks ` ``` ` for all diagrams.
+- **Context:** This applies to both standalone `.md` files and `///` style Markdown Javadoc in `.java` files.

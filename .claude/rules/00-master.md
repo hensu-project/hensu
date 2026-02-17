@@ -13,4 +13,5 @@ MANDATORY: Before every session:
 - Adhere to the "Search & Context Protocol" in `01-context-strategy.md`.
 - Adhere to the "GraalVM Native Image" in `10-java-standards.md`.
 - Adhere to the "Hensu Java & Kotlin Standards" in `20-native-safety.md`.
+- Adhere to the "Hensu Linedraw Standard" in `30-linedraw.md`.
 - Document all public APIs following the [Javadoc Guide](../../docs/javadoc-guide.md).
