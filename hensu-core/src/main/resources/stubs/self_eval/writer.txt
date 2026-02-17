@@ -1,0 +1,19 @@
+Here is my response about {{topic}}:
+
+The content addresses the main points but has room for improvement.
+
+## Self-Evaluation
+
+I rate my own work and provide recommendations for improvement:
+
+{
+  "self_score": 65,
+  "recommendation": "To improve this response: 1) Add 2-3 concrete real-world examples, 2) Include quantitative data where available, 3) Strengthen the conclusion with actionable takeaways",
+  "strengths": ["clear_structure", "covers_basics"],
+  "weaknesses": ["lacks_depth", "needs_examples", "weak_conclusion"],
+  "improvement_areas": [
+    "Add specific case studies",
+    "Include industry statistics",
+    "Expand analysis section"
+  ]
+}

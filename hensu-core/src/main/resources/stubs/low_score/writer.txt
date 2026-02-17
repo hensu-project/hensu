@@ -1,0 +1,10 @@
+Here is a brief response about {{topic}}:
+
+This topic is interesting but I wasn't able to fully address all aspects.
+
+{
+  "score": 45,
+  "recommendation": "The response needs more depth. Add specific examples, include data points, and expand the analysis section with at least 3 supporting arguments.",
+  "confidence": "low",
+  "missing_elements": ["examples", "data", "detailed_analysis"]
+}

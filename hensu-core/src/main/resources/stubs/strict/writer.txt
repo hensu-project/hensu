@@ -1,0 +1,19 @@
+Here is my article about {{topic}}:
+
+# Introduction to {{topic}}
+
+This is a brief introduction to the subject.
+
+## Main Points
+
+1. First point about the topic
+2. Second consideration
+
+## Conclusion
+
+In conclusion, this topic is important.
+
+{
+  "score": 55,
+  "recommendation": "Need to expand coverage and add more concrete examples"
+}

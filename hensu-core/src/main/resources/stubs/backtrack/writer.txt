@@ -1,0 +1,11 @@
+Attempting to write about {{topic}}...
+
+Unfortunately, I was unable to adequately address this topic due to complexity.
+
+{
+  "score": 25,
+  "recommendation": "Complete restart required. The approach needs fundamental reconsideration: 1) Break down the topic into smaller components, 2) Research each component thoroughly before writing, 3) Create an outline before drafting",
+  "status": "failed",
+  "requires_backtrack": true,
+  "backtrack_target": "start"
+}

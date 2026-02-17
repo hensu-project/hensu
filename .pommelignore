@@ -1,0 +1,68 @@
+# --- Pommel Semantic Index Ignore (Hensu Project) ---
+# Patterns to exclude from indexing (gitignore-style syntax)
+
+# Dependencies
+node_modules/
+vendor/
+.venv/
+
+# Build outputs
+bin/
+obj/
+dist/
+build/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+*.cover
+
+# Project Metadata (Noise for AI)
+.git/
+.idea/
+.vscode/
+.settings/
+.pommel/
+.claudecode/
+
+# Large Binary Files & Media
+*.jar
+*.war
+*.zip
+*.tar.gz
+*.exe
+*.dll
+*.so
+*.dylib
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.pdf
+
+# Logs and Traces
+*.log
+*.trace
+hs_err_pid*
+replay_pid*
+**/logs/
+
+# Dependency Lockfiles
+gradle.lockfile
+**/verification-metadata.xml
+
+# Local Secrets & Environments
+.env
+.env.local
+local.properties
+secrets.yaml
