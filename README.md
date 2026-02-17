@@ -229,6 +229,15 @@ curl -X POST http://localhost:8080/api/v1/executions \
   -d '{"workflowId": "hello", "context": {"topic": "AI Agents"}}'
 ```
 
+### 5. Agent-Native Development
+
+Hensu is pre-configured for AI-assisted engineering. You do not need to create custom instructions or CLAUDE.md files.
+Because the project includes standardized rules in .cursor/rules/ and .claude/rules/, your coding assistant will
+automatically inherit the project’s architectural constraints, Java 25 standards, and the Pommel search protocol the
+moment you open the workspace.
+
+The only requirement is to have Pommel installed to enable the mandatory context-retrieval features.
+
 ---
 
 ## Security & MCP
