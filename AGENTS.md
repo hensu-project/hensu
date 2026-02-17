@@ -99,6 +99,13 @@ hensu-langchain4j-adapter     # LangChain4j integration (Claude, GPT, Gemini, De
 - `WorkflowRepository` - Tenant-scoped storage for workflow definitions (defaults to in-memory; JDBC impl in server)
 - `WorkflowStateRepository` - Tenant-scoped storage for execution state snapshots (defaults to in-memory; JDBC impl in server)
 - `ExecutionListener` - Lifecycle callbacks including `onCheckpoint(HensuState)` for inter-node persistence
+- `ProcessorPipeline` - Orchestrates pre/post node execution processor chains
+
+**Execution Lifecycle**: The `WorkflowExecutor` processes each node through a strict PRE-EXECUTE-POST pipeline.
+Post-execution logic is handled by a chain of `PostNodeExecutionProcessor`s in fixed order: output extraction → history
+recording → human review → rubric evaluation → transition resolution. Any processor can short-circuit the pipeline by
+returning a terminal `ExecutionResult`. This design isolates cross-cutting concerns (e.g., adding a new rubric) from
+the core agent execution logic.
 
 **Server-Specific Components** (in `hensu-server`):
 
@@ -305,6 +312,8 @@ CRUD operations, UPSERT semantics, FK constraints, tenant isolation, and seriali
 - `hensu-core/.../HensuEnvironment.java` - Container for all core components
 - `hensu-core/.../agent/AgentFactory.java` - Creates agents from explicit providers
 - `hensu-core/.../execution/WorkflowExecutor.java` - Main execution engine
+- `hensu-core/.../execution/pipeline/ProcessorPipeline.java` - Pre/post processor orchestration
+- `hensu-core/.../execution/pipeline/ProcessorContext.java` - Per-iteration context carrier
 - `hensu-core/.../workflow/Workflow.java` - Core data model
 - `hensu-core/.../rubric/RubricEngine.java` - Quality evaluation engine
 - `hensu-core/.../tool/ToolRegistry.java` - Protocol-agnostic tool descriptors
