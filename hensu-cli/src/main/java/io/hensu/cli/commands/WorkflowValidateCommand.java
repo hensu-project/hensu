@@ -11,6 +11,19 @@ import java.util.*;
 import java.util.stream.Collectors;
 import picocli.CommandLine;
 
+/// CLI command for validating workflow syntax and structure.
+///
+/// Parses the workflow and performs static analysis to detect issues:
+/// - Syntax errors in Kotlin DSL
+/// - Unreachable nodes (not connected to start node)
+/// - Missing node references in transitions
+///
+/// ### Usage
+/// ```bash
+/// hensu validate [-d <working-dir>] <workflow-name>
+/// ```
+///
+/// @see WorkflowCommand
 @CommandLine.Command(name = "validate", description = "Validate workflow syntax")
 class WorkflowValidateCommand extends WorkflowCommand {
 
@@ -39,6 +52,13 @@ class WorkflowValidateCommand extends WorkflowCommand {
         }
     }
 
+    /// Finds nodes that are not reachable from the start node via any transition path.
+    ///
+    /// Performs breadth-first traversal from the start node following all transition types
+    /// (success, failure, score). Nodes not visited are considered unreachable.
+    ///
+    /// @param workflow the workflow to analyze, not null
+    /// @return list of unreachable node IDs (empty if all nodes are reachable)
     private List<String> findUnreachableNodes(Workflow workflow) {
         Set<String> reachable = new HashSet<>();
         Deque<String> queue = new ArrayDeque<>();

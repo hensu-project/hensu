@@ -7,13 +7,23 @@ import jakarta.inject.Inject;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-/// Registry for workflow visualization formats. Discovers all VisualizationFormat implementations
-/// via CDI.
+/// Registry and dispatcher for workflow visualization formats.
+///
+/// Discovers all {@link VisualizationFormat} implementations via CDI injection and provides
+/// a unified API for rendering workflows in any registered format.
+///
+/// @implNote Thread-safe after construction. Format map is immutable.
+/// @see VisualizationFormat
+/// @see TextVisualizationFormat
+/// @see MermaidVisualizationFormat
 @ApplicationScoped
 public class WorkflowVisualizer {
 
     private final Map<String, VisualizationFormat> formats;
 
+    /// Creates a visualizer with all CDI-discovered format implementations.
+    ///
+    /// @param formatInstances CDI-provided format implementations, not null
     @Inject
     public WorkflowVisualizer(Instance<VisualizationFormat> formatInstances) {
         this.formats =
@@ -21,12 +31,12 @@ public class WorkflowVisualizer {
                         .collect(Collectors.toMap(VisualizationFormat::getName, format -> format));
     }
 
-    /// Visualize workflow using the specified format.
+    /// Renders workflow using the specified format.
     ///
-    /// @param workflow The workflow to visualize
-    /// @param formatName The format name (text, mermaid)
-    /// @return The formatted visualization
-    /// @throws IllegalArgumentException if format is not supported
+    /// @param workflow   the workflow to visualize, not null
+    /// @param formatName the format name (e.g., "text", "mermaid"), not null
+    /// @return formatted visualization string, never null
+    /// @throws IllegalArgumentException if format is not registered
     public String visualize(Workflow workflow, String formatName) {
         VisualizationFormat format = formats.get(formatName);
         if (format == null) {
@@ -39,15 +49,19 @@ public class WorkflowVisualizer {
         return format.render(workflow);
     }
 
-    /// Visualize workflow using the default text format.
+    /// Renders workflow using the default text format.
     ///
-    /// @param workflow The workflow to visualize
-    /// @return The text visualization
+    /// Equivalent to calling `visualize(workflow, "text")`.
+    ///
+    /// @param workflow the workflow to visualize, not null
+    /// @return ASCII text visualization with ANSI colors, never null
     public String visualize(Workflow workflow) {
         return visualize(workflow, "text");
     }
 
-    /// @return Available format names
+    /// Returns the names of all registered visualization formats.
+    ///
+    /// @return iterable of format names (e.g., "text", "mermaid"), never null
     public Iterable<String> getAvailableFormats() {
         return formats.keySet();
     }

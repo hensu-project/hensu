@@ -5,6 +5,20 @@ import io.hensu.core.workflow.Workflow;
 import jakarta.inject.Inject;
 import picocli.CommandLine;
 
+/// CLI command for rendering workflow graphs in various formats.
+///
+/// Supports multiple output formats for different use cases:
+/// - `text` - ASCII art with ANSI colors for terminal display
+/// - `mermaid` - Mermaid diagram syntax for documentation
+///
+/// ### Usage
+/// ```bash
+/// hensu visualize [-d <working-dir>] [--format text|mermaid] [--no-color] <workflow-name>
+/// ```
+///
+/// @see io.hensu.cli.visualizer.WorkflowVisualizer
+/// @see io.hensu.cli.visualizer.TextVisualizationFormat
+/// @see io.hensu.cli.visualizer.MermaidVisualizationFormat
 @CommandLine.Command(name = "visualize", description = "Visualize workflow graph")
 class WorkflowVisualizeCommand extends WorkflowCommand {
 
@@ -12,13 +26,13 @@ class WorkflowVisualizeCommand extends WorkflowCommand {
             index = "0",
             description = "Workflow name (from workflows/ directory)",
             arity = "0..1")
-    String workflowName;
+    private String workflowName;
 
     @CommandLine.Option(
             names = "--format",
             defaultValue = "text",
             description = "Output format: text, mermaid")
-    String format;
+    private String format;
 
     @Inject WorkflowVisualizer visualizer;
 

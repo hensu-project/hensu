@@ -8,18 +8,25 @@ import jakarta.enterprise.context.ApplicationScoped;
 import java.util.Map;
 import java.util.logging.Logger;
 
-/// API caller handler - makes external API calls.
+/// Generic node handler for making external API calls (currently simulated).
 ///
-/// ### Config options:
+/// Reads request data from context, makes an HTTP call, and stores the response
+/// back to context for subsequent nodes.
 ///
-/// - **endpoint** - API endpoint URL
-/// - **method** - HTTP method (GET, POST, etc.)
-/// - **inputField** - Field containing request data
-/// - **outputField** - Field to store response
-/// - **timeout** - Request timeout in ms
+/// ### Config Options
+/// | Key | Type | Default | Description |
+/// |-----|------|---------|-------------|
+/// | `endpoint` | String | `""` | API endpoint URL |
+/// | `method` | String | `"GET"` | HTTP method (GET, POST, PUT, DELETE) |
+/// | `inputField` | String | `"input"` | Context field containing request data |
+/// | `outputField` | String | `"response"` | Context field to store response |
+/// | `timeout` | Number | `30000` | Request timeout in milliseconds |
 ///
+/// @apiNote **Currently simulated** - returns mock response. Real HTTP implementation
+/// should use {@link io.hensu.cli.action.CLIActionExecutor} HttpCall action instead.
 ///
-/// ### Note: Currently simulated. Real implementation would use HTTP client.
+/// @apiNote Side effect: Modifies workflow context by storing response in `outputField`.
+/// @see GenericNodeHandler
 @ApplicationScoped
 public class ApiCallerHandler implements GenericNodeHandler {
 
