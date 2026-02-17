@@ -3,6 +3,7 @@ package io.hensu.cli.commands;
 import io.hensu.cli.execution.VerboseExecutionListenerFactory;
 import io.hensu.cli.ui.AnsiStyles;
 import io.hensu.core.HensuEnvironment;
+import io.hensu.core.agent.stub.StubResponseRegistry;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.result.ExecutionResult;
@@ -107,6 +108,9 @@ class WorkflowRunCommand extends WorkflowCommand {
             }
             System.out.println();
 
+            // Configure stub registry with filesystem stubs directory
+            configureStubsDirectory();
+
             // Configure action executor with working directory for command registry
             configureActionExecutor();
 
@@ -158,6 +162,15 @@ class WorkflowRunCommand extends WorkflowCommand {
                     "%s %s %s%n",
                     styles.crossmark(), styles.bold("Workflow execution failed:"), e.getMessage());
             e.printStackTrace();
+        }
+    }
+
+    /// Configures the stub response registry with the working directory's stubs folder,
+    /// enabling filesystem-based stub resolution for CLI executions.
+    private void configureStubsDirectory() {
+        Path stubsDir = getWorkingDirectory().getStubsDir();
+        if (Files.isDirectory(stubsDir)) {
+            StubResponseRegistry.getInstance().setStubsDirectory(stubsDir);
         }
     }
 

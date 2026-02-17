@@ -18,8 +18,10 @@ import kotlin.io.path.readText
  * │   └── custom/      # Optional subdirectories
  * ├── prompts/         # Prompt templates (.md files)
  * │   └── custom/      # Optional subdirectories
- * └── rubrics/         # Rubric definitions (.md files)
- *     └── templates/   # Optional subdirectories
+ * ├── rubrics/         # Rubric definitions (.md files)
+ * │   └── templates/   # Optional subdirectories
+ * └── stubs/           # Stub response files (.txt, optional)
+ *     └── default/     # Default scenario stubs
  * ```
  *
  * Usage in DSL:
@@ -40,6 +42,9 @@ class WorkingDirectory(private val root: Path) {
 
         /** Subdirectory name for rubric definitions. */
         const val RUBRICS_DIR: String = "rubrics"
+
+        /** Subdirectory name for stub response files. */
+        const val STUBS_DIR: String = "stubs"
 
         /**
          * Creates a WorkingDirectory from a path, validating existence.
@@ -76,6 +81,10 @@ class WorkingDirectory(private val root: Path) {
     /** Path to the rubrics subdirectory, never null. May not exist on disk. */
     val rubricsDir: Path
         get() = root.resolve(RUBRICS_DIR)
+
+    /** Path to the stubs subdirectory, never null. May not exist on disk. */
+    val stubsDir: Path
+        get() = root.resolve(STUBS_DIR)
 
     /**
      * Resolves a workflow file path from the workflows directory.

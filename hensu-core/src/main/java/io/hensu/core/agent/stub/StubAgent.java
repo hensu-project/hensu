@@ -91,10 +91,14 @@ public class StubAgent implements Agent {
         return TextResponse.of(response, metadata);
     }
 
-    /// Generates a mock response when no configured response is found.
+    /// Generates a short, deterministic mock response when no configured response is found.
+    ///
+    /// Returns a compact stub identifier without echoing the prompt, preventing
+    /// recursive growth when workflows chain node outputs into subsequent prompts
+    /// via template variables.
     ///
     /// If the prompt requests JSON output (contains "json" or "output as"),
-    /// attempts to generate valid JSON with placeholder values.
+    /// generates valid JSON with placeholder values.
     ///
     /// @param prompt the original prompt, not null
     /// @param context execution context, may be null
@@ -106,22 +110,12 @@ public class StubAgent implements Agent {
             return generateJsonResponse(prompt);
         }
 
+        String nodeId = context != null ? (String) context.get("current_node") : null;
+        String identifier = nodeId != null ? nodeId : id;
+
         return String.format(
-                """
-                        [STUB RESPONSE from %s]
-
-                        This is a stub response for testing purposes.
-                        Agent: %s
-                        Model: %s
-                        Role: %s
-
-                        The actual prompt was:
-                        %s""",
-                id,
-                id,
-                config.getModel(),
-                config.getRole(),
-                prompt.length() > 500 ? prompt.substring(0, 500) + "..." : prompt);
+                "[STUB] Auto-generated response for '%s' (agent: %s, model: %s).",
+                identifier, id, config.getModel());
     }
 
     /// Generates a JSON response by parsing expected keys from the prompt.
