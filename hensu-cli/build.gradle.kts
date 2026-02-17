@@ -6,7 +6,7 @@ plugins {
 dependencies {
     implementation(platform("io.quarkus.platform:quarkus-bom:3.30.8"))
 
-    implementation(project(":hensu-core"))
+    implementation(project(":hensu-dsl"))
     implementation(project(":hensu-langchain4j-adapter"))
 
     implementation("io.quarkus:quarkus-picocli")

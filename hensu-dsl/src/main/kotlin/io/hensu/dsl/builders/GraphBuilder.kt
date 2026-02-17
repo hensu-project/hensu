@@ -53,6 +53,7 @@ class GraphBuilder(private val workingDirectory: WorkingDirectory) {
     }
 
     /** Enables `start at "nodeId"` syntax. */
+    @Suppress("RemoveRedundantQualifierName")
     val start: start
         get() = io.hensu.dsl.builders.start
 
