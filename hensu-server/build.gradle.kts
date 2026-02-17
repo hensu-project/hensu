@@ -7,7 +7,14 @@ dependencies {
     implementation(platform("io.quarkus.platform:quarkus-bom:3.30.8"))
 
     implementation(project(":hensu-core"))
+    implementation(project(":hensu-serialization"))
     implementation(project(":hensu-langchain4j-adapter"))
+
+    // Quarkus LangChain4j extensions — register GraalVM reflection metadata for native image
+    implementation(platform("io.quarkus.platform:quarkus-langchain4j-bom:3.30.8"))
+    implementation("io.quarkiverse.langchain4j:quarkus-langchain4j-anthropic")
+    implementation("io.quarkiverse.langchain4j:quarkus-langchain4j-openai")
+    implementation("io.quarkiverse.langchain4j:quarkus-langchain4j-ai-gemini")
 
     // Quarkus REST (reactive by default in Quarkus 3.x, includes SSE support)
     implementation("io.quarkus:quarkus-rest")

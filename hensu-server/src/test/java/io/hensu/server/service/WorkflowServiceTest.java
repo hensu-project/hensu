@@ -8,7 +8,7 @@ import static org.mockito.Mockito.when;
 
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.state.HensuSnapshot;
-import io.hensu.core.storage.workflow.WorkflowStateRepository;
+import io.hensu.server.persistence.WorkflowStateRepository;
 import io.hensu.server.service.WorkflowService.ExecutionNotFoundException;
 import io.hensu.server.service.WorkflowService.ExecutionStatus;
 import io.hensu.server.service.WorkflowService.ExecutionSummary;

@@ -6,7 +6,7 @@ import static org.mockito.Mockito.verify;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
-import io.hensu.core.storage.rubric.RubricRepository;
+import io.hensu.core.rubric.RubricRepository;
 import java.util.concurrent.ExecutorService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

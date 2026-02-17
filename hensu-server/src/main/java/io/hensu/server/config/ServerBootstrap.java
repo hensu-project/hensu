@@ -14,17 +14,21 @@ import org.jboss.logging.Logger;
 
 /// Server bootstrap that registers server-specific components on startup.
 ///
-/// Performs the following registrations:
-/// - Registers {@link AgenticNodeExecutor} to override default StandardNode handling
-/// - Registers {@link McpSidecar} as an action handler for MCP tool calls
-/// - Registers {@link ExecutionEventBroadcaster} for SSE event streaming
+/// Core components (AgentRegistry, NodeExecutorRegistry, WorkflowExecutor) are
+/// provided by {@link HensuEnvironmentProducer} via {@link io.hensu.core.HensuFactory}.
+/// This bootstrap registers server-specific extensions on those components.
+///
+/// ### Registrations
+/// - {@link AgenticNodeExecutor} - Overrides StandardNode handling with planning support
+/// - {@link McpSidecar} - Action handler for MCP tool calls to external servers
+/// - {@link ExecutionEventBroadcaster} - PlanObserver for SSE event streaming
 ///
 /// ### Execution Order
-/// Runs during Quarkus startup event, after CDI beans are initialized.
+/// Runs during Quarkus startup event, after HensuEnvironment is initialized.
 ///
+/// @see HensuEnvironmentProducer for core component setup
 /// @see AgenticNodeExecutor for planning-aware node execution
 /// @see McpSidecar for MCP tool integration
-/// @see ExecutionEventBroadcaster for SSE event streaming
 @ApplicationScoped
 public class ServerBootstrap {
 
