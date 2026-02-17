@@ -5,6 +5,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -22,10 +24,13 @@ import java.util.stream.Collectors;
 ///
 /// ### Response Resolution Order
 /// 1. Programmatically registered responses (highest priority)
-/// 2. Node-specific resources: `/stubs/{scenario}/{nodeId}.txt`
-/// 3. Agent-specific resources: `/stubs/{scenario}/{agentId}.txt`
-/// 4. Default scenario resources: `/stubs/default/{nodeId|agentId}.txt`
-/// 5. Returns null (triggers fallback generation in {@link StubAgent})
+/// 2. Classpath resource: `/stubs/{scenario}/{nodeId}.txt`
+/// 3. Classpath resource: `/stubs/{scenario}/{agentId}.txt`
+/// 4. Filesystem: `{stubsDir}/{scenario}/{nodeId}.txt`
+/// 5. Filesystem: `{stubsDir}/{scenario}/{agentId}.txt`
+/// 6. Default scenario classpath: `/stubs/default/{nodeId|agentId}.txt`
+/// 7. Default scenario filesystem: `{stubsDir}/default/{nodeId|agentId}.txt`
+/// 8. Returns null (triggers fallback generation in {@link StubAgent})
 ///
 /// ### Scenario Selection
 /// - Context variable: `context.put("stub_scenario", "low_score")`
@@ -50,6 +55,7 @@ public class StubResponseRegistry {
 
     private final Map<String, Map<String, String>> registeredResponses = new ConcurrentHashMap<>();
     private final Map<String, String> resourceCache = new ConcurrentHashMap<>();
+    private volatile Path stubsDirectory;
 
     private StubResponseRegistry() {
         // Private constructor for singleton
@@ -113,6 +119,33 @@ public class StubResponseRegistry {
     public void clearScenario(String scenario) {
         registeredResponses.remove(scenario);
         resourceCache.keySet().removeIf(key -> key.startsWith(scenario + "/"));
+    }
+
+    /// Sets the filesystem directory for stub response lookup.
+    ///
+    /// When set, the registry searches this directory for stub files after
+    /// classpath resources. Expected structure: `{path}/{scenario}/{key}.txt`.
+    ///
+    /// @apiNote **Side effects**:
+    /// - Changes filesystem lookup path for all subsequent `getResponse` calls
+    /// - Clears the resource cache to avoid stale entries
+    ///
+    /// @param path absolute path to the stubs directory, not null
+    /// @throws NullPointerException if path is null
+    /// @see #clearStubsDirectory() to remove filesystem lookup
+    public void setStubsDirectory(Path path) {
+        this.stubsDirectory = path;
+        resourceCache.clear();
+        logger.info("[STUB] Filesystem stubs directory set to: " + path);
+    }
+
+    /// Removes the filesystem stubs directory, reverting to classpath-only resolution.
+    ///
+    /// @apiNote **Side effects**:
+    /// - Clears the resource cache
+    public void clearStubsDirectory() {
+        this.stubsDirectory = null;
+        resourceCache.clear();
     }
 
     /// Resolves a stub response for the given execution context.
@@ -184,6 +217,33 @@ public class StubResponseRegistry {
             }
         }
 
+        // Filesystem lookup (working directory stubs)
+        if (nodeId != null) {
+            response = loadFilesystemResponse(scenario, nodeId);
+            if (response != null) {
+                logger.info(
+                        "[STUB] Loaded filesystem response for node: "
+                                + nodeId
+                                + " (scenario: "
+                                + scenario
+                                + ")");
+                return processResponse(response, context);
+            }
+        }
+
+        if (agentId != null) {
+            response = loadFilesystemResponse(scenario, agentId);
+            if (response != null) {
+                logger.info(
+                        "[STUB] Loaded filesystem response for agent: "
+                                + agentId
+                                + " (scenario: "
+                                + scenario
+                                + ")");
+                return processResponse(response, context);
+            }
+        }
+
         if (!DEFAULT_SCENARIO.equals(scenario)) {
             if (nodeId != null) {
                 response = loadResourceResponse(DEFAULT_SCENARIO, nodeId);
@@ -197,6 +257,23 @@ public class StubResponseRegistry {
                 response = loadResourceResponse(DEFAULT_SCENARIO, agentId);
                 if (response != null) {
                     logger.info("[STUB] Loaded default resource for agent: " + agentId);
+                    return processResponse(response, context);
+                }
+            }
+
+            // Default scenario filesystem fallback
+            if (nodeId != null) {
+                response = loadFilesystemResponse(DEFAULT_SCENARIO, nodeId);
+                if (response != null) {
+                    logger.info("[STUB] Loaded default filesystem response for node: " + nodeId);
+                    return processResponse(response, context);
+                }
+            }
+
+            if (agentId != null) {
+                response = loadFilesystemResponse(DEFAULT_SCENARIO, agentId);
+                if (response != null) {
+                    logger.info("[STUB] Loaded default filesystem response for agent: " + agentId);
                     return processResponse(response, context);
                 }
             }
@@ -278,6 +355,41 @@ public class StubResponseRegistry {
             logger.warning("Failed to load stub resource: " + path + " - " + e.getMessage());
             return null;
         }
+    }
+
+    /// Loads a response from the filesystem stubs directory.
+    ///
+    /// Reads `{stubsDirectory}/{scenario}/{key}.txt` if the stubs directory is set
+    /// and the file exists. Results are cached alongside classpath responses.
+    ///
+    /// @param scenario the scenario subdirectory, not null
+    /// @param key the file name (without .txt extension), not null
+    /// @return file contents or null if stubs directory is not set or file not found
+    private String loadFilesystemResponse(String scenario, String key) {
+        Path dir = stubsDirectory;
+        if (dir == null) {
+            return null;
+        }
+
+        String cacheKey = "fs:" + scenario + "/" + key;
+
+        if (resourceCache.containsKey(cacheKey)) {
+            String cached = resourceCache.get(cacheKey);
+            return cached.isEmpty() ? null : cached;
+        }
+
+        Path file = dir.resolve(scenario).resolve(key + ".txt");
+        String content = null;
+        if (Files.isRegularFile(file)) {
+            try {
+                content = Files.readString(file, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                logger.warning("Failed to load filesystem stub: " + file + " - " + e.getMessage());
+            }
+        }
+
+        resourceCache.put(cacheKey, content != null ? content : "");
+        return content;
     }
 
     /// Processes response template by substituting `{{key}}` placeholders.

@@ -718,11 +718,15 @@ The registry searches in this order:
 
 1. **Programmatic response** for the active scenario, matched by **node ID**
 2. **Programmatic response** for the active scenario, matched by **agent ID**
-3. **Resource file** at `/stubs/{scenario}/{nodeId}.txt`
-4. **Resource file** at `/stubs/{scenario}/{agentId}.txt`
-5. **Default scenario resource** at `/stubs/default/{nodeId}.txt` (if scenario is not `"default"`)
-6. **Default scenario resource** at `/stubs/default/{agentId}.txt`
-7. **Auto-generated fallback** — parses the prompt for JSON structure hints or returns a labelled stub response
+3. **Classpath resource** at `/stubs/{scenario}/{nodeId}.txt`
+4. **Classpath resource** at `/stubs/{scenario}/{agentId}.txt`
+5. **Filesystem stub** at `{stubsDir}/{scenario}/{nodeId}.txt`
+6. **Filesystem stub** at `{stubsDir}/{scenario}/{agentId}.txt`
+7. **Default scenario classpath** at `/stubs/default/{nodeId}.txt` (if scenario is not `"default"`)
+8. **Default scenario classpath** at `/stubs/default/{agentId}.txt`
+9. **Default scenario filesystem** at `{stubsDir}/default/{nodeId}.txt`
+10. **Default scenario filesystem** at `{stubsDir}/default/{agentId}.txt`
+11. **Auto-generated fallback** — parses the prompt for JSON structure hints or returns a labelled stub response
 
 The first match wins. This means you can register stubs by **node ID** (most common in tests) or by **agent ID** (useful when multiple nodes share the same agent).
 
@@ -774,6 +778,34 @@ src/test/resources/
 ```
 
 Each `.txt` file contains the raw response text the stub agent returns.
+
+#### Filesystem-Based Stubs
+
+For CLI usage where classpath resources are sealed inside the JAR, place stub files in the working directory's `stubs/` folder. The CLI automatically detects this directory and configures the registry:
+
+```
+working-dir/
+  workflows/
+    my-workflow.kt
+  stubs/
+    default/
+      writer.txt
+      reviewer.txt
+    low_score/
+      evaluate.txt
+```
+
+```bash
+hensu run -d working-dir georgia-discovery.kt
+```
+
+Filesystem stubs follow the same `{scenario}/{key}.txt` convention as classpath resources. Classpath resources take priority over filesystem stubs, so integration tests with classpath stubs are unaffected.
+
+You can also set the stubs directory programmatically:
+
+```java
+StubResponseRegistry.getInstance().setStubsDirectory(Path.of("./working-dir/stubs"));
+```
 
 #### Scenario Selection
 
