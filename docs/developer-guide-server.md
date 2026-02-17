@@ -23,40 +23,41 @@ The server module extends `hensu-core` with HTTP capabilities. Core infrastructu
 via `HensuFactory.builder()` - **never** by constructing components directly.
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           hensu-server                              │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │                     api/ (REST + SSE)                        │   │
-│  │  WorkflowResource │ ExecutionResource │ ExecutionEventResource │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                              │                                      │
-│  ┌───────────────────────────┼───────────────────────────────────┐ │
-│  │                     service/                                  │ │
-│  │                      WorkflowService                          │ │
-│  └───────────────────────────┼───────────────────────────────────┘ │
-│                              │                                      │
-│  ┌──────────────┬────────────┴────────────┬────────────────────┐   │
-│  │  streaming/  │        mcp/             │    persistence/    │   │
-│  │  (SSE Events)│  (MCP Split-Pipe)       │  (State Storage)   │   │
-│  └──────────────┴─────────────────────────┴────────────────────┘   │
-│                              │                                      │
-│  ┌──────────┬────────────────┴────────────────┬────────────────┐   │
-│  │ action/  │          config/                │   tenant/      │   │
-│  │ Server   │  HensuEnvironmentProducer       │  TenantContext │   │
-│  │ Action   │  ServerConfiguration            │  (ScopedValue) │   │
-│  │ Executor │  ServerBootstrap                │                │   │
-│  └──────────┴─────────────────────────────────┴────────────────┘   │
-│                              │                                      │
-└──────────────────────────────┼──────────────────────────────────────┘
-                               │
-                    ┌──────────┴──────────┐
-                    │     hensu-core      │
-                    │  (HensuEnvironment) │
-                    │  WorkflowExecutor   │
-                    │  AgentRegistry      │
-                    │  PlanExecutor       │
-                    └─────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                            hensu-server                              │
+│                                                                      │
+│  ┌───────────────────────────────────────────────────────────────┐   │
+│  │                       api/ (REST + SSE)                       │   │
+│  │  WorkflowResource │ ExecutionResource │ ExecutionEventResource│   │
+│  └───────────────────────────────────────────────────────────────┘   │
+│                                │                                     │
+│  ┌─────────────────────────────┼─────────────────────────────────┐   │
+│  │                      service/                                 │   │
+│  │                       WorkflowService                         │   │
+│  └─────────────────────────────┼─────────────────────────────────┘   │
+│                                │                                     │
+│  ┌────────────────┬────────────┴────────────┬────────────────────┐   │
+│  │  streaming/    │        mcp/             │    persistence/    │   │
+│  │  (SSE Events)  │  (MCP Split-Pipe)       │  (State Storage)   │   │
+│  └────────────────┴─────────────────────────┴────────────────────┘   │
+│                                │                                     │
+│  ┌────────────┬────────────────┴────────────────┬────────────────┐   │
+│  │ action/    │          config/                │   tenant/      │   │
+│  │ Server     │  HensuEnvironmentProducer       │  TenantContext │   │
+│  │ Action     │  ServerConfiguration            │  (ScopedValue) │   │
+│  │ Executor   │  ServerBootstrap                │                │   │
+│  └────────────┴─────────────────────────────────┴────────────────┘   │
+│                                │                                     │
+└────────────────────────────────┼─────────────────────────────────────┘
+                                 │
+                      ┌──────────┴──────────┐
+                      │     hensu-core      │
+                      │  (HensuEnvironment) │
+                      │  WorkflowExecutor   │
+                      │  AgentRegistry      │
+                      │  PlanExecutor       │
+                      │  ToolRegistry       │
+                      └─────────────────────┘
 ```
 
 ### Request Flow
@@ -209,7 +210,7 @@ io.hensu.server/
 
 ### TenantContext
 
-Uses Java 21+ `ScopedValue` for thread-safe tenant isolation:
+Uses Java 25 `ScopedValue` for thread-safe tenant isolation:
 
 ```java
 // In REST resource or interceptor
@@ -297,15 +298,15 @@ public class MyResource {
 
 ### Response Conventions
 
-| Status | Usage |
-|--------|-------|
-| 200 OK | Successful GET, PUT, POST with body |
-| 201 Created | Resource created (workflow push - new) |
-| 202 Accepted | Async operation started (execution start) |
-| 204 No Content | Successful DELETE |
-| 400 Bad Request | Invalid input, missing headers |
-| 404 Not Found | Resource not found |
-| 500 Internal Server Error | Unexpected errors |
+| Status                    | Usage                                     |
+|---------------------------|-------------------------------------------|
+| 200 OK                    | Successful GET, PUT, POST with body       |
+| 201 Created               | Resource created (workflow push - new)    |
+| 202 Accepted              | Async operation started (execution start) |
+| 204 No Content            | Successful DELETE                         |
+| 400 Bad Request           | Invalid input, missing headers            |
+| 404 Not Found             | Resource not found                        |
+| 500 Internal Server Error | Unexpected errors                         |
 
 ---
 
@@ -514,20 +515,20 @@ class MyResourceIT {
 
 ## GraalVM Native Image
 
-The server is deployed as a GraalVM native image via Quarkus. All server code — and any dependency it pulls in — must be native-image safe. See the [hensu-core Developer Guide](../../hensu-core/docs/developer-guide.md#graalvm-native-image-constraints) for the foundational rules (no reflection, no classpath scanning, no dynamic proxies, no runtime bytecode generation). This section covers **server-specific** concerns.
+The server is deployed as a GraalVM native image via Quarkus. All server code — and any dependency it pulls in — must be native-image safe. See the [hensu-core Developer Guide](developer-guide-core.md#graalvm-native-image-constraints) for the foundational rules (no reflection, no classpath scanning, no dynamic proxies, no runtime bytecode generation). This section covers **server-specific** concerns.
 
 ### How Quarkus Changes the Picture
 
 Quarkus performs heavy build-time processing that relaxes some raw GraalVM constraints:
 
-| Feature | Raw GraalVM | With Quarkus |
-|---------|-------------|-------------|
-| CDI injection (`@Inject`) | Requires reflection config | Works — Quarkus resolves beans at build time (ArC) |
-| `@ConfigProperty` | Requires reflection config | Works — processed at build time |
-| JAX-RS resources (`@Path`, `@GET`) | Requires reflection config | Works — REST layer is build-time wired |
-| Jackson `@JsonProperty` on DTOs | Requires reflection config | Works — `quarkus-jackson` registers metadata |
-| `ServiceLoader` | Fails at runtime | Works — Quarkus scans `META-INF/services` at build time |
-| LangChain4j AI services | Requires reflection config | Works — `quarkus-langchain4j` extensions register metadata |
+| Feature                            | Raw GraalVM                | With Quarkus                                               |
+|------------------------------------|----------------------------|------------------------------------------------------------|
+| CDI injection (`@Inject`)          | Requires reflection config | Works — Quarkus resolves beans at build time (ArC)         |
+| `@ConfigProperty`                  | Requires reflection config | Works — processed at build time                            |
+| JAX-RS resources (`@Path`, `@GET`) | Requires reflection config | Works — REST layer is build-time wired                     |
+| Jackson `@JsonProperty` on DTOs    | Requires reflection config | Works — `quarkus-jackson` registers metadata               |
+| `ServiceLoader`                    | Fails at runtime           | Works — Quarkus scans `META-INF/services` at build time    |
+| LangChain4j AI services            | Requires reflection config | Works — `quarkus-langchain4j` extensions register metadata |
 
 **Key insight**: Within Quarkus-managed code, standard annotations and CDI work normally. The constraints only bite when you introduce code that Quarkus doesn't know about — custom reflection, third-party libraries without Quarkus extensions, or `hensu-core` internals that bypass the framework.
 
@@ -585,15 +586,11 @@ public Object dynamicBean() {
 }
 ```
 
-### Server-Specific Pitfalls
+### Server-Specific Notes
 
 **Mutiny reactive types are safe.** `Uni`, `Multi`, `BroadcastProcessor` all work in native image — Quarkus handles their registration.
 
-**`ScopedValue` is a standard API in Java 25.** The `TenantContext` pattern uses `ScopedValue`, which was finalized in JDK 25. No `--enable-preview` flag is needed.
-
 **MCP JSON-RPC uses explicit Jackson.** The `JsonRpc` class uses `ObjectMapper` directly with `readTree`/`writeValueAsString` — no reflection-based deserialization. This is intentionally safe for native image.
-
-**Sealed interfaces in event types.** `ExecutionEvent` is a sealed interface with record implementations. Pattern matching (`switch`) over sealed types is fully native-image safe and is the preferred approach for type dispatch.
 
 ### Verifying Native Image Compatibility
 
@@ -610,17 +607,15 @@ public Object dynamicBean() {
 
 ### Quick Reference (Server-Specific)
 
-| Pattern | Safe | Notes |
-|---------|------|-------|
-| `@Inject` / `@Produces` | Yes | Quarkus ArC — build-time CDI |
-| `@ConfigProperty` | Yes | Build-time processed |
-| Quarkus extensions | Yes | Provide native metadata |
-| Raw third-party libs | Maybe | Need `reflect-config.json` if reflective |
-| `ObjectMapper.readTree()` | Yes | No reflection — tree-model parsing |
+| Pattern                                             | Safe  | Notes                                     |
+|-----------------------------------------------------|-------|-------------------------------------------|
+| `@Inject` / `@Produces`                             | Yes   | Quarkus ArC — build-time CDI              |
+| `@ConfigProperty`                                   | Yes   | Build-time processed                      |
+| Quarkus extensions                                  | Yes   | Provide native metadata                   |
+| Raw third-party libs                                | Maybe | Need `reflect-config.json` if reflective  |
+| `ObjectMapper.readTree()`                           | Yes   | No reflection — tree-model parsing        |
 | `new ObjectMapper().readValue(json, MyClass.class)` | Maybe | Needs registration unless Quarkus-managed |
-| `ScopedValue` | Yes | Standard API in JDK 25 |
-| Sealed interface `switch` | Yes | Preferred for type dispatch |
-| Mutiny `Uni`/`Multi` | Yes | Quarkus-managed |
+| Mutiny `Uni`/`Multi`                                | Yes   | Quarkus-managed                           |
 
 ---
 
@@ -691,7 +686,7 @@ public class MyComponent {
 
 ## See Also
 
-- [README.md](../README.md) - Module overview and quick start
-- [Unified Architecture](../../docs/unified-architecture.md) - Architecture decisions and vision
-- [hensu-core Developer Guide](../../docs/developer-guide.md) - Core engine documentation
-- [DSL Reference](../../docs/dsl-reference.md) - Workflow DSL syntax
+- [README.md](../hensu-server/README.md) - Module overview and quick start
+- [Unified Architecture](unified-architecture.md) - Architecture decisions and vision
+- [hensu-core Developer Guide](developer-guide-core.md) - Core engine documentation
+- [DSL Reference](dsl-reference.md) - Workflow DSL syntax
