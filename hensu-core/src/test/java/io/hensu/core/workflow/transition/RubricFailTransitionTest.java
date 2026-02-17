@@ -112,7 +112,7 @@ class RubricFailTransitionTest {
     @Test
     void shouldExposeFunction() {
         // Given
-        var func = (java.util.function.Function<RubricEvaluation, String>) evaluation -> "target";
+        var func = (java.util.function.Function<RubricEvaluation, String>) _ -> "target";
         RubricFailTransition transition = new RubricFailTransition(func);
 
         // Then
@@ -122,7 +122,7 @@ class RubricFailTransitionTest {
     @Test
     void shouldImplementTransitionRule() {
         // Given
-        RubricFailTransition transition = new RubricFailTransition(eval -> "target");
+        RubricFailTransition transition = new RubricFailTransition(_ -> "target");
 
         // Then
         assertThat(transition).isInstanceOf(TransitionRule.class);
