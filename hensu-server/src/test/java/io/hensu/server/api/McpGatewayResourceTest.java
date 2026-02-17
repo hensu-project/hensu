@@ -81,26 +81,30 @@ class McpGatewayResourceTest {
         void shouldAcceptValidMessage() {
             String jsonMessage = "{\"jsonrpc\":\"2.0\",\"id\":\"123\",\"result\":{}}";
 
-            Response response = resource.receiveMessage(jsonMessage).await().indefinitely();
+            try (Response response = resource.receiveMessage(jsonMessage).await().indefinitely()) {
 
-            assertThat(response.getStatus()).isEqualTo(204);
+                assertThat(response.getStatus()).isEqualTo(204);
+            }
             verify(sessionManager).handleResponse(jsonMessage);
         }
 
         @Test
         void shouldReturn400ForEmptyMessage() {
-            Response response = resource.receiveMessage("").await().indefinitely();
+            Map<String, Object> entity;
+            try (Response response = resource.receiveMessage("").await().indefinitely()) {
 
-            assertThat(response.getStatus()).isEqualTo(400);
-            Map<String, Object> entity = (Map<String, Object>) response.getEntity();
+                assertThat(response.getStatus()).isEqualTo(400);
+                entity = (Map<String, Object>) response.getEntity();
+            }
             assertThat(entity.get("error")).isEqualTo("Empty message body");
         }
 
         @Test
         void shouldReturn400ForNullMessage() {
-            Response response = resource.receiveMessage(null).await().indefinitely();
+            try (Response response = resource.receiveMessage(null).await().indefinitely()) {
 
-            assertThat(response.getStatus()).isEqualTo(400);
+                assertThat(response.getStatus()).isEqualTo(400);
+            }
         }
     }
 
@@ -112,10 +116,12 @@ class McpGatewayResourceTest {
             when(sessionManager.connectedClientCount()).thenReturn(5);
             when(sessionManager.pendingRequestCount()).thenReturn(12);
 
-            Response response = resource.status();
+            Map<String, Object> entity;
+            try (Response response = resource.status()) {
 
-            assertThat(response.getStatus()).isEqualTo(200);
-            Map<String, Object> entity = (Map<String, Object>) response.getEntity();
+                assertThat(response.getStatus()).isEqualTo(200);
+                entity = (Map<String, Object>) response.getEntity();
+            }
             assertThat(entity.get("connectedClients")).isEqualTo(5);
             assertThat(entity.get("pendingRequests")).isEqualTo(12);
         }
@@ -130,10 +136,12 @@ class McpGatewayResourceTest {
             when(sessionManager.getClientInfo("client-1"))
                     .thenReturn(new ClientInfo("client-1", System.currentTimeMillis() - 5000));
 
-            Response response = resource.clientStatus("client-1");
+            Map<String, Object> entity;
+            try (Response response = resource.clientStatus("client-1")) {
 
-            assertThat(response.getStatus()).isEqualTo(200);
-            Map<String, Object> entity = (Map<String, Object>) response.getEntity();
+                assertThat(response.getStatus()).isEqualTo(200);
+                entity = (Map<String, Object>) response.getEntity();
+            }
             assertThat(entity.get("clientId")).isEqualTo("client-1");
             assertThat(entity.get("connected")).isEqualTo(true);
             assertThat((Long) entity.get("connectedDurationMs")).isGreaterThanOrEqualTo(5000L);
@@ -144,10 +152,12 @@ class McpGatewayResourceTest {
             when(sessionManager.isConnected("client-2")).thenReturn(false);
             when(sessionManager.getClientInfo("client-2")).thenReturn(null);
 
-            Response response = resource.clientStatus("client-2");
+            Map<String, Object> entity;
+            try (Response response = resource.clientStatus("client-2")) {
 
-            assertThat(response.getStatus()).isEqualTo(200);
-            Map<String, Object> entity = (Map<String, Object>) response.getEntity();
+                assertThat(response.getStatus()).isEqualTo(200);
+                entity = (Map<String, Object>) response.getEntity();
+            }
             assertThat(entity.get("clientId")).isEqualTo("client-2");
             assertThat(entity.get("connected")).isEqualTo(false);
         }

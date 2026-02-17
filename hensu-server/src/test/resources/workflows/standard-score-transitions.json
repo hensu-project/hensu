@@ -1,0 +1,59 @@
+{
+  "id" : "standard-score-transitions",
+  "version" : "1.0.0",
+  "startNode" : "evaluate",
+  "agents" : {
+    "evaluator" : {
+      "id" : "evaluator",
+      "role" : "evaluator",
+      "model" : "stub",
+      "temperature" : 0.3
+    }
+  },
+  "nodes" : {
+    "evaluate" : {
+      "id" : "evaluate",
+      "nodeType" : "STANDARD",
+      "agentId" : "evaluator",
+      "prompt" : "Evaluate the quality of: {content}",
+      "outputParams" : [ "score" ],
+      "transitionRules" : [ {
+        "type" : "score",
+        "conditions" : [ {
+          "operator" : "GTE",
+          "value" : 8.0,
+          "range" : null,
+          "targetNode" : "high-quality"
+        }, {
+          "operator" : "RANGE",
+          "value" : null,
+          "range" : {
+            "start" : 4.0,
+            "end" : 7.99
+          },
+          "targetNode" : "medium-quality"
+        }, {
+          "operator" : "LT",
+          "value" : 4.0,
+          "range" : null,
+          "targetNode" : "low-quality"
+        } ]
+      } ]
+    },
+    "high-quality" : {
+      "id" : "high-quality",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    },
+    "medium-quality" : {
+      "id" : "medium-quality",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    },
+    "low-quality" : {
+      "id" : "low-quality",
+      "nodeType" : "END",
+      "status" : "FAILURE"
+    }
+  }
+}

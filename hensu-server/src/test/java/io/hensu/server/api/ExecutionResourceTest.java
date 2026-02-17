@@ -1,6 +1,7 @@
 package io.hensu.server.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -46,11 +47,12 @@ class ExecutionResourceTest {
 
             var request =
                     new ExecutionResource.ExecutionStartRequest("wf-1", Map.of("key", "value"));
-            Response response = resource.startExecution("tenant-1", request);
+            Map<String, Object> entity;
+            try (Response response = resource.startExecution("tenant-1", request)) {
 
-            assertThat(response.getStatus()).isEqualTo(202);
-            @SuppressWarnings("unchecked")
-            Map<String, Object> entity = (Map<String, Object>) response.getEntity();
+                assertThat(response.getStatus()).isEqualTo(202);
+                entity = (Map<String, Object>) response.getEntity();
+            }
             assertThat(entity.get("executionId")).isEqualTo("exec-123");
             assertThat(entity.get("workflowId")).isEqualTo("wf-1");
         }
@@ -61,41 +63,53 @@ class ExecutionResourceTest {
                     .thenThrow(new WorkflowNotFoundException("Not found"));
 
             var request = new ExecutionResource.ExecutionStartRequest("wf-1", Map.of());
-            try {
-                resource.startExecution("tenant-1", request);
-            } catch (NotFoundException e) {
-                assertThat(e.getMessage()).contains("Not found");
-            }
+            assertThatThrownBy(
+                            () -> {
+                                try (var _ = resource.startExecution("tenant-1", request)) {
+                                    // No-op
+                                }
+                            })
+                    .isInstanceOf(NotFoundException.class)
+                    .hasMessageContaining("Not found");
         }
 
         @Test
         void shouldReturn400WhenTenantIdMissing() {
             var request = new ExecutionResource.ExecutionStartRequest("wf-1", Map.of());
-            try {
-                resource.startExecution(null, request);
-            } catch (BadRequestException e) {
-                assertThat(e.getMessage()).contains("X-Tenant-ID");
-            }
+            assertThatThrownBy(
+                            () -> {
+                                try (var _ = resource.startExecution(null, request)) {
+                                    // No-op
+                                }
+                            })
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessageContaining("X-Tenant-ID");
         }
 
         @Test
         void shouldReturn400WhenTenantIdBlank() {
             var request = new ExecutionResource.ExecutionStartRequest("wf-1", Map.of());
-            try {
-                resource.startExecution("   ", request);
-            } catch (BadRequestException e) {
-                assertThat(e.getMessage()).contains("X-Tenant-ID");
-            }
+            assertThatThrownBy(
+                            () -> {
+                                try (var _ = resource.startExecution("   ", request)) {
+                                    // No-op
+                                }
+                            })
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessageContaining("X-Tenant-ID");
         }
 
         @Test
         void shouldReturn400WhenWorkflowIdMissing() {
             var request = new ExecutionResource.ExecutionStartRequest(null, Map.of());
-            try {
-                resource.startExecution("tenant-1", request);
-            } catch (BadRequestException e) {
-                assertThat(e.getMessage()).contains("workflowId");
-            }
+            assertThatThrownBy(
+                            () -> {
+                                try (var _ = resource.startExecution("tenant-1", request)) {
+                                    // No-op
+                                }
+                            })
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessageContaining("workflowId");
         }
     }
 
@@ -104,13 +118,14 @@ class ExecutionResourceTest {
 
         @Test
         void shouldResumeExecutionAndReturn200() {
-            Response response =
+            try (Response response =
                     resource.resume(
                             "exec-1",
                             "tenant-1",
-                            new ExecutionResource.ResumeRequest(true, Map.of()));
+                            new ExecutionResource.ResumeRequest(true, Map.of()))) {
 
-            assertThat(response.getStatus()).isEqualTo(200);
+                assertThat(response.getStatus()).isEqualTo(200);
+            }
             verify(workflowService)
                     .resumeExecution(eq("tenant-1"), eq("exec-1"), any(ResumeDecision.class));
         }
@@ -121,11 +136,14 @@ class ExecutionResourceTest {
                     .when(workflowService)
                     .resumeExecution(any(), any(), any());
 
-            try {
-                resource.resume("exec-1", "tenant-1", null);
-            } catch (NotFoundException e) {
-                assertThat(e.getMessage()).contains("Not found");
-            }
+            assertThatThrownBy(
+                            () -> {
+                                try (var _ = resource.resume("exec-1", "tenant-1", null)) {
+                                    // No-op
+                                }
+                            })
+                    .isInstanceOf(NotFoundException.class)
+                    .hasMessageContaining("Not found");
         }
     }
 
@@ -140,7 +158,6 @@ class ExecutionResourceTest {
             Response response = resource.getExecution("exec-1", "tenant-1");
 
             assertThat(response.getStatus()).isEqualTo(200);
-            @SuppressWarnings("unchecked")
             Map<String, Object> entity = (Map<String, Object>) response.getEntity();
             assertThat(entity.get("status")).isEqualTo("PAUSED");
         }
@@ -170,11 +187,12 @@ class ExecutionResourceTest {
                                     new ExecutionSummary(
                                             "exec-2", "wf-2", "node-2", Instant.now())));
 
-            Response response = resource.listPausedExecutions("tenant-1");
+            List<Map<String, Object>> entity;
+            try (Response response = resource.listPausedExecutions("tenant-1")) {
 
-            assertThat(response.getStatus()).isEqualTo(200);
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> entity = (List<Map<String, Object>>) response.getEntity();
+                assertThat(response.getStatus()).isEqualTo(200);
+                entity = (List<Map<String, Object>>) response.getEntity();
+            }
             assertThat(entity).hasSize(2);
         }
 
@@ -182,11 +200,12 @@ class ExecutionResourceTest {
         void shouldReturnEmptyListWhenNoPausedExecutions() {
             when(workflowService.listPausedExecutions("tenant-1")).thenReturn(List.of());
 
-            Response response = resource.listPausedExecutions("tenant-1");
+            List<Map<String, Object>> entity;
+            try (Response response = resource.listPausedExecutions("tenant-1")) {
 
-            assertThat(response.getStatus()).isEqualTo(200);
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> entity = (List<Map<String, Object>>) response.getEntity();
+                assertThat(response.getStatus()).isEqualTo(200);
+                entity = (List<Map<String, Object>>) response.getEntity();
+            }
             assertThat(entity).isEmpty();
         }
     }

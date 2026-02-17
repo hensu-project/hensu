@@ -338,6 +338,9 @@ class WorkflowBuilderTest {
 
     @Test
     fun `should support method chaining`() {
+        // Given
+        Files.writeString(tempDir.resolve("rubrics/quality.md"), "# Quality Rubric")
+
         // When
         val workflow =
             workflow("Chaining", workingDir) {
@@ -347,6 +350,8 @@ class WorkflowBuilderTest {
                         model = "test"
                     }
                 }
+
+                rubrics { rubric("quality", "quality.md") }
 
                 graph {
                     start at "step1"

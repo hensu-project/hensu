@@ -1,0 +1,45 @@
+{
+  "id" : "sub-workflow-parent",
+  "version" : "1.0.0",
+  "startNode" : "prepare",
+  "agents" : {
+    "preparer" : {
+      "id" : "preparer",
+      "role" : "preparer",
+      "model" : "stub",
+      "temperature" : 0.5
+    }
+  },
+  "nodes" : {
+    "prepare" : {
+      "id" : "prepare",
+      "nodeType" : "STANDARD",
+      "agentId" : "preparer",
+      "prompt" : "Prepare data for processing: {topic}",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "invoke-child"
+      } ]
+    },
+    "invoke-child" : {
+      "id" : "invoke-child",
+      "nodeType" : "SUB_WORKFLOW",
+      "workflowId" : "sub-workflow-child",
+      "inputMapping" : {
+        "input" : "prepare"
+      },
+      "outputMapping" : {
+        "child_result" : "child-process"
+      },
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "parent-done"
+      } ]
+    },
+    "parent-done" : {
+      "id" : "parent-done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

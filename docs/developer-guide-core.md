@@ -17,6 +17,7 @@ This guide covers API usage, adapter development, extension points, and testing 
 - [Template Resolution](#template-resolution)
 - [Human Review](#human-review)
 - [Testing](#testing)
+  - [Stub Agent System](#stub-agent-system)
 - [GraalVM Native Image Constraints](#graalvm-native-image-constraints)
 - [Credentials Management](#credentials-management)
 - [Key Classes Reference](#key-files-reference)
@@ -65,8 +66,15 @@ HensuEnvironment env = HensuFactory.builder()
     .reviewHandler(myReviewHandler)           // Human review support
     .actionExecutor(myActionExecutor)         // Action execution
 
+    // Repositories (defaults to in-memory implementations)
+    .workflowRepository(myWorkflowRepo)      // Custom workflow storage
+    .workflowStateRepository(myStateRepo)    // Custom state persistence
+
     .build();
 ```
+
+> **Note**: When `workflowRepository` or `workflowStateRepository` are not set, `HensuFactory` defaults to
+> `InMemoryWorkflowRepository` and `InMemoryWorkflowStateRepository` respectively.
 
 > **Note**: `StubAgentProvider` is always included automatically by `build()`. Do not add it explicitly.
 
@@ -91,6 +99,12 @@ ExecutionResult result = executor.execute(workflow, initialContext);
 if (result instanceof ExecutionResult.Completed completed) {
     System.out.println("Success! Exit status: " + completed.getExitStatus());
     System.out.println("Final output: " + completed.getFinalOutput());
+} else if (result instanceof ExecutionResult.Paused(HensuState pausedState)) {
+    System.out.println("Paused at node: " + pausedState.getCurrentNode());
+    // Save snapshot for later resume
+    HensuSnapshot snapshot = HensuSnapshot.from(pausedState, "paused");
+    // ... persist snapshot, then later:
+    // executor.executeFrom(workflow, snapshot.toState());
 } else if (result instanceof ExecutionResult.Rejected rejected) {
     System.out.println("Rejected: " + rejected.getReason());
 }
@@ -113,7 +127,7 @@ dependencies {
 ```java
 package io.hensu.adapter.myai;
 
-import io.hensu.core.agent.spi.AgentProvider;
+import io.hensu.core.agent.AgentProvider;
 import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentConfig;
 import java.util.Map;
@@ -585,21 +599,133 @@ Review modes per node:
 
 ## Testing
 
-### Stub Mode
+### Stub Agent System
 
-Run workflows without consuming API tokens using the built-in `StubAgentProvider`:
+The stub agent system lets you run full workflow executions without consuming API tokens. It intercepts all agent calls and returns configurable mock responses, making it the foundation for both unit and integration testing.
 
-```bash
-# Environment variable
-export HENSU_STUB_ENABLED=true
+#### Architecture
 
-# Or application property
-hensu.stub.enabled=true
+Three classes collaborate to provide the stub infrastructure:
+
+```
+StubAgentProvider (priority 1000, intercepts all models when enabled)
+  └── creates StubAgent per agent ID
+        └── resolves response via StubResponseRegistry (singleton)
 ```
 
-When enabled, `StubAgentProvider` (priority 1000) intercepts all model requests, returning mock responses.
+| Class                  | Role                                                       |
+|------------------------|------------------------------------------------------------|
+| `StubAgentProvider`    | Intercepts all model requests when enabled (priority 1000) |
+| `StubAgent`            | Executes by resolving responses from the registry          |
+| `StubResponseRegistry` | Singleton that stores and resolves stub responses          |
+
+#### Enabling Stub Mode
+
+Stub mode can be enabled through any of these (checked in order):
+
+```java
+// 1. Credentials map (per-execution override)
+credentials.put("HENSU_STUB_ENABLED", "true");
+
+// 2. System property
+// -Dhensu.stub.enabled=true
+
+// 3. Environment variable
+// export HENSU_STUB_ENABLED=true
+
+// 4. Application property (Quarkus)
+// hensu.stub.enabled=true
+```
+
+When enabled, `StubAgentProvider` returns priority 1000, outranking all real providers. When disabled, it returns priority -1 and is never selected.
+
+#### Response Resolution Order
+
+When `StubAgent.execute()` is called, it reads the current node ID from `context.get("current_node")` (set by `StandardNodeExecutor` before each agent call) and delegates to `StubResponseRegistry.getResponse(nodeId, agentId, context, prompt)`.
+
+The registry searches in this order:
+
+1. **Programmatic response** for the active scenario, matched by **node ID**
+2. **Programmatic response** for the active scenario, matched by **agent ID**
+3. **Resource file** at `/stubs/{scenario}/{nodeId}.txt`
+4. **Resource file** at `/stubs/{scenario}/{agentId}.txt`
+5. **Default scenario resource** at `/stubs/default/{nodeId}.txt` (if scenario is not `"default"`)
+6. **Default scenario resource** at `/stubs/default/{agentId}.txt`
+7. **Auto-generated fallback** — parses the prompt for JSON structure hints or returns a labelled stub response
+
+The first match wins. This means you can register stubs by **node ID** (most common in tests) or by **agent ID** (useful when multiple nodes share the same agent).
+
+#### Node ID Propagation
+
+`StandardNodeExecutor` sets `current_node` in the execution context before each `agent.execute()` call:
+
+```java
+state.getContext().put("current_node", node.getId());
+```
+
+This allows `StubAgent` to resolve stubs by the workflow node ID rather than the agent ID. Since a workflow JSON typically assigns different node IDs and agent IDs (e.g., node `"process"` with agent `"writer"`), node-ID-based registration is the natural choice for tests.
+
+#### Programmatic Registration
+
+Register responses directly via `StubResponseRegistry`:
+
+```java
+StubResponseRegistry registry = StubResponseRegistry.getInstance();
+
+// Register by node ID (most common — matches resolution priority 1)
+registry.registerResponse("draft", "Article about AI covering key concepts.");
+
+// Register by agent ID (matches resolution priority 2)
+registry.registerResponse("writer", "Fallback content for any node using 'writer' agent");
+
+// Register for a specific scenario
+registry.registerResponse("low_score", "evaluate",
+    "{\"score\": 0.3, \"content\": \"Poor quality output\"}");
+
+// Clear all responses between tests
+registry.clearResponses();
+```
+
+#### Resource-Based Stubs
+
+Place text files on the classpath for reusable, declarative stubs:
+
+```
+src/test/resources/
+  stubs/
+    default/           # Default scenario
+      writer.txt       # Matched by agent ID "writer"
+      reviewer.txt     # Matched by agent ID "reviewer"
+    high_score/        # Named scenario
+      evaluate.txt     # Matched by node/agent ID "evaluate"
+    low_score/
+      evaluate.txt
+```
+
+Each `.txt` file contains the raw response text the stub agent returns.
+
+#### Scenario Selection
+
+Scenarios partition stub responses for different test paths (e.g., high-score vs low-score flows). The active scenario is determined by:
+
+1. **Context variable**: `context.put("stub_scenario", "low_score")`
+2. **System property**: `-Dhensu.stub.scenario=backtrack`
+3. **Default**: `"default"`
+
+#### Template Variables
+
+Response templates support `{{key}}` substitution from the execution context:
+
+```text
+# stubs/default/writer.txt
+A detailed article about {{topic}} covering key aspects of the subject.
+```
+
+When the execution context contains `"topic" -> "quantum computing"`, the placeholder is replaced at resolution time.
 
 ### Unit Testing with Mock Providers
+
+For lightweight unit tests that don't need the full stub system, create an inline mock provider:
 
 ```java
 @Test
@@ -624,10 +750,13 @@ void testWorkflowLogic() {
 ### Test Commands
 
 ```bash
-./gradlew hensu-core:test                              # Run core tests
+./gradlew hensu-core:test                              # Core unit tests
+./gradlew hensu-server:test                            # Server + integration tests
 ./gradlew hensu-core:test --tests "RubricEngineTest"   # Single test class
 ./gradlew test                                         # All modules
 ```
+
+> **See also**: [Server Developer Guide — Integration Testing](developer-guide-server.md#integration-testing) for the full `@QuarkusTest` integration test framework built on this stub system.
 
 ## GraalVM Native Image Constraints
 
@@ -755,28 +884,33 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 
 ## Key Files Reference
 
-| File                                         | Description                                   |
-|----------------------------------------------|-----------------------------------------------|
-| `HensuFactory.java`                          | Bootstrap and environment creation            |
-| `HensuEnvironment.java`                      | Container for all core components             |
-| `HensuConfig.java`                           | Configuration (threading, storage)            |
-| `agent/AgentFactory.java`                    | Creates agents from explicit providers        |
-| `agent/spi/AgentProvider.java`               | Provider interface for pluggable AI backends  |
-| `agent/AgentRegistry.java`                   | Agent lookup interface                        |
-| `agent/DefaultAgentRegistry.java`            | Thread-safe agent registry                    |
-| `agent/stub/StubAgentProvider.java`          | Testing provider (priority 1000 when enabled) |
-| `execution/WorkflowExecutor.java`            | Main execution engine                         |
-| `execution/executor/GenericNodeHandler.java` | Generic node handler interface                |
-| `execution/action/ActionHandler.java`        | Action handler interface                      |
-| `execution/action/ActionExecutor.java`       | Action dispatch interface                     |
-| `execution/result/ExecutionResult.java`      | Workflow execution outcome                    |
-| `workflow/Workflow.java`                     | Core data model                               |
-| `rubric/RubricEngine.java`                   | Quality evaluation engine                     |
-| `rubric/model/Rubric.java`                   | Rubric definition model                       |
-| `tool/ToolDefinition.java`                   | Protocol-agnostic tool descriptor             |
-| `tool/ToolRegistry.java`                     | Tool registration/lookup interface            |
-| `plan/PlanExecutor.java`                     | Step-by-step plan execution                   |
-| `plan/Plan.java`                             | Plan model (steps + constraints)              |
-| `template/SimpleTemplateResolver.java`       | `{variable}` substitution                     |
-| `review/ReviewHandler.java`                  | Human review interface                        |
-| `state/ExecutionSnapshot.java`               | Serializable execution state                  |
+| File                                         | Description                                                       |
+|----------------------------------------------|-------------------------------------------------------------------|
+| `HensuFactory.java`                          | Bootstrap and environment creation                                |
+| `HensuEnvironment.java`                      | Container for all core components                                 |
+| `HensuConfig.java`                           | Configuration (threading, storage)                                |
+| `agent/AgentFactory.java`                    | Creates agents from explicit providers                            |
+| `agent/AgentProvider.java`                   | Provider interface for pluggable AI backends                      |
+| `agent/AgentRegistry.java`                   | Agent lookup interface                                            |
+| `agent/DefaultAgentRegistry.java`            | Thread-safe agent registry                                        |
+| `agent/stub/StubAgentProvider.java`          | Testing provider (priority 1000 when enabled)                     |
+| `execution/WorkflowExecutor.java`            | Main execution engine                                             |
+| `execution/executor/GenericNodeHandler.java` | Generic node handler interface                                    |
+| `execution/action/ActionHandler.java`        | Action handler interface                                          |
+| `execution/action/ActionExecutor.java`       | Action dispatch interface                                         |
+| `execution/result/ExecutionResult.java`      | Workflow execution outcome (Completed, Paused, Rejected, Failure) |
+| `workflow/Workflow.java`                     | Core data model                                                   |
+| `workflow/WorkflowRepository.java`           | Workflow definition persistence interface                         |
+| `workflow/InMemoryWorkflowRepository.java`   | In-memory workflow repository (default)                           |
+| `state/HensuState.java`                      | Mutable workflow execution state                                  |
+| `state/HensuSnapshot.java`                   | Immutable state snapshot for persistence                          |
+| `state/WorkflowStateRepository.java`         | Execution state persistence interface                             |
+| `state/InMemoryWorkflowStateRepository.java` | In-memory state repository (default)                              |
+| `rubric/RubricEngine.java`                   | Quality evaluation engine                                         |
+| `rubric/model/Rubric.java`                   | Rubric definition model                                           |
+| `tool/ToolDefinition.java`                   | Protocol-agnostic tool descriptor                                 |
+| `tool/ToolRegistry.java`                     | Tool registration/lookup interface                                |
+| `plan/PlanExecutor.java`                     | Step-by-step plan execution                                       |
+| `plan/Plan.java`                             | Plan model (steps + constraints)                                  |
+| `template/SimpleTemplateResolver.java`       | `{variable}` substitution                                         |
+| `review/ReviewHandler.java`                  | Human review interface                                            |

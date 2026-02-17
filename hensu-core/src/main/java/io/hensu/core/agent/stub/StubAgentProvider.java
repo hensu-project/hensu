@@ -2,7 +2,7 @@ package io.hensu.core.agent.stub;
 
 import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentConfig;
-import io.hensu.core.agent.spi.AgentProvider;
+import io.hensu.core.agent.AgentProvider;
 import java.util.Map;
 import java.util.logging.Logger;
 

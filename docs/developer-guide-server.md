@@ -12,6 +12,7 @@ This guide covers the architecture, patterns, and best practices for developing 
 - [SSE Streaming](#sse-streaming)
 - [MCP Integration](#mcp-integration)
 - [Testing](#testing)
+  - [Integration Testing](#integration-testing)
 - [GraalVM Native Image](#graalvm-native-image)
 - [Configuration](#configuration)
 
@@ -36,10 +37,10 @@ via `HensuFactory.builder()` - **never** by constructing components directly.
 │  │                       WorkflowService                         │   │
 │  └─────────────────────────────┼─────────────────────────────────┘   │
 │                                │                                     │
-│  ┌────────────────┬────────────┴────────────┬────────────────────┐   │
-│  │  streaming/    │        mcp/             │    persistence/    │   │
-│  │  (SSE Events)  │  (MCP Split-Pipe)       │  (State Storage)   │   │
-│  └────────────────┴─────────────────────────┴────────────────────┘   │
+│  ┌─────────────────────────────┼─────────────────────────────────┐   │
+│  │  streaming/                 │        mcp/                     │   │
+│  │  (SSE Events)               │  (MCP Split-Pipe)               │   │
+│  └─────────────────────────────┴─────────────────────────────────┘   │
 │                                │                                     │
 │  ┌────────────┬────────────────┴────────────────┬────────────────┐   │
 │  │ action/    │          config/                │   tenant/      │   │
@@ -97,10 +98,12 @@ public HensuEnvironment hensuEnvironment() {
 
 ### ServerConfiguration
 
-Delegates `HensuEnvironment` components for CDI injection and produces server-specific beans:
+Delegates `HensuEnvironment` components for CDI injection and produces server-specific beans.
+Repository instances are created inside `HensuFactory` (defaulting to in-memory implementations)
+and exposed here as CDI beans via delegation:
 
 ```java
-// Core components from HensuEnvironment
+// Core components delegated from HensuEnvironment
 @Produces @Singleton
 public WorkflowExecutor workflowExecutor(HensuEnvironment env) {
     return env.getWorkflowExecutor();
@@ -111,23 +114,25 @@ public AgentRegistry agentRegistry(HensuEnvironment env) {
     return env.getAgentRegistry();
 }
 
+// Repositories — created by HensuFactory, delegated for CDI injection
+@Produces @Singleton
+public WorkflowRepository workflowRepository(HensuEnvironment env) {
+    return env.getWorkflowRepository();
+}
+
+@Produces @Singleton
+public WorkflowStateRepository workflowStateRepository(HensuEnvironment env) {
+    return env.getWorkflowStateRepository();
+}
+
 // Shared ObjectMapper with Hensu serialization support
 @Produces @Singleton
 public ObjectMapper objectMapper() {
     return WorkflowSerializer.createMapper();
 }
-
-// Server-specific beans
-@Produces @Singleton
-public WorkflowRepository workflowRepository() {
-    return new InMemoryWorkflowRepository();
-}
-
-@Produces @Singleton
-public WorkflowStateRepository workflowStateRepository() {
-    return new InMemoryWorkflowStateRepository();
-}
 ```
+
+> **Note**: Use `@Singleton` (not `@ApplicationScoped`) for delegate producers. `@ApplicationScoped` creates a CDI client proxy that breaks `instanceof` checks against concrete types (e.g., `InMemoryWorkflowStateRepository`).
 
 ### ServerActionExecutor
 
@@ -147,8 +152,8 @@ public ActionResult execute(Action action, Map<String, Object> context) {
 ### Common Mistakes
 
 - **NEVER** create `WorkflowExecutor`, `AgentRegistry`, or other core components directly
-- **NEVER** create a `StubAgent` manually - `HensuFactory` has stub mode built-in
-- **NEVER** put persistence interfaces in `hensu-core` - storage is a server concern
+- **NEVER** create a `StubAgent` manually — `HensuFactory` has stub mode built-in
+- **NEVER** create repository instances directly in server producers — delegate from `HensuEnvironment`
 - **NEVER** support local command execution in server mode
 
 ---
@@ -181,12 +186,6 @@ io.hensu.server/
 │   ├── McpConnectionPool        # Connection pooling
 │   ├── McpSidecar               # ActionHandler for MCP tools
 │   └── SseMcpConnection         # SSE-based connection impl
-│
-├── persistence/           # Server-specific storage
-│   ├── WorkflowRepository       # Workflow definition persistence
-│   ├── InMemoryWorkflowRepository
-│   ├── WorkflowStateRepository  # Execution state persistence
-│   └── InMemoryWorkflowStateRepository
 │
 ├── planner/               # LLM planning
 │   └── LlmPlanner              # LLM-based plan generation
@@ -476,7 +475,7 @@ class MyResourceTest {
 }
 ```
 
-### Integration Test Pattern
+### Integration Test Pattern (REST)
 
 ```java
 @QuarkusTest
@@ -510,6 +509,188 @@ class MyResourceIT {
     }
 }
 ```
+
+### Integration Testing
+
+Full-stack integration tests exercise the workflow engine end-to-end within a bootstrapped Quarkus context, using the [Stub Agent System](developer-guide-core.md#stub-agent-system) to intercept all model requests.
+
+#### Test Infrastructure
+
+| Class                  | Role                                                             |
+|------------------------|------------------------------------------------------------------|
+| `IntegrationTestBase`  | Abstract base: CDI injection, state cleanup, helper methods      |
+| `TestActionHandler`    | Records action payloads for plan/action dispatch assertions      |
+| `TestReviewHandler`    | Scriptable review decisions (approve, backtrack, reject)         |
+| `TestValidatorHandler` | Generic node handler for `"validator"` type nodes                |
+| `TestPauseHandler`     | Generic node handler that pauses on first call, succeeds on next |
+
+All infrastructure lives in `io.hensu.server.integration` (package-private).
+
+#### IntegrationTestBase
+
+Every integration test extends `IntegrationTestBase`, which provides:
+
+- **CDI-injected beans**: `workflowRepository`, `workflowStateRepository`, `workflowService`, `agentRegistry`, `hensuEnvironment`
+- **Per-test cleanup** (`@BeforeEach`): clears stub responses, workflow repository, and workflow state repository
+- **Helper methods**:
+
+| Method                                           | Description                                             |
+|--------------------------------------------------|---------------------------------------------------------|
+| `loadWorkflow(resourceName)`                     | Loads JSON fixtures from `/workflows/`                  |
+| `pushAndExecute(workflow, context)`              | Saves workflow + executes under `TEST_TENANT`           |
+| `pushAndExecuteWithMcp(workflow, ctx, endpoint)` | Executes with MCP-enabled tenant context                |
+| `registerStub(key, response)`                    | Programmatic stub registration by node ID or agent ID   |
+| `registerStub(scenario, key, response)`          | Scenario-specific stub registration                     |
+| `resolveRubricPath(resourceName)`                | Copies classpath rubric to temp file for `RubricParser` |
+
+#### Writing an Integration Test
+
+```java
+@QuarkusTest
+class MyWorkflowIntegrationTest extends IntegrationTestBase {
+
+    @Test
+    void shouldExecuteWorkflow() {
+        // 1. Load workflow fixture
+        Workflow workflow = loadWorkflow("my-workflow.json");
+
+        // 2. Register stub responses by node ID
+        registerStub("research", "Research findings about the topic");
+        registerStub("draft", "Article draft based on research");
+
+        // 3. Execute
+        ExecutionStartResult result = pushAndExecute(
+                workflow, Map.of("topic", "AI"));
+
+        // 4. Assert on final snapshot
+        List<HensuSnapshot> snapshots = workflowStateRepository
+                .findByWorkflowId(TEST_TENANT, result.workflowId());
+        assertThat(snapshots).isNotEmpty();
+
+        HensuSnapshot snapshot = snapshots.getLast();
+        assertThat(snapshot.checkpointReason()).isEqualTo("completed");
+        assertThat(snapshot.context())
+                .containsEntry("research", "Research findings about the topic");
+    }
+}
+```
+
+Register stubs by **node ID** (e.g., `"research"`, `"draft"`), not by agent ID. The `StandardNodeExecutor` propagates the current node ID into the execution context, so `StubResponseRegistry` resolves node-ID-based stubs first. See [Stub Agent System — Response Resolution Order](developer-guide-core.md#response-resolution-order) for the full lookup chain.
+
+#### Scripting Review Decisions
+
+`TestReviewHandler` is a CDI `@Alternative` (priority 1) that replaces the default `AUTO_APPROVE` handler. Enqueue decisions before execution — they are consumed in FIFO order:
+
+```java
+@Inject TestReviewHandler testReviewHandler;
+
+@BeforeEach
+void resetReviewHandler() {
+    testReviewHandler.reset();
+}
+
+@Test
+void shouldBacktrackAndRetry() {
+    Workflow workflow = loadWorkflow("review-workflow.json");
+    registerStub("research", "Research");
+    registerStub("draft", "Content");
+
+    // First review: backtrack to "research" node
+    testReviewHandler.enqueueDecision(
+            new ReviewDecision.Backtrack("research", null, "Needs more detail"));
+    // Second review: approve
+    testReviewHandler.enqueueDecision(new ReviewDecision.Approve());
+
+    ExecutionStartResult result = pushAndExecute(
+            workflow, Map.of("topic", "test"));
+
+    HensuSnapshot snapshot = /* ... get last snapshot ... */;
+    List<BacktrackEvent> backtracks = snapshot.history().getBacktracks();
+    assertThat(backtracks).isNotEmpty();
+    assertThat(backtracks.getFirst().getFrom()).isEqualTo("draft");
+    assertThat(backtracks.getFirst().getTo()).isEqualTo("research");
+}
+```
+
+When the queue is empty, `TestReviewHandler` falls back to a configurable default (approve by default). Use `setDefaultDecision()` to change the fallback.
+
+#### Verifying Action Dispatch
+
+`TestActionHandler` records all payloads dispatched to the `"test-tool"` handler ID:
+
+```java
+@Inject TestActionHandler testActionHandler;
+@Inject ActionExecutor actionExecutor;
+
+@BeforeEach
+void resetActionHandler() {
+    testActionHandler.reset();
+    actionExecutor.registerHandler(testActionHandler);
+}
+
+@Test
+void shouldDispatchPlanSteps() {
+    Workflow workflow = loadWorkflow("plan-static.json");
+    registerStub("execute", "Plan execution complete");
+
+    pushAndExecute(workflow, Map.of("task", "test"));
+
+    List<Map<String, Object>> payloads = testActionHandler.getReceivedPayloads();
+    assertThat(payloads).hasSize(2);
+    assertThat(payloads.getFirst()).containsEntry("action", "search");
+    assertThat(payloads.get(1)).containsEntry("action", "process");
+}
+```
+
+#### Workflow JSON Fixtures
+
+Place workflow definitions in `src/test/resources/workflows/`. Use `model: "stub"` for all agents:
+
+```json
+{
+  "id": "my-workflow",
+  "version": "1.0.0",
+  "startNode": "process",
+  "agents": {
+    "writer": { "id": "writer", "role": "writer", "model": "stub", "temperature": 0.7 }
+  },
+  "nodes": {
+    "process": {
+      "id": "process",
+      "nodeType": "STANDARD",
+      "agentId": "writer",
+      "prompt": "Write about {topic}",
+      "transitionRules": [{ "type": "success", "targetNode": "done" }]
+    },
+    "done": { "id": "done", "nodeType": "END", "status": "SUCCESS" }
+  }
+}
+```
+
+#### Rubric Testing
+
+Pre-register parsed rubrics so the executor skips filesystem path resolution:
+
+```java
+private Rubric parseAndRegisterRubric(String rubricId, String resourceName) {
+    String rubricPath = resolveRubricPath(resourceName);
+    Rubric parsed = RubricParser.parse(Path.of(rubricPath));
+
+    Rubric rubric = Rubric.builder()
+            .id(rubricId)
+            .name(parsed.getName())
+            .version(parsed.getVersion())
+            .type(parsed.getType())
+            .passThreshold(parsed.getPassThreshold())
+            .criteria(parsed.getCriteria())
+            .build();
+
+    hensuEnvironment.getRubricRepository().save(rubric);
+    return rubric;
+}
+```
+
+Place rubric markdown files in `src/test/resources/rubrics/`.
 
 ---
 
@@ -567,16 +748,16 @@ When adding a new library to `hensu-server`:
 CDI producers in `ServerConfiguration` are native-image safe because Quarkus processes them at build time. Follow these patterns:
 
 ```java
-// SAFE — Quarkus resolves this at build time
+// SAFE — delegates from HensuEnvironment
 @Produces @Singleton
 public WorkflowExecutor workflowExecutor(HensuEnvironment env) {
     return env.getWorkflowExecutor();
 }
 
-// SAFE — concrete instantiation
+// SAFE — delegates repository created by HensuFactory
 @Produces @Singleton
-public WorkflowRepository workflowRepository() {
-    return new InMemoryWorkflowRepository();
+public WorkflowRepository workflowRepository(HensuEnvironment env) {
+    return env.getWorkflowRepository();
 }
 
 // UNSAFE — dynamic class loading in a producer
@@ -675,7 +856,7 @@ public class MyComponent {
 
 - Don't bypass `HensuFactory` by constructing core components directly
 - Don't create `StubAgent` manually (use built-in stub mode)
-- Don't put persistence interfaces in `hensu-core`
+- Don't create repository instances directly in server producers — delegate from `HensuEnvironment`
 - Don't support local command execution in server mode
 - Don't put business logic in REST resources
 - Don't expose internal exceptions to clients

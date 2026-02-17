@@ -1,12 +1,10 @@
-package io.hensu.server.persistence;
+package io.hensu.core.workflow;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.execution.result.ExitStatus;
-import io.hensu.core.workflow.Workflow;
-import io.hensu.core.workflow.WorkflowMetadata;
 import io.hensu.core.workflow.node.EndNode;
 import io.hensu.core.workflow.node.Node;
 import java.time.Instant;

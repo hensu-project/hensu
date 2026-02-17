@@ -1,0 +1,50 @@
+{
+  "id" : "rubric-backtrack-critical",
+  "version" : "1.0.0",
+  "startNode" : "research",
+  "agents" : {
+    "researcher" : {
+      "id" : "researcher",
+      "role" : "researcher",
+      "model" : "stub",
+      "temperature" : 0.5
+    },
+    "writer" : {
+      "id" : "writer",
+      "role" : "writer",
+      "model" : "stub",
+      "temperature" : 0.7
+    }
+  },
+  "rubrics" : {
+    "quality" : "quality-low"
+  },
+  "nodes" : {
+    "research" : {
+      "id" : "research",
+      "nodeType" : "STANDARD",
+      "agentId" : "researcher",
+      "prompt" : "Research the topic: {topic}",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "draft"
+      } ]
+    },
+    "draft" : {
+      "id" : "draft",
+      "nodeType" : "STANDARD",
+      "agentId" : "writer",
+      "prompt" : "Write an article based on the research",
+      "rubricId" : "quality",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

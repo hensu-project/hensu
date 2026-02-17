@@ -1,0 +1,30 @@
+{
+  "id" : "sub-workflow-child",
+  "version" : "1.0.0",
+  "startNode" : "child-process",
+  "agents" : {
+    "child-processor" : {
+      "id" : "child-processor",
+      "role" : "processor",
+      "model" : "stub",
+      "temperature" : 0.5
+    }
+  },
+  "nodes" : {
+    "child-process" : {
+      "id" : "child-process",
+      "nodeType" : "STANDARD",
+      "agentId" : "child-processor",
+      "prompt" : "Process the input: {input}",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "child-done"
+      } ]
+    },
+    "child-done" : {
+      "id" : "child-done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

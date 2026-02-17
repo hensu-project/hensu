@@ -21,7 +21,9 @@ import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.template.TemplateResolver;
 import io.hensu.core.util.JsonUtil;
 import io.hensu.core.workflow.Workflow;
+import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.core.workflow.node.*;
+import io.hensu.core.workflow.transition.ScoreTransition;
 import io.hensu.core.workflow.transition.TransitionRule;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -40,7 +42,7 @@ import java.util.logging.Logger;
 ///
 /// ### Contracts
 /// - **Precondition**: `workflow.getStartNode()` must exist in the workflow's node map
-/// - **Postcondition**: Returns `Completed` or `Rejected`, never null
+/// - **Postcondition**: Returns `Completed`, `Paused`, or `Rejected`, never null
 /// - **Invariant**: State history is append-only during execution
 ///
 /// ### Backtracking Thresholds
@@ -63,6 +65,7 @@ public class WorkflowExecutor {
     private static final double CRITICAL_FAILURE_THRESHOLD = 30.0;
     private static final double MODERATE_FAILURE_THRESHOLD = 60.0;
     private static final double MINOR_FAILURE_THRESHOLD = 80.0;
+    private static final int DEFAULT_MAX_BACKTRACK_RETRIES = 3;
 
     private final NodeExecutorRegistry nodeExecutorRegistry;
     private final AgentRegistry agentRegistry;
@@ -71,6 +74,7 @@ public class WorkflowExecutor {
     private final ReviewHandler reviewHandler;
     private final TemplateResolver templateResolver;
     private final ActionExecutor actionExecutor;
+    private final WorkflowRepository workflowRepository;
 
     /// Creates a workflow executor with core dependencies.
     ///
@@ -93,7 +97,8 @@ public class WorkflowExecutor {
                 rubricEngine,
                 reviewHandler,
                 null,
-                new SimpleTemplateResolver());
+                new SimpleTemplateResolver(),
+                null);
     }
 
     /// Creates a workflow executor with action execution support.
@@ -119,7 +124,8 @@ public class WorkflowExecutor {
                 rubricEngine,
                 reviewHandler,
                 actionExecutor,
-                new SimpleTemplateResolver());
+                new SimpleTemplateResolver(),
+                null);
     }
 
     /// Creates a workflow executor with all dependencies.
@@ -132,6 +138,7 @@ public class WorkflowExecutor {
     /// auto-approve)
     /// @param actionExecutor executor for executable actions, may be null (actions logged only)
     /// @param templateResolver resolver for `{variable}` syntax in prompts, not null
+    /// @param workflowRepository repository for loading sub-workflow definitions, not null
     public WorkflowExecutor(
             NodeExecutorRegistry nodeExecutorRegistry,
             AgentRegistry agentRegistry,
@@ -139,7 +146,8 @@ public class WorkflowExecutor {
             RubricEngine rubricEngine,
             ReviewHandler reviewHandler,
             ActionExecutor actionExecutor,
-            TemplateResolver templateResolver) {
+            TemplateResolver templateResolver,
+            WorkflowRepository workflowRepository) {
         this.nodeExecutorRegistry = nodeExecutorRegistry;
         this.agentRegistry = agentRegistry;
         this.executorService = executorService;
@@ -147,6 +155,7 @@ public class WorkflowExecutor {
         this.reviewHandler = reviewHandler != null ? reviewHandler : ReviewHandler.AUTO_APPROVE;
         this.actionExecutor = actionExecutor;
         this.templateResolver = templateResolver;
+        this.workflowRepository = workflowRepository;
     }
 
     /// Executes a workflow without observability listener.
@@ -192,13 +201,63 @@ public class WorkflowExecutor {
         registerWorkflowAgents(workflow);
 
         String currentNodeId = workflow.getStartNode();
+        String executionId =
+                initialContext.containsKey("_execution_id")
+                        ? (String) initialContext.get("_execution_id")
+                        : UUID.randomUUID().toString();
         HensuState state =
-                new HensuState(
-                        new HashMap<>(initialContext),
-                        workflow.getId(),
-                        currentNodeId,
-                        new ExecutionHistory());
+                new HensuState.Builder()
+                        .executionId(executionId)
+                        .workflowId(workflow.getId())
+                        .currentNode(currentNodeId)
+                        .context(initialContext)
+                        .history(new ExecutionHistory())
+                        .build();
 
+        return executeLoop(state, workflow, listener);
+    }
+
+    /// Resumes execution of a workflow from a previously saved state.
+    ///
+    /// Used after a workflow was paused (returned {@link ExecutionResult.Paused})
+    /// and needs to continue from the saved checkpoint.
+    ///
+    /// @param workflow the workflow definition, not null
+    /// @param savedState the state to resume from, not null
+    /// @return execution result indicating completion, pause, or rejection, never null
+    /// @throws Exception if execution fails
+    public ExecutionResult executeFrom(Workflow workflow, HensuState savedState) throws Exception {
+        return executeFrom(workflow, savedState, ExecutionListener.NOOP);
+    }
+
+    /// Resumes execution of a workflow from a previously saved state with a listener.
+    ///
+    /// @param workflow the workflow definition, not null
+    /// @param savedState the state to resume from, not null
+    /// @param listener listener for execution events, not null
+    /// @return execution result indicating completion, pause, or rejection, never null
+    /// @throws Exception if execution fails
+    public ExecutionResult executeFrom(
+            Workflow workflow, HensuState savedState, ExecutionListener listener) throws Exception {
+        registerWorkflowAgents(workflow);
+        return executeLoop(savedState, workflow, listener);
+    }
+
+    /// Core execution loop shared by {@link #execute} and {@link #executeFrom}.
+    ///
+    /// Traverses the workflow graph from the current node in state to an end node,
+    /// handling node execution, review checkpoints, rubric evaluation, and transitions.
+    /// Returns {@link ExecutionResult.Paused} if a node returns {@link ResultStatus#PENDING}.
+    ///
+    /// @param state current workflow state with position, not null
+    /// @param workflow workflow definition, not null
+    /// @param listener execution event listener, not null
+    /// @return execution result, never null
+    /// @throws Exception if execution fails
+    private ExecutionResult executeLoop(
+            HensuState state, Workflow workflow, ExecutionListener listener) throws Exception {
+
+        String currentNodeId = state.getCurrentNode();
         ExecutionContext context = createExecutionContext(state, workflow, listener);
 
         while (true) {
@@ -206,6 +265,9 @@ public class WorkflowExecutor {
             if (node == null) {
                 throw new IllegalStateException("Node not found: " + currentNodeId);
             }
+
+            // Clear rubric evaluation from previous node to prevent stale data leaking
+            state.setRubricEvaluation(null);
 
             if (node instanceof EndNode endNode) {
                 NodeExecutor<EndNode> executor =
@@ -217,6 +279,12 @@ public class WorkflowExecutor {
             listener.onNodeStart(node);
 
             NodeResult result = executeNode(node, context);
+
+            // Pause execution if node signals PENDING (e.g., awaiting external input)
+            if (result.getStatus() == ResultStatus.PENDING) {
+                state.setCurrentNode(currentNodeId);
+                return new ExecutionResult.Paused(state);
+            }
 
             listener.onNodeComplete(node, result);
 
@@ -249,7 +317,9 @@ public class WorkflowExecutor {
                         }
                     } else if (reviewDecision instanceof ReviewDecision.Backtrack backtrack) {
                         currentNodeId = backtrack.getTargetStep();
-                        state = backtrack.getEditedState();
+                        if (backtrack.getEditedState() != null) {
+                            state = backtrack.getEditedState();
+                        }
                         state.setCurrentNode(currentNodeId);
 
                         if (backtrack.hasEditedPrompt()) {
@@ -274,18 +344,21 @@ public class WorkflowExecutor {
                 }
             }
 
-            if (node instanceof StandardNode standardNode) {
-                if (standardNode.getRubricId() != null) {
-                    Rubric rubric = loadRubric(standardNode.getRubricId(), workflow.getRubrics());
-                    rubricEngine.registerRubric(rubric);
-                    RubricEvaluation evaluation =
-                            rubricEngine.evaluate(rubric.getId(), result, state.getContext());
+            if (node.getRubricId() != null) {
+                registerRubricIfAbsent(node.getRubricId(), workflow);
+                RubricEvaluation evaluation =
+                        rubricEngine.evaluate(node.getRubricId(), result, state.getContext());
 
-                    state.setRubricEvaluation(evaluation);
+                state.setRubricEvaluation(evaluation);
 
-                    if (!evaluation.isPassed()) {
+                if (!evaluation.isPassed()) {
+                    // User-defined score transitions take precedence over auto-backtrack
+                    boolean hasMatchingScoreTransition =
+                            hasMatchingScoreTransition(node, state, result);
+
+                    if (!hasMatchingScoreTransition) {
                         AutoBacktrack autoBacktrack =
-                                determineAutoBacktrack(evaluation, standardNode, workflow, state);
+                                determineAutoBacktrack(evaluation, node, workflow, state);
 
                         if (autoBacktrack != null) {
                             logger.info(
@@ -337,6 +410,8 @@ public class WorkflowExecutor {
                 .nodeExecutorRegistry(nodeExecutorRegistry)
                 .workflowExecutor(this)
                 .actionExecutor(actionExecutor)
+                .workflowRepository(workflowRepository)
+                .rubricEngine(rubricEngine)
                 .build();
     }
 
@@ -387,10 +462,7 @@ public class WorkflowExecutor {
     /// @param state current workflow state, not null
     /// @return auto-backtrack instruction, or null if no backtrack needed
     private AutoBacktrack determineAutoBacktrack(
-            RubricEvaluation evaluation,
-            StandardNode currentNode,
-            Workflow workflow,
-            HensuState state) {
+            RubricEvaluation evaluation, Node currentNode, Workflow workflow, HensuState state) {
 
         List<String> selfRecommendations =
                 (List<String>) state.getContext().get(DefaultRubricEvaluator.RECOMMENDATIONS_KEY);
@@ -417,9 +489,22 @@ public class WorkflowExecutor {
         }
 
         if (evaluation.getScore() < MINOR_FAILURE_THRESHOLD) {
-            Map<String, Object> updates = new HashMap<>();
             Integer retryAttempt = (Integer) state.getContext().get("retry_attempt");
-            updates.put("retry_attempt", retryAttempt != null ? retryAttempt + 1 : 1);
+            int currentAttempt = retryAttempt != null ? retryAttempt : 0;
+
+            if (currentAttempt >= DEFAULT_MAX_BACKTRACK_RETRIES) {
+                logger.warning(
+                        "Max backtrack retries ("
+                                + DEFAULT_MAX_BACKTRACK_RETRIES
+                                + ") reached for node "
+                                + currentNode.getId()
+                                + " with score "
+                                + evaluation.getScore());
+                return null;
+            }
+
+            Map<String, Object> updates = new HashMap<>();
+            updates.put("retry_attempt", currentAttempt + 1);
             updates.put("improvement_hints", evaluation.getSuggestions());
             addRecommendationsToContext(updates, selfRecommendations, evaluation);
             return new AutoBacktrack(currentNode.getId(), updates);
@@ -502,10 +587,9 @@ public class WorkflowExecutor {
                         .filter(
                                 step -> {
                                     Node node = workflow.getNodes().get(step.getNodeId());
-                                    if (node instanceof StandardNode standardNode) {
-                                        return standardNode.getRubricId() != null;
-                                    }
-                                    return false;
+                                    return node != null
+                                            && node.getRubricId() != null
+                                            && !node.getRubricId().isEmpty();
                                 })
                         .findFirst();
 
@@ -520,24 +604,49 @@ public class WorkflowExecutor {
     /// @return node ID of previous phase, or null if none found
     private String findPreviousPhase(String currentNodeId, HensuState state, Workflow workflow) {
         Node currentNode = workflow.getNodes().get(currentNodeId);
-        String currentRubric = null;
-        if (currentNode instanceof StandardNode) {
-            currentRubric = currentNode.getRubricId();
-        }
+        String currentRubric = currentNode != null ? currentNode.getRubricId() : null;
 
         List<ExecutionStep> steps = state.getHistory().getSteps();
         for (int i = steps.size() - 1; i >= 0; i--) {
             ExecutionStep step = steps.get(i);
             Node stepNode = workflow.getNodes().get(step.getNodeId());
-            if (stepNode instanceof StandardNode standardNode) {
-                if (standardNode.getRubricId() != null
-                        && !Objects.equals(standardNode.getRubricId(), currentRubric)) {
-                    return step.getNodeId();
-                }
+            if (stepNode != null
+                    && stepNode.getRubricId() != null
+                    && !stepNode.getRubricId().isEmpty()
+                    && !Objects.equals(stepNode.getRubricId(), currentRubric)) {
+                return step.getNodeId();
             }
         }
 
         return null;
+    }
+
+    /// Checks if any ScoreTransition rule on the node matches the current score.
+    ///
+    /// @param node current node, not null
+    /// @param state current workflow state, not null
+    /// @param result node execution result, not null
+    /// @return true if a matching score transition exists
+    private boolean hasMatchingScoreTransition(Node node, HensuState state, NodeResult result) {
+        for (TransitionRule rule : node.getTransitionRules()) {
+            if (rule instanceof ScoreTransition st && st.evaluate(state, result) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Registers a rubric in the engine if not already present, avoiding
+    /// redundant file parsing on retries and backtrack loops.
+    ///
+    /// @param rubricId rubric identifier, not null
+    /// @param workflow workflow containing rubric path mappings, not null
+    /// @throws IllegalStateException if rubricId not found in workflow rubrics
+    private void registerRubricIfAbsent(String rubricId, Workflow workflow) {
+        if (!rubricEngine.exists(rubricId)) {
+            Rubric rubric = loadRubric(rubricId, workflow.getRubrics());
+            rubricEngine.registerRubric(rubric);
+        }
     }
 
     /// Loads a rubric by ID from the workflow's rubric paths.

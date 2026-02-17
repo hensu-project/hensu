@@ -42,12 +42,12 @@ public final class ActionNode extends Node {
         return actions;
     }
 
-    /// Returns the rubric ID (always empty for action nodes).
+    /// Returns the rubric ID (always null for action nodes).
     ///
-    /// @return empty string, never null
+    /// @return null, action nodes do not support rubric evaluation
     @Override
     public String getRubricId() {
-        return "";
+        return null;
     }
 
     /// Returns the node type for executor dispatch.

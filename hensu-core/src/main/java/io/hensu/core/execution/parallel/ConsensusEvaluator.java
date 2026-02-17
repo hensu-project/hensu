@@ -38,6 +38,7 @@ public class ConsensusEvaluator {
 
     private static final Logger logger = Logger.getLogger(ConsensusEvaluator.class.getName());
     private static final double DEFAULT_THRESHOLD = 70.0;
+    private static final double DEFAULT_MAJORITY_THRESHOLD = 0.5;
     private static final double DEFAULT_WEIGHTED_THRESHOLD = 0.5;
     private static final double NEUTRAL_SCORE = 50.0;
     private static final double REJECT_MARGIN = 20.0;
@@ -71,13 +72,15 @@ public class ConsensusEvaluator {
         };
     }
 
-    /// Extracts votes from branch results by parsing output for scores and decisions.
+    /// Extracts votes from branch results using rubric evaluation or text heuristics.
     ///
-    /// ### Vote Extraction Logic
-    /// 1. Check result metadata for explicit "score" field
-    /// 2. Parse output text for "score" or "rating" followed by a number
-    /// 3. Determine vote type from keywords (approve/reject/abstain)
-    /// 4. Fall back to score-based determination using threshold
+    /// ### Vote Extraction Priority
+    /// 1. **Rubric** (authoritative): If metadata contains `rubric_passed`, use rubric score
+    ///    and pass/fail status directly — `passed` maps to APPROVE, `failed` maps to REJECT
+    /// 2. **Metadata score**: Check for explicit `score` field in metadata
+    /// 3. **Text patterns**: Parse output for "score" or "rating" followed by a number
+    /// 4. **Keywords**: Detect approve/reject/abstain keywords in output text
+    /// 5. **Threshold fallback**: Compare extracted score against configured threshold
     ///
     /// @param branchResults list of branch execution results, not null
     /// @param config consensus configuration for threshold, not null
@@ -92,14 +95,31 @@ public class ConsensusEvaluator {
             String branchId = br.getBranchId();
             NodeResult result = br.getResult();
             String output = result.getOutput() != null ? result.getOutput().toString() : "";
+            Map<String, Object> metadata = result.getMetadata();
 
-            double score = extractScore(output, result.getMetadata());
-            ConsensusResult.VoteType voteType =
-                    determineVoteType(output, score, config.getThreshold());
+            double score;
+            ConsensusResult.VoteType voteType;
+
+            if (metadata.containsKey("rubric_passed")) {
+                // Rubric evaluation is authoritative — overrides text heuristics
+                boolean rubricPassed = (Boolean) metadata.get("rubric_passed");
+                score =
+                        metadata.containsKey("rubric_score")
+                                ? ((Number) metadata.get("rubric_score")).doubleValue()
+                                : NEUTRAL_SCORE;
+                voteType =
+                        rubricPassed
+                                ? ConsensusResult.VoteType.APPROVE
+                                : ConsensusResult.VoteType.REJECT;
+            } else {
+                // Fall through to text-based heuristics
+                score = extractScore(output, metadata);
+                voteType = determineVoteType(output, score, config.getThreshold());
+            }
 
             double weight =
-                    result.getMetadata().containsKey("weight")
-                            ? ((Number) result.getMetadata().get("weight")).doubleValue()
+                    metadata.containsKey("weight")
+                            ? ((Number) metadata.get("weight")).doubleValue()
                             : defaultWeight;
 
             votes.put(
@@ -170,8 +190,12 @@ public class ConsensusEvaluator {
 
     /// Evaluates consensus using majority vote strategy.
     ///
+    /// Consensus is reached when the number of approvals meets or exceeds
+    /// the threshold percentage of total votes. Defaults to 50% when no
+    /// threshold is configured.
+    ///
     /// @param votes map of branch votes, not null
-    /// @param config consensus configuration, not null
+    /// @param config consensus configuration with optional threshold, not null
     /// @return consensus result, never null
     private ConsensusResult evaluateMajorityVote(
             Map<String, ConsensusResult.Vote> votes, ConsensusConfig config) {
@@ -180,7 +204,10 @@ public class ConsensusEvaluator {
         long rejectCount = votes.values().stream().filter(ConsensusResult.Vote::isReject).count();
         long total = votes.size();
 
-        boolean consensusReached = approveCount > total / 2;
+        double effectiveThreshold =
+                config.getThreshold() != null ? config.getThreshold() : DEFAULT_MAJORITY_THRESHOLD;
+        long requiredApprovals = (long) Math.ceil(total * effectiveThreshold);
+        boolean consensusReached = approveCount >= requiredApprovals;
 
         ConsensusResult.Vote winningVote =
                 votes.values().stream()
@@ -195,10 +222,13 @@ public class ConsensusEvaluator {
 
         String reasoning =
                 String.format(
-                        "Majority vote: %d approve, %d reject out of %d total. %s",
+                        "Majority vote: %d approve, %d reject out of %d total"
+                                + " (threshold=%.0f%%, required=%d). %s",
                         approveCount,
                         rejectCount,
                         total,
+                        effectiveThreshold * 100,
+                        requiredApprovals,
                         consensusReached ? "Consensus reached." : "Consensus not reached.");
 
         return ConsensusResult.builder()

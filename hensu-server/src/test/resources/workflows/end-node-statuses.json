@@ -1,0 +1,59 @@
+{
+  "id" : "end-node-statuses",
+  "version" : "1.0.0",
+  "startNode" : "evaluate",
+  "agents" : {
+    "evaluator" : {
+      "id" : "evaluator",
+      "role" : "evaluator",
+      "model" : "stub",
+      "temperature" : 0.3
+    }
+  },
+  "nodes" : {
+    "evaluate" : {
+      "id" : "evaluate",
+      "nodeType" : "STANDARD",
+      "agentId" : "evaluator",
+      "prompt" : "Evaluate: {input}",
+      "outputParams" : [ "score" ],
+      "transitionRules" : [ {
+        "type" : "score",
+        "conditions" : [ {
+          "operator" : "GTE",
+          "value" : 8.0,
+          "range" : null,
+          "targetNode" : "success-end"
+        }, {
+          "operator" : "RANGE",
+          "value" : null,
+          "range" : {
+            "start" : 4.0,
+            "end" : 7.99
+          },
+          "targetNode" : "cancel-end"
+        }, {
+          "operator" : "LT",
+          "value" : 4.0,
+          "range" : null,
+          "targetNode" : "failure-end"
+        } ]
+      } ]
+    },
+    "success-end" : {
+      "id" : "success-end",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    },
+    "failure-end" : {
+      "id" : "failure-end",
+      "nodeType" : "END",
+      "status" : "FAILURE"
+    },
+    "cancel-end" : {
+      "id" : "cancel-end",
+      "nodeType" : "END",
+      "status" : "CANCEL"
+    }
+  }
+}

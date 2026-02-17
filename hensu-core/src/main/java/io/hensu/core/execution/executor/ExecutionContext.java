@@ -4,9 +4,11 @@ import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.action.ActionExecutor;
+import io.hensu.core.rubric.RubricEngine;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.template.TemplateResolver;
 import io.hensu.core.workflow.Workflow;
+import io.hensu.core.workflow.WorkflowRepository;
 import java.util.concurrent.ExecutorService;
 
 /// Encapsulates all dependencies and state needed for node execution.
@@ -27,6 +29,8 @@ import java.util.concurrent.ExecutorService;
 /// - `nodeExecutorRegistry` - For node type dispatch
 /// - `workflowExecutor` - For sub-workflow invocation
 /// - `actionExecutor` - For command/action execution
+/// - `rubricEngine` - For rubric-based quality evaluation
+/// - `workflowRepository` - For loading sub-workflow definitions
 ///
 /// @implNote Immutable after construction. Thread-safe for read access.
 /// Modified copies can be created via {@link #withState} and {@link #withWorkflow}.
@@ -47,6 +51,8 @@ public final class ExecutionContext {
     private final NodeExecutorRegistry nodeExecutorRegistry;
     private final WorkflowExecutor workflowExecutor;
     private final ActionExecutor actionExecutor;
+    private final RubricEngine rubricEngine;
+    private final WorkflowRepository workflowRepository;
 
     private ExecutionContext(Builder builder) {
         this.state = builder.state;
@@ -58,6 +64,8 @@ public final class ExecutionContext {
         this.nodeExecutorRegistry = builder.nodeExecutorRegistry;
         this.workflowExecutor = builder.workflowExecutor;
         this.actionExecutor = builder.actionExecutor;
+        this.rubricEngine = builder.rubricEngine;
+        this.workflowRepository = builder.workflowRepository;
     }
 
     /// Returns the current workflow execution state.
@@ -123,6 +131,24 @@ public final class ExecutionContext {
         return actionExecutor;
     }
 
+    /// Returns the rubric engine for quality evaluation of node and branch outputs.
+    ///
+    /// @return rubric engine, or null if not configured
+    /// @see RubricEngine for evaluation logic
+    public RubricEngine getRubricEngine() {
+        return rubricEngine;
+    }
+
+    /// Returns the workflow repository for tenant-scoped sub-workflow loading.
+    ///
+    /// Used by {@link io.hensu.core.execution.executor.SubWorkflowNodeExecutor}
+    /// to resolve nested workflow definitions at runtime.
+    ///
+    /// @return workflow repository, or null if not configured
+    public WorkflowRepository getWorkflowRepository() {
+        return workflowRepository;
+    }
+
     /// Creates a new context builder.
     ///
     /// @return new builder instance, never null
@@ -148,6 +174,8 @@ public final class ExecutionContext {
                 .nodeExecutorRegistry(this.nodeExecutorRegistry)
                 .workflowExecutor(this.workflowExecutor)
                 .actionExecutor(this.actionExecutor)
+                .rubricEngine(this.rubricEngine)
+                .workflowRepository(this.workflowRepository)
                 .build();
     }
 
@@ -169,6 +197,8 @@ public final class ExecutionContext {
                 .nodeExecutorRegistry(this.nodeExecutorRegistry)
                 .workflowExecutor(this.workflowExecutor)
                 .actionExecutor(this.actionExecutor)
+                .rubricEngine(this.rubricEngine)
+                .workflowRepository(this.workflowRepository)
                 .build();
     }
 
@@ -187,6 +217,8 @@ public final class ExecutionContext {
         private NodeExecutorRegistry nodeExecutorRegistry;
         private WorkflowExecutor workflowExecutor;
         private ActionExecutor actionExecutor;
+        private RubricEngine rubricEngine;
+        private WorkflowRepository workflowRepository;
 
         private Builder() {}
 
@@ -232,6 +264,16 @@ public final class ExecutionContext {
 
         public Builder actionExecutor(ActionExecutor actionExecutor) {
             this.actionExecutor = actionExecutor;
+            return this;
+        }
+
+        public Builder rubricEngine(RubricEngine rubricEngine) {
+            this.rubricEngine = rubricEngine;
+            return this;
+        }
+
+        public Builder workflowRepository(WorkflowRepository workflowRepository) {
+            this.workflowRepository = workflowRepository;
             return this;
         }
 

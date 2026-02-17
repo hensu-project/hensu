@@ -1,0 +1,30 @@
+{
+  "id" : "mcp-action",
+  "version" : "1.0.0",
+  "startNode" : "call-mcp",
+  "nodes" : {
+    "call-mcp" : {
+      "id" : "call-mcp",
+      "nodeType" : "ACTION",
+      "actions" : [ {
+        "type" : "send",
+        "handlerId" : "mcp",
+        "payload" : {
+          "tool" : "read_file",
+          "arguments" : {
+            "path" : "/test/data.txt"
+          }
+        }
+      } ],
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

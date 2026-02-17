@@ -112,7 +112,10 @@ class TransitionBuilderTest {
 
     @Test
     fun `should build score-based transitions`() {
-        // Given/When
+        // Given
+        Files.writeString(tempDir.resolve("rubrics/quality.md"), "# Quality Rubric")
+
+        // When
         val workflow =
             workflow("ScoreTransitions", workingDir) {
                 agents {
@@ -121,6 +124,8 @@ class TransitionBuilderTest {
                         model = "test"
                     }
                 }
+
+                rubrics { rubric("quality", "quality.md") }
 
                 graph {
                     start at "step1"
@@ -206,7 +211,10 @@ class TransitionBuilderTest {
 
     @Test
     fun `should support multiple transition types in same node`() {
-        // Given/When
+        // Given
+        Files.writeString(tempDir.resolve("rubrics/quality.md"), "# Quality Rubric")
+
+        // When
         val workflow =
             workflow("MultipleTransitions", workingDir) {
                 agents {
@@ -215,6 +223,8 @@ class TransitionBuilderTest {
                         model = "test"
                     }
                 }
+
+                rubrics { rubric("quality", "quality.md") }
 
                 graph {
                     start at "step1"

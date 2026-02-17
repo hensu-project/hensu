@@ -48,7 +48,7 @@ public final class HensuState {
         this.executionId = Objects.requireNonNull(builder.executionId);
         this.workflowId = Objects.requireNonNull(builder.workflowId);
         this.currentNode = Objects.requireNonNull(builder.currentNode);
-        this.context = Map.copyOf(builder.context);
+        this.context = new HashMap<>(builder.context);
         this.history = builder.history;
         this.rubricEvaluation = builder.rubricEvaluation;
         this.retryCount = builder.retryCount;
@@ -188,7 +188,7 @@ public final class HensuState {
         private RubricEvaluation rubricEvaluation;
         private int retryCount = 0;
 
-        Builder() {}
+        public Builder() {}
 
         public Builder executionId(String executionId) {
             this.executionId = executionId;

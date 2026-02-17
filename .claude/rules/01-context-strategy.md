@@ -7,6 +7,14 @@
 Pommel is a semantic code search tool designed as a first-line discovery method. It returns semantic matches with
 approximately 18x fewer tokens than grep-based searching.
 
+## Tool Initialization (The Handshake)
+At the start of a session or before the first search, you must verify your environment:
+
+1.  **Run Check:** Execute `pm status` (or `pm --version`).
+2.  **Evaluate:**
+    * **Success (Exit Code 0):** Enable **Pommel Mode**. Use `pm search` for all queries.
+    * **Failure (Command Not Found):** Enable **Fallback Mode**. Use grep/file explorer.
+
 ## When to Use
 
 **Use `pm search` for:**

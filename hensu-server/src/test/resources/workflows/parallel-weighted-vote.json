@@ -1,0 +1,58 @@
+{
+  "id" : "parallel-weighted-vote",
+  "version" : "1.0.0",
+  "startNode" : "parallel",
+  "agents" : {
+    "senior-reviewer" : {
+      "id" : "senior-reviewer",
+      "role" : "senior-reviewer",
+      "model" : "stub",
+      "temperature" : 0.3
+    },
+    "junior-reviewer" : {
+      "id" : "junior-reviewer",
+      "role" : "junior-reviewer",
+      "model" : "stub",
+      "temperature" : 0.3
+    }
+  },
+  "nodes" : {
+    "parallel" : {
+      "id" : "parallel",
+      "nodeType" : "PARALLEL",
+      "branches" : [ {
+        "id" : "senior-branch",
+        "agentId" : "senior-reviewer",
+        "prompt" : "Review this content: {content}",
+        "weight" : 2.0
+      }, {
+        "id" : "junior-branch",
+        "agentId" : "junior-reviewer",
+        "prompt" : "Review this content: {content}",
+        "weight" : 1.0
+      } ],
+      "consensusConfig" : {
+        "strategy" : "WEIGHTED_VOTE",
+        "threshold" : 0.5
+      },
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "consensus-reached"
+      }, {
+        "type" : "failure",
+        "retryCount" : 0,
+        "targetNode" : "no-consensus"
+      } ]
+    },
+    "consensus-reached" : {
+      "id" : "consensus-reached",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    },
+    "no-consensus" : {
+      "id" : "no-consensus",
+      "nodeType" : "END",
+      "status" : "FAILURE"
+    }
+  }
+}

@@ -2,6 +2,7 @@ package io.hensu.server.mcp;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -123,8 +124,7 @@ class McpConnectionPoolTest {
 
         @Test
         void shouldNoOpForUnknownEndpoint() {
-            pool.remove("http://unknown:3000");
-            // no exception
+            assertDoesNotThrow(() -> pool.remove("http://unknown:3000"));
         }
     }
 

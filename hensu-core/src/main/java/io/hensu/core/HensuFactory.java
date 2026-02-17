@@ -1,9 +1,9 @@
 package io.hensu.core;
 
 import io.hensu.core.agent.AgentFactory;
+import io.hensu.core.agent.AgentProvider;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.agent.DefaultAgentRegistry;
-import io.hensu.core.agent.spi.AgentProvider;
 import io.hensu.core.agent.stub.StubAgentProvider;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.action.ActionExecutor;
@@ -16,8 +16,12 @@ import io.hensu.core.rubric.RubricRepository;
 import io.hensu.core.rubric.evaluator.DefaultRubricEvaluator;
 import io.hensu.core.rubric.evaluator.LLMRubricEvaluator;
 import io.hensu.core.rubric.evaluator.RubricEvaluator;
+import io.hensu.core.state.InMemoryWorkflowStateRepository;
+import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.template.TemplateResolver;
+import io.hensu.core.workflow.InMemoryWorkflowRepository;
+import io.hensu.core.workflow.WorkflowRepository;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -144,7 +148,15 @@ public final class HensuFactory {
             AgentRegistry agentRegistry,
             ExecutorService executorService) {
         return createEnvironment(
-                config, nodeExecutorRegistry, agentRegistry, null, null, null, executorService);
+                config,
+                nodeExecutorRegistry,
+                agentRegistry,
+                null,
+                null,
+                null,
+                executorService,
+                new InMemoryWorkflowRepository(),
+                new InMemoryWorkflowStateRepository());
     }
 
     /// Creates a Hensu environment with pre-configured registries and optional LLM evaluator.
@@ -168,7 +180,9 @@ public final class HensuFactory {
                 evaluatorAgentId,
                 null,
                 null,
-                executorService);
+                executorService,
+                new InMemoryWorkflowRepository(),
+                new InMemoryWorkflowStateRepository());
     }
 
     /// Creates a Hensu environment with LLM evaluator and human review support.
@@ -195,13 +209,16 @@ public final class HensuFactory {
                 evaluatorAgentId,
                 reviewHandler,
                 null,
-                executorService);
+                executorService,
+                new InMemoryWorkflowRepository(),
+                new InMemoryWorkflowStateRepository());
     }
 
     /// Creates a Hensu environment with all configuration options.
     ///
     /// This is the most complete factory method, allowing full control over
-    /// all components including evaluator, review handler, and action executor.
+    /// all components including evaluator, review handler, action executor,
+    /// and workflow repository.
     ///
     /// @param config configuration options, not null
     /// @param nodeExecutorRegistry registry for node type executors, not null
@@ -211,6 +228,8 @@ public final class HensuFactory {
     /// @param reviewHandler handler for human review checkpoints, may be null for auto-approve
     /// @param actionExecutor executor for executable actions, may be null for logging-only mode
     /// @param executorService thread pool for parallel execution, not null
+    /// @param workflowRepository tenant-scoped storage for workflow definitions, not null
+    /// @param workflowStateRepository tenant-scoped storage for execution state snapshots, not null
     /// @return a fully-configured environment, never null
     public static HensuEnvironment createEnvironment(
             HensuConfig config,
@@ -219,7 +238,9 @@ public final class HensuFactory {
             String evaluatorAgentId,
             ReviewHandler reviewHandler,
             ActionExecutor actionExecutor,
-            ExecutorService executorService) {
+            ExecutorService executorService,
+            WorkflowRepository workflowRepository,
+            WorkflowStateRepository workflowStateRepository) {
         // Create core components
         RubricRepository rubricRepository = createRubricRepository(config);
 
@@ -234,7 +255,7 @@ public final class HensuFactory {
         // Create engines
         RubricEngine rubricEngine = new RubricEngine(rubricRepository, rubricEvaluator);
 
-        // Create workflow executor with review handler and action executor
+        // Create workflow executor with review handler, action executor, and workflow repository
         WorkflowExecutor workflowExecutor =
                 new WorkflowExecutor(
                         nodeExecutorRegistry,
@@ -242,7 +263,9 @@ public final class HensuFactory {
                         executorService,
                         rubricEngine,
                         reviewHandler,
-                        actionExecutor);
+                        actionExecutor,
+                        new SimpleTemplateResolver(),
+                        workflowRepository);
 
         return new HensuEnvironment(
                 workflowExecutor,
@@ -250,7 +273,9 @@ public final class HensuFactory {
                 agentRegistry,
                 rubricRepository,
                 executorService,
-                actionExecutor);
+                actionExecutor,
+                workflowRepository,
+                workflowStateRepository);
     }
 
     /// Discovers and loads API credentials from environment variables.
@@ -384,6 +409,8 @@ public final class HensuFactory {
         private String evaluatorAgentId = null;
         private ReviewHandler reviewHandler = null;
         private ActionExecutor actionExecutor = null;
+        private WorkflowRepository workflowRepository;
+        private WorkflowStateRepository workflowStateRepository;
         private ExecutorService executorService;
 
         /// Sets the configuration options.
@@ -521,6 +548,28 @@ public final class HensuFactory {
             return this;
         }
 
+        /// Sets a custom workflow repository for tenant-scoped workflow storage.
+        ///
+        /// When not set, defaults to {@link InMemoryWorkflowRepository}.
+        ///
+        /// @param workflowRepository the repository, may be null for default in-memory storage
+        /// @return this builder for chaining, never null
+        public Builder workflowRepository(WorkflowRepository workflowRepository) {
+            this.workflowRepository = workflowRepository;
+            return this;
+        }
+
+        /// Sets a custom workflow state repository for persisting execution snapshots.
+        ///
+        /// When not set, defaults to {@link InMemoryWorkflowStateRepository}.
+        ///
+        /// @param workflowStateRepository the repository, may be null for default in-memory storage
+        /// @return this builder for chaining, never null
+        public Builder workflowStateRepository(WorkflowStateRepository workflowStateRepository) {
+            this.workflowStateRepository = workflowStateRepository;
+            return this;
+        }
+
         /// Sets a custom node executor registry.
         ///
         /// @param nodeExecutorRegistry the registry, may be null for default
@@ -616,6 +665,12 @@ public final class HensuFactory {
                 // Stateless executors get services from ExecutionContext at runtime
                 nodeExecutorRegistry = new DefaultNodeExecutorRegistry();
             }
+            if (workflowRepository == null) {
+                workflowRepository = new InMemoryWorkflowRepository();
+            }
+            if (workflowStateRepository == null) {
+                workflowStateRepository = new InMemoryWorkflowStateRepository();
+            }
             return createEnvironment(
                     config,
                     nodeExecutorRegistry,
@@ -623,7 +678,9 @@ public final class HensuFactory {
                     evaluatorAgentId,
                     reviewHandler,
                     actionExecutor,
-                    executorService);
+                    executorService,
+                    workflowRepository,
+                    workflowStateRepository);
         }
     }
 

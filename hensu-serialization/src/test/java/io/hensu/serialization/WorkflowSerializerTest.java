@@ -129,6 +129,7 @@ class WorkflowSerializerTest {
                         .id("test")
                         .startNode("validate")
                         .nodes(Map.of("validate", generic, "done", end))
+                        .rubrics(Map.of("validation-rubric", "test-rubric-path"))
                         .build();
 
         Workflow restored = WorkflowSerializer.fromJson(WorkflowSerializer.toJson(workflow));
@@ -144,7 +145,7 @@ class WorkflowSerializerTest {
         ParallelNode parallel =
                 ParallelNode.builder("parallel")
                         .branch(new Branch("b1", "writer", "prompt1", null))
-                        .branch(new Branch("b2", "reviewer", "prompt2", "rubric1"))
+                        .branch(new Branch("b2", "reviewer", "prompt2", "rubric1", 2.0))
                         .consensus(
                                 new ConsensusConfig("judge", ConsensusStrategy.JUDGE_DECIDES, 0.8))
                         .transitionRules(List.of(new SuccessTransition("done")))
@@ -156,12 +157,15 @@ class WorkflowSerializerTest {
                         .id("test")
                         .startNode("parallel")
                         .nodes(Map.of("parallel", parallel, "done", end))
+                        .rubrics(Map.of("rubric1", "test-rubric-path"))
                         .build();
 
         Workflow restored = WorkflowSerializer.fromJson(WorkflowSerializer.toJson(workflow));
 
         ParallelNode restoredParallel = (ParallelNode) restored.getNodes().get("parallel");
         assertThat(restoredParallel.getBranchesList()).hasSize(2);
+        assertThat(restoredParallel.getBranchesList().get(0).getWeight()).isEqualTo(1.0);
+        assertThat(restoredParallel.getBranchesList().get(1).getWeight()).isEqualTo(2.0);
         assertThat(restoredParallel.getConsensusConfig().strategy())
                 .isEqualTo(ConsensusStrategy.JUDGE_DECIDES);
     }
@@ -455,6 +459,12 @@ class WorkflowSerializerTest {
                         ? Map.of(nodeId, node)
                         : Map.of(nodeId, node, "done", end);
 
-        return Workflow.builder().id("test").startNode(nodeId).nodes(nodes).build();
+        var builder = Workflow.builder().id("test").startNode(nodeId).nodes(nodes);
+
+        if (node.getRubricId() != null && !node.getRubricId().isEmpty()) {
+            builder.rubrics(Map.of(node.getRubricId(), "test-rubric-path"));
+        }
+
+        return builder.build();
     }
 }

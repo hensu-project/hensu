@@ -30,16 +30,16 @@ to external MCP servers.
 │           │                   │                  │              │
 │  ┌────────┴───────────────────┴──────────────────┴───────────┐  │
 │  │  Server Runtime                                           │  │
-│  │  ┌────────────────┐  ┌──────────────┐  ┌──────────────┐   │  │
-│  │  │ ServerAction   │  │ Workflow     │  │ TenantContext│   │  │
-│  │  │ Executor (MCP) │  │ Repository   │  │ (ScopedValue)│   │  │
-│  │  └────────────────┘  └──────────────┘  └──────────────┘   │  │
+│  │  ┌────────────────┐  ┌──────────────┐                     │  │
+│  │  │ ServerAction   │  │ TenantContext│                     │  │
+│  │  │ Executor (MCP) │  │ (ScopedValue)│                     │  │
+│  │  └────────────────┘  └──────────────┘                     │  │
 │  └───────────────────────────┬───────────────────────────────┘  │
 │                              │                                  │
 │  ┌───────────────────────────┴───────────────────────────────┐  │
 │  │  hensu-core (HensuEnvironment via HensuFactory)           │  │
-│  │  WorkflowExecutor │ AgentRegistry │ PlanExecutor │        │  │ 
-│  │              RubricEngine │ ToolRegistry                  │  │
+│  │  WorkflowExecutor │ AgentRegistry │ PlanExecutor │        │  │
+│  │  RubricEngine │ WorkflowRepository │ StateRepository      │  │
 │  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -187,14 +187,7 @@ The server initializes core infrastructure via CDI:
 2. `ServerConfiguration` delegates core components for CDI injection
 3. `ServerActionExecutor` provides MCP-only action execution (rejects local bash)
 
-```java
-// HensuEnvironmentProducer
-HensuEnvironment env = HensuFactory.builder()
-    .config(HensuConfig.builder().useVirtualThreads(true).build())
-    .loadCredentials(properties)
-    .actionExecutor(serverActionExecutor)  // MCP-only
-    .build();
-```
+See [Server Developer Guide](../docs/developer-guide-server.md) for implementation details.
 
 ### Tenant Context
 
@@ -220,10 +213,11 @@ Planning-aware executor for StandardNodes:
 
 ### Persistence
 
-Server-specific storage (MVP uses in-memory implementations):
+Repository interfaces and in-memory defaults live in `hensu-core`. The server delegates them from
+`HensuEnvironment` via `@Produces @Singleton` — it never creates instances directly.
 
-- `WorkflowRepository` - Workflow definition persistence (push/pull/delete)
-- `WorkflowStateRepository` - Execution state persistence (snapshots, pause/resume)
+- `WorkflowRepository` (`io.hensu.core.workflow`) — Workflow definition storage
+- `WorkflowStateRepository` (`io.hensu.core.state`) — Execution state snapshots (pause/resume)
 
 ## Configuration
 
@@ -272,11 +266,6 @@ hensu-server/
 │   │   ├── McpSessionManager.java
 │   │   ├── McpSidecar.java
 │   │   └── SseMcpConnection.java
-│   ├── persistence/           # Server-specific storage
-│   │   ├── WorkflowRepository.java
-│   │   ├── InMemoryWorkflowRepository.java
-│   │   ├── WorkflowStateRepository.java
-│   │   └── InMemoryWorkflowStateRepository.java
 │   ├── planner/               # LLM planning
 │   │   └── LlmPlanner.java
 │   ├── service/               # Business logic
@@ -290,11 +279,14 @@ hensu-server/
 │       └── TenantResolutionInterceptor.java
 └── src/test/java/
     └── io/hensu/server/
+        ├── action/
         ├── api/
+        ├── config/
         ├── executor/
-        ├── integration/
+        ├── integration/       # Full-stack tests via IntegrationTestBase
         ├── mcp/
-        ├── persistence/
+        ├── planner/
+        ├── service/
         ├── streaming/
         └── tenant/
 ```
