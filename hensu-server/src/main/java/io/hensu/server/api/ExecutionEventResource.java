@@ -1,10 +1,16 @@
 package io.hensu.server.api;
 
+import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
+import io.hensu.server.validation.LogSanitizer;
+import io.hensu.server.validation.ValidId;
 import io.smallrye.mutiny.Multi;
 import jakarta.inject.Inject;
-import jakarta.ws.rs.*;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import org.jboss.logging.Logger;
 import org.jboss.resteasy.reactive.RestStreamElementType;
@@ -24,9 +30,7 @@ import org.jboss.resteasy.reactive.RestStreamElementType;
 ///
 /// ### Usage
 /// ```javascript
-/// const eventSource = new EventSource('/api/v1/executions/exec-123/events', {
-///     headers: { 'X-Tenant-ID': 'tenant-1' }
-/// });
+/// const eventSource = new EventSource('/api/v1/executions/exec-123/events');
 ///
 /// eventSource.addEventListener('step.started', (e) => {
 ///     const data = JSON.parse(e.data);
@@ -59,10 +63,13 @@ public class ExecutionEventResource {
     private static final Logger LOG = Logger.getLogger(ExecutionEventResource.class);
 
     private final ExecutionEventBroadcaster broadcaster;
+    private final RequestTenantResolver tenantResolver;
 
     @Inject
-    public ExecutionEventResource(ExecutionEventBroadcaster broadcaster) {
+    public ExecutionEventResource(
+            ExecutionEventBroadcaster broadcaster, RequestTenantResolver tenantResolver) {
         this.broadcaster = broadcaster;
+        this.tenantResolver = tenantResolver;
     }
 
     /// Subscribes to execution events via SSE.
@@ -70,7 +77,7 @@ public class ExecutionEventResource {
     /// ### Request
     /// ```
     /// GET /api/v1/executions/{executionId}/events
-    /// X-Tenant-ID: tenant-123
+    /// Authorization: Bearer <jwt>
     /// Accept: text/event-stream
     /// ```
     ///
@@ -84,33 +91,44 @@ public class ExecutionEventResource {
     /// ```
     ///
     /// @param executionId the execution to subscribe to
-    /// @param tenantId tenant identifier from header
     /// @return SSE event stream
     @GET
     @Path("/{executionId}/events")
     @Produces(MediaType.SERVER_SENT_EVENTS)
     @RestStreamElementType(MediaType.APPLICATION_JSON)
     public Multi<ExecutionEvent> streamEvents(
-            @PathParam("executionId") String executionId,
-            @HeaderParam("X-Tenant-ID") String tenantId) {
+            @PathParam("executionId") @ValidId String executionId) {
 
-        validateTenantId(tenantId);
+        String tenantId = tenantResolver.tenantId();
 
-        LOG.infov("SSE subscription: executionId={0}, tenant={1}", executionId, tenantId);
+        LOG.infov(
+                "SSE subscription: executionId={0}, tenant={1}",
+                LogSanitizer.sanitize(executionId), tenantId);
 
         return broadcaster
                 .subscribe(executionId)
                 .onSubscription()
-                .invoke(() -> LOG.debugv("Client subscribed to execution: {0}", executionId))
+                .invoke(
+                        () ->
+                                LOG.debugv(
+                                        "Client subscribed to execution: {0}",
+                                        LogSanitizer.sanitize(executionId)))
                 .onTermination()
                 .invoke(
                         (t, c) -> {
                             if (t != null) {
-                                LOG.warnv(t, "SSE stream error for execution: {0}", executionId);
+                                LOG.warnv(
+                                        t,
+                                        "SSE stream error for execution: {0}",
+                                        LogSanitizer.sanitize(executionId));
                             } else if (c) {
-                                LOG.debugv("SSE stream cancelled for execution: {0}", executionId);
+                                LOG.debugv(
+                                        "SSE stream cancelled for execution: {0}",
+                                        LogSanitizer.sanitize(executionId));
                             } else {
-                                LOG.debugv("SSE stream completed for execution: {0}", executionId);
+                                LOG.debugv(
+                                        "SSE stream completed for execution: {0}",
+                                        LogSanitizer.sanitize(executionId));
                             }
                         });
     }
@@ -119,15 +137,14 @@ public class ExecutionEventResource {
     ///
     /// Streams all execution events for the tenant. Useful for monitoring dashboards.
     ///
-    /// @param tenantId tenant identifier from header
     /// @return SSE event stream for all tenant executions
     @GET
     @Path("/events")
     @Produces(MediaType.SERVER_SENT_EVENTS)
     @RestStreamElementType(MediaType.APPLICATION_JSON)
-    public Multi<ExecutionEvent> streamAllEvents(@HeaderParam("X-Tenant-ID") String tenantId) {
+    public Multi<ExecutionEvent> streamAllEvents() {
 
-        validateTenantId(tenantId);
+        String tenantId = tenantResolver.tenantId();
 
         LOG.infov("SSE subscription for all executions: tenant={0}", tenantId);
 
@@ -143,12 +160,5 @@ public class ExecutionEventResource {
                                 LOG.debugv(
                                         "Client subscribed to all events for tenant: {0}",
                                         tenantId));
-    }
-
-    /// Validates tenant ID header is present.
-    private void validateTenantId(String tenantId) {
-        if (tenantId == null || tenantId.isBlank()) {
-            throw new BadRequestException("X-Tenant-ID header is required");
-        }
     }
 }

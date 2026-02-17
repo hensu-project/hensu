@@ -8,7 +8,7 @@ import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.core.workflow.node.EndNode;
-import jakarta.ws.rs.BadRequestException;
+import io.hensu.server.security.RequestTenantResolver;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
@@ -26,7 +26,9 @@ class WorkflowResourceTest {
     @BeforeEach
     void setUp() {
         workflowRepository = mock(WorkflowRepository.class);
-        resource = new WorkflowResource(workflowRepository);
+        RequestTenantResolver tenantResolver = mock(RequestTenantResolver.class);
+        when(tenantResolver.tenantId()).thenReturn("tenant-1");
+        resource = new WorkflowResource(workflowRepository, tenantResolver);
     }
 
     private Workflow createTestWorkflow(String id, String version) {
@@ -50,7 +52,7 @@ class WorkflowResourceTest {
             when(workflowRepository.exists("tenant-1", "wf-1")).thenReturn(false);
 
             Map<String, Object> entity;
-            try (Response response = resource.pushWorkflow("tenant-1", workflow)) {
+            try (Response response = resource.pushWorkflow(workflow)) {
 
                 assertThat(response.getStatus()).isEqualTo(201);
                 verify(workflowRepository).save("tenant-1", workflow);
@@ -68,7 +70,7 @@ class WorkflowResourceTest {
             when(workflowRepository.exists("tenant-1", "wf-1")).thenReturn(true);
 
             Map<String, Object> entity;
-            try (Response response = resource.pushWorkflow("tenant-1", workflow)) {
+            try (Response response = resource.pushWorkflow(workflow)) {
 
                 assertThat(response.getStatus()).isEqualTo(200);
                 verify(workflowRepository).save("tenant-1", workflow);
@@ -76,32 +78,6 @@ class WorkflowResourceTest {
                 entity = (Map<String, Object>) response.getEntity();
             }
             assertThat(entity.get("created")).isEqualTo(false);
-        }
-
-        @Test
-        void shouldReturn400WhenTenantIdMissing() {
-            Workflow workflow = createTestWorkflow("wf-1", "1.0.0");
-
-            assertThatThrownBy(
-                            () -> {
-                                try (var _ = resource.pushWorkflow(null, workflow)) {
-                                    // No-op
-                                }
-                            })
-                    .isInstanceOf(BadRequestException.class)
-                    .hasMessageContaining("X-Tenant-ID");
-        }
-
-        @Test
-        void shouldReturn400WhenWorkflowNull() {
-            assertThatThrownBy(
-                            () -> {
-                                try (var _ = resource.pushWorkflow("tenant-1", null)) {
-                                    // No-op
-                                }
-                            })
-                    .isInstanceOf(BadRequestException.class)
-                    .hasMessageContaining("Workflow definition");
         }
     }
 
@@ -113,7 +89,7 @@ class WorkflowResourceTest {
             Workflow workflow = createTestWorkflow("wf-1", "1.0.0");
             when(workflowRepository.findById("tenant-1", "wf-1")).thenReturn(Optional.of(workflow));
 
-            try (Response response = resource.pullWorkflow("wf-1", "tenant-1")) {
+            try (Response response = resource.pullWorkflow("wf-1")) {
 
                 assertThat(response.getStatus()).isEqualTo(200);
                 assertThat(response.getEntity()).isEqualTo(workflow);
@@ -126,24 +102,12 @@ class WorkflowResourceTest {
 
             assertThatThrownBy(
                             () -> {
-                                try (var _ = resource.pullWorkflow("wf-1", "tenant-1")) {
+                                try (var _ = resource.pullWorkflow("wf-1")) {
                                     // No-op
                                 }
                             })
                     .isInstanceOf(NotFoundException.class)
                     .hasMessageContaining("wf-1");
-        }
-
-        @Test
-        void shouldReturn400WhenTenantIdMissing() {
-            assertThatThrownBy(
-                            () -> {
-                                try (var _ = resource.pullWorkflow("wf-1", null)) {
-                                    // No-op
-                                }
-                            })
-                    .isInstanceOf(BadRequestException.class)
-                    .hasMessageContaining("X-Tenant-ID");
         }
     }
 
@@ -159,7 +123,7 @@ class WorkflowResourceTest {
             when(workflowRepository.findAll("tenant-1")).thenReturn(workflows);
 
             List<Map<String, String>> entity;
-            try (Response response = resource.listWorkflows("tenant-1")) {
+            try (Response response = resource.listWorkflows()) {
 
                 assertThat(response.getStatus()).isEqualTo(200);
                 entity = (List<Map<String, String>>) response.getEntity();
@@ -174,24 +138,12 @@ class WorkflowResourceTest {
             when(workflowRepository.findAll("tenant-1")).thenReturn(List.of());
 
             List<Map<String, String>> entity;
-            try (Response response = resource.listWorkflows("tenant-1")) {
+            try (Response response = resource.listWorkflows()) {
 
                 assertThat(response.getStatus()).isEqualTo(200);
                 entity = (List<Map<String, String>>) response.getEntity();
             }
             assertThat(entity).isEmpty();
-        }
-
-        @Test
-        void shouldReturn400WhenTenantIdMissing() {
-            assertThatThrownBy(
-                            () -> {
-                                try (var _ = resource.listWorkflows(null)) {
-                                    // No-op
-                                }
-                            })
-                    .isInstanceOf(BadRequestException.class)
-                    .hasMessageContaining("X-Tenant-ID");
         }
     }
 
@@ -202,7 +154,7 @@ class WorkflowResourceTest {
         void shouldReturn204WhenWorkflowDeleted() {
             when(workflowRepository.delete("tenant-1", "wf-1")).thenReturn(true);
 
-            try (Response response = resource.deleteWorkflow("wf-1", "tenant-1")) {
+            try (Response response = resource.deleteWorkflow("wf-1")) {
 
                 assertThat(response.getStatus()).isEqualTo(204);
             }
@@ -215,7 +167,7 @@ class WorkflowResourceTest {
 
             assertThatThrownBy(
                             () -> {
-                                try (var _ = resource.deleteWorkflow("wf-1", "tenant-1")) {
+                                try (var _ = resource.deleteWorkflow("wf-1")) {
                                     // No-op
                                 }
                             })

@@ -45,7 +45,7 @@ fun selfEvalTestWorkflow() = workflow("self-eval-test") {
     }
 
     rubrics {
-        rubric("content_quality", "content-quality.md")
+        rubric("content-quality", "content-quality.md")
     }
 
     graph {
@@ -69,7 +69,7 @@ fun selfEvalTestWorkflow() = workflow("self-eval-test") {
             agent = "reviewer"
             prompt = "Review this content: {draft}. Provide JSON: {\"score\": <0-100>, \"recommendation\": \"<feedback>\", \"approved\": <true/false>}"
             outputParams = listOf("score", "recommendation", "approved")
-            rubric = "content_quality"
+            rubric = "content-quality"
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "finalize"

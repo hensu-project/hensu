@@ -25,7 +25,7 @@ class WorkflowDeleteCommandTest extends BaseWorkflowCommandTest {
         command = spy(new WorkflowDeleteCommand());
         injectField(command, "workflowId", "my-workflow");
         injectField(command, "serverUrl", "http://localhost:8080");
-        injectField(command, "tenantId", "test-tenant");
+        injectField(command, "token", "test-tenant");
     }
 
     @Test

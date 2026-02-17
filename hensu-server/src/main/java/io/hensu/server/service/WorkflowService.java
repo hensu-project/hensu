@@ -1,5 +1,6 @@
 package io.hensu.server.service;
 
+import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.state.HensuSnapshot;
@@ -99,7 +100,8 @@ public class WorkflowService {
                         executionContext.put("_execution_id", executionId);
 
                         ExecutionResult result =
-                                workflowExecutor.execute(workflow, executionContext);
+                                workflowExecutor.execute(
+                                        workflow, executionContext, checkpointListener(tenantId));
 
                         // Save final state and publish completion event
                         if (result instanceof ExecutionResult.Completed completed) {
@@ -203,7 +205,9 @@ public class WorkflowService {
                         Workflow workflow = loadWorkflow(snapshot.workflowId());
 
                         // Resume execution from saved state
-                        ExecutionResult result = workflowExecutor.executeFrom(workflow, state);
+                        ExecutionResult result =
+                                workflowExecutor.executeFrom(
+                                        workflow, state, checkpointListener(tenantId));
 
                         // Save final state
                         if (result instanceof ExecutionResult.Completed completed) {
@@ -306,6 +310,19 @@ public class WorkflowService {
                                         s.currentNodeId(),
                                         s.createdAt()))
                 .toList();
+    }
+
+    /// Creates a listener that persists workflow state after each node completes.
+    ///
+    /// @param tenantId the tenant owning the execution, not null
+    /// @return listener that saves checkpoints to the state repository, never null
+    private ExecutionListener checkpointListener(String tenantId) {
+        return new ExecutionListener() {
+            @Override
+            public void onCheckpoint(HensuState state) {
+                stateRepository.save(tenantId, HensuSnapshot.from(state, "checkpoint"));
+            }
+        };
     }
 
     /// Loads a workflow by ID.

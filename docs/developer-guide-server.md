@@ -64,7 +64,7 @@ via `HensuFactory.builder()` - **never** by constructing components directly.
 ### Request Flow
 
 1. HTTP request arrives at REST resource (`api/`)
-2. Tenant ID extracted from `X-Tenant-ID` header
+2. Tenant ID extracted from the JWT `tenant_id` claim via `RequestTenantResolver`
 3. `TenantContext` established for the request scope
 4. Service layer processes business logic
 5. Core engine executes workflow
@@ -79,18 +79,31 @@ This is wired through CDI in three classes:
 
 ### HensuEnvironmentProducer
 
-Creates the `HensuEnvironment` singleton via `HensuFactory`:
+Creates the `HensuEnvironment` singleton via `HensuFactory`. Conditionally wires
+JDBC repositories when a DataSource is available (default), or falls back to in-memory
+when the `inmem` profile disables the datasource:
 
 ```java
 @Produces
 @ApplicationScoped
 public HensuEnvironment hensuEnvironment() {
     Properties properties = extractHensuProperties();
-    hensuEnvironment = HensuFactory.builder()
+    HensuFactory.Builder factoryBuilder = HensuFactory.builder()
             .config(HensuConfig.builder().useVirtualThreads(true).build())
             .loadCredentials(properties)
-            .actionExecutor(actionExecutor)  // ServerActionExecutor (MCP-only)
-            .build();
+            .actionExecutor(actionExecutor);  // ServerActionExecutor (MCP-only)
+
+    // Conditional persistence: JDBC when DataSource available, in-memory otherwise
+    boolean dsActive = config.getOptionalValue("quarkus.datasource.active", Boolean.class)
+            .orElse(true);
+    if (dsActive && dataSourceInstance.isResolvable()) {
+        DataSource ds = dataSourceInstance.get();
+        factoryBuilder
+                .workflowRepository(new JdbcWorkflowRepository(ds))
+                .workflowStateRepository(new JdbcWorkflowStateRepository(ds, objectMapper));
+    }
+
+    hensuEnvironment = factoryBuilder.build();
     registerGenericHandlers();
     return hensuEnvironment;
 }
@@ -99,8 +112,8 @@ public HensuEnvironment hensuEnvironment() {
 ### ServerConfiguration
 
 Delegates `HensuEnvironment` components for CDI injection and produces server-specific beans.
-Repository instances are created inside `HensuFactory` (defaulting to in-memory implementations)
-and exposed here as CDI beans via delegation:
+Repository instances are created by `HensuEnvironmentProducer` (JDBC or in-memory depending on
+profile) and exposed here as CDI beans via delegation:
 
 ```java
 // Core components delegated from HensuEnvironment
@@ -171,6 +184,17 @@ io.hensu.server/
 │   ├── ExecutionEventResource   # Execution monitoring SSE
 │   └── McpGatewayResource       # MCP split-pipe SSE/POST
 │
+├── validation/            # Input validation (Bean Validation)
+│   ├── InputValidator            # Shared validation predicates (safe-ID, dangerous chars, size)
+│   ├── ValidId                   # Custom identifier constraint annotation
+│   ├── ValidIdValidator          # Regex-based validator implementation
+│   ├── ValidMessage              # Custom constraint for raw message body strings
+│   ├── ValidMessageValidator     # Size-limit + control-character validator
+│   ├── ValidWorkflow             # Custom constraint for Workflow request bodies
+│   ├── ValidWorkflowValidator    # Deep-validates workflow object graph
+│   ├── LogSanitizer              # Strips CR/LF for log injection prevention
+│   └── ConstraintViolationExceptionMapper  # Global 400 error mapper
+│
 ├── config/                # CDI configuration
 │   ├── HensuEnvironmentProducer # HensuFactory → HensuEnvironment
 │   ├── ServerBootstrap          # Startup registrations
@@ -186,6 +210,11 @@ io.hensu.server/
 │   ├── McpConnectionPool        # Connection pooling
 │   ├── McpSidecar               # ActionHandler for MCP tools
 │   └── SseMcpConnection         # SSE-based connection impl
+│
+├── persistence/           # PostgreSQL persistence (plain JDBC)
+│   ├── JdbcWorkflowRepository   # Workflow definitions (JSONB)
+│   ├── JdbcWorkflowStateRepository # Execution state snapshots (JSONB)
+│   └── PersistenceException     # Unchecked wrapper for SQLException
 │
 ├── planner/               # LLM planning
 │   └── LlmPlanner              # LLM-based plan generation
@@ -273,24 +302,17 @@ public class MyResource {
         this.service = service;
     }
 
+    @Inject RequestTenantResolver tenantResolver;
+
     @GET
     @Path("/{id}")
-    public Response get(
-            @PathParam("id") String id,
-            @HeaderParam("X-Tenant-ID") String tenantId) {
-
-        validateTenantId(tenantId);
+    public Response get(@PathParam("id") String id) {
+        String tenantId = tenantResolver.tenantId();
 
         // Business logic via service layer
         MyEntity entity = service.findById(tenantId, id);
 
         return Response.ok(entity).build();
-    }
-
-    private void validateTenantId(String tenantId) {
-        if (tenantId == null || tenantId.isBlank()) {
-            throw new BadRequestException("X-Tenant-ID header is required");
-        }
     }
 }
 ```
@@ -306,6 +328,144 @@ public class MyResource {
 | 400 Bad Request           | Invalid input, missing headers            |
 | 404 Not Found             | Resource not found                        |
 | 500 Internal Server Error | Unexpected errors                         |
+
+### Input Validation
+
+The server uses Bean Validation (Hibernate Validator via Quarkus) to enforce input
+constraints declaratively on REST endpoint parameters and request DTOs.
+
+#### Components
+
+| Class                                | Role                                                                     |
+|--------------------------------------|--------------------------------------------------------------------------|
+| `InputValidator`                     | Shared predicates: safe-ID pattern, dangerous-char detection, size limit |
+| `@ValidId`                           | Custom constraint for path/query identifiers                             |
+| `ValidIdValidator`                   | Validates against `[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}`                     |
+| `@ValidMessage`                      | Custom constraint for raw `String` message bodies                        |
+| `ValidMessageValidator`              | Checks non-blank, UTF-8 byte size limit, and dangerous control chars     |
+| `@ValidWorkflow`                     | Custom constraint for full `Workflow` request bodies                     |
+| `ValidWorkflowValidator`             | Deep-validates the entire workflow object graph (IDs + free text)        |
+| `LogSanitizer`                       | Strips CR/LF from values before logging (defense-in-depth)               |
+| `ConstraintViolationExceptionMapper` | Global `@Provider` — translates violations into standardized 400 JSON    |
+
+All classes live in `io.hensu.server.validation`.
+
+#### `@ValidId` Constraint
+
+Apply `@ValidId` to every path parameter and query parameter that accepts a user-provided
+identifier (`workflowId`, `executionId`, `clientId`, etc.). The constraint rejects null,
+blank, and malformed strings — preventing path traversal, injection, and overly long IDs
+at the API boundary.
+
+Valid identifiers:
+- Start with an alphanumeric character (`a-z`, `A-Z`, `0-9`)
+- Contain only alphanumeric characters, dots (`.`), hyphens (`-`), and underscores (`_`)
+- Are 1–255 characters long
+
+#### Applying Validation
+
+```java
+// Path parameter — @ValidId validates the raw string
+@GET
+@Path("/{workflowId}")
+public Response get(@PathParam("workflowId") @ValidId String workflowId) {
+    // workflowId is guaranteed safe here
+}
+
+// Request body DTO — @Valid triggers nested validation, @NotNull rejects missing body
+@POST
+public Response create(@Valid @NotNull CreateRequest request) { ... }
+
+// DTO record with field-level constraints
+public record CreateRequest(
+        @NotBlank(message = "workflowId is required") @ValidId String workflowId) {}
+```
+
+Validation is triggered automatically by the JAX-RS pipeline — no manual checks needed.
+
+#### `@ValidMessage` Constraint
+
+Apply `@ValidMessage` to raw `String` body parameters that receive free-text content (e.g., MCP
+messages, chat inputs). The constraint enforces three checks:
+
+1. **Not null or blank** — rejects missing bodies
+2. **UTF-8 byte size** — must not exceed `maxBytes` (default 1 MB)
+3. **No dangerous control characters** — rejects U+0000–U+0008, U+000B, U+000C, U+000E–U+001F,
+   U+007F. TAB, LF, and CR are permitted since they are legitimate in free text.
+
+Each failing condition produces a distinct violation message:
+
+| Condition          | Violation message                             |
+|--------------------|-----------------------------------------------|
+| Null or blank      | `Message body is required`                    |
+| Exceeds byte limit | `Message exceeds maximum allowed size`        |
+| Control characters | `Message contains illegal control characters` |
+
+```java
+// Default 1 MB limit
+@POST
+@Consumes(MediaType.APPLICATION_JSON)
+public Uni<Response> receive(@ValidMessage String body) { ... }
+
+// Custom size limit (64 KB)
+@POST
+public Uni<Response> receive(@ValidMessage(maxBytes = 65_536) String body) { ... }
+```
+
+#### Error Response Format
+
+`ConstraintViolationExceptionMapper` catches all `ConstraintViolationException`s and returns
+a standardized JSON response consistent with the `GlobalExceptionMapper` format:
+
+```json
+{"error": "workflowId: must be a valid identifier (alphanumeric, dots, hyphens, underscores; 1-255 chars)", "status": 400}
+```
+
+Multiple violations are joined with `; `.
+
+#### Workflow Body Validation
+
+When a `Workflow` object is submitted via `POST /api/v1/workflows`, the `@ValidWorkflow` constraint
+triggers `ValidWorkflowValidator`, which deep-validates the entire object graph:
+
+- **Identifier fields** (workflow ID, node IDs, agent IDs, branch IDs, rubric keys, etc.) must match
+  the safe-ID pattern `[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}`
+- **Free-text fields** (prompts, instructions, rubric content, metadata) are scanned for dangerous
+  control characters (U+0000–U+0008, U+000B, U+000C, U+000E–U+001F, U+007F). Tabs, newlines, and
+  carriage returns are permitted since they are legitimate in prompt text.
+
+The validator walks all node types via pattern matching (`StandardNode`, `ParallelNode`,
+`SubWorkflowNode`, `ForkNode`, `JoinNode`, `GenericNode`, `EndNode`) and validates type-specific
+fields (e.g., branch prompts, input/output mappings, await targets).
+
+```java
+@POST
+public Response push(@ValidWorkflow Workflow workflow) {
+    // workflow is guaranteed safe here — all IDs and text fields validated
+}
+```
+
+#### Log Sanitizer (Defense-in-Depth)
+
+`LogSanitizer.sanitize()` strips CR/LF characters from user-derived values before they reach log
+output, preventing log injection attacks. Apply it at every log call site that includes
+user-controlled input:
+
+```java
+LOG.infov("Processing workflow: id={0}", LogSanitizer.sanitize(workflowId));
+```
+
+#### Adding Validation to New Endpoints
+
+1. Add `@ValidId` to all path/query params accepting identifiers
+2. Add `@ValidMessage` to raw `String` body params receiving free-text content
+3. Add `@ValidWorkflow` to `Workflow` body parameters (or `@Valid @NotNull` for other DTOs)
+4. Add field-level constraints (`@NotBlank`, `@ValidId`, `@Size`, etc.) to DTO records
+5. Use `LogSanitizer.sanitize()` when logging any user-provided string
+6. Write a test in `InputValidationIntegrationTest` covering the new constraints
+
+See `hensu-server/src/test/java/io/hensu/server/integration/InputValidationIntegrationTest.java` for
+comprehensive examples.
 
 ---
 
@@ -467,10 +627,11 @@ class MyResourceTest {
     }
 
     @Test
-    void shouldReturn400WhenTenantIdMissing() {
-        assertThatThrownBy(() -> resource.get("id-1", null))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("X-Tenant-ID");
+    void shouldReturn403WhenNoTenantContext() {
+        // RequestTenantResolver throws ForbiddenException when no JWT tenant_id claim
+        assertThatThrownBy(() -> resource.get("id-1"))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("No tenant context");
     }
 }
 ```
@@ -484,7 +645,7 @@ class MyResourceIT {
     @Test
     void shouldPushWorkflow() {
         given()
-            .header("X-Tenant-ID", "test-tenant")
+            .auth().preemptive().oauth2("test-token")
             .contentType(ContentType.JSON)
             .body(workflowJson)
         .when()
@@ -498,7 +659,7 @@ class MyResourceIT {
     @Test
     void shouldStartExecution() {
         given()
-            .header("X-Tenant-ID", "test-tenant")
+            .auth().preemptive().oauth2("test-token")
             .contentType(ContentType.JSON)
             .body(Map.of("workflowId", "my-workflow", "context", Map.of()))
         .when()
@@ -512,17 +673,18 @@ class MyResourceIT {
 
 ### Integration Testing
 
-Full-stack integration tests exercise the workflow engine end-to-end within a bootstrapped Quarkus context, using the [Stub Agent System](developer-guide-core.md#stub-agent-system) to intercept all model requests.
+Full-stack integration tests exercise the workflow engine end-to-end within a bootstrapped Quarkus context, using the [Stub Agent System](developer-guide-core.md#stub-agent-system) to intercept all model requests. Behavior tests use the `inmem` profile (no Docker required); repository tests use Testcontainers PostgreSQL.
 
 #### Test Infrastructure
 
-| Class                  | Role                                                             |
-|------------------------|------------------------------------------------------------------|
-| `IntegrationTestBase`  | Abstract base: CDI injection, state cleanup, helper methods      |
-| `TestActionHandler`    | Records action payloads for plan/action dispatch assertions      |
-| `TestReviewHandler`    | Scriptable review decisions (approve, backtrack, reject)         |
-| `TestValidatorHandler` | Generic node handler for `"validator"` type nodes                |
-| `TestPauseHandler`     | Generic node handler that pauses on first call, succeeds on next |
+| Class                  | Role                                                                                                    |
+|------------------------|---------------------------------------------------------------------------------------------------------|
+| `IntegrationTestBase`  | Abstract base: CDI injection, state cleanup, helper methods (`@TestProfile(InMemoryTestProfile.class)`) |
+| `InMemoryTestProfile`  | Quarkus test profile activating `inmem` — disables PostgreSQL and Flyway                                |
+| `TestActionHandler`    | Records action payloads for plan/action dispatch assertions                                             |
+| `TestReviewHandler`    | Scriptable review decisions (approve, backtrack, reject)                                                |
+| `TestValidatorHandler` | Generic node handler for `"validator"` type nodes                                                       |
+| `TestPauseHandler`     | Generic node handler that pauses on first call, succeeds on next                                        |
 
 All infrastructure lives in `io.hensu.server.integration` (package-private).
 
@@ -692,6 +854,43 @@ private Rubric parseAndRegisterRubric(String rubricId, String resourceName) {
 
 Place rubric markdown files in `src/test/resources/rubrics/`.
 
+#### Repository Tests (Testcontainers)
+
+JDBC repository tests live in `io.hensu.server.persistence` and use Testcontainers PostgreSQL (no Quarkus context). They extend `JdbcRepositoryTestBase` which provides:
+
+- A shared PostgreSQL container per test class
+- Flyway migration (same `V1__create_persistence_tables.sql` used in production)
+- Pre-configured `DataSource` and `ObjectMapper`
+
+```java
+class JdbcWorkflowRepositoryTest extends JdbcRepositoryTestBase {
+
+    private JdbcWorkflowRepository repo;
+
+    @BeforeEach
+    void setUp() {
+        repo = new JdbcWorkflowRepository(dataSource);
+        repo.deleteAllForTenant(TENANT);
+    }
+
+    @Test
+    void saveAndFindById_roundTrip() {
+        Workflow workflow = buildWorkflow("wf-1");
+        repo.save(TENANT, workflow);
+
+        Optional<Workflow> found = repo.findById(TENANT, "wf-1");
+        assertThat(found).isPresent();
+        assertThat(found.get().getId()).isEqualTo("wf-1");
+    }
+}
+```
+
+These tests require Docker for Testcontainers. Run them separately:
+
+```bash
+./gradlew :hensu-server:test --tests "*.persistence.*"
+```
+
 ---
 
 ## GraalVM Native Image
@@ -727,7 +926,7 @@ When adding a new library to `hensu-server`:
    ```
 
 3. **If no extension exists**, you must verify native-image compatibility:
-   - Run `./gradlew hensu-server:build -Dquarkus.native.enabled=true`
+   - Run `./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native`
    - Test the binary: `./hensu-server/build/hensu-server-*-runner`
    - If it fails with `ClassNotFoundException` or `NoSuchMethodException`, add reflection configuration:
      ```json
@@ -819,6 +1018,21 @@ hensu.planning.default-max-steps=10
 hensu.planning.default-max-replans=3
 hensu.planning.default-timeout=5m
 
+# PostgreSQL (Dev Services auto-starts a container in dev/test mode)
+quarkus.datasource.db-kind=postgresql
+%prod.quarkus.datasource.username=hensu
+%prod.quarkus.datasource.password=hensu
+%prod.quarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/hensu
+
+# Flyway schema migrations
+quarkus.flyway.migrate-at-start=true
+quarkus.flyway.schemas=hensu
+
+# In-memory profile (no PostgreSQL)
+%inmem.quarkus.datasource.active=false
+%inmem.quarkus.datasource.devservices.enabled=false
+%inmem.quarkus.flyway.migrate-at-start=false
+
 # Logging
 quarkus.log.category."io.hensu".level=DEBUG
 ```
@@ -843,7 +1057,7 @@ public class MyComponent {
 
 ### Do
 
-- Always validate `X-Tenant-ID` header in REST resources
+- Inject `RequestTenantResolver` for tenant identity (resolved from JWT `tenant_id` claim)
 - Use `HensuFactory.builder()` for core infrastructure (never construct directly)
 - Keep workflow definition management separate from execution operations
 - Use service layer for business logic, resources for HTTP concerns

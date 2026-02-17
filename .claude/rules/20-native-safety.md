@@ -40,7 +40,7 @@ When adding a new library to `hensu-server`:
    ```
 
 3. **If no extension exists**, you must verify native-image compatibility:
-    - Run `./gradlew hensu-server:build -Dquarkus.native.enabled=true`
+    - Run `./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native`
     - Test the binary: `./hensu-server/build/hensu-server-*-runner`
     - If it fails with `ClassNotFoundException` or `NoSuchMethodException`, add reflection configuration:
       ```json
@@ -97,7 +97,7 @@ their registration.
 
 ```bash
 # Full native build (slow — run before releases, not on every change)
-./gradlew hensu-server:build -Dquarkus.native.enabled=true
+./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native
 
 # Quick JVM-mode test (catches most issues except native-specific ones)
 ./gradlew hensu-server:test

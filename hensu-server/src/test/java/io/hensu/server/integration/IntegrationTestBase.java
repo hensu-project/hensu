@@ -3,9 +3,7 @@ package io.hensu.server.integration;
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.agent.stub.StubResponseRegistry;
-import io.hensu.core.state.InMemoryWorkflowStateRepository;
 import io.hensu.core.state.WorkflowStateRepository;
-import io.hensu.core.workflow.InMemoryWorkflowRepository;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.serialization.WorkflowSerializer;
@@ -14,6 +12,7 @@ import io.hensu.server.service.WorkflowService.ExecutionStartResult;
 import io.hensu.server.tenant.TenantContext;
 import io.hensu.server.tenant.TenantContext.TenantInfo;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import java.io.IOException;
 import java.io.InputStream;
@@ -49,6 +48,8 @@ import org.junit.jupiter.api.BeforeEach;
 /// - **Precondition**: Quarkus test context must be active (`@QuarkusTest`)
 /// - **Postcondition**: Each test starts with empty repositories and stub registry
 /// - **Invariant**: All executions run under {@link #TEST_TENANT} unless overridden
+/// - **Cleanup**: Per-test `@BeforeEach` deletes tenant data via repository interfaces
+/// - **Profile**: Uses {@link InMemoryTestProfile} (`inmem`) — no Docker or PostgreSQL required
 ///
 /// @implNote Package-private. Not part of the public API.
 ///
@@ -56,6 +57,7 @@ import org.junit.jupiter.api.BeforeEach;
 /// @see StubResponseRegistry for stub response configuration
 /// @see io.hensu.core.agent.stub.StubAgentProvider for the stub agent mechanism
 @QuarkusTest
+@TestProfile(InMemoryTestProfile.class)
 abstract class IntegrationTestBase {
 
     /// Default tenant ID used across all integration tests.
@@ -75,12 +77,9 @@ abstract class IntegrationTestBase {
     void resetState() {
         StubResponseRegistry.getInstance().clearResponses();
 
-        if (workflowRepository instanceof InMemoryWorkflowRepository inMemory) {
-            inMemory.clear();
-        }
-        if (workflowStateRepository instanceof InMemoryWorkflowStateRepository inMemory) {
-            inMemory.clear();
-        }
+        // FK: execution_states references workflows — delete states first
+        workflowStateRepository.deleteAllForTenant(TEST_TENANT);
+        workflowRepository.deleteAllForTenant(TEST_TENANT);
     }
 
     /// Loads a workflow JSON fixture from the classpath.

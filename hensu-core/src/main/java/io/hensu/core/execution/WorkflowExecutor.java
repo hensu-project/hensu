@@ -276,6 +276,12 @@ public class WorkflowExecutor {
                 return new ExecutionResult.Completed(state, endNode.getExitStatus());
             }
 
+            // Checkpoint: state is fully consistent (previous node's output, history,
+            // review, rubric, and transitions are all applied). Safe to persist for
+            // crash recovery. If the server dies during the upcoming node execution,
+            // resume will re-execute this node from this checkpoint.
+            listener.onCheckpoint(state);
+
             listener.onNodeStart(node);
 
             NodeResult result = executeNode(node, context);

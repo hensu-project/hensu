@@ -32,7 +32,7 @@ fun backtrackDebugWorkflow() = workflow("BacktrackDebug") {
     }
 
     rubrics {
-        rubric("content_quality", "content-quality.md")
+        rubric("content-quality", "content-quality.md")
     }
 
     graph {
@@ -47,7 +47,7 @@ fun backtrackDebugWorkflow() = workflow("BacktrackDebug") {
         node("review") {
             agent = "critic"
             prompt = "Review the draft and evaluate its quality."
-            rubric = "content_quality"
+            rubric = "content-quality"
 
             onScore {
                 whenScore greaterThanOrEqual 70.0 goto "refine"
@@ -64,7 +64,7 @@ fun backtrackDebugWorkflow() = workflow("BacktrackDebug") {
         node("final_check") {
             agent = "critic"
             prompt = "Final quality check on the refined content."
-            rubric = "content_quality"
+            rubric = "content-quality"
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "approve"

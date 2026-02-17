@@ -1,5 +1,6 @@
 package io.hensu.server.mcp;
 
+import io.hensu.server.validation.LogSanitizer;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.subscription.MultiEmitter;
@@ -20,15 +21,15 @@ import org.jboss.logging.Logger;
 ///
 /// ### Architecture
 /// ```
-/// ┌─────────────────┐                    ┌─────────────────┐
+/// +—————————————————+                    +—————————————————+
 /// │  Hensu Engine   │                    │  Tenant Client  │
 /// │                 │                    │  (MCP Server)   │
-/// │  sendRequest()  │──── SSE ──────────>│  EventSource    │
+/// │  sendRequest()  │———— SSE ——————————>│  EventSource    │
 /// │                 │  (tools/call)      │                 │
 /// │                 │                    │                 │
-/// │  handleResponse │<─── POST ──────────│  POST /message  │
+/// │  handleResponse │<——— POST ——————————│  POST /message  │
 /// │  (Future.done)  │  (result/error)    │                 │
-/// └─────────────────┘                    └─────────────────┘
+/// +—————————————————+                    +—————————————————+
 /// ```
 ///
 /// ### Thread Safety
@@ -73,7 +74,7 @@ public class McpSessionManager {
         return Multi.createFrom()
                 .emitter(
                         emitter -> {
-                            LOG.infov("MCP client connected: {0}", clientId);
+                            LOG.infov("MCP client connected: {0}", LogSanitizer.sanitize(clientId));
 
                             // Register the emitter
                             emitters.put(clientId, emitter);
@@ -88,7 +89,9 @@ public class McpSessionManager {
                             // Cleanup on disconnect
                             emitter.onTermination(
                                     () -> {
-                                        LOG.infov("MCP client disconnected: {0}", clientId);
+                                        LOG.infov(
+                                                "MCP client disconnected: {0}",
+                                                LogSanitizer.sanitize(clientId));
                                         emitters.remove(clientId);
                                         clients.remove(clientId);
 
@@ -135,7 +138,8 @@ public class McpSessionManager {
         // Push request down SSE pipe
         try {
             LOG.debugv(
-                    "Sending MCP request to {0}: method={1}, id={2}", clientId, method, requestId);
+                    "Sending MCP request to {0}: method={1}, id={2}",
+                    LogSanitizer.sanitize(clientId), method, requestId);
             emitter.emit(jsonRequest);
         } catch (Exception e) {
             pendingRequests.remove(requestId);
@@ -167,7 +171,9 @@ public class McpSessionManager {
     public void sendNotification(String clientId, String method, Object params) {
         MultiEmitter<? super String> emitter = emitters.get(clientId);
         if (emitter == null || emitter.isCancelled()) {
-            LOG.warnv("Cannot send notification, client not connected: {0}", clientId);
+            LOG.warnv(
+                    "Cannot send notification, client not connected: {0}",
+                    LogSanitizer.sanitize(clientId));
             return;
         }
 
@@ -191,7 +197,8 @@ public class McpSessionManager {
         if (id == null) {
             LOG.warnv(
                     "Received response without ID: {0}",
-                    jsonResponse.substring(0, Math.min(100, jsonResponse.length())));
+                    LogSanitizer.sanitize(
+                            jsonResponse.substring(0, Math.min(100, jsonResponse.length()))));
             return;
         }
 
@@ -251,7 +258,9 @@ public class McpSessionManager {
     private void cancelPendingRequests(String clientId) {
         // Note: We don't track requests by client, so we can't cancel selectively.
         // In production, you might want a clientId -> Set<requestId> mapping.
-        LOG.debugv("Client {0} disconnected, pending requests may time out", clientId);
+        LOG.debugv(
+                "Client {0} disconnected, pending requests may time out",
+                LogSanitizer.sanitize(clientId));
     }
 
     /// Client connection metadata.

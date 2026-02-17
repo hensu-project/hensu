@@ -28,13 +28,15 @@ subprojects {
     dependencies {
         // Test dependencies - shared across all modules
         "testImplementation"("org.junit.jupiter:junit-jupiter:5.11.4")
-        "testImplementation"("org.assertj:assertj-core:3.27.2")
+        "testImplementation"("org.assertj:assertj-core:3.27.7")
         "testImplementation"("org.mockito:mockito-core:5.15.2")
         "testRuntimeOnly"("org.junit.platform:junit-platform-launcher")
     }
 
     tasks.withType<JavaCompile> {
         options.encoding = "UTF-8"
+        // Retain method parameter names in bytecode
+        options.compilerArgs.add("-parameters")
     }
 
     // Java 24+ JVM args required across all execution modes:

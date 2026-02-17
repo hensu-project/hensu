@@ -12,7 +12,7 @@ import picocli.CommandLine.Command;
 /// ### Usage
 /// ```
 /// hensu list
-/// hensu list --server http://prod:8080 --tenant acme
+/// hensu list --server http://prod:8080 --token "$TOKEN"
 /// ```
 @Command(name = "list", description = "List workflows on the server")
 public class WorkflowListCommand extends ServerCommand {

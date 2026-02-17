@@ -1,5 +1,6 @@
 package io.hensu.server.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hensu.adapter.langchain4j.LangChain4jProvider;
 import io.hensu.core.HensuConfig;
 import io.hensu.core.HensuEnvironment;
@@ -7,6 +8,8 @@ import io.hensu.core.HensuFactory;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.GenericNodeHandler;
 import io.hensu.core.review.ReviewHandler;
+import io.hensu.server.persistence.JdbcWorkflowRepository;
+import io.hensu.server.persistence.JdbcWorkflowStateRepository;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
@@ -14,6 +17,7 @@ import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Inject;
 import java.util.List;
 import java.util.Properties;
+import javax.sql.DataSource;
 import org.eclipse.microprofile.config.Config;
 import org.jboss.logging.Logger;
 
@@ -57,6 +61,10 @@ public class HensuEnvironmentProducer {
 
     @Inject ActionExecutor actionExecutor;
 
+    @Inject Instance<DataSource> dataSourceInstance;
+
+    @Inject ObjectMapper objectMapper;
+
     /// Produces the Hensu runtime environment for CDI injection.
     ///
     /// Configures virtual threads, loads credentials from `hensu.credentials.*`
@@ -75,6 +83,19 @@ public class HensuEnvironmentProducer {
                         .loadCredentials(properties)
                         .agentProviders(List.of(new LangChain4jProvider()))
                         .actionExecutor(actionExecutor);
+
+        boolean dsActive =
+                config.getOptionalValue("quarkus.datasource.active", Boolean.class).orElse(true);
+
+        if (dsActive && dataSourceInstance.isResolvable()) {
+            DataSource ds = dataSourceInstance.get();
+            factoryBuilder
+                    .workflowRepository(new JdbcWorkflowRepository(ds))
+                    .workflowStateRepository(new JdbcWorkflowStateRepository(ds, objectMapper));
+            LOG.info("Using JDBC persistence (PostgreSQL)");
+        } else {
+            LOG.info("Using in-memory persistence");
+        }
 
         if (reviewHandlerInstance.isResolvable()) {
             factoryBuilder.reviewHandler(reviewHandlerInstance.get());

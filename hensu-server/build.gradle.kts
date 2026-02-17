@@ -2,7 +2,6 @@ import io.quarkus.gradle.tasks.QuarkusDev
 
 plugins {
     id("io.quarkus") version "3.30.8"
-    kotlin("jvm")
 }
 
 // Quarkus dev mode forks its own JVM — pass Java 24+ args via QuarkusDev task API
@@ -12,14 +11,16 @@ tasks.named<QuarkusDev>("quarkusDev") {
 }
 
 dependencies {
+    // Quarkus BOMs
     implementation(platform("io.quarkus.platform:quarkus-bom:3.30.8"))
+    implementation(platform("io.quarkus.platform:quarkus-langchain4j-bom:3.30.8"))
 
+    // Internal Modules
     implementation(project(":hensu-core"))
     implementation(project(":hensu-serialization"))
     implementation(project(":hensu-langchain4j-adapter"))
 
     // Quarkus LangChain4j extensions — register GraalVM reflection metadata for native image
-    implementation(platform("io.quarkus.platform:quarkus-langchain4j-bom:3.30.8"))
     implementation("io.quarkiverse.langchain4j:quarkus-langchain4j-anthropic")
     implementation("io.quarkiverse.langchain4j:quarkus-langchain4j-openai")
     implementation("io.quarkiverse.langchain4j:quarkus-langchain4j-ai-gemini")
@@ -28,24 +29,23 @@ dependencies {
     implementation("io.quarkus:quarkus-rest")
     implementation("io.quarkus:quarkus-rest-jackson")
 
-    // Vert.x HTTP (included transitively, explicit for HTTP/2 and future HTTP/3)
-    // HTTP/3 support is experimental in Quarkus - requires SSL configuration
-    // See: https://quarkus.io/guides/http-reference#http3-experimental
+    // Bean Validation — annotation-driven input validation for REST endpoints
+    implementation("io.quarkus:quarkus-hibernate-validator")
 
-    // Quarkus Scheduler for background tasks
-    implementation("io.quarkus:quarkus-scheduler")
+    // Persistence — plain JDBC + Flyway (no ORM, virtual threads handle concurrency)
+    implementation("io.quarkus:quarkus-jdbc-postgresql")
+    implementation("io.quarkus:quarkus-flyway")
 
-    // Quarkus CDI
-    implementation("io.quarkus:quarkus-arc")
-    implementation("io.quarkus:quarkus-kotlin")
-
-    // Persistence (optional, can be enabled when needed)
-    // implementation("io.quarkus:quarkus-hibernate-orm-panache")
-    // implementation("io.quarkus:quarkus-jdbc-postgresql")
+    // Security — JWT bearer token authentication
+    implementation("io.quarkus:quarkus-smallrye-jwt")
 
     // Testing
+    val testcontainersVersion = "1.21.4"
+
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("io.rest-assured:rest-assured")
-    testImplementation("org.mockito:mockito-junit-jupiter:5.15.2")
-    testImplementation("org.assertj:assertj-core:3.27.3")
+    testImplementation("org.testcontainers:postgresql:${testcontainersVersion}")
+    testImplementation("org.testcontainers:junit-jupiter:${testcontainersVersion}")
+    testImplementation("org.flywaydb:flyway-database-postgresql")
+    testImplementation("io.quarkus:quarkus-test-security-jwt")
 }

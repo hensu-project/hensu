@@ -1,4 +1,4 @@
-# Rubric: ContentQuality
+# Rubric: content-quality
 
 ## Metadata
 - name: Content Quality

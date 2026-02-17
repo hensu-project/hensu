@@ -2,8 +2,20 @@ package io.hensu.server.api;
 
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
+import io.hensu.server.security.RequestTenantResolver;
+import io.hensu.server.validation.LogSanitizer;
+import io.hensu.server.validation.ValidId;
+import io.hensu.server.validation.ValidWorkflow;
 import jakarta.inject.Inject;
-import jakarta.ws.rs.*;
+import jakarta.validation.constraints.NotNull;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.NotFoundException;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
@@ -18,7 +30,8 @@ import org.jboss.logging.Logger;
 /// - Listing workflows for a tenant
 /// - Deleting workflows
 ///
-/// All endpoints require `X-Tenant-ID` header for multi-tenant isolation.
+/// Tenant identity is resolved from the JWT `tenant_id` claim via
+/// {@link RequestTenantResolver}. In dev/test mode, a default tenant is used.
 ///
 /// ### Usage Pattern
 /// CLI compiles Kotlin DSL to JSON and pushes to server:
@@ -39,10 +52,13 @@ public class WorkflowResource {
     private static final Logger LOG = Logger.getLogger(WorkflowResource.class);
 
     private final WorkflowRepository workflowRepository;
+    private final RequestTenantResolver tenantResolver;
 
     @Inject
-    public WorkflowResource(WorkflowRepository workflowRepository) {
+    public WorkflowResource(
+            WorkflowRepository workflowRepository, RequestTenantResolver tenantResolver) {
         this.workflowRepository = workflowRepository;
+        this.tenantResolver = tenantResolver;
     }
 
     /// Pushes a workflow definition (idempotent create or update).
@@ -50,7 +66,7 @@ public class WorkflowResource {
     /// ### Request
     /// ```
     /// POST /api/v1/workflows
-    /// X-Tenant-ID: tenant-123
+    /// Authorization: Bearer <jwt>
     /// Content-Type: application/json
     ///
     /// {
@@ -68,17 +84,17 @@ public class WorkflowResource {
     /// {"id": "order-processing", "version": "1.0.0", "created": true}
     /// ```
     @POST
-    public Response pushWorkflow(@HeaderParam("X-Tenant-ID") String tenantId, Workflow workflow) {
+    public Response pushWorkflow(
+            @NotNull(message = "Workflow definition is required") @ValidWorkflow
+                    Workflow workflow) {
 
-        validateTenantId(tenantId);
-
-        if (workflow == null) {
-            throw new BadRequestException("Workflow definition is required");
-        }
+        String tenantId = tenantResolver.tenantId();
 
         LOG.infov(
                 "Push workflow: id={0}, version={1}, tenant={2}",
-                workflow.getId(), workflow.getVersion(), tenantId);
+                LogSanitizer.sanitize(workflow.getId()),
+                LogSanitizer.sanitize(workflow.getVersion()),
+                tenantId);
 
         boolean exists = workflowRepository.exists(tenantId, workflow.getId());
         workflowRepository.save(tenantId, workflow);
@@ -99,7 +115,7 @@ public class WorkflowResource {
     /// ### Request
     /// ```
     /// GET /api/v1/workflows/{workflowId}
-    /// X-Tenant-ID: tenant-123
+    /// Authorization: Bearer <jwt>
     /// ```
     ///
     /// ### Response (200 OK)
@@ -115,13 +131,12 @@ public class WorkflowResource {
     /// ```
     @GET
     @Path("/{workflowId}")
-    public Response pullWorkflow(
-            @PathParam("workflowId") String workflowId,
-            @HeaderParam("X-Tenant-ID") String tenantId) {
+    public Response pullWorkflow(@PathParam("workflowId") @ValidId String workflowId) {
 
-        validateTenantId(tenantId);
+        String tenantId = tenantResolver.tenantId();
 
-        LOG.debugv("Pull workflow: id={0}, tenant={1}", workflowId, tenantId);
+        LOG.debugv(
+                "Pull workflow: id={0}, tenant={1}", LogSanitizer.sanitize(workflowId), tenantId);
 
         Workflow workflow =
                 workflowRepository
@@ -137,7 +152,7 @@ public class WorkflowResource {
     /// ### Request
     /// ```
     /// GET /api/v1/workflows
-    /// X-Tenant-ID: tenant-123
+    /// Authorization: Bearer <jwt>
     /// ```
     ///
     /// ### Response (200 OK)
@@ -148,9 +163,9 @@ public class WorkflowResource {
     /// ]
     /// ```
     @GET
-    public Response listWorkflows(@HeaderParam("X-Tenant-ID") String tenantId) {
+    public Response listWorkflows() {
 
-        validateTenantId(tenantId);
+        String tenantId = tenantResolver.tenantId();
 
         LOG.debugv("List workflows: tenant={0}", tenantId);
 
@@ -169,19 +184,18 @@ public class WorkflowResource {
     /// ### Request
     /// ```
     /// DELETE /api/v1/workflows/{workflowId}
-    /// X-Tenant-ID: tenant-123
+    /// Authorization: Bearer <jwt>
     /// ```
     ///
     /// ### Response (204 No Content)
     @DELETE
     @Path("/{workflowId}")
-    public Response deleteWorkflow(
-            @PathParam("workflowId") String workflowId,
-            @HeaderParam("X-Tenant-ID") String tenantId) {
+    public Response deleteWorkflow(@PathParam("workflowId") @ValidId String workflowId) {
 
-        validateTenantId(tenantId);
+        String tenantId = tenantResolver.tenantId();
 
-        LOG.infov("Delete workflow: id={0}, tenant={1}", workflowId, tenantId);
+        LOG.infov(
+                "Delete workflow: id={0}, tenant={1}", LogSanitizer.sanitize(workflowId), tenantId);
 
         boolean deleted = workflowRepository.delete(tenantId, workflowId);
 
@@ -190,11 +204,5 @@ public class WorkflowResource {
         }
 
         return Response.noContent().build();
-    }
-
-    private void validateTenantId(String tenantId) {
-        if (tenantId == null || tenantId.isBlank()) {
-            throw new jakarta.ws.rs.BadRequestException("X-Tenant-ID header is required");
-        }
     }
 }

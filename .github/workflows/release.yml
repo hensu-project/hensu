@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and test all modules
+        run: ./gradlew build
+
+      - name: Build native server binary
+        run: ./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native -x test
+
+      - name: Rename binary for release
+        run: |
+          BINARY=$(find hensu-server/build -name '*-runner' -type f)
+          cp "$BINARY" hensu-server-linux-x86_64
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            hensu-server-linux-x86_64
