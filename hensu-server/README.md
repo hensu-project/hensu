@@ -1,4 +1,4 @@
-# Hensu Server
+# Hensu™ Server
 
 Quarkus-based HTTP server for multi-tenant AI workflow execution with MCP (Model Context Protocol) integration.
 

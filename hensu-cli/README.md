@@ -1,4 +1,4 @@
-# Hensu CLI
+# Hensu™ CLI
 
 Quarkus-based CLI tool for compiling, executing, and managing Hensu AI workflows.
 

@@ -1,4 +1,4 @@
-# Hensu Core
+# Hensu™ Core
 
 Pure Java workflow execution runtime with zero external dependencies.
 

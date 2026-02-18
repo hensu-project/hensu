@@ -1,4 +1,4 @@
-# Hensu Kotlin DSL Reference
+# Hensu™ Kotlin DSL Reference
 
 This document provides a complete reference for the Hensu Kotlin DSL used to define AI agent workflows.
 
