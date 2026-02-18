@@ -1,6 +1,6 @@
 <div align="center">
 
-# Hensu
+# Hensu™
 
 ### The high-performance orchestration engine for declarative AI workflows.
 
@@ -9,7 +9,7 @@
 [![CI](https://github.com/hensu-project/hensu/actions/workflows/ci.yml/badge.svg)](https://github.com/hensu-project/hensu/actions/workflows/ci.yml)
 [![Native Image](https://github.com/hensu-project/hensu/actions/workflows/native.yml/badge.svg)](https://github.com/hensu-project/hensu/actions/workflows/native.yml)
 [![Protocol](https://img.shields.io/badge/Protocol-MCP-green)](https://modelcontextprotocol.io/)
-[![Status](https://img.shields.io/badge/Status-Alpha-red)]()
+[![Status](https://img.shields.io/badge/status-pre--beta-blueviolet)]()
 
 **Define. Build. Run.**<br>
 Self-hosted. Developer-friendly. Zero lock-in.
@@ -254,6 +254,18 @@ user-supplied code.
 | **Stateless Server**   | Workflow state is externalized to pluggable repositories. The server can be killed and restarted at any time.                                                           |
 | **Input Validation**   | All API inputs are validated at the boundary. Identifiers are restricted to a safe character set; free-text fields are sanitized to reject control character injection. |
 | **Native Binary**      | GraalVM native image eliminates classpath scanning, reflection, and dynamic class loading attack surfaces.                                                              |
+
+
+## Legal
+
+- [LICENSE](LICENSE) (Apache 2.0)
+- [TRADEMARK](https://github.com/hensu-project/.github/blob/main/TRADEMARK.md)
+- [CONTRIBUTING](https://github.com/hensu-project/.github/blob/main/CONTRIBUTING.md)
+
+Hensu is a trademark of the Hensu project.
+Copyright 2025-2026 The Hensu Authors. All rights reserved.
+
+---
 
 <div align="center">
 

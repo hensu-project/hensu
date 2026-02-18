@@ -1,4 +1,4 @@
-# Hensu Core Developer Guide
+# Hensu™ Core Developer Guide
 
 This guide covers API usage, adapter development, extension points, and testing strategies for developers working with or extending `hensu-core`.
 

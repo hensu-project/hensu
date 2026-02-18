@@ -1,6 +1,6 @@
-# AGENTS.md: Hensu Project Operational Manual
+# AGENTS.md: Hensu™ Project Operational Manual
 
-- Project Status: Alpha
+- Project Status: Pre-Beta
 - Lead Developer: @alxsuv
 - Standard: AGENTS.md v1.2 (2026)
 

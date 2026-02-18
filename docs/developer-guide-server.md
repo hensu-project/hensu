@@ -1,4 +1,4 @@
-# Hensu Server Developer Guide
+# Hensu™ Server Developer Guide
 
 This guide covers the architecture, patterns, and best practices for developing the `hensu-server` module.
 

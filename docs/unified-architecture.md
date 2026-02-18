@@ -1,4 +1,4 @@
-# Hensu Unified Architecture
+# Hensu™ Unified Architecture
 
 **Hensu** separates the **authoring** of AI workflows from their **execution**. Developers describe agent behavior in a
 type-safe Kotlin DSL. A compiler produces portable JSON definitions. A stateless, GraalVM native-image server executes
