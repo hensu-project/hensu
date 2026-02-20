@@ -6,7 +6,7 @@ import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
 /// Mixin for `AgentConfig.Builder` to handle the naming mismatch:
 /// getter `isMaintainContext()` serializes as `"maintainContext"`,
 /// but the builder setter is `maintainContext(boolean)`.
-@JsonPOJOBuilder(withPrefix = "", buildMethodName = "build")
+@JsonPOJOBuilder(withPrefix = "")
 public abstract class AgentConfigBuilderMixin {
 
     @JsonProperty("maintainContext")

@@ -2,5 +2,5 @@ package io.hensu.serialization.mixin;
 
 import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
 
-@JsonPOJOBuilder(withPrefix = "", buildMethodName = "build")
+@JsonPOJOBuilder(withPrefix = "")
 public abstract class WorkflowBuilderMixin {}

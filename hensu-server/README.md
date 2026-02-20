@@ -344,6 +344,7 @@ hensu-server/
 │   │   └── ConstraintViolationExceptionMapper.java  # Global 400 error mapper
 │   ├── config/                            # CDI configuration
 │   │   ├── HensuEnvironmentProducer.java  # HensuFactory → HensuEnvironment
+│   │   ├── NativeImageConfig.java         # GraalVM @RegisterForReflection (Jackson mixin targets)
 │   │   ├── ServerBootstrap.java           # Startup registrations
 │   │   └── ServerConfiguration.java       # CDI delegation + server beans
 │   ├── executor/                          # Planning-aware execution
