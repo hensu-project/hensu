@@ -898,6 +898,8 @@ HensuFactory.builder()
 
 ### Jackson Serialization Pattern
 
+**`hensu-core` must contain zero Jackson annotations.** No `@JsonDeserialize`, `@JsonProperty`, `@JsonTypeInfo`, or any Jackson import belongs here. All serialization metadata lives in `hensu-serialization`; all native-image reflection registrations live in `hensu-server`. This keeps the core framework-agnostic.
+
 The `hensu-serialization` module uses explicit `SimpleModule` registrations instead of Jackson's reflective annotation processing:
 
 ```java
@@ -914,6 +916,8 @@ When adding new serializable types:
 2. Register them in `HensuJacksonModule`
 3. Do **not** rely on `@JsonTypeInfo` with class names — GraalVM cannot resolve them at runtime
 4. Use a `"type"` discriminator field with an explicit `switch` in the deserializer
+
+> **See also**: [hensu-serialization Developer Guide](developer-guide-serialization.md) for the full Jackson contract — mixin/builder pattern, `treeToValue` rules, and how to add new types safely.
 
 ### Writing Native-Image-Safe Adapters
 

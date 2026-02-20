@@ -966,6 +966,49 @@ public Object dynamicBean() {
 }
 ```
 
+### NativeImageConfig — Jackson Reflection Registration
+
+`hensu-core` domain classes are deliberately free of Quarkus annotations. When Jackson needs to access them reflectively at runtime (private constructors, builder setters, `build()` methods), GraalVM static analysis cannot trace the call sites. The fix lives entirely in `hensu-server`.
+
+`NativeImageConfig` is the **single registration point** for all `@RegisterForReflection` entries needed by the serialization module:
+
+```java
+// hensu-server/src/main/java/io/hensu/server/config/NativeImageConfig.java
+@RegisterForReflection(
+        targets = {
+            // --- Mixin/builder pattern (private constructors + setters) ---
+            Workflow.class, Workflow.Builder.class,
+            AgentConfig.class, AgentConfig.Builder.class,
+            // ...
+            // --- treeToValue delegation (Duration / nested types) ---
+            PlanningConfig.class, PlanConstraints.class, Plan.class, PlannedStep.class
+        })
+public class NativeImageConfig {}
+```
+
+**Two patterns require registration here:**
+
+1. **`@JsonPOJOBuilder` mixin targets** — Jackson instantiates the builder via its private no-arg constructor, calls each setter, then calls `build()`. GraalVM cannot trace these calls through the generic mixin machinery.
+
+2. **`treeToValue` delegation** — When a custom deserializer calls `mapper.treeToValue(node, SomeClass.class)`, Jackson uses POJO reflection for `SomeClass`. Simple records (primitives, strings, enums only) should be **fixed** by switching to manual `JsonNode` extraction instead. Register only types where manual extraction is impractical (e.g., nested `Duration` fields).
+
+**When to add vs. fix:** if the class is a simple record with no `Duration`/nested-complex fields, fix the deserializer. If it contains `Duration` or deeply nested types, add it here. See [hensu-serialization Developer Guide](developer-guide-serialization.md#the-treetovalue-rule) for the full rule.
+
+### Resource Bundling
+
+GraalVM's static analysis only sees resource paths known at build time. Any class that loads resources via a **dynamically constructed path** — e.g., `getResourceAsStream("/stubs/" + scenario + "/" + key + ".txt")` — will silently receive `null` at runtime in the native image, because the files were never embedded.
+
+Fix: declare the affected path patterns in `application.properties`:
+
+```properties
+# Bundle all stub response files into the native image.
+# StubResponseRegistry builds paths like /stubs/{scenario}/{key}.txt at runtime;
+# GraalVM cannot trace these dynamically — explicit inclusion is required.
+quarkus.native.resources.includes=stubs/**
+```
+
+**Rule:** any directory whose contents are loaded via a runtime-computed path needs a corresponding `quarkus.native.resources.includes` entry. Add it next to the relevant property comment, not at the bottom of the file.
+
 ### Server-Specific Notes
 
 **Mutiny reactive types are safe.** `Uni`, `Multi`, `BroadcastProcessor` all work in native image — Quarkus handles their registration.
@@ -987,15 +1030,19 @@ public Object dynamicBean() {
 
 ### Quick Reference (Server-Specific)
 
-| Pattern                                             | Safe  | Notes                                     |
-|-----------------------------------------------------|-------|-------------------------------------------|
-| `@Inject` / `@Produces`                             | Yes   | Quarkus ArC — build-time CDI              |
-| `@ConfigProperty`                                   | Yes   | Build-time processed                      |
-| Quarkus extensions                                  | Yes   | Provide native metadata                   |
-| Raw third-party libs                                | Maybe | Need `reflect-config.json` if reflective  |
-| `ObjectMapper.readTree()`                           | Yes   | No reflection — tree-model parsing        |
-| `new ObjectMapper().readValue(json, MyClass.class)` | Maybe | Needs registration unless Quarkus-managed |
-| Mutiny `Uni`/`Multi`                                | Yes   | Quarkus-managed                           |
+| Pattern                                             | Safe  | Notes                                                                  |
+|-----------------------------------------------------|-------|------------------------------------------------------------------------|
+| `@Inject` / `@Produces`                             | Yes   | Quarkus ArC — build-time CDI                                           |
+| `@ConfigProperty`                                   | Yes   | Build-time processed                                                   |
+| Quarkus extensions                                  | Yes   | Provide native metadata                                                |
+| Raw third-party libs                                | Maybe | Need `reflect-config.json` if reflective                               |
+| `ObjectMapper.readTree()`                           | Yes   | No reflection — tree-model parsing                                     |
+| `new ObjectMapper().readValue(json, MyClass.class)` | Maybe | Needs entry in `NativeImageConfig` unless Quarkus-managed              |
+| `mapper.treeToValue(node, SimpleRecord.class)`      | No    | Fix the deserializer — extract fields manually from `JsonNode`         |
+| `getResourceAsStream("/path/" + dynamic + ".txt")`  | No    | Add pattern to `quarkus.native.resources.includes`                     |
+| `@RegisterForReflection` on `hensu-core` classes    | No    | Keep Quarkus annotations out of core — register in `NativeImageConfig` |
+| `quarkus-jackson` for mixin-pattern types           | No    | Extension only scans direct annotations; mixins are runtime events     |
+| Mutiny `Uni`/`Multi`                                | Yes   | Quarkus-managed                                                        |
 
 ---
 
@@ -1084,4 +1131,5 @@ public class MyComponent {
 - [README.md](../hensu-server/README.md) - Module overview and quick start
 - [Unified Architecture](unified-architecture.md) - Architecture decisions and vision
 - [hensu-core Developer Guide](developer-guide-core.md) - Core engine documentation
+- [hensu-serialization Developer Guide](developer-guide-serialization.md) - Jackson patterns, `treeToValue` rule, native image implications
 - [DSL Reference](dsl-reference.md) - Workflow DSL syntax

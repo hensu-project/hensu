@@ -9,18 +9,26 @@ import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import io.hensu.core.execution.action.Action;
 import io.hensu.core.execution.parallel.Branch;
 import io.hensu.core.execution.parallel.ConsensusConfig;
+import io.hensu.core.execution.parallel.ConsensusStrategy;
 import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.plan.Plan;
 import io.hensu.core.plan.PlanningConfig;
 import io.hensu.core.review.ReviewConfig;
+import io.hensu.core.review.ReviewMode;
 import io.hensu.core.workflow.node.*;
 import io.hensu.core.workflow.transition.TransitionRule;
 import java.io.IOException;
 import java.io.Serial;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 /// Deserializes JSON to the appropriate `Node` subtype based on `nodeType` field.
+///
+/// Simple nested types (`ReviewConfig`, `ConsensusConfig`, `Branch`) are extracted manually from
+/// the `JsonNode` tree. Complex types with `Duration` fields (`PlanningConfig`, `Plan`) delegate
+/// to `treeToValue` and are registered for reflection in
+/// `io.hensu.server.config.NativeImageConfig`.
 ///
 /// @see NodeSerializer for the inverse operation
 class NodeDeserializer extends StdDeserializer<Node> {
@@ -30,7 +38,6 @@ class NodeDeserializer extends StdDeserializer<Node> {
     private static final TypeReference<List<TransitionRule>> TRANSITION_LIST =
             new TypeReference<>() {};
     private static final TypeReference<List<Action>> ACTION_LIST = new TypeReference<>() {};
-    private static final TypeReference<List<Branch>> BRANCH_LIST = new TypeReference<>() {};
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
     private static final TypeReference<Map<String, String>> STRING_MAP = new TypeReference<>() {};
     private static final TypeReference<Map<String, Object>> OBJECT_MAP = new TypeReference<>() {};
@@ -73,7 +80,12 @@ class NodeDeserializer extends StdDeserializer<Node> {
                         .planFailureTarget(textOrNull(root, "planFailureTarget"));
 
         if (root.has("reviewConfig")) {
-            b.reviewConfig(mapper.treeToValue(root.get("reviewConfig"), ReviewConfig.class));
+            JsonNode rc = root.get("reviewConfig");
+            b.reviewConfig(
+                    new ReviewConfig(
+                            ReviewMode.valueOf(rc.get("mode").asText()),
+                            rc.get("allowBacktrack").asBoolean(),
+                            rc.get("allowEdit").asBoolean()));
         }
         if (root.has("outputParams")) {
             b.outputParams(readValue(mapper, root, "outputParams", STRING_LIST));
@@ -122,10 +134,23 @@ class NodeDeserializer extends StdDeserializer<Node> {
     private ParallelNode deserializeParallel(ObjectMapper mapper, JsonNode root, String id)
             throws IOException {
         ParallelNode.Builder b =
-                ParallelNode.builder(id).branches(readValue(mapper, root, "branches", BRANCH_LIST));
+                ParallelNode.builder(id)
+                        .branches(
+                                root.has("branches")
+                                        ? deserializeBranches(root.get("branches"))
+                                        : List.of());
 
         if (root.has("consensusConfig")) {
-            b.consensus(mapper.treeToValue(root.get("consensusConfig"), ConsensusConfig.class));
+            JsonNode cc = root.get("consensusConfig");
+            b.consensus(
+                    new ConsensusConfig(
+                            cc.has("judgeAgentId") && !cc.get("judgeAgentId").isNull()
+                                    ? cc.get("judgeAgentId").asText()
+                                    : null,
+                            ConsensusStrategy.valueOf(cc.get("strategy").asText()),
+                            cc.has("threshold") && !cc.get("threshold").isNull()
+                                    ? cc.get("threshold").doubleValue()
+                                    : null));
         }
         if (root.has("transitionRules")) {
             b.transitionRules(readValue(mapper, root, "transitionRules", TRANSITION_LIST));
@@ -186,6 +211,24 @@ class NodeDeserializer extends StdDeserializer<Node> {
                         ? mapper.convertValue(root.get("outputMapping"), STRING_MAP)
                         : Map.of(),
                 readValue(mapper, root, "transitionRules", TRANSITION_LIST));
+    }
+
+    private List<Branch> deserializeBranches(JsonNode array) {
+        List<Branch> branches = new ArrayList<>();
+        for (JsonNode b : array) {
+            branches.add(
+                    new Branch(
+                            b.get("id").asText(),
+                            b.get("agentId").asText(),
+                            b.has("prompt") && !b.get("prompt").isNull()
+                                    ? b.get("prompt").asText()
+                                    : null,
+                            b.has("rubricId") && !b.get("rubricId").isNull()
+                                    ? b.get("rubricId").asText()
+                                    : null,
+                            b.has("weight") ? b.get("weight").doubleValue() : 1.0));
+        }
+        return branches;
     }
 
     private String textOrNull(JsonNode root, String field) {

@@ -33,24 +33,22 @@ subprojects {
         "testRuntimeOnly"("org.junit.platform:junit-platform-launcher")
     }
 
+    val jvm25Args = listOf(
+        "--enable-native-access=ALL-UNNAMED",
+        "--add-opens", "java.base/java.lang=ALL-UNNAMED"
+    )
+
     tasks.withType<JavaCompile> {
         options.encoding = "UTF-8"
-        // Retain method parameter names in bytecode
         options.compilerArgs.add("-parameters")
     }
 
-    // Java 24+ JVM args required across all execution modes:
-    //   --enable-native-access: Foreign Function & Memory API (Project Panama)
-    //   --add-opens java.base/java.lang: Vert.x / JBoss Threads thread-local reset
-    // See: https://github.com/quarkusio/quarkus/discussions/51041
-    val jvm24Args = listOf("--enable-native-access=ALL-UNNAMED", "--add-opens", "java.base/java.lang=ALL-UNNAMED")
-
     tasks.withType<JavaExec> {
-        jvmArgs(jvm24Args)
+        jvmArgs(jvm25Args)
     }
 
     tasks.test {
-        jvmArgs(jvm24Args)
+        jvmArgs(jvm25Args)
         useJUnitPlatform()
     }
 

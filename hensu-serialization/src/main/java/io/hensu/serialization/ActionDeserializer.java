@@ -23,7 +23,7 @@ class ActionDeserializer extends StdDeserializer<Action> {
     }
 
     @Override
-    public Action deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
+    public Action deserialize(JsonParser p, DeserializationContext ctx) throws IOException {
         ObjectMapper mapper = (ObjectMapper) p.getCodec();
         JsonNode root = mapper.readTree(p);
 
