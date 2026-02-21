@@ -202,11 +202,23 @@ public sealed interface ExecutionEvent {
     }
 
     /// Execution completed event.
+    ///
+    /// Carries the public workflow output — the final execution context with internal
+    /// system keys (prefixed with `_`) excluded. Clients should use this field
+    /// rather than polling for status when they are already connected to the SSE stream.
+    ///
+    /// @param executionId the execution identifier, never null
+    /// @param workflowId the workflow definition identifier, never null
+    /// @param success true if the workflow reached a success end node
+    /// @param finalNodeId the last node the workflow executed, may be null
+    /// @param output public context variables produced by the workflow, never null, may be empty
+    /// @param timestamp when the event occurred, never null
     record ExecutionCompleted(
             String executionId,
             String workflowId,
             boolean success,
             String finalNodeId,
+            Map<String, Object> output,
             Instant timestamp)
             implements ExecutionEvent {
 
@@ -215,16 +227,36 @@ public sealed interface ExecutionEvent {
             return "execution.completed";
         }
 
+        /// Creates a success completion event with workflow output.
+        ///
+        /// @param executionId the execution identifier, not null
+        /// @param workflowId the workflow identifier, not null
+        /// @param finalNodeId the last executed node, may be null
+        /// @param output public context variables, not null
+        /// @return new event, never null
         public static ExecutionCompleted success(
-                String executionId, String workflowId, String finalNodeId) {
+                String executionId,
+                String workflowId,
+                String finalNodeId,
+                Map<String, Object> output) {
             return new ExecutionCompleted(
-                    executionId, workflowId, true, finalNodeId, Instant.now());
+                    executionId, workflowId, true, finalNodeId, output, Instant.now());
         }
 
+        /// Creates a failure completion event with workflow output.
+        ///
+        /// @param executionId the execution identifier, not null
+        /// @param workflowId the workflow identifier, not null
+        /// @param finalNodeId the last executed node, may be null
+        /// @param output public context variables at the point of failure, not null
+        /// @return new event, never null
         public static ExecutionCompleted failure(
-                String executionId, String workflowId, String finalNodeId) {
+                String executionId,
+                String workflowId,
+                String finalNodeId,
+                Map<String, Object> output) {
             return new ExecutionCompleted(
-                    executionId, workflowId, false, finalNodeId, Instant.now());
+                    executionId, workflowId, false, finalNodeId, output, Instant.now());
         }
     }
 

@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.service.WorkflowService;
 import io.hensu.server.service.WorkflowService.ExecutionNotFoundException;
+import io.hensu.server.service.WorkflowService.ExecutionOutput;
 import io.hensu.server.service.WorkflowService.ExecutionStartResult;
 import io.hensu.server.service.WorkflowService.ExecutionStatus;
 import io.hensu.server.service.WorkflowService.ExecutionSummary;
@@ -25,6 +26,7 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class ExecutionResourceTest {
 
@@ -87,8 +89,11 @@ class ExecutionResourceTest {
 
                 assertThat(response.getStatus()).isEqualTo(200);
             }
-            verify(workflowService)
-                    .resumeExecution(eq("tenant-1"), eq("exec-1"), any(ResumeDecision.class));
+
+            ArgumentCaptor<ResumeDecision> captor = ArgumentCaptor.forClass(ResumeDecision.class);
+            verify(workflowService).resumeExecution(eq("tenant-1"), eq("exec-1"), captor.capture());
+            assertThat(captor.getValue().approved()).isTrue();
+            assertThat(captor.getValue().modifications()).isEmpty();
         }
 
         @Test
@@ -133,6 +138,39 @@ class ExecutionResourceTest {
             } catch (NotFoundException e) {
                 assertThat(e.getMessage()).contains("Not found");
             }
+        }
+    }
+
+    @Nested
+    class GetExecutionResult {
+
+        @Test
+        void shouldReturnOutputWithFilteredContext() {
+            Map<String, Object> output = Map.of("summary", "done", "approved", true);
+            when(workflowService.getExecutionResult("tenant-1", "exec-1"))
+                    .thenReturn(new ExecutionOutput("exec-1", "wf-1", "COMPLETED", output));
+
+            Map<String, Object> entity;
+            try (Response response = resource.getExecutionResult("exec-1")) {
+                assertThat(response.getStatus()).isEqualTo(200);
+                entity = (Map<String, Object>) response.getEntity();
+            }
+            assertThat(entity.get("executionId")).isEqualTo("exec-1");
+            assertThat(entity.get("workflowId")).isEqualTo("wf-1");
+            assertThat(entity.get("status")).isEqualTo("COMPLETED");
+            Map<String, Object> returnedOutput = (Map<String, Object>) entity.get("output");
+            assertThat(returnedOutput).containsEntry("summary", "done");
+            assertThat(returnedOutput).containsEntry("approved", true);
+        }
+
+        @Test
+        void shouldReturn404WhenExecutionNotFound() {
+            when(workflowService.getExecutionResult(any(), any()))
+                    .thenThrow(new ExecutionNotFoundException("exec-missing not found"));
+
+            assertThatThrownBy(() -> resource.getExecutionResult("exec-missing"))
+                    .isInstanceOf(NotFoundException.class)
+                    .hasMessageContaining("exec-missing not found");
         }
     }
 

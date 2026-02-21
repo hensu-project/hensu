@@ -16,6 +16,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.Serial;
 import java.util.*;
+import java.util.stream.Collectors;
 import org.jboss.logging.Logger;
 
 /// Service for workflow execution and state management.
@@ -23,7 +24,7 @@ import org.jboss.logging.Logger;
 /// Handles business logic for workflow operations:
 /// - Starting new workflow executions
 /// - Resuming paused executions
-/// - Retrieving execution state and plans
+/// - Retrieving execution state, plans, and final output
 ///
 /// All operations are tenant-scoped via {@link TenantContext}.
 ///
@@ -60,7 +61,7 @@ public class WorkflowService {
     /// @param tenantId the tenant requesting execution, not null
     /// @param workflowId the workflow to execute, not null
     /// @param context initial context variables, not null
-    /// @return execution result containing execution ID
+    /// @return execution result containing execution ID, never null
     /// @throws WorkflowNotFoundException if workflow not found
     /// @throws WorkflowExecutionException if execution fails
     public ExecutionStartResult startExecution(
@@ -80,72 +81,90 @@ public class WorkflowService {
                         ? TenantContext.current()
                         : TenantInfo.simple(tenantId);
 
-        // Publish execution started event
+        // Publish execution started event before entering the scoped execution frame
         eventBroadcaster.publish(
                 executionId,
                 ExecutionEvent.ExecutionStarted.now(executionId, workflowId, tenantId));
 
-        // Set execution context for PlanObserver events
-        eventBroadcaster.setCurrentExecution(executionId);
-
         try {
-            TenantContext.runAs(
-                    tenant,
+            eventBroadcaster.runAs(
+                    executionId,
                     () -> {
-                        Workflow workflow = loadWorkflow(workflowId);
+                        TenantContext.runAs(
+                                tenant,
+                                () -> {
+                                    Workflow workflow = loadWorkflow(workflowId);
 
-                        // Inject tenant ID into context for sub-workflow resolution
-                        Map<String, Object> executionContext = new HashMap<>(context);
-                        executionContext.put("_tenant_id", tenantId);
-                        executionContext.put("_execution_id", executionId);
+                                    // Inject tenant ID into context for sub-workflow resolution
+                                    Map<String, Object> executionContext = new HashMap<>(context);
+                                    executionContext.put("_tenant_id", tenantId);
+                                    executionContext.put("_execution_id", executionId);
 
-                        ExecutionResult result =
-                                workflowExecutor.execute(
-                                        workflow, executionContext, checkpointListener(tenantId));
+                                    ExecutionResult result =
+                                            workflowExecutor.execute(
+                                                    workflow,
+                                                    executionContext,
+                                                    checkpointListener(tenantId));
 
-                        // Save final state and publish completion event
-                        if (result instanceof ExecutionResult.Completed completed) {
-                            HensuSnapshot snapshot =
-                                    HensuSnapshot.from(completed.finalState(), "completed");
-                            stateRepository.save(tenantId, snapshot);
-                            eventBroadcaster.publish(
-                                    executionId,
-                                    ExecutionEvent.ExecutionCompleted.success(
-                                            executionId,
-                                            workflowId,
-                                            completed.finalState().getCurrentNode()));
-                        } else if (result instanceof ExecutionResult.Rejected rejected) {
-                            HensuSnapshot snapshot =
-                                    HensuSnapshot.from(rejected.state(), "rejected");
-                            stateRepository.save(tenantId, snapshot);
-                            eventBroadcaster.publish(
-                                    executionId,
-                                    ExecutionEvent.ExecutionCompleted.failure(
-                                            executionId,
-                                            workflowId,
-                                            rejected.state().getCurrentNode()));
-                        } else if (result instanceof ExecutionResult.Paused(HensuState state)) {
-                            HensuSnapshot snapshot = HensuSnapshot.from(state, "paused");
-                            stateRepository.save(tenantId, snapshot);
-                            eventBroadcaster.publish(
-                                    executionId,
-                                    ExecutionEvent.ExecutionCompleted.failure(
-                                            executionId, workflowId, state.getCurrentNode()));
-                        } else if (result
-                                instanceof
-                                ExecutionResult.Failure(
-                                        HensuState currentState,
-                                        IllegalStateException e)) {
-                            HensuSnapshot snapshot = HensuSnapshot.from(currentState, "failed");
-                            stateRepository.save(tenantId, snapshot);
-                            eventBroadcaster.publish(
-                                    executionId,
-                                    ExecutionEvent.ExecutionError.now(
-                                            executionId,
-                                            "ExecutionFailure",
-                                            e.getMessage(),
-                                            currentState.getCurrentNode()));
-                        }
+                                    // Save final state and publish completion event
+                                    if (result instanceof ExecutionResult.Completed completed) {
+                                        HensuSnapshot snapshot =
+                                                HensuSnapshot.from(
+                                                        completed.finalState(), "completed");
+                                        stateRepository.save(tenantId, snapshot);
+                                        eventBroadcaster.publish(
+                                                executionId,
+                                                ExecutionEvent.ExecutionCompleted.success(
+                                                        executionId,
+                                                        workflowId,
+                                                        completed.finalState().getCurrentNode(),
+                                                        publicContext(
+                                                                completed
+                                                                        .finalState()
+                                                                        .getContext())));
+                                    } else if (result
+                                            instanceof ExecutionResult.Rejected rejected) {
+                                        HensuSnapshot snapshot =
+                                                HensuSnapshot.from(rejected.state(), "rejected");
+                                        stateRepository.save(tenantId, snapshot);
+                                        eventBroadcaster.publish(
+                                                executionId,
+                                                ExecutionEvent.ExecutionCompleted.failure(
+                                                        executionId,
+                                                        workflowId,
+                                                        rejected.state().getCurrentNode(),
+                                                        publicContext(
+                                                                rejected.state().getContext())));
+                                    } else if (result
+                                            instanceof ExecutionResult.Paused(HensuState state)) {
+                                        HensuSnapshot snapshot =
+                                                HensuSnapshot.from(state, "paused");
+                                        stateRepository.save(tenantId, snapshot);
+                                        eventBroadcaster.publish(
+                                                executionId,
+                                                ExecutionEvent.ExecutionCompleted.failure(
+                                                        executionId,
+                                                        workflowId,
+                                                        state.getCurrentNode(),
+                                                        publicContext(state.getContext())));
+                                    } else if (result
+                                            instanceof
+                                            ExecutionResult.Failure(
+                                                    HensuState currentState,
+                                                    IllegalStateException e)) {
+                                        HensuSnapshot snapshot =
+                                                HensuSnapshot.from(currentState, "failed");
+                                        stateRepository.save(tenantId, snapshot);
+                                        eventBroadcaster.publish(
+                                                executionId,
+                                                ExecutionEvent.ExecutionError.now(
+                                                        executionId,
+                                                        "ExecutionFailure",
+                                                        e.getMessage(),
+                                                        currentState.getCurrentNode()));
+                                    }
+                                    return null;
+                                });
                         return null;
                     });
         } catch (Exception e) {
@@ -157,8 +176,6 @@ public class WorkflowService {
                             executionId, e.getClass().getSimpleName(), e.getMessage(), null));
             throw new WorkflowExecutionException("Workflow execution failed: " + e.getMessage(), e);
         } finally {
-            // Clear execution context and complete the stream
-            eventBroadcaster.setCurrentExecution(null);
             eventBroadcaster.complete(executionId);
         }
 
@@ -242,7 +259,7 @@ public class WorkflowService {
     ///
     /// @param tenantId the tenant owning the execution, not null
     /// @param executionId the execution ID, not null
-    /// @return the plan if one is pending review
+    /// @return the plan if one is pending review, empty if no plan is active
     /// @throws ExecutionNotFoundException if execution not found
     public Optional<PlanInfo> getPendingPlan(String tenantId, String executionId) {
         Objects.requireNonNull(tenantId, "tenantId must not be null");
@@ -271,7 +288,7 @@ public class WorkflowService {
     ///
     /// @param tenantId the tenant owning the execution, not null
     /// @param executionId the execution ID, not null
-    /// @return the execution status
+    /// @return the execution status, never null
     /// @throws ExecutionNotFoundException if execution not found
     public ExecutionStatus getExecutionStatus(String tenantId, String executionId) {
         Objects.requireNonNull(tenantId, "tenantId must not be null");
@@ -294,10 +311,37 @@ public class WorkflowService {
                 snapshot.hasActivePlan());
     }
 
+    /// Gets the public output of a completed or paused execution.
+    ///
+    /// Returns the workflow context at the time of the last checkpoint with
+    /// internal system keys (prefixed with `_`) filtered out. This is the
+    /// primary endpoint for retrieving the final result of a workflow run.
+    ///
+    /// @param tenantId the tenant owning the execution, not null
+    /// @param executionId the execution ID, not null
+    /// @return the execution output, never null
+    /// @throws ExecutionNotFoundException if execution not found
+    public ExecutionOutput getExecutionResult(String tenantId, String executionId) {
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
+        Objects.requireNonNull(executionId, "executionId must not be null");
+
+        HensuSnapshot snapshot =
+                stateRepository
+                        .findByExecutionId(tenantId, executionId)
+                        .orElseThrow(
+                                () ->
+                                        new ExecutionNotFoundException(
+                                                "Execution not found: " + executionId));
+
+        String status = snapshot.isCompleted() ? "COMPLETED" : "PAUSED";
+        return new ExecutionOutput(
+                executionId, snapshot.workflowId(), status, publicContext(snapshot.context()));
+    }
+
     /// Lists all paused executions for a tenant.
     ///
     /// @param tenantId the tenant ID, not null
-    /// @return list of paused execution summaries
+    /// @return list of paused execution summaries, never null, may be empty
     public List<ExecutionSummary> listPausedExecutions(String tenantId) {
         Objects.requireNonNull(tenantId, "tenantId must not be null");
 
@@ -310,6 +354,17 @@ public class WorkflowService {
                                         s.currentNodeId(),
                                         s.createdAt()))
                 .toList();
+    }
+
+    /// Returns only the public context entries — keys starting with `_` are internal
+    /// system variables and are excluded from client-facing output.
+    ///
+    /// @param context the raw execution context, not null
+    /// @return unmodifiable map of public context entries, never null, may be empty
+    private static Map<String, Object> publicContext(Map<String, Object> context) {
+        return context.entrySet().stream()
+                .filter(e -> !e.getKey().startsWith("_"))
+                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     /// Creates a listener that persists workflow state after each node completes.
@@ -327,8 +382,8 @@ public class WorkflowService {
 
     /// Loads a workflow by ID.
     ///
-    /// @param workflowId the workflow ID to load
-    /// @return the workflow
+    /// @param workflowId the workflow ID to load, not null
+    /// @return the workflow, never null
     /// @throws WorkflowNotFoundException if not found
     private Workflow loadWorkflow(String workflowId) {
         String tenantId = TenantContext.current().tenantId();
@@ -341,9 +396,15 @@ public class WorkflowService {
     // --- Result types ---
 
     /// Result of starting an execution.
+    ///
+    /// @param executionId the assigned execution identifier, never null
+    /// @param workflowId the workflow that was started, never null
     public record ExecutionStartResult(String executionId, String workflowId) {}
 
     /// Decision for resuming a paused execution.
+    ///
+    /// @param approved whether the pending plan is approved
+    /// @param modifications optional context modifications to apply before resuming, may be null
     public record ResumeDecision(boolean approved, Map<String, Object> modifications) {
         public static ResumeDecision approve() {
             return new ResumeDecision(true, Map.of());
@@ -355,9 +416,19 @@ public class WorkflowService {
     }
 
     /// Information about a pending plan.
+    ///
+    /// @param planId the plan identifier, never null
+    /// @param totalSteps total number of steps in the plan
+    /// @param currentStep index of the step currently executing
     public record PlanInfo(String planId, int totalSteps, int currentStep) {}
 
     /// Status of an execution.
+    ///
+    /// @param executionId the execution identifier, never null
+    /// @param workflowId the workflow definition identifier, never null
+    /// @param status `COMPLETED` or `PAUSED`, never null
+    /// @param currentNodeId the node where execution is positioned, may be null if completed
+    /// @param hasPendingPlan true if a plan is awaiting review
     public record ExecutionStatus(
             String executionId,
             String workflowId,
@@ -365,7 +436,24 @@ public class WorkflowService {
             String currentNodeId,
             boolean hasPendingPlan) {}
 
+    /// The public output of a completed or paused execution.
+    ///
+    /// Contains the workflow context at termination with internal system keys
+    /// (prefixed with `_`) excluded.
+    ///
+    /// @param executionId the execution identifier, never null
+    /// @param workflowId the workflow definition identifier, never null
+    /// @param status `COMPLETED` or `PAUSED`, never null
+    /// @param output public context variables produced by the workflow, never null, may be empty
+    public record ExecutionOutput(
+            String executionId, String workflowId, String status, Map<String, Object> output) {}
+
     /// Summary of an execution.
+    ///
+    /// @param executionId the execution identifier, never null
+    /// @param workflowId the workflow definition identifier, never null
+    /// @param currentNodeId the node where execution is paused, may be null
+    /// @param createdAt when the execution was created, never null
     public record ExecutionSummary(
             String executionId,
             String workflowId,

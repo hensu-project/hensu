@@ -13,10 +13,12 @@ import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.server.service.WorkflowService.ExecutionNotFoundException;
+import io.hensu.server.service.WorkflowService.ExecutionOutput;
 import io.hensu.server.service.WorkflowService.ExecutionStatus;
 import io.hensu.server.service.WorkflowService.ExecutionSummary;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -176,6 +178,96 @@ class WorkflowServiceTest {
 
             assertThatThrownBy(() -> service.getPendingPlan("tenant-1", "exec-1"))
                     .isInstanceOf(ExecutionNotFoundException.class);
+        }
+    }
+
+    @Nested
+    class GetExecutionResult {
+
+        private HensuSnapshot snapshotWithContext(Map<String, Object> context, String reason) {
+            return new HensuSnapshot(
+                    "wf-1", "exec-1", null, context, null, null, Instant.now(), reason);
+        }
+
+        @Test
+        void shouldFilterInternalKeysFromOutput() {
+            Map<String, Object> mixedContext = new HashMap<>();
+            mixedContext.put("_tenant_id", "tenant-1");
+            mixedContext.put("_execution_id", "exec-1");
+            mixedContext.put("_last_output", "internal routing value");
+            mixedContext.put("summary", "Order processed successfully");
+            mixedContext.put("approved", true);
+            when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
+                    .thenReturn(Optional.of(snapshotWithContext(mixedContext, "completed")));
+
+            ExecutionOutput output = service.getExecutionResult("tenant-1", "exec-1");
+
+            assertThat(output.output()).doesNotContainKey("_tenant_id");
+            assertThat(output.output()).doesNotContainKey("_execution_id");
+            assertThat(output.output()).doesNotContainKey("_last_output");
+            assertThat(output.output()).containsEntry("summary", "Order processed successfully");
+            assertThat(output.output()).containsEntry("approved", true);
+        }
+
+        @Test
+        void shouldReturnEmptyOutputWhenAllContextKeysAreInternal() {
+            Map<String, Object> internalOnly = new HashMap<>();
+            internalOnly.put("_tenant_id", "tenant-1");
+            internalOnly.put("_execution_id", "exec-1");
+            when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
+                    .thenReturn(Optional.of(snapshotWithContext(internalOnly, "completed")));
+
+            ExecutionOutput output = service.getExecutionResult("tenant-1", "exec-1");
+
+            assertThat(output.output()).isEmpty();
+        }
+
+        @Test
+        void shouldReturnCorrectStatusAndIdentifiers() {
+            Map<String, Object> context = new HashMap<>();
+            context.put("result", "done");
+            when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
+                    .thenReturn(Optional.of(snapshotWithContext(context, "completed")));
+
+            ExecutionOutput output = service.getExecutionResult("tenant-1", "exec-1");
+
+            assertThat(output.executionId()).isEqualTo("exec-1");
+            assertThat(output.workflowId()).isEqualTo("wf-1");
+            assertThat(output.status()).isEqualTo("COMPLETED");
+            assertThat(output.output()).containsKey("result");
+        }
+
+        @Test
+        void shouldReportPausedStatusForNonCompletedSnapshot() {
+            Map<String, Object> context = new HashMap<>();
+            context.put("step", "validation");
+            // currentNodeId is non-null and reason is not "completed" → PAUSED
+            HensuSnapshot paused =
+                    new HensuSnapshot(
+                            "wf-1",
+                            "exec-1",
+                            "validation-node",
+                            context,
+                            null,
+                            null,
+                            Instant.now(),
+                            "checkpoint");
+            when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
+                    .thenReturn(Optional.of(paused));
+
+            ExecutionOutput output = service.getExecutionResult("tenant-1", "exec-1");
+
+            assertThat(output.status()).isEqualTo("PAUSED");
+        }
+
+        @Test
+        void shouldThrowWhenExecutionNotFound() {
+            when(stateRepository.findByExecutionId("tenant-1", "missing"))
+                    .thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.getExecutionResult("tenant-1", "missing"))
+                    .isInstanceOf(ExecutionNotFoundException.class)
+                    .hasMessageContaining("missing");
         }
     }
 

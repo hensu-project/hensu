@@ -282,7 +282,7 @@ The REST API is split into two distinct resources:
    - Uses `WorkflowRepository` directly
 
 2. **ExecutionResource** (`/api/v1/executions`) - Execution runtime (client integration)
-   - Start, resume, status, plan
+   - Start, resume, status, plan, result
    - Uses `WorkflowService` for business logic
 
 **Do not mix** definition management with execution in the same resource.
@@ -520,6 +520,54 @@ private ExecutionEvent convertEvent(String executionId, PlanEvent event) {
 broadcaster.publish(executionId, ExecutionEvent.MyNewEvent.now(executionId, "value"));
 ```
 
+### Execution Context Routing (ScopedValue)
+
+`ExecutionEventBroadcaster` uses a `ScopedValue` — not `ThreadLocal` — to carry the current execution ID into
+`PlanObserver` callbacks. This is mandatory for correctness with virtual threads (Project Loom).
+
+Wrap execution blocks with `runAs()`:
+
+```java
+// WorkflowService — correct pattern
+eventBroadcaster.runAs(executionId, () -> {
+    TenantContext.runAs(tenantId, () -> {
+        workflowExecutor.executeFrom(workflow, snapshot);
+    });
+    return null;
+});
+```
+
+**Do not** call `broadcaster.setCurrentExecution()` — that method no longer exists. ScopedValue is structurally
+scoped: the binding is automatically released when `runAs()` returns, even on exception paths.
+
+If you need to route `PlanEvent` callbacks from a background thread (e.g. an async agent) to the right execution,
+call `broadcaster.registerPlan(planId, executionId)` **before** execution starts. The broadcaster will prefer the
+plan→execution map over the ScopedValue when both are present.
+
+### execution.completed Event — Output Field
+
+The `execution.completed` SSE event now carries the final workflow output:
+
+```json
+{
+  "type": "execution.completed",
+  "executionId": "exec-123",
+  "workflowId": "order-processing",
+  "success": true,
+  "finalNodeId": "end",
+  "output": {
+    "summary": "Order validated",
+    "items": 3
+  },
+  "timestamp": "2024-01-01T12:00:00Z"
+}
+```
+
+`output` contains the public workflow context — all keys **not** prefixed with `_`. Internal routing keys
+(`_tenant_id`, `_execution_id`, `_last_output`, etc.) are stripped before publishing.
+
+`output` may be empty `{}` if the workflow produced no public context keys.
+
 ### BroadcastProcessor Pattern
 
 For fan-out to multiple subscribers:
@@ -552,6 +600,34 @@ public class MyBroadcaster {
     }
 }
 ```
+
+### Retrieving the Final Workflow Output
+
+After execution completes, clients can fetch the output via REST instead of (or in addition to) consuming the SSE
+stream:
+
+```
+GET /api/v1/executions/{executionId}/result
+Authorization: Bearer <jwt>
+```
+
+Response (200 OK):
+
+```json
+{
+  "executionId": "exec-123",
+  "workflowId": "order-processing",
+  "status": "COMPLETED",
+  "output": {
+    "summary": "Order validated",
+    "items": 3
+  }
+}
+```
+
+`status` is `COMPLETED` when `currentNodeId` is null in the snapshot, `PAUSED` otherwise. Internal context keys
+(prefixed with `_`) are filtered the same way as in the SSE event. Returns **404** if the execution ID does not
+exist for the requesting tenant.
 
 ---
 

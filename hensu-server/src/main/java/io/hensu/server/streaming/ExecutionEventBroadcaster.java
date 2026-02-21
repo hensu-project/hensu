@@ -7,6 +7,7 @@ import io.smallrye.mutiny.operators.multi.processors.BroadcastProcessor;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import org.jboss.logging.Logger;
 
@@ -17,8 +18,10 @@ import org.jboss.logging.Logger;
 /// to SSE-friendly {@link ExecutionEvent} DTOs.
 ///
 /// ### Thread Safety
-/// Thread-safe. Uses ConcurrentHashMap for subscription management and
-/// BroadcastProcessor for thread-safe event delivery.
+/// Thread-safe. Uses `ConcurrentHashMap` for subscription management and
+/// `BroadcastProcessor` for thread-safe event delivery. Execution context
+/// is propagated via a `ScopedValue` — structurally scoped to the calling
+/// frame rather than manually set/cleared, making it safe for virtual threads.
 ///
 /// ### Memory Management
 /// Subscriptions are automatically cleaned up when:
@@ -31,9 +34,11 @@ import org.jboss.logging.Logger;
 /// // Subscribe to execution events (in SSE endpoint)
 /// Multi<ExecutionEvent> events = broadcaster.subscribe(executionId);
 ///
-/// // Publish events (called by AgenticNodeExecutor via PlanObserver)
-/// broadcaster.setCurrentExecution(executionId);
-/// broadcaster.onEvent(planEvent);  // Automatically converted and broadcast
+/// // Run execution with scoped context so PlanObserver events are routed correctly
+/// broadcaster.runAs(executionId, () -> {
+///     workflowExecutor.execute(workflow, context, listener);
+///     return null;
+/// });
 ///
 /// // Or publish directly
 /// broadcaster.publish(executionId, ExecutionEvent.ExecutionStarted.now(...));
@@ -53,13 +58,13 @@ public class ExecutionEventBroadcaster implements PlanObserver {
     /// Maps plan ID to execution ID for event routing.
     private final Map<String, String> planToExecution = new ConcurrentHashMap<>();
 
-    /// Thread-local current execution ID for PlanObserver context.
-    private static final ThreadLocal<String> CURRENT_EXECUTION = new ThreadLocal<>();
+    /// ScopedValue carrying the current execution ID within a {@link #runAs} frame.
+    static final ScopedValue<String> CURRENT_EXECUTION = ScopedValue.newInstance();
 
     /// Subscribes to events for an execution.
     ///
-    /// @param executionId the execution to subscribe to
-    /// @return event stream that emits events for this execution
+    /// @param executionId the execution to subscribe to, not null
+    /// @return event stream that emits events for this execution, never null
     public Multi<ExecutionEvent> subscribe(String executionId) {
         Objects.requireNonNull(executionId, "executionId must not be null");
 
@@ -78,8 +83,8 @@ public class ExecutionEventBroadcaster implements PlanObserver {
 
     /// Publishes an event to all subscribers of an execution.
     ///
-    /// @param executionId the target execution
-    /// @param event the event to publish
+    /// @param executionId the target execution, not null
+    /// @param event the event to publish, not null
     public void publish(String executionId, ExecutionEvent event) {
         Objects.requireNonNull(executionId, "executionId must not be null");
         Objects.requireNonNull(event, "event must not be null");
@@ -95,30 +100,27 @@ public class ExecutionEventBroadcaster implements PlanObserver {
         }
     }
 
-    /// Sets the current execution context for PlanObserver events.
+    /// Executes a task with the given execution ID bound as the current execution context.
     ///
-    /// Call this before executing a plan to route plan events to the correct execution.
+    /// Binds `executionId` into a `ScopedValue` for the duration of the call so that
+    /// {@link PlanObserver} events fired from within the task are automatically routed
+    /// to the correct SSE stream without manual set/clear bookkeeping.
     ///
-    /// @param executionId the execution ID, or null to clear
-    public void setCurrentExecution(String executionId) {
-        if (executionId != null) {
-            CURRENT_EXECUTION.set(executionId);
-        } else {
-            CURRENT_EXECUTION.remove();
-        }
-    }
-
-    /// Gets the current execution ID from thread-local context.
-    ///
-    /// @return current execution ID, or null if not set
-    public String getCurrentExecution() {
-        return CURRENT_EXECUTION.get();
+    /// @param executionId the execution context to bind, not null
+    /// @param task the task to execute within this context, not null
+    /// @param <T> the return type of the task
+    /// @return the task's return value
+    /// @throws Exception if the task throws
+    public <T> T runAs(String executionId, Callable<T> task) throws Exception {
+        Objects.requireNonNull(executionId, "executionId must not be null");
+        Objects.requireNonNull(task, "task must not be null");
+        return ScopedValue.where(CURRENT_EXECUTION, executionId).call(task::call);
     }
 
     /// Associates a plan ID with an execution ID for event routing.
     ///
-    /// @param planId the plan identifier
-    /// @param executionId the execution identifier
+    /// @param planId the plan identifier, not null
+    /// @param executionId the execution identifier, not null
     public void registerPlan(String planId, String executionId) {
         Objects.requireNonNull(planId, "planId must not be null");
         Objects.requireNonNull(executionId, "executionId must not be null");
@@ -129,7 +131,7 @@ public class ExecutionEventBroadcaster implements PlanObserver {
     ///
     /// Should be called when execution finishes to clean up resources.
     ///
-    /// @param executionId the execution to complete
+    /// @param executionId the execution to complete, not null
     public void complete(String executionId) {
         Objects.requireNonNull(executionId, "executionId must not be null");
 
@@ -143,10 +145,10 @@ public class ExecutionEventBroadcaster implements PlanObserver {
         planToExecution.entrySet().removeIf(e -> executionId.equals(e.getValue()));
     }
 
-    /// Completes with error for an execution.
+    /// Completes the event stream with an error for an execution.
     ///
-    /// @param executionId the execution that errored
-    /// @param error the error
+    /// @param executionId the execution that errored, not null
+    /// @param error the error cause, not null
     public void error(String executionId, Throwable error) {
         Objects.requireNonNull(executionId, "executionId must not be null");
 
@@ -161,7 +163,7 @@ public class ExecutionEventBroadcaster implements PlanObserver {
 
     /// Unsubscribes and cleans up an execution stream.
     ///
-    /// @param executionId the execution to unsubscribe
+    /// @param executionId the execution to unsubscribe, not null
     public void unsubscribe(String executionId) {
         complete(executionId);
     }
@@ -175,7 +177,7 @@ public class ExecutionEventBroadcaster implements PlanObserver {
 
     /// Returns whether an execution has active subscribers.
     ///
-    /// @param executionId the execution to check
+    /// @param executionId the execution to check, not null
     /// @return true if there are subscribers
     public boolean hasSubscribers(String executionId) {
         return processors.containsKey(executionId);
@@ -198,16 +200,13 @@ public class ExecutionEventBroadcaster implements PlanObserver {
         }
     }
 
-    /// Resolves execution ID from plan ID or thread-local context.
+    /// Resolves execution ID from plan ID mapping or the current ScopedValue context.
     private String resolveExecutionId(String planId) {
-        // First check plan mapping
         String executionId = planToExecution.get(planId);
         if (executionId != null) {
             return executionId;
         }
-
-        // Fall back to thread-local context
-        return CURRENT_EXECUTION.get();
+        return CURRENT_EXECUTION.isBound() ? CURRENT_EXECUTION.get() : null;
     }
 
     /// Converts a PlanEvent to an SSE ExecutionEvent.

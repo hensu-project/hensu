@@ -30,17 +30,6 @@ class McpGatewayResourceTest {
     class Connect {
 
         @Test
-        void shouldCreateSessionForValidClientId() {
-            Multi<String> mockStream = Multi.createFrom().items("{\"test\":\"ping\"}");
-            when(sessionManager.createSession("client-1")).thenReturn(mockStream);
-
-            Multi<String> result = resource.connect("client-1");
-
-            assertThat(result).isNotNull();
-            verify(sessionManager).createSession("client-1");
-        }
-
-        @Test
         void shouldStreamEventsFromSessionManager() {
             Multi<String> mockStream =
                     Multi.createFrom()
