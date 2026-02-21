@@ -102,10 +102,10 @@ hensu-langchain4j-adapter     # LangChain4j integration (Claude, GPT, Gemini, De
 - `ProcessorPipeline` - Orchestrates pre/post node execution processor chains
 
 **Execution Lifecycle**: The `WorkflowExecutor` processes each node through a strict PRE-EXECUTE-POST pipeline.
-Post-execution logic is handled by a chain of `PostNodeExecutionProcessor`s in fixed order: output extraction → history
-recording → human review → rubric evaluation → transition resolution. Any processor can short-circuit the pipeline by
-returning a terminal `ExecutionResult`. This design isolates cross-cutting concerns (e.g., adding a new rubric) from
-the core agent execution logic.
+Pre-execution processors run in order: checkpoint → node start. Post-execution processors run in order: output
+extraction → node complete → history recording → human review → rubric evaluation → transition resolution. Any
+processor can short-circuit the pipeline by returning a terminal `ExecutionResult`. This design isolates cross-cutting
+concerns (e.g., adding a new rubric) from the core agent execution logic.
 
 **Server-Specific Components** (in `hensu-server`):
 
@@ -166,7 +166,7 @@ Execution state flows through three types:
 
 **Checkpoint lifecycle** (inter-node persistence for failover):
 
-1. `WorkflowExecutor.executeLoop()` calls `listener.onCheckpoint(state)` before each non-end node
+1. `CheckpointPreProcessor` fires `listener.onCheckpoint(state)` as the first step before each non-end node
 2. `WorkflowService` implements `ExecutionListener.onCheckpoint()` to save a `HensuSnapshot` with reason `"checkpoint"`
 3. If server dies mid-execution → restart → `findPaused()` returns interrupted executions → resume from last checkpoint
 

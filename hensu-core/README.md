@@ -229,11 +229,14 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   └── EndNodeExecutor.java       # Terminal nodes
 │   ├── pipeline/
 │   │   ├── NodeExecutionProcessor.java          # Base processor interface
-│   │   ├── PreNodeExecutionProcessor.java       # Pre-execution processor interface
-│   │   ├── PostNodeExecutionProcessor.java      # Post-execution processor interface
+│   │   ├── PreNodeExecutionProcessor.java       # Pre-execution processor marker interface
+│   │   ├── PostNodeExecutionProcessor.java      # Post-execution processor marker interface
 │   │   ├── ProcessorContext.java                # Per-iteration context (node + result + state)
 │   │   ├── ProcessorPipeline.java               # Orchestrates pre/post processor chains
+│   │   ├── CheckpointPreProcessor.java          # Fires listener.onCheckpoint for crash-recovery persistence
+│   │   ├── NodeStartPreProcessor.java           # Fires listener.onNodeStart for observability
 │   │   ├── OutputExtractionPostProcessor.java   # Validates then stores node output in state context
+│   │   ├── NodeCompletePostProcessor.java       # Fires listener.onNodeComplete for observability
 │   │   ├── HistoryPostProcessor.java            # Records execution steps for audit
 │   │   ├── ReviewPostProcessor.java             # Human-in-the-loop review checkpoints
 │   │   ├── RubricPostProcessor.java             # Quality evaluation + auto-backtrack

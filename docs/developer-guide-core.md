@@ -146,21 +146,26 @@ halts immediately (short-circuit).
 
 ### Pre-Execution Pipeline
 
-This pipeline is an architectural placeholder for future features like input validation, context injection, or
-pre-execution guards. Currently no `PreNodeExecutionProcessor` implementations exist.
+Runs before the node's primary logic. All processors receive a `ProcessorContext` with a `null` result.
+
+| Order | Processor                  | Responsibility                                                      |
+|-------|----------------------------|---------------------------------------------------------------------|
+| 1     | `CheckpointPreProcessor`   | Fires `listener.onCheckpoint(state)` for crash-recovery persistence |
+| 2     | `NodeStartPreProcessor`    | Fires `listener.onNodeStart(node)` for observability                |
 
 ### Post-Execution Pipeline
 
 This is where the majority of the workflow's state management and decision-making occurs. The processors run in a
 **fixed, critical order** — changing the order breaks invariants downstream processors depend on:
 
-| Order | Processor                       | Responsibility                                       |
-|-------|---------------------------------|------------------------------------------------------|
-| 1     | `OutputExtractionPostProcessor` | Validates then stores node output in state context   |
-| 2     | `HistoryPostProcessor`          | Records execution step for audit and backtracking    |
-| 3     | `ReviewPostProcessor`           | Human-in-the-loop checkpoints                        |
-| 4     | `RubricPostProcessor`           | Automated quality evaluation and self-correction     |
-| 5     | `TransitionPostProcessor`       | Determines next node via `TransitionRule` evaluation |
+| Order | Processor                       | Responsibility                                                        |
+|-------|---------------------------------|-----------------------------------------------------------------------|
+| 1     | `OutputExtractionPostProcessor` | Validates (control chars, Unicode tricks, size) then stores output    |
+| 2     | `NodeCompletePostProcessor`     | Fires `listener.onNodeComplete(node, result)` for observability       |
+| 3     | `HistoryPostProcessor`          | Records execution step for audit and backtracking                     |
+| 4     | `ReviewPostProcessor`           | Human-in-the-loop checkpoints                                         |
+| 5     | `RubricPostProcessor`           | Automated quality evaluation and self-correction                      |
+| 6     | `TransitionPostProcessor`       | Determines next node via `TransitionRule` evaluation                  |
 
 **`OutputExtractionPostProcessor`** — First validates the raw output using `AgentOutputValidator` (see
 [Agentic Output Validation](#agentic-output-validation)). On any violation it returns `ExecutionResult.Failure`
