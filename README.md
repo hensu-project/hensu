@@ -259,11 +259,12 @@ user-supplied code.
 ## Legal
 
 - [LICENSE](LICENSE) (Apache 2.0)
+- [NOTICE](NOTICE)
 - [TRADEMARK](https://github.com/hensu-project/.github/blob/main/TRADEMARK.md)
 - [CONTRIBUTING](https://github.com/hensu-project/.github/blob/main/CONTRIBUTING.md)
 
-Hensu is a trademark of the Hensu project.
-Copyright 2025-2026 The Hensu Authors. All rights reserved.
+Hensu™ and the axolotl logo are trademarks of Aleksandr Suvorov.
+Copyright 2025-2026 Aleksandr Suvorov. All rights reserved.
 
 ---
 
