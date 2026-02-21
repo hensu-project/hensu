@@ -246,14 +246,15 @@ custom instructions or CLAUDE.md files.
 Hensu is designed for Zero-Trust environments. The server is a **pure orchestrator** — it never executes
 user-supplied code.
 
-| Principle              | Implementation                                                                                                                                                          |
-|:-----------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **No Local Execution** | The server has no shell, no `eval`, no script runner. All side effects route through MCP to tenant clients.                                                             |
-| **Tenant Isolation**   | Every execution runs inside a Java `ScopedValue` boundary. No data leaks between concurrent workflows.                                                                  |
-| **No Inbound Ports**   | The Split-Pipe transport means tenant clients connect *outbound* via SSE. No firewall rules required.                                                                   |
-| **Stateless Server**   | Workflow state is externalized to pluggable repositories. The server can be killed and restarted at any time.                                                           |
-| **Input Validation**   | All API inputs are validated at the boundary. Identifiers are restricted to a safe character set; free-text fields are sanitized to reject control character injection. |
-| **Native Binary**      | GraalVM native image eliminates classpath scanning, reflection, and dynamic class loading attack surfaces.                                                              |
+| Principle              | Implementation                                                                                                                                                                                                  |
+|:-----------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **No Local Execution** | The server has no shell, no `eval`, no script runner. All side effects route through MCP to tenant clients.                                                                                                     |
+| **Tenant Isolation**   | Every execution runs inside a Java `ScopedValue` boundary. No data leaks between concurrent workflows.                                                                                                          |
+| **No Inbound Ports**   | The Split-Pipe transport means tenant clients connect *outbound* via SSE. No firewall rules required.                                                                                                           |
+| **Stateless Server**   | Workflow state is externalized to pluggable repositories. The server can be killed and restarted at any time.                                                                                                   |
+| **Input Validation**   | All API inputs are validated at the boundary. Identifiers are restricted to a safe character set; free-text fields are sanitized to reject control character injection.                                         |
+| **Output Validation**  | LLM-generated node outputs are validated before entering workflow state. ASCII control characters, Unicode manipulation characters (RTL overrides, zero-width chars, BOM), and oversized payloads are rejected. |
+| **Native Binary**      | GraalVM native image eliminates classpath scanning, reflection, and dynamic class loading attack surfaces.                                                                                                      |
 
 
 ## Legal

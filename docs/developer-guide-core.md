@@ -11,6 +11,7 @@ This guide covers API usage, adapter development, extension points, and testing 
 - [Execution Pipeline](#execution-pipeline)
   - [Pre-Execution Pipeline](#pre-execution-pipeline)
   - [Post-Execution Pipeline](#post-execution-pipeline)
+  - [Agentic Output Validation](#agentic-output-validation)
 - [Creating Custom Adapters](#creating-custom-adapters)
 - [Generic Nodes](#generic-nodes)
 - [Action Handlers](#action-handlers)
@@ -155,15 +156,17 @@ This is where the majority of the workflow's state management and decision-makin
 
 | Order | Processor                       | Responsibility                                       |
 |-------|---------------------------------|------------------------------------------------------|
-| 1     | `OutputExtractionPostProcessor` | Stores node output in state context                  |
+| 1     | `OutputExtractionPostProcessor` | Validates then stores node output in state context   |
 | 2     | `HistoryPostProcessor`          | Records execution step for audit and backtracking    |
 | 3     | `ReviewPostProcessor`           | Human-in-the-loop checkpoints                        |
 | 4     | `RubricPostProcessor`           | Automated quality evaluation and self-correction     |
 | 5     | `TransitionPostProcessor`       | Determines next node via `TransitionRule` evaluation |
 
-**`OutputExtractionPostProcessor`** — Puts the raw output string into the context map keyed by node ID. For
-`StandardNode`s with `outputParams` defined, it also parses the output as JSON and extracts the specified fields into
-the context map for use by subsequent nodes.
+**`OutputExtractionPostProcessor`** — First validates the raw output using `AgentOutputValidator` (see
+[Agentic Output Validation](#agentic-output-validation)). On any violation it returns `ExecutionResult.Failure`
+immediately, leaving the context map unmodified. If validation passes, it puts the raw output string into the context
+map keyed by node ID. For `StandardNode`s with `outputParams` defined, it also parses the output as JSON and extracts
+the specified fields into the context map for use by subsequent nodes.
 
 **`HistoryPostProcessor`** — Appends an immutable `ExecutionStep` (containing a state snapshot, the node result, and a
 timestamp) to the `ExecutionHistory`. This is the foundation for time-travel debugging and backtracking.
@@ -180,6 +183,53 @@ step, enabling self-correcting loops.
 **`TransitionPostProcessor`** — The final step. Evaluates the current node's `TransitionRule` list in order. The first
 rule that returns a valid target node ID wins, and the state is updated to point to that next node. Throws
 `IllegalStateException` if no rule matches, preventing the workflow from silently getting stuck.
+
+### Agentic Output Validation
+
+LLM-generated outputs are non-deterministic and treated as **untrusted data**. Unlike REST input (short, user-typed,
+identity-validated), agentic output is machine-generated and carries threats that simple control-character filtering
+does not cover.
+
+`AgentOutputValidator` (`io.hensu.core.util`) is the single authority for output validation in the core engine. It is
+called by `OutputExtractionPostProcessor` before any output is written to workflow state.
+
+#### Checks Applied
+
+| Check                      | Method                     | Threat                                                                                |
+|----------------------------|----------------------------|---------------------------------------------------------------------------------------|
+| ASCII control characters   | `containsDangerousChars()` | Null bytes, non-printable chars that degrade downstream processing                    |
+| Unicode manipulation chars | `containsUnicodeTricks()`  | RTL overrides, zero-width chars, BOM — used to hide content or carry prompt injection |
+| Payload size               | `exceedsSizeLimit()`       | Runaway generation exhausting memory or storage in downstream stages                  |
+
+The **size limit is 4 MB** (`MAX_LLM_OUTPUT_BYTES`) — higher than the 1 MB REST cap to accommodate large agentic
+outputs (documents, generated code). The limits serve different threat models and are intentionally separate constants.
+
+#### Unicode Manipulation Detail
+
+The `containsUnicodeTricks()` check targets characters outside the ASCII control range that LLMs can produce:
+
+| Category                      | Codepoints    | Example Attack                              |
+|-------------------------------|---------------|---------------------------------------------|
+| RTL/LTR directional overrides | U+202A–U+202E | Hide malicious text behind visual reversal  |
+| Unicode isolates              | U+2066–U+2069 | Isolate bidi runs to redirect rendering     |
+| Zero-width characters         | U+200B–U+200D | Invisible payload embedding, steganography  |
+| Byte-order mark               | U+FEFF        | Unexpected BOM in content signals injection |
+
+Legitimate RTL scripts (Arabic, Hebrew) use **natural bidi properties** of their characters and do not require
+directional override characters. The check produces no false positives on standard multilingual content.
+
+#### Separation from Server-Side Validation
+
+`AgentOutputValidator` is intentionally separate from `InputValidator` in `hensu-server`. The two classes serve
+distinct trust boundaries and must not be merged:
+
+| Concern            | `InputValidator` (server)           | `AgentOutputValidator` (core)        |
+|--------------------|-------------------------------------|--------------------------------------|
+| Input source       | Human-typed REST requests           | LLM-generated node outputs           |
+| Size limit         | 1 MB (`MAX_JSON_MESSAGE_BYTES`)     | 4 MB (`MAX_LLM_OUTPUT_BYTES`)        |
+| Unicode tricks     | Not checked (low risk for humans)   | Checked (LLMs can produce overrides) |
+| Safe-ID validation | Yes — for user-supplied identifiers | Not applicable — no IDs in output    |
+| Framework          | Jakarta Bean Validation             | Pure utility, zero dependencies      |
 
 ## Creating Custom Adapters
 
