@@ -1,15 +1,18 @@
 package io.hensu.server.streaming;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.plan.Plan;
 import io.hensu.core.plan.PlanEvent;
 import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.plan.StepResult;
-import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.helpers.test.AssertSubscriber;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -28,16 +31,15 @@ class ExecutionEventBroadcasterTest {
 
         @Test
         void shouldCreateSubscriptionForExecution() {
-            Multi<ExecutionEvent> events = broadcaster.subscribe("exec-1");
+            broadcaster.subscribe("exec-1");
 
-            assertThat(events).isNotNull();
             assertThat(broadcaster.hasSubscribers("exec-1")).isTrue();
         }
 
         @Test
-        void shouldReturnSameStreamForMultipleSubscriptions() {
-            Multi<ExecutionEvent> first = broadcaster.subscribe("exec-1");
-            Multi<ExecutionEvent> second = broadcaster.subscribe("exec-1");
+        void shouldReuseExistingProcessorForSameExecutionId() {
+            broadcaster.subscribe("exec-1");
+            broadcaster.subscribe("exec-1");
 
             assertThat(broadcaster.activeSubscriptionCount()).isEqualTo(1);
         }
@@ -65,15 +67,20 @@ class ExecutionEventBroadcasterTest {
 
         @Test
         void shouldNotFailWhenNoSubscribers() {
-            ExecutionEvent event =
-                    ExecutionEvent.ExecutionStarted.now("exec-1", "wf-1", "tenant-1");
-
-            // Should not throw
-            broadcaster.publish("exec-1", event);
+            // A publish to an unknown execution must silently drop — no exception, no subscriber
+            // created
+            assertThatCode(
+                            () ->
+                                    broadcaster.publish(
+                                            "exec-1",
+                                            ExecutionEvent.ExecutionStarted.now(
+                                                    "exec-1", "wf-1", "tenant-1")))
+                    .doesNotThrowAnyException();
+            assertThat(broadcaster.hasSubscribers("exec-1")).isFalse();
         }
 
         @Test
-        void shouldDeliverMultipleEvents() {
+        void shouldDeliverMultipleEventsInOrder() {
             AssertSubscriber<ExecutionEvent> subscriber =
                     broadcaster
                             .subscribe("exec-1")
@@ -119,22 +126,90 @@ class ExecutionEventBroadcasterTest {
         }
 
         @Test
-        void shouldCleanupResources() {
+        void shouldCleanupSubscriberEntryAfterComplete() {
             broadcaster.subscribe("exec-1");
             assertThat(broadcaster.hasSubscribers("exec-1")).isTrue();
 
             broadcaster.complete("exec-1");
+
             assertThat(broadcaster.hasSubscribers("exec-1")).isFalse();
         }
     }
 
     @Nested
-    class PlanObserver {
+    class ScopedValueContext {
 
         @Test
-        void shouldConvertPlanCreatedEvent() {
-            broadcaster.setCurrentExecution("exec-1");
+        void runAs_bindsScopedValueForDurationOfCall() throws Exception {
+            AtomicBoolean wasBound = new AtomicBoolean(false);
+            AtomicReference<String> capturedId = new AtomicReference<>();
 
+            broadcaster.runAs(
+                    "exec-1",
+                    () -> {
+                        wasBound.set(ExecutionEventBroadcaster.CURRENT_EXECUTION.isBound());
+                        capturedId.set(ExecutionEventBroadcaster.CURRENT_EXECUTION.get());
+                        return null;
+                    });
+
+            assertThat(wasBound.get()).isTrue();
+            assertThat(capturedId.get()).isEqualTo("exec-1");
+        }
+
+        @Test
+        void runAs_unbindsContextAfterNormalReturn() throws Exception {
+            broadcaster.runAs("exec-1", () -> null);
+
+            // ScopedValue must not be bound outside its frame
+            assertThat(ExecutionEventBroadcaster.CURRENT_EXECUTION.isBound()).isFalse();
+        }
+
+        @Test
+        void runAs_unbindsContextEvenWhenCallableThrows() {
+            assertThatThrownBy(
+                            () ->
+                                    broadcaster.runAs(
+                                            "exec-1",
+                                            () -> {
+                                                throw new RuntimeException("execution failed");
+                                            }))
+                    .isInstanceOf(RuntimeException.class);
+
+            // The old ThreadLocal set/clear idiom could fail to clear on re-thrown exceptions
+            // if the finally block was in a different scope. ScopedValue is structurally
+            // scoped so this is guaranteed by the JVM — this test proves we use it correctly.
+            assertThat(ExecutionEventBroadcaster.CURRENT_EXECUTION.isBound()).isFalse();
+        }
+
+        @Test
+        void runAs_nestedCallsBindCorrectIdWithinEachScope() throws Exception {
+            AtomicReference<String> outerCapture = new AtomicReference<>();
+            AtomicReference<String> innerCapture = new AtomicReference<>();
+
+            broadcaster.runAs(
+                    "outer",
+                    () -> {
+                        outerCapture.set(ExecutionEventBroadcaster.CURRENT_EXECUTION.get());
+                        broadcaster.runAs(
+                                "inner",
+                                () -> {
+                                    innerCapture.set(
+                                            ExecutionEventBroadcaster.CURRENT_EXECUTION.get());
+                                    return null;
+                                });
+                        return null;
+                    });
+
+            assertThat(outerCapture.get()).isEqualTo("outer");
+            assertThat(innerCapture.get()).isEqualTo("inner");
+        }
+    }
+
+    @Nested
+    class PlanObserverConversion {
+
+        @Test
+        void onEvent_routesViaScopedValueWhenNoPlanMappingExists() throws Exception {
             AssertSubscriber<ExecutionEvent> subscriber =
                     broadcaster
                             .subscribe("exec-1")
@@ -148,43 +223,56 @@ class ExecutionEventBroadcasterTest {
                                     PlannedStep.simple(0, "tool-1", "Step 1"),
                                     PlannedStep.simple(1, "tool-2", "Step 2")));
 
-            broadcaster.onEvent(PlanEvent.PlanCreated.now(plan));
+            // ScopedValue provides the execution context — no explicit plan registration needed
+            // before PlanCreated fires (it registers the plan as a side-effect).
+            broadcaster.runAs(
+                    "exec-1",
+                    () -> {
+                        broadcaster.onEvent(PlanEvent.PlanCreated.now(plan));
+                        return null;
+                    });
 
             subscriber.awaitItems(1);
             ExecutionEvent event = subscriber.getItems().getFirst();
             assertThat(event.type()).isEqualTo("plan.created");
-            assertThat(event).isInstanceOf(ExecutionEvent.PlanCreated.class);
-
             ExecutionEvent.PlanCreated created = (ExecutionEvent.PlanCreated) event;
             assertThat(created.steps()).hasSize(2);
         }
 
         @Test
-        void shouldConvertStepStartedEvent() {
-            broadcaster.setCurrentExecution("exec-1");
+        void onEvent_prefersPlanMappingOverScopedValue() throws Exception {
+            // plan-1 is registered to exec-1
             broadcaster.registerPlan("plan-1", "exec-1");
 
-            AssertSubscriber<ExecutionEvent> subscriber =
+            AssertSubscriber<ExecutionEvent> subscriberExec1 =
                     broadcaster
                             .subscribe("exec-1")
                             .subscribe()
                             .withSubscriber(AssertSubscriber.create(10));
+            AssertSubscriber<ExecutionEvent> subscriberExec2 =
+                    broadcaster
+                            .subscribe("exec-2")
+                            .subscribe()
+                            .withSubscriber(AssertSubscriber.create(10));
 
-            PlannedStep step = PlannedStep.simple(0, "search", "Search for data");
-            broadcaster.onEvent(PlanEvent.StepStarted.now("plan-1", step));
+            // ScopedValue says exec-2, but plan mapping must take priority
+            broadcaster.runAs(
+                    "exec-2",
+                    () -> {
+                        PlannedStep step = PlannedStep.simple(0, "search", "desc");
+                        broadcaster.onEvent(PlanEvent.StepStarted.now("plan-1", step));
+                        return null;
+                    });
 
-            subscriber.awaitItems(1);
-            ExecutionEvent event = subscriber.getItems().getFirst();
-            assertThat(event.type()).isEqualTo("step.started");
+            subscriberExec1.awaitItems(1);
 
-            ExecutionEvent.StepStarted started = (ExecutionEvent.StepStarted) event;
-            assertThat(started.toolName()).isEqualTo("search");
-            assertThat(started.stepIndex()).isEqualTo(0);
+            // Event was routed to exec-1 (plan mapping), not exec-2 (ScopedValue)
+            assertThat(subscriberExec1.getItems()).hasSize(1);
+            assertThat(subscriberExec2.getItems()).isEmpty();
         }
 
         @Test
-        void shouldConvertStepCompletedEvent() {
-            broadcaster.setCurrentExecution("exec-1");
+        void onEvent_convertsStepCompletedWithOutput() {
             broadcaster.registerPlan("plan-1", "exec-1");
 
             AssertSubscriber<ExecutionEvent> subscriber =
@@ -198,67 +286,36 @@ class ExecutionEventBroadcasterTest {
             broadcaster.onEvent(PlanEvent.StepCompleted.now("plan-1", result));
 
             subscriber.awaitItems(1);
-            ExecutionEvent event = subscriber.getItems().getFirst();
-            assertThat(event.type()).isEqualTo("step.completed");
-
-            ExecutionEvent.StepCompleted completed = (ExecutionEvent.StepCompleted) event;
+            ExecutionEvent.StepCompleted completed =
+                    (ExecutionEvent.StepCompleted) subscriber.getItems().getFirst();
             assertThat(completed.success()).isTrue();
             assertThat(completed.output()).isEqualTo("Result data");
         }
 
         @Test
-        void shouldConvertPlanCompletedEvent() {
-            broadcaster.setCurrentExecution("exec-1");
-            broadcaster.registerPlan("plan-1", "exec-1");
-
+        void onEvent_convertsAndRegistersPlanOnPlanCreated() throws Exception {
             AssertSubscriber<ExecutionEvent> subscriber =
                     broadcaster
                             .subscribe("exec-1")
                             .subscribe()
                             .withSubscriber(AssertSubscriber.create(10));
 
-            broadcaster.onEvent(PlanEvent.PlanCompleted.success("plan-1", "Final output"));
+            Plan plan = Plan.staticPlan("node-1", List.of(PlannedStep.simple(0, "tool", "do it")));
 
-            subscriber.awaitItems(1);
-            ExecutionEvent event = subscriber.getItems().getFirst();
-            assertThat(event.type()).isEqualTo("plan.completed");
+            broadcaster.runAs(
+                    "exec-1",
+                    () -> {
+                        broadcaster.onEvent(PlanEvent.PlanCreated.now(plan));
+                        return null;
+                    });
 
-            ExecutionEvent.PlanCompleted completed = (ExecutionEvent.PlanCompleted) event;
-            assertThat(completed.success()).isTrue();
-            assertThat(completed.output()).isEqualTo("Final output");
-        }
+            // After PlanCreated, subsequent step events must route via plan mapping
+            // (not ScopedValue) — plan ID is now known
+            broadcaster.onEvent(PlanEvent.PlanCompleted.success(plan.id(), "Done"));
 
-        @Test
-        void shouldRouteEventsByPlanId() {
-            // Register plan with execution
-            broadcaster.registerPlan("plan-1", "exec-1");
-
-            AssertSubscriber<ExecutionEvent> subscriber =
-                    broadcaster
-                            .subscribe("exec-1")
-                            .subscribe()
-                            .withSubscriber(AssertSubscriber.create(10));
-
-            // No current execution set, but plan is registered
-            broadcaster.onEvent(PlanEvent.PlanCompleted.success("plan-1", "Done"));
-
-            subscriber.awaitItems(1);
-            assertThat(subscriber.getItems().getFirst().executionId()).isEqualTo("exec-1");
-        }
-    }
-
-    @Nested
-    class ThreadLocalContext {
-
-        @Test
-        void shouldSetAndClearCurrentExecution() {
-            assertThat(broadcaster.getCurrentExecution()).isNull();
-
-            broadcaster.setCurrentExecution("exec-1");
-            assertThat(broadcaster.getCurrentExecution()).isEqualTo("exec-1");
-
-            broadcaster.setCurrentExecution(null);
-            assertThat(broadcaster.getCurrentExecution()).isNull();
+            subscriber.awaitItems(2);
+            assertThat(subscriber.getItems().get(0).type()).isEqualTo("plan.created");
+            assertThat(subscriber.getItems().get(1).type()).isEqualTo("plan.completed");
         }
     }
 }

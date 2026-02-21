@@ -27,7 +27,7 @@ import org.jboss.logging.Logger;
 /// Provides endpoints for:
 /// - Starting workflow executions
 /// - Resuming paused executions
-/// - Querying execution status and plans
+/// - Querying execution status, plans, and final output
 ///
 /// Tenant identity is resolved from the JWT `tenant_id` claim via
 /// {@link RequestTenantResolver}. In dev/test mode, a default tenant is used.
@@ -265,6 +265,54 @@ public class ExecutionResource {
                         .toList();
 
         return Response.ok().entity(response).build();
+    }
+
+    /// Gets the final output of a completed or paused execution.
+    ///
+    /// Returns the workflow context at the last checkpoint with internal system
+    /// keys (prefixed with `_`) excluded. Use this endpoint to retrieve the
+    /// workflow result when not consuming the SSE stream, or as a fallback
+    /// after receiving an `execution.completed` event.
+    ///
+    /// ### Request
+    /// ```
+    /// GET /api/v1/executions/{executionId}/result
+    /// Authorization: Bearer <jwt>
+    /// ```
+    ///
+    /// ### Response (200 OK)
+    /// ```json
+    /// {
+    ///   "executionId": "exec-123",
+    ///   "workflowId": "order-processing",
+    ///   "status": "COMPLETED",
+    ///   "output": {"summary": "Order validated", "approved": true}
+    /// }
+    /// ```
+    ///
+    /// @param executionId the execution identifier, not null
+    /// @return 200 with output, or 404 if not found
+    @GET
+    @Path("/{executionId}/result")
+    public Response getExecutionResult(@PathParam("executionId") @ValidId String executionId) {
+
+        String tenantId = tenantResolver.tenantId();
+
+        try {
+            ExecutionOutput output = workflowService.getExecutionResult(tenantId, executionId);
+
+            return Response.ok()
+                    .entity(
+                            Map.of(
+                                    "executionId", output.executionId(),
+                                    "workflowId", output.workflowId(),
+                                    "status", output.status(),
+                                    "output", output.output()))
+                    .build();
+        } catch (ExecutionNotFoundException e) {
+            LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
+            throw new NotFoundException(e.getMessage());
+        }
     }
 
     /// Request body for starting an execution.
