@@ -1,0 +1,33 @@
+Hensu The high-performance orchestration engine for declarative AI workflows
+Copyright 2025–2026 Aleksandr Suvorov
+
+Hensu™ and the axolotl logo are trademarks of Aleksandr Suvorov.
+
+This product includes software developed by:
+
+* The Apache Software Foundation (http://www.apache.org/)
+  - Used via Quarkus, various Apache Commons components, and Flyway (Core).
+
+* Red Hat, Inc. and contributors (https://quarkus.io/)
+  - The Quarkus framework and its ecosystem.
+
+* JetBrains s.r.o. and Kotlin contributors (https://kotlinlang.org/)
+  - The Kotlin programming language and scripting tools.
+
+* The LangChain4j Authors (https://github.com/langchain4j/langchain4j)
+  - AI orchestration and model adapters.
+
+* The FasterXML Project (https://github.com/FasterXML/jackson)
+  - The Jackson JSON processing suite.
+
+* The PostgreSQL Global Development Group (https://jdbc.postgresql.org/)
+  - PostgreSQL JDBC Driver
+
+* AtomicJar, Inc. and Testcontainers contributors (https://www.testcontainers.org/)
+  - Container-based testing infrastructure.
+
+* Eclipse Foundation (https://www.eclipse.org/)
+  - Used via Jakarta EE and MicroProfile specifications.
+
+* The Mockito Project (https://site.mockito.org/)
+  - Mocking framework for unit testing.
