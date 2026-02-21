@@ -30,28 +30,31 @@ public final class ProcessorPipeline {
         this.processors = List.copyOf(processors);
     }
 
-    /// Builds the pre-execution pipeline.
+    /// Builds the pre-execution pipeline of {@link PreNodeExecutionProcessor}s.
     ///
     /// Runs before the node's primary logic is invoked. Processors in this
     /// pipeline receive a {@link ProcessorContext} with a {@code null} result.
     ///
-    /// @apiNote Currently an architectural placeholder; returns an empty pipeline.
-    /// Add {@link PreNodeExecutionProcessor}s here for input validation,
-    /// context injection, or guard logic.
+    /// Pipeline order:
+    /// 1. Checkpoint — fires {@code listener.onCheckpoint(state)} for crash-recovery persistence
+    /// 2. Node start — fires {@code listener.onNodeStart(node)} for observability
     ///
-    /// @return an empty pre-execution pipeline, never null
+    /// @return configured pre-execution pipeline, never null
     public static ProcessorPipeline preExecution() {
-        return new ProcessorPipeline(List.of());
+        return new ProcessorPipeline(
+                List.of(new CheckpointPreProcessor(), new NodeStartPreProcessor()));
     }
 
     /// Builds the default post-execution pipeline of {@link PostNodeExecutionProcessor}s.
     ///
     /// Pipeline order matters — each processor may short-circuit the chain:
-    /// 1. Output extraction — stores node output in state context
-    /// 2. History — appends execution step to history
-    /// 3. Review — human review checkpoint (may redirect or terminate)
-    /// 4. Rubric — quality evaluation and auto-backtrack (may redirect or terminate)
-    /// 5. Transition — resolves next node (sets current node in state)
+    /// 1. Output extraction — validates (dangerous chars, Unicode tricks, size) then stores
+    /// node output in state context
+    /// 2. Node complete — fires {@code listener.onNodeComplete(node, result)} for observability
+    /// 3. History — appends execution step to history
+    /// 4. Review — human review checkpoint (may redirect or terminate)
+    /// 5. Rubric — quality evaluation and auto-backtrack (may redirect or terminate)
+    /// 6. Transition — resolves next node (sets current node in state)
     ///
     /// @param reviewHandler handler for human review callbacks, not null
     /// @param rubricEngine engine for rubric evaluation, not null
@@ -61,6 +64,7 @@ public final class ProcessorPipeline {
         return new ProcessorPipeline(
                 List.of(
                         new OutputExtractionPostProcessor(),
+                        new NodeCompletePostProcessor(),
                         new HistoryPostProcessor(),
                         new ReviewPostProcessor(reviewHandler),
                         new RubricPostProcessor(rubricEngine),

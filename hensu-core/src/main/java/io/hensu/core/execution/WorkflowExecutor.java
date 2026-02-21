@@ -133,13 +133,12 @@ public class WorkflowExecutor {
         this.agentRegistry = agentRegistry;
         this.executorService = executorService;
         this.rubricEngine = rubricEngine;
-        ReviewHandler reviewHandler1 =
-                reviewHandler != null ? reviewHandler : ReviewHandler.AUTO_APPROVE;
+        reviewHandler = reviewHandler != null ? reviewHandler : ReviewHandler.AUTO_APPROVE;
         this.actionExecutor = actionExecutor;
         this.templateResolver = templateResolver;
         this.workflowRepository = workflowRepository;
         this.prePipeline = ProcessorPipeline.preExecution();
-        this.postPipeline = ProcessorPipeline.postExecution(reviewHandler1, rubricEngine);
+        this.postPipeline = ProcessorPipeline.postExecution(reviewHandler, rubricEngine);
     }
 
     /// Executes a workflow without observability listener.
@@ -223,7 +222,7 @@ public class WorkflowExecutor {
     ///
     /// Traverses the workflow graph with a symmetric pipeline model:
     /// PRE-PIPELINE -> node execution -> POST-PIPELINE. The loop handles:
-    /// node lookup, end-node detection, pre-pipeline directives, checkpointing,
+    /// node lookup, end-node detection, pre-pipeline directives,
     /// node execution, PENDING detection, and post-pipeline directive dispatch.
     ///
     /// @param state    current workflow state with position, not null
@@ -256,17 +255,12 @@ public class WorkflowExecutor {
             var preResult = prePipeline.execute(new ProcessorContext(context, node, null));
             if (preResult.isPresent()) return preResult.get();
 
-            listener.onCheckpoint(state);
-            listener.onNodeStart(node);
-
             NodeResult result = executeNode(node, context);
 
             if (result.getStatus() == ResultStatus.PENDING) {
                 state.setCurrentNode(currentNodeId);
                 return new ExecutionResult.Paused(state);
             }
-
-            listener.onNodeComplete(node, result);
 
             var postResult = postPipeline.execute(new ProcessorContext(context, node, result));
             if (postResult.isPresent()) return postResult.get();
