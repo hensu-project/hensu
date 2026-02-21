@@ -16,6 +16,7 @@ The `hensu-core` module is the execution engine at the heart of Hensu. It provid
 - **Template Resolution** — `{variable}` placeholder substitution in prompts
 - **State Snapshots** — Serializable execution state for persistence and time-travel debugging
 - **Generic Nodes** — Extensible node types for custom workflow operations
+- **Agentic Output Validation** — Defense-in-depth safety checks applied to all LLM-generated node outputs before they enter workflow state (ASCII control chars, Unicode manipulation chars, payload size)
 
 ## Architecture
 
@@ -232,7 +233,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── PostNodeExecutionProcessor.java      # Post-execution processor interface
 │   │   ├── ProcessorContext.java                # Per-iteration context (node + result + state)
 │   │   ├── ProcessorPipeline.java               # Orchestrates pre/post processor chains
-│   │   ├── OutputExtractionPostProcessor.java   # Stores node output in state context
+│   │   ├── OutputExtractionPostProcessor.java   # Validates then stores node output in state context
 │   │   ├── HistoryPostProcessor.java            # Records execution steps for audit
 │   │   ├── ReviewPostProcessor.java             # Human-in-the-loop review checkpoints
 │   │   ├── RubricPostProcessor.java             # Quality evaluation + auto-backtrack
@@ -278,6 +279,9 @@ hensu-core/src/main/java/io/hensu/core/
 │   └── PlanEvent.java             # Plan lifecycle events
 ├── review/                        # Human review support
 ├── template/                      # {variable} placeholder resolution
+├── util/
+│   ├── AgentOutputValidator.java  # LLM output safety checks (control chars, Unicode tricks, size)
+│   └── JsonUtil.java              # Dependency-free JSON extraction utilities
 └── state/                         # Execution state and persistence
     ├── HensuState.java            # Mutable runtime state during execution
     ├── HensuSnapshot.java         # Immutable checkpoint record for persistence

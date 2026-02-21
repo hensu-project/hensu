@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.hensu.core.execution.executor.ExecutionContext;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
+import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuState;
+import io.hensu.core.util.AgentOutputValidator;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.transition.SuccessTransition;
@@ -151,6 +153,57 @@ class OutputExtractionPostProcessorTest {
         processor.process(ctx);
 
         assertThat(ctx.state().getContext()).containsEntry("flat", "ok").doesNotContainKey("meta");
+    }
+
+    // ——————————————————————————————————————————————————————
+    // Output validation
+    // ——————————————————————————————————————————————————————
+
+    @Test
+    @DisplayName("output with NUL byte returns Failure and does not pollute context")
+    void shouldRejectOutputWithNulByte() {
+        var ctx = contextWith("guard-node", "clean prefix\u0000injected", List.of());
+
+        var result = processor.process(ctx);
+
+        assertThat(result).isPresent().get().isInstanceOf(ExecutionResult.Failure.class);
+        assertThat(ctx.state().getContext()).doesNotContainKey("guard-node");
+    }
+
+    @Test
+    @DisplayName("output with RLO override (U+202E) returns Failure and does not pollute context")
+    void shouldRejectOutputWithRloOverride() {
+        var ctx = contextWith("guard-node", "visible\u202Ehidden", List.of());
+
+        var result = processor.process(ctx);
+
+        assertThat(result).isPresent().get().isInstanceOf(ExecutionResult.Failure.class);
+        assertThat(ctx.state().getContext()).doesNotContainKey("guard-node");
+    }
+
+    @Test
+    @DisplayName(
+            "output exceeding MAX_LLM_OUTPUT_BYTES returns Failure and does not pollute context")
+    void shouldRejectOversizedOutput() {
+        // One byte over the 4 MB limit
+        String oversized = "x".repeat(AgentOutputValidator.MAX_LLM_OUTPUT_BYTES + 1);
+        var ctx = contextWith("guard-node", oversized, List.of());
+
+        var result = processor.process(ctx);
+
+        assertThat(result).isPresent().get().isInstanceOf(ExecutionResult.Failure.class);
+        assertThat(ctx.state().getContext()).doesNotContainKey("guard-node");
+    }
+
+    @Test
+    @DisplayName("Failure result carries the node ID in the exception message")
+    void shouldIncludeNodeIdInFailureMessage() {
+        var ctx = contextWith("my-node", "bad\u0007content", List.of());
+
+        var result = processor.process(ctx);
+
+        var failure = (ExecutionResult.Failure) result.orElseThrow();
+        assertThat(failure.e().getMessage()).contains("my-node");
     }
 
     // --- Helpers ---
