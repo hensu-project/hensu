@@ -1,4 +1,5 @@
 <div align="center">
+    <img src="assets/logo.png" alt="hensu logo" width="150" style="margin-bottom: -30px;"/><br>
 
 # Hensu™
 
