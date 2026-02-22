@@ -21,8 +21,18 @@ import javax.sql.DataSource;
 /// `history`, and `active_plan`. Each execution has at most one row —
 /// checkpoints overwrite the previous state (UPSERT semantics).
 ///
+/// ### Lease Management
+/// `save()` automatically maintains the distributed recovery lease:
+/// - `checkpoint_reason = "checkpoint"` — sets `server_node_id` and bumps `last_heartbeat_at`
+/// - Any terminal reason (`"completed"`, `"paused"`, `"failed"`, `"rejected"`) — clears
+/// both to NULL
+///
+/// This ensures the recovery sweeper only targets executions that are actively
+/// running on a now-dead node, never safely-paused human-review executions.
+///
 /// ### Contracts
-/// - **Precondition**: Flyway migration `V1__create_persistence_tables` has run
+/// - **Precondition**: Flyway migrations `V1__create_persistence_tables` and
+///   `V2__add_execution_leases` have run
 /// - **Postcondition**: `save` is idempotent per `(tenant_id, execution_id)`
 ///
 /// @implNote Thread-safe. Each call acquires its own JDBC connection from the
@@ -30,6 +40,7 @@ import javax.sql.DataSource;
 /// server runs on virtual threads.
 ///
 /// @see HensuSnapshot
+/// @see ExecutionLeaseManager
 /// @see JdbcWorkflowRepository
 public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
 
@@ -39,8 +50,9 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
             """
             INSERT INTO hensu.execution_states
                 (tenant_id, execution_id, workflow_id, current_node_id,
-                 context, history, active_plan, checkpoint_reason, created_at)
-            VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?)
+                 context, history, active_plan, checkpoint_reason, created_at,
+                 server_node_id, last_heartbeat_at)
+            VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?, ?)
             ON CONFLICT (tenant_id, execution_id)
             DO UPDATE SET
                 current_node_id   = EXCLUDED.current_node_id,
@@ -48,7 +60,9 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
                 history           = EXCLUDED.history,
                 active_plan       = EXCLUDED.active_plan,
                 checkpoint_reason = EXCLUDED.checkpoint_reason,
-                created_at        = EXCLUDED.created_at
+                created_at        = EXCLUDED.created_at,
+                server_node_id    = EXCLUDED.server_node_id,
+                last_heartbeat_at = EXCLUDED.last_heartbeat_at
             """;
 
     private static final String SQL_FIND_BY_EXECUTION_ID =
@@ -59,12 +73,14 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
             WHERE tenant_id = ? AND execution_id = ?
             """;
 
+    /// Only returns executions that are safely paused for human review
+    /// (server_node_id IS NULL ensures active checkpoints are excluded).
     private static final String SQL_FIND_PAUSED =
             """
             SELECT execution_id, workflow_id, current_node_id, context, history,
                    active_plan, checkpoint_reason, created_at
             FROM hensu.execution_states
-            WHERE tenant_id = ? AND current_node_id IS NOT NULL
+            WHERE tenant_id = ? AND current_node_id IS NOT NULL AND server_node_id IS NULL
             ORDER BY created_at
             """;
 
@@ -89,17 +105,30 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
 
     private final JdbcSupport jdbc;
     private final ObjectMapper objectMapper;
+    private final String serverNodeId;
 
-    public JdbcWorkflowStateRepository(DataSource dataSource, ObjectMapper objectMapper) {
+    /// Creates a repository backed by the given data source.
+    ///
+    /// @param dataSource the JDBC connection pool, not null
+    /// @param objectMapper Jackson mapper for JSONB serialization, not null
+    /// @param serverNodeId unique identifier of this server instance, not null
+    public JdbcWorkflowStateRepository(
+            DataSource dataSource, ObjectMapper objectMapper, String serverNodeId) {
         Objects.requireNonNull(dataSource, "dataSource must not be null");
         this.jdbc = new JdbcSupport(dataSource);
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null");
+        this.serverNodeId = Objects.requireNonNull(serverNodeId, "serverNodeId must not be null");
     }
 
     @Override
     public void save(String tenantId, HensuSnapshot snapshot) {
         Objects.requireNonNull(tenantId, "tenantId must not be null");
         Objects.requireNonNull(snapshot, "snapshot must not be null");
+
+        // Active checkpoints hold the lease; terminal states release it.
+        boolean active = "checkpoint".equals(snapshot.checkpointReason());
+        String leaseNodeId = active ? serverNodeId : null;
+        OffsetDateTime heartbeatAt = active ? OffsetDateTime.now(ZoneOffset.UTC) : null;
 
         jdbc.update(
                 SQL_SAVE,
@@ -117,6 +146,8 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
                                     : null);
                     ps.setString(8, snapshot.checkpointReason());
                     ps.setObject(9, OffsetDateTime.ofInstant(snapshot.createdAt(), ZoneOffset.UTC));
+                    ps.setString(10, leaseNodeId);
+                    ps.setObject(11, heartbeatAt);
                 },
                 "Failed to save execution state: " + snapshot.executionId());
     }

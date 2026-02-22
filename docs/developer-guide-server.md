@@ -13,6 +13,7 @@ This guide covers the architecture, patterns, and best practices for developing 
 - [MCP Integration](#mcp-integration)
 - [Testing](#testing)
   - [Integration Testing](#integration-testing)
+- [Distributed Recovery (Leasing)](#distributed-recovery-leasing)
 - [GraalVM Native Image](#graalvm-native-image)
 - [Configuration](#configuration)
 
@@ -100,7 +101,7 @@ public HensuEnvironment hensuEnvironment() {
         DataSource ds = dataSourceInstance.get();
         factoryBuilder
                 .workflowRepository(new JdbcWorkflowRepository(ds))
-                .workflowStateRepository(new JdbcWorkflowStateRepository(ds, objectMapper));
+                .workflowStateRepository(new JdbcWorkflowStateRepository(ds, objectMapper, leaseManager.getServerNodeId()));
     }
 
     hensuEnvironment = factoryBuilder.build();
@@ -145,7 +146,7 @@ public ObjectMapper objectMapper() {
 }
 ```
 
-> **Note**: Use `@Singleton` (not `@ApplicationScoped`) for delegate producers. `@ApplicationScoped` creates a CDI client proxy that breaks `instanceof` checks against concrete types (e.g., `InMemoryWorkflowStateRepository`).
+> **Note**: Use `@Singleton` (not `@ApplicationScoped`) **only for `@Produces` delegate methods** like these. `@ApplicationScoped` creates a CDI client proxy that breaks `instanceof` checks against the concrete type returned (e.g., `InMemoryWorkflowStateRepository` used in test cleanup). Regular CDI beans that are not produced via `@Produces` — service classes, scheduled jobs, handlers — should use `@ApplicationScoped`.
 
 ### ServerActionExecutor
 
@@ -212,15 +213,19 @@ io.hensu.server/
 │   └── SseMcpConnection         # SSE-based connection impl
 │
 ├── persistence/           # PostgreSQL persistence (plain JDBC)
-│   ├── JdbcWorkflowRepository   # Workflow definitions (JSONB)
-│   ├── JdbcWorkflowStateRepository # Execution state snapshots (JSONB)
-│   └── PersistenceException     # Unchecked wrapper for SQLException
+│   ├── JdbcWorkflowRepository         # Workflow definitions (JSONB)
+│   ├── JdbcWorkflowStateRepository    # Execution state snapshots (JSONB + lease columns)
+│   ├── ExecutionLeaseManager          # Distributed lease management (@ApplicationScoped)
+│   ├── JdbcSupport                    # JDBC helper (queryList, update)
+│   └── PersistenceException           # Unchecked wrapper for SQLException
 │
 ├── planner/               # LLM planning
 │   └── LlmPlanner              # LLM-based plan generation
 │
 ├── service/               # Business logic layer
-│   └── WorkflowService          # Workflow operations
+│   ├── WorkflowService              # Workflow operations
+│   ├── ExecutionHeartbeatJob        # Periodic heartbeat emission (@Scheduled)
+│   └── WorkflowRecoveryJob          # Orphaned execution sweeper (@Scheduled)
 │
 ├── streaming/             # Execution event streaming
 │   ├── ExecutionEvent           # Event DTOs (sealed interface)
@@ -969,6 +974,71 @@ These tests require Docker for Testcontainers. Run them separately:
 
 ---
 
+## Distributed Recovery (Leasing)
+
+In production multi-instance deployments, each server node holds a **lease** on the executions it
+is currently running. When a node crashes, surviving nodes detect the stale lease and atomically
+claim the orphaned execution for re-execution.
+
+### Components
+
+| Class                   | Package        | Role                                                                                                                                             |
+|-------------------------|----------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ExecutionLeaseManager` | `persistence/` | `@ApplicationScoped` CDI bean; owns lease SQL, generates `server_node_id`, exposes `updateHeartbeats()` and `claimStaleExecutions()`             |
+| `ExecutionHeartbeatJob` | `service/`     | `@Scheduled` — runs every `${hensu.lease.heartbeat-interval:30s}`; calls `leaseManager.updateHeartbeats()`                                       |
+| `WorkflowRecoveryJob`   | `service/`     | `@Scheduled` — runs every `${hensu.lease.recovery-interval:60s}`; claims stale executions and calls `workflowService.resumeExecution()` for each |
+
+### Lease Lifecycle
+
+The `JdbcWorkflowStateRepository.save()` method sets or clears lease columns based on
+`checkpointReason`:
+
+| Reason                                                 | `server_node_id`      | `last_heartbeat_at` |
+|--------------------------------------------------------|-----------------------|---------------------|
+| `"checkpoint"`                                         | set to this node's ID | set to `NOW()`      |
+| `"paused"` / `"completed"` / `"failed"` / `"rejected"` | `NULL`                | `NULL`              |
+
+This means `findPaused()` (which filters `WHERE server_node_id IS NULL`) only returns
+human-review checkpoints — active running executions are never surfaced as paused.
+
+### Configuration
+
+```properties
+# Node identity — auto-generated UUID on startup if left blank
+hensu.node.id=
+
+# Heartbeat interval — how often active leases are renewed
+hensu.lease.heartbeat-interval=30s
+
+# Recovery sweep interval — how often the sweeper runs
+hensu.lease.recovery-interval=60s
+
+# Stale threshold — executions older than this are claimed by the sweeper
+hensu.lease.stale-threshold=90s
+```
+
+### InMemory Profile
+
+The `inmem` test profile disables the scheduler entirely:
+
+```properties
+%inmem.quarkus.scheduler.enabled=false
+```
+
+`ExecutionLeaseManager.isActive()` returns `false` when `quarkus.datasource.active=false`.
+All lease operations are no-ops; `WorkflowRecoveryJob` guards with `if (!leaseManager.isActive()) return;`.
+
+### Testing
+
+Lease behaviour is tested in `io.hensu.server.persistence.ExecutionLeaseTest` (Testcontainers
+PostgreSQL, no Quarkus context). Key properties covered:
+
+- Orphaned row (stale heartbeat) is claimed by the sweeper node
+- Row with a fresh heartbeat is never claimed (live execution safety)
+- `updateHeartbeats()` only touches rows owned by the calling node (crashed-node isolation)
+
+---
+
 ## GraalVM Native Image
 
 The server is deployed as a GraalVM native image via Quarkus. All server code — and any dependency it pulls in — must be native-image safe. See the [hensu-core Developer Guide](developer-guide-core.md#graalvm-native-image-constraints) for the foundational rules (no reflection, no classpath scanning, no dynamic proxies, no runtime bytecode generation). This section covers **server-specific** concerns.
@@ -1155,6 +1225,13 @@ quarkus.flyway.schemas=hensu
 %inmem.quarkus.datasource.active=false
 %inmem.quarkus.datasource.devservices.enabled=false
 %inmem.quarkus.flyway.migrate-at-start=false
+
+# Distributed recovery leasing
+hensu.node.id=
+hensu.lease.heartbeat-interval=30s
+hensu.lease.recovery-interval=60s
+hensu.lease.stale-threshold=90s
+%inmem.quarkus.scheduler.enabled=false
 
 # Logging
 quarkus.log.category."io.hensu".level=DEBUG

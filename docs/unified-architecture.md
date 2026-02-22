@@ -80,7 +80,9 @@ transport:
 - **Upstream (HTTP POST):** The client executes the tool locally and returns the result.
 
 This means tenant clients connect *outbound* — no inbound ports, no firewall rules, no VPN.
-The server never sees raw credentials or executes user-supplied code.
+The server never sees raw credentials or executes user-supplied code. LLM output is treated with
+equal suspicion — `AgentOutputValidator` sanitizes all agent responses for control characters,
+Unicode manipulation, and excessive payload size before the output is written to workflow state.
 
 ### 4. Non-Linear Graph Execution
 
@@ -96,6 +98,10 @@ Workflows are not limited to linear chains. The graph engine supports:
 | **Backtracking**          | Review decisions can jump to any previous node, restoring state from execution history                     |
 | **Sub-workflows**         | `SubWorkflowNode` with input/output mapping for hierarchical composition                                   |
 | **Pause / Resume**        | Any node returning `PENDING` checkpoints state; `executeFrom()` resumes from snapshot                      |
+
+For non-agent steps, `GenericNode` runs custom synchronous logic registered by `executorType`;
+`ActionNode` dispatches asynchronous tasks to external systems via a registered `ActionHandler`
+(e.g., webhooks, git operations, notifications).
 
 ### 5. Quality Gates (Rubric Evaluation)
 
@@ -114,7 +120,52 @@ Repository interfaces and in-memory defaults live in **hensu-core**:
 `HensuEnvironment` via `@Produces @Singleton` — it never creates instances directly. Production deployments can
 substitute database-backed implementations through the builder.
 
-### 7. REST API Separation
+### 7. Distributed Execution & Recovery
+
+In a multi-instance deployment, each server node holds a **lease** on the executions it is
+currently running. Leases are tracked via two columns in `hensu.execution_states`:
+
+- `server_node_id` — the UUID of the server node owning the execution (`NULL` when idle or complete)
+- `last_heartbeat_at` — timestamp last refreshed by the owning node
+
+Three components implement the lease lifecycle:
+
+| Component               | Responsibility                                                                                                                                                               |
+|:------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ExecutionLeaseManager` | Acquires, renews, and atomically claims leases; generates and holds `server_node_id`                                                                                         |
+| `ExecutionHeartbeatJob` | Runs every `hensu.lease.heartbeat-interval` (default `30s`) — bumps `last_heartbeat_at` for all active leases on this node                                                   |
+| `WorkflowRecoveryJob`   | Runs every `hensu.lease.recovery-interval` (default `60s`) — claims any execution whose heartbeat is older than `hensu.lease.stale-threshold` (default `90s`) and resumes it |
+
+```
++——————————————————————————————————————————————————————————————————————+
+│  save("checkpoint") ————————————————> server_node_id set             │
+│       │                                                              │
+│       V             every 30 s                                       │
+│  updateHeartbeats() ————————————————> last_heartbeat_at = NOW()      │
+│       │                                                              │
+│  node crashes                  after stale threshold                 │
+│       V                                                              │
+│  claimStaleExecutions() ———————————> new node claims orphaned row    │
+│       V                                                              │
+│  resumeExecution() → save("completed") ——> server_node_id = NULL     │
++——————————————————————————————————————————————————————————————————————+
+```
+
+**Concurrency safety**: `claimStaleExecutions` uses a single `UPDATE … WHERE last_heartbeat_at < threshold
+RETURNING …`. Under PostgreSQL's default `READ COMMITTED` isolation, two concurrent sweepers racing on the
+same stale row cannot both claim it — the second re-evaluates the `WHERE` clause against the committed row
+(fresh heartbeat) and silently skips it. No application-level locking is required.
+
+The lease is **automatically cleared** (set to `NULL`) when an execution reaches a terminal state —
+`"completed"`, `"paused"` (human review), `"failed"`, or `"rejected"`. The `%inmem` test profile
+disables the scheduler entirely (`%inmem.quarkus.scheduler.enabled=false`).
+
+### 8. REST API Separation
+
+All path/query identifiers are validated by `@ValidId`; workflow request bodies by `@ValidWorkflow`
+(deep-validates the entire object graph for safe identifiers and control-character-free text);
+free-text inputs by `@ValidMessage`. `LogSanitizer` strips CR/LF at every log call site.
+Violations return `400 Bad Request`. See [Server Developer Guide — Input Validation](developer-guide-server.md#input-validation).
 
 ```
 /api/v1/workflows    → WorkflowResource (definition management - CLI integration)
@@ -225,7 +276,9 @@ Extends core with HTTP, MCP, and multi-tenancy:
 - `ExecutionResource` — Execution runtime (start/resume/status/plan)
 - `McpSidecar` / `McpGateway` — MCP protocol integration
 - `LlmPlanner` — LLM-based plan generation
-- `TenantContext` — `ScopedValue`-based tenant isolation
+- `TenantContext` — Java 25 `ScopedValue` carrying tenant identity for the scope of a request; `TenantContext.runAs()` is the safe propagation entry point
+- `ExecutionLeaseManager` / `ExecutionHeartbeatJob` / `WorkflowRecoveryJob` — Distributed recovery: heartbeat emission and orphaned-execution sweeper
+- `JdbcWorkflowRepository` / `JdbcWorkflowStateRepository` — PostgreSQL-backed storage (JSONB workflow definitions, execution state + lease columns)
 
 ### hensu-serialization (JSON Serialization)
 
@@ -314,6 +367,36 @@ node("research-topic") {
 
 ### 3. The Execution Loop
 
+`WorkflowExecutor` separates every node traversal into two distinct concerns: the **outer
+processor pipeline** that wraps each node, and the **inner plan-step loop** within it.
+
+**Outer Pipeline** (`ProcessorPipeline`) — every node traversal:
+
+```
++——————————————————————————————————————————————————+
+│  PRE-EXECUTION PIPELINE                          │
+│  1. CheckpointPreProcessor  (persist state)      │
+│  2. NodeStartPreProcessor   (observability hook) │
++—————————————————————+————————————————————————————+
+                      V
+            node.execute() ————> Inner Loop (see below)
+                      V
++——————————————————————————————————————————————————+
+│  POST-EXECUTION PIPELINE                         │
+│  1. OutputExtractionPostProcessor                │
+│     (AgentOutputValidator → write to context)    │
+│  2. NodeCompletePostProcessor (observability)    │
+│  3. HistoryPostProcessor      (audit trail)      │
+│  4. ReviewPostProcessor       (human-in-the-loop)│
+│  5. RubricPostProcessor       (quality gate)     │
+│  6. TransitionPostProcessor   (next node)        │
++——————————————————————————————————————————————————+
+```
+
+Any processor can short-circuit by returning a terminal `ExecutionResult`.
+
+**Inner Plan Loop** — what `node.execute()` runs for `StandardNode`:
+
 ```
 +———————————————————————————————————————————————————————————————+
 │                     Node Execution                            │
@@ -382,6 +465,113 @@ The server wires core infrastructure through CDI:
 
 ---
 
+## GraalVM Design Constraints
+
+Hensu is deployed as a **GraalVM native image** — this is not just a deployment detail, it shapes
+core architecture. GraalVM performs static analysis at build time; patterns that require runtime
+reflection, classpath scanning, or dynamic class generation fail silently or crash.
+
+### The No-Go List (hensu-core)
+
+| Pattern                                     | Problem                              | Rule                                          |
+|:--------------------------------------------|:-------------------------------------|:----------------------------------------------|
+| `Class.forName()` / `field.setAccessible()` | Requires runtime reflection metadata | Never in `hensu-core`                         |
+| `Proxy.newProxyInstance()`                  | Generates classes at runtime         | Never                                         |
+| Jackson `@JsonTypeInfo(use = CLASS)`        | Encodes class names as strings       | Never; use `SimpleModule` type discriminators |
+| Classpath scanning / `ServiceLoader`        | Scans at runtime                     | Explicit wiring via `HensuFactory.builder()`  |
+
+### Quarkus Relaxations (hensu-server)
+
+Quarkus extensions generate GraalVM metadata at build time, so these patterns work safely
+within `hensu-server`:
+
+- CDI injection (`@Inject`, `@Produces`) — ArC resolves beans at build time
+- `@ConfigProperty` — processed at build time
+- JAX-RS resources (`@Path`, `@GET`) — REST layer is build-time wired
+- LangChain4j AI services — `quarkus-langchain4j` extensions register metadata
+
+### Explicit Wiring as a Design Principle
+
+The prohibition on classpath scanning is why `HensuFactory.builder()` uses explicit wiring.
+`AgentProvider`, `NodeExecutorRegistry`, and `ActionExecutor` instances are declared at call
+sites — GraalVM's static analysis can follow every reference.
+
+Classes in `hensu-core` that Jackson needs reflectively (builder constructors, setter methods)
+are registered in `NativeImageConfig` in `hensu-server` via `@RegisterForReflection`. No
+Quarkus or Jackson annotations ever enter `hensu-core`.
+
+See [Server Developer Guide — GraalVM Native Image](developer-guide-server.md#graalvm-native-image).
+
+---
+
+## Jackson Serialization Contract
+
+### The Core Boundary Rule
+
+`hensu-core` contains **zero Jackson imports**. Domain models (`Workflow`, `Node`, `AgentConfig`)
+are plain Java records and builder classes — no `@JsonProperty`, `@JsonDeserialize`,
+`@JsonTypeInfo`. This is a deliberate decoupling contract: the core engine is a pure Java
+library, testable and deployable without any JSON framework.
+
+### How Serialization Is Wired
+
+`hensu-serialization` owns the entire Jackson configuration:
+
+| Component            | Role                                                                                                                                        |
+|:---------------------|:--------------------------------------------------------------------------------------------------------------------------------------------|
+| `WorkflowSerializer` | Entry point: `toJson()`, `fromJson()`, `createMapper()` — the single `ObjectMapper` factory                                                 |
+| `HensuJacksonModule` | `SimpleModule` registering all custom serializers/deserializers for `Node`, `TransitionRule`, `Action` hierarchies — no reflective scanning |
+| `mixin/` package     | Jackson mixins enabling builder-based deserialization without annotating core models                                                        |
+
+`WorkflowSerializer.createMapper()` is the **single `ObjectMapper` factory** for CLI and server.
+`ServerConfiguration` exposes it as a CDI bean via `@Produces @Singleton`.
+
+### GraalVM Implication
+
+Jackson mixins are a runtime event — Quarkus cannot trace them at build time. `NativeImageConfig`
+in `hensu-server` is the single `@RegisterForReflection` registration point for all `hensu-core`
+builder classes that the mixin machinery needs.
+
+See [hensu-serialization Developer Guide](developer-guide-serialization.md) for the `treeToValue` rule.
+
+---
+
+## Testing Strategy
+
+Each layer has a dedicated testing approach exercising real code at the appropriate scope.
+
+### Unit Tests (Pure JVM)
+
+Isolated class tests using Mockito. `StubAgentProvider` (priority 1000) intercepts all agent
+creation and returns a `StubAgent` backed by `StubResponseRegistry`. No AI API calls, no network,
+no containers.
+
+### Integration Tests (Quarkus InMemory)
+
+`@QuarkusTest` with `@TestProfile(InMemoryTestProfile.class)` boots the full server — API,
+CDI wiring, `WorkflowExecutor`, `TenantContext` — against in-memory repositories. The `inmem`
+profile disables PostgreSQL, Flyway, and the scheduler (no Docker required).
+
+All integration tests extend `IntegrationTestBase`, which provides CDI injection, per-test
+state cleanup, and helpers (`registerStub`, `pushAndExecute`, `resolveRubricPath`).
+
+### Repository Tests (Testcontainers PostgreSQL)
+
+Tests in `io.hensu.server.persistence` extend `JdbcRepositoryTestBase`, which starts a real
+PostgreSQL container and runs Flyway migrations — no Quarkus context involved. These tests
+cover CRUD, UPSERT semantics, FK constraints, tenant isolation, lease column behaviour, and
+distributed recovery operations.
+
+### Test Coverage Map
+
+| Layer       | Mechanism                      | Scope                                                |
+|:------------|:-------------------------------|:-----------------------------------------------------|
+| Unit        | Mockito, pure JVM              | Class-level logic, edge cases                        |
+| Integration | `@QuarkusTest` + inmem profile | CDI wiring, API contracts, end-to-end workflow logic |
+| Persistence | Testcontainers + Flyway        | SQL correctness, schema migrations, tenant isolation |
+
+---
+
 ## Summary
 
 The unified architecture provides:
@@ -392,11 +582,14 @@ The unified architecture provides:
 4. **Zero-Trust Execution** — Server has no shell; all side effects route through MCP to tenant clients
 5. **Non-Linear Graphs** — Loops, conditional branches, fork/join, parallel fan-out with consensus, backtracking
 6. **Rubric Evaluation** — Quality gates that score outputs and route on thresholds for self-correcting loops
-7. **Pause / Resume** — Workflows checkpoint at any node and resume (potentially on a different instance)
-8. **Sub-Workflows** — Hierarchical composition via `SubWorkflowNode` with input/output mapping
-9. **Flexible Planning** — Static (predefined) or Dynamic (LLM-generated) execution plans within nodes
-10. **Human Review** — Checkpoints for manual approval at both plan and execution levels
-11. **Multi-Tenancy** — `ScopedValues` for safe context propagation and tenant isolation
-12. **Storage in Core** — Repository interfaces with in-memory defaults; server delegates via CDI
-13. **Shared Serialization** — `hensu-serialization` provides consistent JSON format for CLI and server
-14. **API Separation** — Workflow definitions and executions are distinct REST resources
+7. **Pause / Resume** — Workflows checkpoint at any node and resume; the lease protocol protects against data races when the owning node crashes
+8. **Distributed Recovery** — Heartbeat/sweeper lease protocol for crashed-node detection; atomic PostgreSQL `UPDATE…RETURNING` claim
+9. **Sub-Workflows** — Hierarchical composition via `SubWorkflowNode` with input/output mapping
+10. **Flexible Planning** — Static (predefined) or Dynamic (LLM-generated) execution plans within nodes
+11. **Human Review** — Checkpoints for manual approval at both plan and execution levels
+12. **Multi-Tenancy** — Java 25 `ScopedValues` for safe tenant context propagation and isolation
+13. **Storage in Core** — Repository interfaces with in-memory defaults; server delegates via CDI
+14. **Shared Serialization** — `hensu-serialization` provides consistent JSON format; zero Jackson in `hensu-core`
+15. **API Separation** — Workflow definitions and executions are distinct REST resources
+16. **GraalVM-First Design** — No-reflection core; explicit wiring enables static analysis
+17. **Three-Layer Testing** — Unit (Mockito), Integration (inmem + stubs), Persistence (Testcontainers)

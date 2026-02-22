@@ -36,6 +36,9 @@ dependencies {
     implementation("io.quarkus:quarkus-jdbc-postgresql")
     implementation("io.quarkus:quarkus-flyway")
 
+    // Scheduler — distributed recovery heartbeat and sweeper jobs
+    implementation("io.quarkus:quarkus-scheduler")
+
     // Security — JWT bearer token authentication
     implementation("io.quarkus:quarkus-smallrye-jwt")
 

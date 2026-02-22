@@ -7,6 +7,10 @@ import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuSnapshot;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -16,16 +20,19 @@ import org.junit.jupiter.api.Test;
 
 /// Integration tests for {@link JdbcWorkflowStateRepository} against a real PostgreSQL instance.
 ///
-/// Verifies CRUD operations, UPSERT semantics, FK constraints, and tenant isolation.
+/// Verifies CRUD operations, UPSERT semantics, FK constraints, tenant isolation,
+/// and lease column set/clear behavior.
 /// A parent workflow is always saved first to satisfy the foreign key reference.
 class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
+
+    static final String NODE_ID = "test-node";
 
     private JdbcWorkflowStateRepository stateRepo;
 
     @BeforeEach
     void setUp() {
         JdbcWorkflowRepository workflowRepo = new JdbcWorkflowRepository(dataSource);
-        stateRepo = new JdbcWorkflowStateRepository(dataSource, objectMapper);
+        stateRepo = new JdbcWorkflowStateRepository(dataSource, objectMapper, NODE_ID);
 
         // FK: execution_states references workflows — delete states first
         stateRepo.deleteAllForTenant(TENANT);
@@ -80,15 +87,18 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
     }
 
     @Test
-    void findByExecutionId_returnsEmptyWhenNotFound() {
-        assertThat(stateRepo.findByExecutionId(TENANT, "nonexistent")).isEmpty();
+    void save_activeCheckpoint_setsLease() throws SQLException {
+        stateRepo.save(TENANT, makeSnapshot("exec-lease", "wf-parent", "process"));
+
+        LeaseColumns lease = readLeaseColumns(TENANT, "exec-lease");
+        assertThat(lease.serverNodeId()).isEqualTo(NODE_ID);
+        assertThat(lease.lastHeartbeatAt()).isNotNull();
     }
 
     @Test
-    void findPaused_returnsSnapshotsWithCurrentNode() {
-        stateRepo.save(TENANT, makeSnapshot("exec-paused", "wf-parent", "process"));
+    void save_completed_clearsLease() throws SQLException {
+        stateRepo.save(TENANT, makeSnapshot("exec-done", "wf-parent", "process"));
 
-        // Completed snapshot: currentNodeId is null
         HensuSnapshot completed =
                 new HensuSnapshot(
                         "wf-parent",
@@ -101,9 +111,71 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         "completed");
         stateRepo.save(TENANT, completed);
 
-        List<HensuSnapshot> paused = stateRepo.findPaused(TENANT);
-        assertThat(paused).hasSize(1);
-        assertThat(paused.getFirst().executionId()).isEqualTo("exec-paused");
+        LeaseColumns lease = readLeaseColumns(TENANT, "exec-done");
+        assertThat(lease.serverNodeId()).isNull();
+        assertThat(lease.lastHeartbeatAt()).isNull();
+    }
+
+    @Test
+    void save_paused_clearsLease() throws SQLException {
+        stateRepo.save(TENANT, makeSnapshot("exec-paused", "wf-parent", "process"));
+
+        HensuSnapshot paused =
+                new HensuSnapshot(
+                        "wf-parent",
+                        "exec-paused",
+                        "process",
+                        Map.of(),
+                        new ExecutionHistory(),
+                        null,
+                        Instant.now(),
+                        "paused");
+        stateRepo.save(TENANT, paused);
+
+        LeaseColumns lease = readLeaseColumns(TENANT, "exec-paused");
+        assertThat(lease.serverNodeId()).isNull();
+        assertThat(lease.lastHeartbeatAt()).isNull();
+    }
+
+    @Test
+    void findByExecutionId_returnsEmptyWhenNotFound() {
+        assertThat(stateRepo.findByExecutionId(TENANT, "nonexistent")).isEmpty();
+    }
+
+    @Test
+    void findPaused_returnsOnlyHumanPausedSnapshots() {
+        // Truly paused for human review: server_node_id = NULL (cleared on "paused" save)
+        HensuSnapshot paused =
+                new HensuSnapshot(
+                        "wf-parent",
+                        "exec-paused",
+                        "process",
+                        Map.of(),
+                        new ExecutionHistory(),
+                        null,
+                        Instant.now(),
+                        "paused");
+        stateRepo.save(TENANT, paused);
+
+        // Active checkpoint: server_node_id is set — must NOT appear in findPaused()
+        stateRepo.save(TENANT, makeSnapshot("exec-running", "wf-parent", "process"));
+
+        // Completed: currentNodeId is null — excluded by current_node_id IS NOT NULL
+        HensuSnapshot completed =
+                new HensuSnapshot(
+                        "wf-parent",
+                        "exec-done",
+                        null,
+                        Map.of(),
+                        new ExecutionHistory(),
+                        null,
+                        Instant.now(),
+                        "completed");
+        stateRepo.save(TENANT, completed);
+
+        List<HensuSnapshot> found = stateRepo.findPaused(TENANT);
+        assertThat(found).hasSize(1);
+        assertThat(found.getFirst().executionId()).isEqualTo("exec-paused");
     }
 
     @Test
@@ -189,12 +261,14 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                 .isEqualTo(ResultStatus.SUCCESS);
     }
 
+    // --- Helpers ---
+
     /// Creates a minimal snapshot with default context and empty history.
     ///
     /// @param executionId unique execution identifier, not null
     /// @param workflowId parent workflow identifier (must exist in DB), not null
     /// @param currentNodeId the node where execution is paused, not null
-    /// @return a valid snapshot, never null
+    /// @return a valid snapshot with {@code checkpoint_reason = "checkpoint"}, never null
     private static HensuSnapshot makeSnapshot(
             String executionId, String workflowId, String currentNodeId) {
         return new HensuSnapshot(
@@ -207,4 +281,25 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                 Instant.now(),
                 "checkpoint");
     }
+
+    /// Reads the raw lease columns directly from the DB for assertion.
+    private LeaseColumns readLeaseColumns(String tenantId, String executionId) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps =
+                        conn.prepareStatement(
+                                "SELECT server_node_id, last_heartbeat_at"
+                                        + " FROM hensu.execution_states"
+                                        + " WHERE tenant_id = ? AND execution_id = ?")) {
+            ps.setString(1, tenantId);
+            ps.setString(2, executionId);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return new LeaseColumns(
+                        rs.getString("server_node_id"),
+                        rs.getObject("last_heartbeat_at", java.time.OffsetDateTime.class));
+            }
+        }
+    }
+
+    private record LeaseColumns(String serverNodeId, java.time.OffsetDateTime lastHeartbeatAt) {}
 }

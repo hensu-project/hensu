@@ -243,7 +243,12 @@ when a DataSource is available, otherwise falls back to in-memory. Repositories 
 - `JdbcWorkflowRepository` / `JdbcWorkflowStateRepository` — PostgreSQL implementations (JSONB columns)
 - **Checkpoint hook**: `WorkflowExecutor` calls `listener.onCheckpoint(state)` before each node execution,
   enabling inter-node state persistence for failover recovery
-- **`inmem` profile**: `quarkus.datasource.active=false` disables PostgreSQL for in-memory-only operation
+- **Distributed recovery**: `ExecutionLeaseManager` maintains a `server_node_id` / `last_heartbeat_at`
+  lease per active execution; `ExecutionHeartbeatJob` renews leases every 30 s (configurable);
+  `WorkflowRecoveryJob` sweeps for stale leases and resumes orphaned executions on a surviving node —
+  see [Server Developer Guide — Distributed Recovery](../docs/developer-guide-server.md#distributed-recovery-leasing)
+- **`inmem` profile**: `quarkus.datasource.active=false` disables PostgreSQL; `quarkus.scheduler.enabled=false`
+  disables all lease jobs for in-memory-only operation
 
 ## Configuration
 
@@ -269,10 +274,16 @@ quarkus.datasource.db-kind=postgresql
 # Flyway schema migrations
 quarkus.flyway.migrate-at-start=true
 quarkus.flyway.schemas=hensu
-# In-memory profile (no PostgreSQL)
+# In-memory profile (no PostgreSQL, no leasing)
 %inmem.quarkus.datasource.active=false
 %inmem.quarkus.datasource.devservices.enabled=false
 %inmem.quarkus.flyway.migrate-at-start=false
+%inmem.quarkus.scheduler.enabled=false
+# Distributed recovery leasing
+hensu.node.id=
+hensu.lease.heartbeat-interval=30s
+hensu.lease.recovery-interval=60s
+hensu.lease.stale-threshold=90s
 ```
 
 ### Local Development Tokens
@@ -358,13 +369,17 @@ hensu-server/
 │   │   ├── McpSidecar.java
 │   │   └── SseMcpConnection.java
 │   ├── persistence/                       # PostgreSQL persistence (plain JDBC)
-│   │   ├── JdbcWorkflowRepository.java    # Workflow definitions (JSONB)
-│   │   ├── JdbcWorkflowStateRepository.java # Execution state snapshots (JSONB)
-│   │   └── PersistenceException.java      # Unchecked wrapper for SQLException
+│   │   ├── JdbcWorkflowRepository.java        # Workflow definitions (JSONB)
+│   │   ├── JdbcWorkflowStateRepository.java   # Execution state snapshots (JSONB + lease columns)
+│   │   ├── ExecutionLeaseManager.java         # Distributed lease management (@ApplicationScoped)
+│   │   ├── JdbcSupport.java                   # JDBC helper (queryList, update)
+│   │   └── PersistenceException.java          # Unchecked wrapper for SQLException
 │   ├── planner/               # LLM planning
 │   │   └── LlmPlanner.java
 │   ├── service/               # Business logic
-│   │   └── WorkflowService.java
+│   │   ├── WorkflowService.java
+│   │   ├── ExecutionHeartbeatJob.java     # Periodic heartbeat emission (@Scheduled)
+│   │   └── WorkflowRecoveryJob.java       # Orphaned execution sweeper (@Scheduled)
 │   ├── streaming/             # SSE event streaming
 │   │   ├── ExecutionEvent.java
 │   │   └── ExecutionEventBroadcaster.java

@@ -8,6 +8,7 @@ import io.hensu.core.HensuFactory;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.GenericNodeHandler;
 import io.hensu.core.review.ReviewHandler;
+import io.hensu.server.persistence.ExecutionLeaseManager;
 import io.hensu.server.persistence.JdbcWorkflowRepository;
 import io.hensu.server.persistence.JdbcWorkflowStateRepository;
 import jakarta.annotation.PreDestroy;
@@ -65,6 +66,8 @@ public class HensuEnvironmentProducer {
 
     @Inject ObjectMapper objectMapper;
 
+    @Inject ExecutionLeaseManager leaseManager;
+
     /// Produces the Hensu runtime environment for CDI injection.
     ///
     /// Configures virtual threads, loads credentials from `hensu.credentials.*`
@@ -91,7 +94,9 @@ public class HensuEnvironmentProducer {
             DataSource ds = dataSourceInstance.get();
             factoryBuilder
                     .workflowRepository(new JdbcWorkflowRepository(ds))
-                    .workflowStateRepository(new JdbcWorkflowStateRepository(ds, objectMapper));
+                    .workflowStateRepository(
+                            new JdbcWorkflowStateRepository(
+                                    ds, objectMapper, leaseManager.getServerNodeId()));
             LOG.info("Using JDBC persistence (PostgreSQL)");
         } else {
             LOG.info("Using in-memory persistence");
