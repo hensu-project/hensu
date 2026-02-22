@@ -18,7 +18,10 @@ import io.hensu.core.rubric.model.DoubleRange;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.*;
-import io.hensu.core.workflow.transition.*;
+import io.hensu.core.workflow.transition.AlwaysTransition;
+import io.hensu.core.workflow.transition.FailureTransition;
+import io.hensu.core.workflow.transition.ScoreTransition;
+import io.hensu.core.workflow.transition.SuccessTransition;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -212,12 +215,13 @@ class WorkflowSerializerTest {
     @Test
     void roundTrip_subWorkflowNode() {
         SubWorkflowNode sub =
-                new SubWorkflowNode(
-                        "sub",
-                        "child-workflow",
-                        Map.of("input", "parentInput"),
-                        Map.of("childOutput", "parentOutput"),
-                        List.of(new SuccessTransition("done")));
+                SubWorkflowNode.builder()
+                        .id("sub")
+                        .workflowId("child-workflow")
+                        .inputMapping(Map.of("input", "parentInput"))
+                        .outputMapping(Map.of("childOutput", "parentOutput"))
+                        .transitionRules(List.of(new SuccessTransition("done")))
+                        .build();
         EndNode end = EndNode.builder().id("done").status(ExitStatus.SUCCESS).build();
 
         Workflow workflow =

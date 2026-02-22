@@ -23,17 +23,39 @@ import io.hensu.serialization.mixin.WorkflowBuilderMixin;
 import io.hensu.serialization.mixin.WorkflowMixin;
 import java.io.Serial;
 
-/// Jackson module for the Hensu workflow type hierarchy.
+/// Jackson `SimpleModule` that registers all Hensu serialization configuration in one place.
 ///
-/// Registers custom serializers for types Jackson cannot handle natively:
-/// polymorphic nodes, sealed transitions/actions, and builder-pattern classes.
+/// Covers two distinct registration strategies:
 ///
-/// @implNote GraalVM-safe. All registrations are explicit — no reflective scanning.
-/// @see WorkflowSerializer for the convenience API
+/// **Custom serializer/deserializer pairs** (polymorphic sealed hierarchies — discriminator
+/// field drives subtype selection at runtime, no reflection required):
+/// - `Node` — `NodeSerializer` / `NodeDeserializer`, discriminator: `"nodeType"`
+/// - `TransitionRule` — `TransitionRuleSerializer` / `TransitionRuleDeserializer`,
+/// discriminator: `"type"`
+/// - `Action` — `ActionSerializer` / `ActionDeserializer`, discriminator: `"type"`
+///
+/// **Mixin/builder pairs** (immutable builder-pattern domain objects — Jackson uses the builder
+/// via reflection; native-image requires corresponding `NativeImageConfig` entries):
+/// - `Workflow` + `Workflow.Builder`
+/// - `AgentConfig` + `AgentConfig.Builder`
+/// - `ExecutionStep` + `ExecutionStep.Builder`
+/// - `NodeResult` + `NodeResult.Builder`
+/// - `BacktrackEvent` + `BacktrackEvent.Builder`
+/// - `ExecutionHistory` (field-visibility mixin — no builder)
+///
+/// @implNote GraalVM-safe. All registrations are explicit — no classpath scanning.
+/// Builder classes registered here require companion entries in `NativeImageConfig`
+/// in `hensu-server` for native-image reflection.
+/// @see WorkflowSerializer for the convenience factory API
 public class HensuJacksonModule extends SimpleModule {
 
     @Serial private static final long serialVersionUID = -8700343972457264694L;
 
+    /// Constructs the module and registers all custom serializer/deserializer pairs.
+    ///
+    /// Mixin registrations are deferred to {@link #setupModule} where the `SetupContext`
+    /// is available. The order of `addSerializer`/`addDeserializer` calls does not affect
+    /// precedence — all three pairs are registered unconditionally.
     public HensuJacksonModule() {
         super("HensuJacksonModule");
 
@@ -47,6 +69,18 @@ public class HensuJacksonModule extends SimpleModule {
         addDeserializer(Action.class, new ActionDeserializer());
     }
 
+    /// Applies mixin annotations to builder-pattern domain types.
+    ///
+    /// Called by Jackson when the module is registered with an `ObjectMapper`.
+    /// Each `setMixInAnnotations` call wires a domain type to its Jackson binding: the
+    /// `*Mixin` class carries `@JsonDeserialize(builder = ...)` on the domain type, and
+    /// the `*BuilderMixin` class carries `@JsonPOJOBuilder(withPrefix = "")` on the builder.
+    ///
+    /// The execution history mixin group (`ExecutionStep`, `NodeResult`, `BacktrackEvent`,
+    /// `ExecutionHistory`) is required for JDBC state persistence, where snapshots are
+    /// round-tripped through JSON.
+    ///
+    /// @param context the setup context provided by Jackson, not null
     @Override
     public void setupModule(SetupContext context) {
         super.setupModule(context);

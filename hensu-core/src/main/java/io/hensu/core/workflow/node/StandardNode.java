@@ -42,15 +42,14 @@ public final class StandardNode extends Node {
     private final Plan staticPlan; // null if dynamic or disabled
     private final String planFailureTarget; // Node to transition to on plan failure
 
-    public StandardNode(Builder builder) {
-        super(Objects.requireNonNull(builder.id, "Node ID required"));
+    private StandardNode(Builder builder) {
+        super(builder.id);
         // agentId and prompt can be null for nodes that use other execution strategies
         this.agentId = builder.agentId;
         this.prompt = builder.prompt;
         this.rubricId = builder.rubricId;
         this.reviewConfig = builder.reviewConfig;
-        this.transitionRules =
-                Objects.requireNonNull(builder.transitionRules, "Transition Rules required");
+        this.transitionRules = builder.transitionRules;
         this.outputParams =
                 builder.outputParams != null ? List.copyOf(builder.outputParams) : List.of();
         // Planning support
@@ -266,8 +265,14 @@ public final class StandardNode extends Node {
         /// Builds the immutable standard node.
         ///
         /// @return new StandardNode instance, never null
-        /// @throws NullPointerException if id or transitionRules is null
+        /// @throws IllegalStateException if `id` or `transitionRules` is null
         public StandardNode build() {
+            if (id == null || id.isBlank()) {
+                throw new IllegalStateException("StandardNode id is required");
+            }
+            if (transitionRules == null) {
+                throw new IllegalStateException("StandardNode transitionRules is required");
+            }
             return new StandardNode(this);
         }
     }

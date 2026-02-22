@@ -91,8 +91,8 @@ class ActionNodeTest {
                                         .actions(actions)
                                         .transitionRules(transitions)
                                         .build())
-                .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("Node ID required");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("id");
     }
 
     @Test
@@ -107,8 +107,8 @@ class ActionNodeTest {
                                         .id("test-node")
                                         .transitionRules(transitions)
                                         .build())
-                .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("Actions required");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("actions");
     }
 
     @Test
@@ -118,8 +118,8 @@ class ActionNodeTest {
 
         // When/Then
         assertThatThrownBy(() -> ActionNode.builder().id("test-node").actions(actions).build())
-                .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("Transition rules required");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("transitionRules");
     }
 
     @Test

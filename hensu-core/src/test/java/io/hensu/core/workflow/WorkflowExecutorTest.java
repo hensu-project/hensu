@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.hensu.core.agent.Agent;
@@ -14,10 +17,11 @@ import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.action.Action;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.DefaultNodeExecutorRegistry;
+import io.hensu.core.execution.executor.ExecutionContext;
 import io.hensu.core.execution.executor.GenericNodeHandler;
-import io.hensu.core.execution.executor.NodeExecutorRegistry;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.parallel.ConsensusStrategy;
+import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.review.ReviewConfig;
@@ -43,18 +47,21 @@ import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.transition.FailureTransition;
 import io.hensu.core.workflow.transition.ScoreTransition;
 import io.hensu.core.workflow.transition.SuccessTransition;
-import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -62,9 +69,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class WorkflowExecutorTest {
 
     @Mock private AgentRegistry agentRegistry;
-
     @Mock private RubricEngine rubricEngine;
-
     @Mock private Agent mockAgent;
 
     private ExecutorService executorService;
@@ -73,16 +78,13 @@ class WorkflowExecutorTest {
     @BeforeEach
     void setUp() {
         executorService = Executors.newFixedThreadPool(2);
-        ReviewHandler reviewHandler = ReviewHandler.AUTO_APPROVE;
-        NodeExecutorRegistry nodeExecutorRegistry = new DefaultNodeExecutorRegistry();
-
         executor =
                 new WorkflowExecutor(
-                        nodeExecutorRegistry,
+                        new DefaultNodeExecutorRegistry(),
                         agentRegistry,
                         executorService,
                         rubricEngine,
-                        reviewHandler);
+                        ReviewHandler.AUTO_APPROVE);
     }
 
     @AfterEach
@@ -92,256 +94,333 @@ class WorkflowExecutorTest {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Core routing and lifecycle
+    // -------------------------------------------------------------------------
+
     @Test
     void shouldExecuteSimpleWorkflowToEnd() throws Exception {
-        // Given
-        Workflow workflow = createSimpleWorkflow();
-        Map<String, Object> context = new HashMap<>();
-        context.put("input", "test data");
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("test")
+                        .agent(agentCfg())
+                        .startNode(step("start", "end"))
+                        .node(end("end"))
+                        .build();
 
-        AgentResponse successResponse = AgentResponse.TextResponse.of("Agent output");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-        when(mockAgent.execute(any(), any())).thenReturn(successResponse);
+        when(mockAgent.execute(any(), any()))
+                .thenReturn(AgentResponse.TextResponse.of("Agent output"));
 
-        // When
-        ExecutionResult result = executor.execute(workflow, context);
+        var result = executor.execute(workflow, new HashMap<>(Map.of("input", "test data")));
 
-        // Then
         assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-        ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-        assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+        assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                .isEqualTo(ExitStatus.SUCCESS);
     }
 
     @Test
     void shouldThrowExceptionWhenNodeNotFound() {
-        // Given
-        Workflow workflow = createWorkflowWithMissingNode();
-        Map<String, Object> context = new HashMap<>();
+        // "start" transitions to "missing-node" which is absent from the nodes map.
+        // The executor must throw at runtime when it tries to resolve the next step.
+        var start =
+                StandardNode.builder()
+                        .id("start")
+                        .agentId("test-agent")
+                        .prompt("Process input")
+                        .transitionRules(List.of(new SuccessTransition("missing-node")))
+                        .build();
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("test")
+                        .agent(agentCfg())
+                        .startNode(start)
+                        .node(end("end"))
+                        .build();
 
-        AgentResponse successResponse = AgentResponse.TextResponse.of("Agent output");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-        when(mockAgent.execute(any(), any())).thenReturn(successResponse);
+        when(mockAgent.execute(any(), any()))
+                .thenReturn(AgentResponse.TextResponse.of("Agent output"));
 
-        // When/Then
-        assertThatThrownBy(() -> executor.execute(workflow, context))
+        assertThatThrownBy(() -> executor.execute(workflow, new HashMap<>()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Node not found");
     }
 
     @Test
     void shouldThrowExceptionWhenAgentNotFound() {
-        // Given
-        Workflow workflow = createSimpleWorkflow();
-        Map<String, Object> context = new HashMap<>();
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("test")
+                        .agent(agentCfg())
+                        .startNode(step("start", "end"))
+                        .node(end("end"))
+                        .build();
 
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.empty());
 
-        // When/Then
-        assertThatThrownBy(() -> executor.execute(workflow, context))
+        assertThatThrownBy(() -> executor.execute(workflow, new HashMap<>()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Agent not found");
     }
 
     @Test
     void shouldResolveTemplateVariables() throws Exception {
-        // Given
-        Workflow workflow = createWorkflowWithTemplatePrompt();
-        Map<String, Object> context = new HashMap<>();
-        context.put("topic", "artificial intelligence");
-        context.put("style", "formal");
+        // Prompt uses {topic} and {style}; executor must substitute from initial context.
+        // If substitution fails the mock won't match and the test will fail.
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("test")
+                        .agent(agentCfg())
+                        .startNode(
+                                StandardNode.builder()
+                                        .id("start")
+                                        .agentId("test-agent")
+                                        .prompt("Write about {topic} in {style} style")
+                                        .transitionRules(List.of(new SuccessTransition("end")))
+                                        .build())
+                        .node(end("end"))
+                        .build();
 
-        AgentResponse successResponse = AgentResponse.TextResponse.of("Generated content");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(eq("Write about artificial intelligence in formal style"), any()))
-                .thenReturn(successResponse);
+                .thenReturn(AgentResponse.TextResponse.of("Generated content"));
 
-        // When
-        ExecutionResult result = executor.execute(workflow, context);
+        var ctx = new HashMap<String, Object>();
+        ctx.put("topic", "artificial intelligence");
+        ctx.put("style", "formal");
+        var result = executor.execute(workflow, ctx);
 
-        // Then
         assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
     }
 
     @Test
     void shouldRecordExecutionHistory() throws Exception {
-        // Given
-        Workflow workflow = createMultiStepWorkflow();
-        Map<String, Object> context = new HashMap<>();
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("test")
+                        .agent(agentCfg())
+                        .startNode(step("step1", "step2"))
+                        .node(step("step2", "end"))
+                        .node(end("end"))
+                        .build();
 
-        AgentResponse successResponse = AgentResponse.TextResponse.of("Agent output");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-        when(mockAgent.execute(any(), any())).thenReturn(successResponse);
+        when(mockAgent.execute(any(), any()))
+                .thenReturn(AgentResponse.TextResponse.of("Agent output"));
 
-        // When
-        ExecutionResult result = executor.execute(workflow, context);
+        var result = executor.execute(workflow, new HashMap<>());
 
-        // Then
         assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-        ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-        assertThat(completed.getFinalState().getHistory().getSteps()).hasSize(2);
+        // Both steps must appear in history — proves the loop visits each node once.
+        assertThat(((ExecutionResult.Completed) result).getFinalState().getHistory().getSteps())
+                .hasSize(2);
     }
 
     @Test
     void shouldHandleAgentFailureResponse() throws Exception {
-        // Given
-        Workflow workflow = createWorkflowWithFailureTransition();
-        Map<String, Object> context = new HashMap<>();
+        // Agent returns Error → executor follows FailureTransition → failure-end.
+        var start =
+                StandardNode.builder()
+                        .id("start")
+                        .agentId("test-agent")
+                        .prompt("Process input")
+                        .transitionRules(
+                                List.of(
+                                        new SuccessTransition("success-end"),
+                                        new FailureTransition(0, "failure-end")))
+                        .build();
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("test")
+                        .agent(agentCfg())
+                        .startNode(start)
+                        .node(end("success-end"))
+                        .node(failEnd("failure-end"))
+                        .build();
 
-        AgentResponse failureResponse = AgentResponse.Error.of("Agent error");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-        when(mockAgent.execute(any(), any())).thenReturn(failureResponse);
+        when(mockAgent.execute(any(), any())).thenReturn(AgentResponse.Error.of("Agent error"));
 
-        // When
-        ExecutionResult result = executor.execute(workflow, context);
+        var result = executor.execute(workflow, new HashMap<>());
 
-        // Then
         assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-        ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-        assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.FAILURE);
+        assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                .isEqualTo(ExitStatus.FAILURE);
     }
 
     @Test
     void shouldExecuteToFailureEnd() throws Exception {
-        // Given
-        Workflow workflow = createWorkflowWithFailureEnd();
-        Map<String, Object> context = new HashMap<>();
+        // Agent succeeds but the workflow design routes to a FAILURE end node.
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("test")
+                        .agent(agentCfg())
+                        .startNode(
+                                StandardNode.builder()
+                                        .id("start")
+                                        .agentId("test-agent")
+                                        .prompt("Process input")
+                                        .transitionRules(
+                                                List.of(new SuccessTransition("failure-end")))
+                                        .build())
+                        .node(failEnd("failure-end"))
+                        .build();
 
-        AgentResponse successResponse = AgentResponse.TextResponse.of("Agent output");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-        when(mockAgent.execute(any(), any())).thenReturn(successResponse);
+        when(mockAgent.execute(any(), any()))
+                .thenReturn(AgentResponse.TextResponse.of("Agent output"));
 
-        // When
-        ExecutionResult result = executor.execute(workflow, context);
+        var result = executor.execute(workflow, new HashMap<>());
 
-        // Then
         assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-        ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-        assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.FAILURE);
+        assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                .isEqualTo(ExitStatus.FAILURE);
     }
 
     @Test
     void shouldThrowWhenNoValidTransition() {
-        // Given
-        Workflow workflow = createWorkflowWithNoTransition();
-        Map<String, Object> context = new HashMap<>();
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("test")
+                        .agent(agentCfg())
+                        .startNode(
+                                StandardNode.builder()
+                                        .id("start")
+                                        .agentId("test-agent")
+                                        .prompt("Process input")
+                                        .transitionRules(List.of()) // no transitions
+                                        .build())
+                        .node(end("end"))
+                        .build();
 
-        AgentResponse successResponse = AgentResponse.TextResponse.of("Agent output");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-        when(mockAgent.execute(any(), any())).thenReturn(successResponse);
+        when(mockAgent.execute(any(), any()))
+                .thenReturn(AgentResponse.TextResponse.of("Agent output"));
 
-        // When/Then
-        assertThatThrownBy(() -> executor.execute(workflow, context))
+        assertThatThrownBy(() -> executor.execute(workflow, new HashMap<>()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("No valid transition");
     }
 
     @Test
     void shouldHandleEmptyPrompt() throws Exception {
-        // Given
-        Workflow workflow = createWorkflowWithNullPrompt();
-        Map<String, Object> context = new HashMap<>();
+        // null prompt → executor must not crash; sends empty string to agent.
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("test")
+                        .agent(agentCfg())
+                        .startNode(
+                                StandardNode.builder()
+                                        .id("start")
+                                        .agentId("test-agent")
+                                        .prompt(null)
+                                        .transitionRules(List.of(new SuccessTransition("end")))
+                                        .build())
+                        .node(end("end"))
+                        .build();
 
-        AgentResponse successResponse = AgentResponse.TextResponse.of("Agent output");
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-        when(mockAgent.execute(eq(""), any())).thenReturn(successResponse);
+        when(mockAgent.execute(eq(""), any()))
+                .thenReturn(AgentResponse.TextResponse.of("Agent output"));
 
-        // When
-        ExecutionResult result = executor.execute(workflow, context);
+        var result = executor.execute(workflow, new HashMap<>());
 
-        // Then
         assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
     }
 
     @Test
     void shouldExtractParametersFromJsonOutput() throws Exception {
-        // Given: Workflow where step1 outputs JSON with parameters, step2 uses them
-        Workflow workflow = createWorkflowWithOutputParams();
-        Map<String, Object> context = new HashMap<>();
+        // step1 returns JSON with outputParams; executor must extract and store in context.
+        var step1 =
+                StandardNode.builder()
+                        .id("step1")
+                        .agentId("test-agent")
+                        .prompt("Extract facts about Georgia")
+                        .outputParams(List.of("lake_name", "peak_height", "capital"))
+                        .transitionRules(List.of(new SuccessTransition("step2")))
+                        .build();
+        var step2 =
+                StandardNode.builder()
+                        .id("step2")
+                        .agentId("test-agent")
+                        .prompt("Use the facts: {lake_name}, {peak_height}, {capital}")
+                        .transitionRules(List.of(new SuccessTransition("end")))
+                        .build();
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("output-params")
+                        .agent(agentCfg())
+                        .startNode(step1)
+                        .node(step2)
+                        .node(end("end"))
+                        .build();
 
-        // Step 1: Returns JSON with extractable parameters
         String jsonOutput =
                 """
-            Here are the facts:
-            {
-                "lake_name": "Lake Paravani",
-                "peak_height": "5201m",
-                "capital": "Tbilisi"
-            }
-            """;
-        AgentResponse step1Response = AgentResponse.TextResponse.of(jsonOutput);
-
-        // Step 2: Uses extracted parameters
-        AgentResponse step2Response =
-                AgentResponse.TextResponse.of("Final output using extracted params");
-
+                Here are the facts:
+                {
+                    "lake_name": "Lake Paravani",
+                    "peak_height": "5201m",
+                    "capital": "Tbilisi"
+                }
+                """;
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-        when(mockAgent.execute(any(), any())).thenReturn(step1Response).thenReturn(step2Response);
+        when(mockAgent.execute(any(), any()))
+                .thenReturn(AgentResponse.TextResponse.of(jsonOutput))
+                .thenReturn(AgentResponse.TextResponse.of("Final output using extracted params"));
 
-        // When
-        ExecutionResult result = executor.execute(workflow, context);
+        var result = executor.execute(workflow, new HashMap<>());
 
-        // Then
         assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-        ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-
-        // Verify parameters were extracted and stored in context
-        Map<String, Object> finalContext = completed.getFinalState().getContext();
-        assertThat(finalContext.get("lake_name")).isEqualTo("Lake Paravani");
-        assertThat(finalContext.get("peak_height")).isEqualTo("5201m");
-        assertThat(finalContext.get("capital")).isEqualTo("Tbilisi");
+        var ctx = ((ExecutionResult.Completed) result).getFinalState().getContext();
+        assertThat(ctx.get("lake_name")).isEqualTo("Lake Paravani");
+        assertThat(ctx.get("peak_height")).isEqualTo("5201m");
+        assertThat(ctx.get("capital")).isEqualTo("Tbilisi");
     }
 
     @Test
     void shouldUseExtractedParamsInSubsequentPrompts() throws Exception {
-        // Given: Workflow where step2's prompt uses placeholders from step1's output
-        Workflow workflow = createWorkflowWithParamPlaceholders();
-        Map<String, Object> context = new HashMap<>();
-
-        // Step 1: Returns JSON with parameters
-        String jsonOutput =
-                """
-            {"country": "Georgia", "language": "Georgian"}
-            """;
-        AgentResponse step1Response = AgentResponse.TextResponse.of(jsonOutput);
-        AgentResponse step2Response =
-                AgentResponse.TextResponse.of("Article about Georgia in Georgian");
+        // step1 returns JSON; step2's prompt placeholders must resolve from extracted params.
+        var extract =
+                StandardNode.builder()
+                        .id("extract")
+                        .agentId("test-agent")
+                        .prompt("Extract country and language info")
+                        .outputParams(List.of("country", "language"))
+                        .transitionRules(List.of(new SuccessTransition("use")))
+                        .build();
+        var use =
+                StandardNode.builder()
+                        .id("use")
+                        .agentId("test-agent")
+                        .prompt("Write an article about {country} in {language}")
+                        .transitionRules(List.of(new SuccessTransition("end")))
+                        .build();
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("param-chain")
+                        .agent(agentCfg())
+                        .startNode(extract)
+                        .node(use)
+                        .node(end("end"))
+                        .build();
 
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-        when(mockAgent.execute(any(), any())).thenReturn(step1Response).thenReturn(step2Response);
+        when(mockAgent.execute(any(), any()))
+                .thenReturn(
+                        AgentResponse.TextResponse.of(
+                                "{\"country\": \"Georgia\", \"language\": \"Georgian\"}"))
+                .thenReturn(AgentResponse.TextResponse.of("Article about Georgia in Georgian"));
 
-        // When
-        ExecutionResult result = executor.execute(workflow, context);
+        var result = executor.execute(workflow, new HashMap<>());
 
-        // Then
         assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-
-        // Verify the second agent call received resolved placeholders
-        // Note: We verify by checking the context contains the extracted params
-        ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-        assertThat(completed.getFinalState().getContext().get("country")).isEqualTo("Georgia");
-        assertThat(completed.getFinalState().getContext().get("language")).isEqualTo("Georgian");
+        var ctx = ((ExecutionResult.Completed) result).getFinalState().getContext();
+        assertThat(ctx.get("country")).isEqualTo("Georgia");
+        assertThat(ctx.get("language")).isEqualTo("Georgian");
     }
 
-    // ===== Behavioral Tests =====
+    // =========================================================================
+    // Behavioral tests
+    // =========================================================================
 
     @Nested
     class FailureRetryTest {
 
         @Test
         void shouldRetryOnFailureAndSucceedOnSecondAttempt() throws Exception {
-            // Given: workflow with retry-3 failure transition
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "start",
+            // FailureTransition(maxRetries=3) — agent fails once then succeeds → SUCCESS end.
+            var start =
                     StandardNode.builder()
                             .id("start")
                             .agentId("test-agent")
@@ -350,59 +429,31 @@ class WorkflowExecutorTest {
                                     List.of(
                                             new SuccessTransition("end"),
                                             new FailureTransition(3, "fallback")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-            nodes.put(
-                    "fallback",
-                    EndNode.builder().id("fallback").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("retry-workflow")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "retry-workflow",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("start")
+                            .build();
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("retry")
+                            .agent(agentCfg())
+                            .startNode(start)
+                            .node(end("end"))
+                            .node(failEnd("fallback"))
                             .build();
 
-            AgentResponse failResponse = AgentResponse.Error.of("Transient error");
-            AgentResponse successResponse = AgentResponse.TextResponse.of("Success");
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
             when(mockAgent.execute(any(), any()))
-                    .thenReturn(failResponse)
-                    .thenReturn(successResponse);
+                    .thenReturn(AgentResponse.Error.of("Transient error"))
+                    .thenReturn(AgentResponse.TextResponse.of("Success"));
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then: agent failed once, succeeded on retry → SUCCESS end
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.SUCCESS);
         }
 
         @Test
         void shouldExhaustRetriesAndTransitionToFallback() throws Exception {
-            // Given: workflow with retry-3 failure transition, agent always fails
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "start",
+            // 1 original + 3 retries all fail → FailureTransition fires → fallback (FAILURE).
+            var start =
                     StandardNode.builder()
                             .id("start")
                             .agentId("test-agent")
@@ -411,69 +462,44 @@ class WorkflowExecutorTest {
                                     List.of(
                                             new SuccessTransition("end"),
                                             new FailureTransition(3, "fallback")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-            nodes.put(
-                    "fallback",
-                    EndNode.builder().id("fallback").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("exhaust-retry")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "exhaust-retry",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("start")
+                            .build();
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("exhaust-retry")
+                            .agent(agentCfg())
+                            .startNode(start)
+                            .node(end("end"))
+                            .node(failEnd("fallback"))
                             .build();
 
-            AgentResponse failResponse = AgentResponse.Error.of("Persistent error");
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-            when(mockAgent.execute(any(), any())).thenReturn(failResponse);
+            when(mockAgent.execute(any(), any()))
+                    .thenReturn(AgentResponse.Error.of("Persistent error"));
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then: 1 initial + 3 retries exhausted → fallback (FAILURE)
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.FAILURE);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.FAILURE);
         }
     }
 
     @Nested
     class ScoreRoutingTest {
 
-        @Test
-        void shouldRouteToHighScoreTarget() throws Exception {
-            // Given: rubric passes with score 90, ScoreTransition routes GTE 80 → excellent
+        @ParameterizedTest(name = "score={0} → {2}")
+        @MethodSource("scoreRoutingCases")
+        void shouldRouteBySimpleScoreThreshold(double score, boolean passed, ExitStatus expected)
+                throws Exception {
             when(rubricEngine.exists("quality")).thenReturn(true);
             when(rubricEngine.evaluate(eq("quality"), any(), any()))
                     .thenReturn(
                             RubricEvaluation.builder()
                                     .rubricId("quality")
-                                    .score(90.0)
-                                    .passed(true)
+                                    .score(score)
+                                    .passed(passed)
                                     .build());
 
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "review",
+            var review =
                     StandardNode.builder()
                             .id("review")
                             .agentId("test-agent")
@@ -493,124 +519,37 @@ class WorkflowExecutorTest {
                                                                     80.0,
                                                                     null,
                                                                     "poor")))))
-                            .build());
-            nodes.put(
-                    "excellent",
-                    EndNode.builder().id("excellent").status(ExitStatus.SUCCESS).build());
-            nodes.put("poor", EndNode.builder().id("poor").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("score-route")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "score-route",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("review")
-                            .rubrics(Map.of("quality", "test-path"))
+                            .build();
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("score-route")
+                            .agent(agentCfg())
+                            .rubric("quality", "test-path")
+                            .startNode(review)
+                            .node(end("excellent"))
+                            .node(failEnd("poor"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
             when(mockAgent.execute(any(), any()))
-                    .thenReturn(AgentResponse.TextResponse.of("Good work"));
+                    .thenReturn(AgentResponse.TextResponse.of("Work output"));
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus()).isEqualTo(expected);
         }
 
-        @Test
-        void shouldRouteToLowScoreTarget() throws Exception {
-            // Given: rubric fails with score 40, ScoreTransition routes LT 80 → poor
-            when(rubricEngine.exists("quality")).thenReturn(true);
-            when(rubricEngine.evaluate(eq("quality"), any(), any()))
-                    .thenReturn(
-                            RubricEvaluation.builder()
-                                    .rubricId("quality")
-                                    .score(40.0)
-                                    .passed(false)
-                                    .build());
-
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "review",
-                    StandardNode.builder()
-                            .id("review")
-                            .agentId("test-agent")
-                            .prompt("Review this")
-                            .rubricId("quality")
-                            .transitionRules(
-                                    List.of(
-                                            new ScoreTransition(
-                                                    List.of(
-                                                            new ScoreCondition(
-                                                                    ComparisonOperator.GTE,
-                                                                    80.0,
-                                                                    null,
-                                                                    "excellent"),
-                                                            new ScoreCondition(
-                                                                    ComparisonOperator.LT,
-                                                                    80.0,
-                                                                    null,
-                                                                    "poor")))))
-                            .build());
-            nodes.put(
-                    "excellent",
-                    EndNode.builder().id("excellent").status(ExitStatus.SUCCESS).build());
-            nodes.put("poor", EndNode.builder().id("poor").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("score-low")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "score-low",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("review")
-                            .rubrics(Map.of("quality", "test-path"))
-                            .build();
-
-            when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-            when(mockAgent.execute(any(), any()))
-                    .thenReturn(AgentResponse.TextResponse.of("Bad work"));
-
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
-
-            // Then: ScoreTransition takes precedence over auto-backtrack, routes to "poor"
-            assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.FAILURE);
+        static Stream<Arguments> scoreRoutingCases() {
+            return Stream.of(
+                    Arguments.of(90.0, true, ExitStatus.SUCCESS), // GTE 80 → "excellent"
+                    Arguments.of(40.0, false, ExitStatus.FAILURE) // LT 80 → "poor"
+                    );
         }
 
         @Test
         void shouldRouteByScoreRange() throws Exception {
-            // Given: score 75, RANGE 70..89 → "good"
+            // Score 75 matches RANGE 70..89 → routes to "good".
+            // This tests a ScoreCondition type not covered by the simple threshold cases above.
             when(rubricEngine.exists("quality")).thenReturn(true);
             when(rubricEngine.evaluate(eq("quality"), any(), any()))
                     .thenReturn(
@@ -620,18 +559,7 @@ class WorkflowExecutorTest {
                                     .passed(false)
                                     .build());
 
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "review",
+            var review =
                     StandardNode.builder()
                             .id("review")
                             .agentId("test-agent")
@@ -656,46 +584,32 @@ class WorkflowExecutorTest {
                                                                     70.0,
                                                                     null,
                                                                     "poor")))))
-                            .build());
-            nodes.put(
-                    "excellent",
-                    EndNode.builder().id("excellent").status(ExitStatus.SUCCESS).build());
-            nodes.put("good", EndNode.builder().id("good").status(ExitStatus.SUCCESS).build());
-            nodes.put("poor", EndNode.builder().id("poor").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("score-range")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "score-range",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("review")
-                            .rubrics(Map.of("quality", "test-path"))
+                            .build();
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("score-range")
+                            .agent(agentCfg())
+                            .rubric("quality", "test-path")
+                            .startNode(review)
+                            .node(end("excellent"))
+                            .node(end("good"))
+                            .node(failEnd("poor"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
             when(mockAgent.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("OK work"));
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then: score 75 matches range 70..89 → routes to "good"
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.SUCCESS);
         }
 
         @Test
         void shouldThrowWhenNoScoreConditionMatches() throws RubricNotFoundException {
-            // Given: rubric passes (score 85), but ScoreTransition only matches GTE 90
+            // Score 85 with a single GTE-90 condition → no match → IllegalStateException.
+            // rubric.passed=true prevents auto-backtrack from kicking in.
             when(rubricEngine.exists("quality")).thenReturn(true);
             when(rubricEngine.evaluate(eq("quality"), any(), any()))
                     .thenReturn(
@@ -705,18 +619,7 @@ class WorkflowExecutorTest {
                                     .passed(true)
                                     .build());
 
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "review",
+            var review =
                     StandardNode.builder()
                             .id("review")
                             .agentId("test-agent")
@@ -731,32 +634,19 @@ class WorkflowExecutorTest {
                                                                     90.0,
                                                                     null,
                                                                     "excellent")))))
-                            .build());
-            nodes.put(
-                    "excellent",
-                    EndNode.builder().id("excellent").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("score-nomatch")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "score-nomatch",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("review")
-                            .rubrics(Map.of("quality", "test-path"))
+                            .build();
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("score-nomatch")
+                            .agent(agentCfg())
+                            .rubric("quality", "test-path")
+                            .startNode(review)
+                            .node(end("excellent"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-            when(mockAgent.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Good"));
+            when(mockAgent.execute(any(), any()))
+                    .thenReturn(AgentResponse.TextResponse.of("Good work"));
 
-            // When/Then: score 85 < 90, rubric passed so no auto-backtrack → "No valid transition"
             assertThatThrownBy(() -> executor.execute(workflow, new HashMap<>()))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("No valid transition");
@@ -768,7 +658,8 @@ class WorkflowExecutorTest {
 
         @Test
         void shouldAutoBacktrackOnMinorFailure() throws Exception {
-            // Given: score 75 first attempt (minor failure), score 90 on retry
+            // score 75 (< 80 threshold) on first attempt → auto-backtrack → retry → score 90 →
+            // SUCCESS.
             when(rubricEngine.exists("quality")).thenReturn(true);
             when(rubricEngine.evaluate(eq("quality"), any(), any()))
                     .thenReturn(
@@ -784,42 +675,20 @@ class WorkflowExecutorTest {
                                     .passed(true)
                                     .build());
 
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "work",
+            var work =
                     StandardNode.builder()
                             .id("work")
                             .agentId("test-agent")
                             .prompt("Do work")
                             .rubricId("quality")
                             .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("backtrack-minor")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "backtrack-minor",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("work")
-                            .rubrics(Map.of("quality", "test-path"))
+                            .build();
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("backtrack-minor")
+                            .agent(agentCfg())
+                            .rubric("quality", "test-path")
+                            .startNode(work)
+                            .node(end("end"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
@@ -827,18 +696,17 @@ class WorkflowExecutorTest {
                     .thenReturn(AgentResponse.TextResponse.of("First attempt"))
                     .thenReturn(AgentResponse.TextResponse.of("Improved attempt"));
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then: auto-backtracked once (score 75 < 80), succeeded on retry → SUCCESS
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.SUCCESS);
         }
 
         @Test
         void shouldStopBacktrackAfterMaxRetries() throws Exception {
-            // Given: rubric always returns score 75 (minor failure, < 80)
+            // rubric always returns score 75 (minor failure); after 3 backtracks
+            // the auto-retry limit is reached and normal SuccessTransition fires.
             when(rubricEngine.exists("quality")).thenReturn(true);
             when(rubricEngine.evaluate(eq("quality"), any(), any()))
                     .thenReturn(
@@ -848,61 +716,38 @@ class WorkflowExecutorTest {
                                     .passed(false)
                                     .build());
 
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "work",
+            var work =
                     StandardNode.builder()
                             .id("work")
                             .agentId("test-agent")
                             .prompt("Do work")
                             .rubricId("quality")
                             .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("backtrack-exhaust")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "backtrack-exhaust",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("work")
-                            .rubrics(Map.of("quality", "test-path"))
+                            .build();
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("backtrack-exhaust")
+                            .agent(agentCfg())
+                            .rubric("quality", "test-path")
+                            .startNode(work)
+                            .node(end("end"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
             when(mockAgent.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("Output"));
 
-            // When: 1 original + 3 retries, then auto-backtrack gives up, SuccessTransition fires
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then: after exhausting 3 backtrack retries, normal transitions take over → SUCCESS
+            // After exhausting retries the SuccessTransition fires → SUCCESS.
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.SUCCESS);
         }
 
         @Test
         void shouldPreferOnScoreOverAutoBacktrack() throws Exception {
-            // Given: rubric score 60 (would trigger moderate auto-backtrack),
-            //        but ScoreTransition LT 70 → "revise" takes precedence
+            // score 60 would trigger auto-backtrack, but ScoreTransition LT 70 → "revise"
+            // takes precedence, routing to a FAILURE end node.
             when(rubricEngine.exists("quality")).thenReturn(true);
             when(rubricEngine.evaluate(eq("quality"), any(), any()))
                     .thenReturn(
@@ -912,18 +757,7 @@ class WorkflowExecutorTest {
                                     .passed(false)
                                     .build());
 
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "review",
+            var review =
                     StandardNode.builder()
                             .id("review")
                             .agentId("test-agent")
@@ -939,41 +773,26 @@ class WorkflowExecutorTest {
                                                                     null,
                                                                     "revise"))),
                                             new SuccessTransition("success-end")))
-                            .build());
-            nodes.put("revise", EndNode.builder().id("revise").status(ExitStatus.FAILURE).build());
-            nodes.put(
-                    "success-end",
-                    EndNode.builder().id("success-end").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("score-precedence")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "score-precedence",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("review")
-                            .rubrics(Map.of("quality", "test-path"))
+                            .build();
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("score-precedence")
+                            .agent(agentCfg())
+                            .rubric("quality", "test-path")
+                            .startNode(review)
+                            .node(failEnd("revise"))
+                            .node(end("success-end"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
             when(mockAgent.execute(any(), any()))
-                    .thenReturn(AgentResponse.TextResponse.of("Mediocre"));
+                    .thenReturn(AgentResponse.TextResponse.of("Mediocre output"));
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then: ScoreTransition LT 70 matches (60 < 70) → routes to "revise", NOT
-            // auto-backtrack
+            // ScoreTransition LT 70 fires (not auto-backtrack) → "revise" → FAILURE.
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.FAILURE);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.FAILURE);
         }
     }
 
@@ -982,7 +801,9 @@ class WorkflowExecutorTest {
 
         @Test
         void shouldNotLeakRubricScoreBetweenNodes() throws RubricNotFoundException {
-            // Given: node1 has rubric (score 85, passed), node2 has ScoreTransition but no rubric
+            // node1 evaluates rubric (score 85); node2 has no rubricId but uses ScoreTransition.
+            // If the score leaked, node2 would route "good". It must NOT — the transition
+            // evaluator must clear the score between nodes and throw instead.
             when(rubricEngine.exists("quality")).thenReturn(true);
             when(rubricEngine.evaluate(eq("quality"), any(), any()))
                     .thenReturn(
@@ -992,32 +813,20 @@ class WorkflowExecutorTest {
                                     .passed(true)
                                     .build());
 
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "node1",
+            var node1 =
                     StandardNode.builder()
                             .id("node1")
                             .agentId("test-agent")
                             .prompt("Step 1")
                             .rubricId("quality")
                             .transitionRules(List.of(new SuccessTransition("node2")))
-                            .build());
-            // node2: NO rubric, but has ScoreTransition → should fail because no score available
-            nodes.put(
-                    "node2",
+                            .build();
+            var node2 =
                     StandardNode.builder()
                             .id("node2")
                             .agentId("test-agent")
                             .prompt("Step 2")
+                            // no rubricId — score must not bleed from node1
                             .transitionRules(
                                     List.of(
                                             new ScoreTransition(
@@ -1027,31 +836,20 @@ class WorkflowExecutorTest {
                                                                     80.0,
                                                                     null,
                                                                     "good")))))
-                            .build());
-            nodes.put("good", EndNode.builder().id("good").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("stale-rubric")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "stale-rubric",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("node1")
-                            .rubrics(Map.of("quality", "test-path"))
+                            .build();
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("stale-rubric")
+                            .agent(agentCfg())
+                            .rubric("quality", "test-path")
+                            .startNode(node1)
+                            .node(node2)
+                            .node(end("good"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
             when(mockAgent.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("Output"));
 
-            // When/Then: rubric eval cleared between nodes, node2's ScoreTransition finds no score
             assertThatThrownBy(() -> executor.execute(workflow, new HashMap<>()))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("No valid transition");
@@ -1078,7 +876,7 @@ class WorkflowExecutorTest {
 
         @Test
         void shouldExecuteGenericNodeViaHandler() throws Exception {
-            // Given: register a handler that returns success
+            // Handler reads config["target"] and returns it in the output.
             genericRegistry.registerGenericHandler(
                     "validator",
                     new GenericNodeHandler() {
@@ -1088,15 +886,13 @@ class WorkflowExecutorTest {
                         }
 
                         @Override
-                        public NodeResult handle(
-                                GenericNode node,
-                                io.hensu.core.execution.executor.ExecutionContext context) {
+                        public NodeResult handle(GenericNode node, ExecutionContext context) {
                             return NodeResult.success(
                                     "Validated: " + node.getConfig().get("target"), Map.of());
                         }
                     });
 
-            Map<String, Node> nodes = new HashMap<>();
+            var nodes = new HashMap<String, Node>();
             nodes.put(
                     "validate",
                     GenericNode.builder()
@@ -1105,29 +901,18 @@ class WorkflowExecutorTest {
                             .config(Map.of("target", "user-input"))
                             .transitionRules(List.of(new SuccessTransition("end")))
                             .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
+            nodes.put("end", end("end"));
+            var workflow =
                     Workflow.builder()
                             .id("generic-test")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "generic-test",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
                             .nodes(nodes)
                             .startNode("validate")
                             .build();
 
-            // When
-            ExecutionResult result = genericExecutor.execute(workflow, new HashMap<>());
+            var result = genericExecutor.execute(workflow, new HashMap<>());
 
-            // Then
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
+            var completed = (ExecutionResult.Completed) result;
             assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
             assertThat(completed.getFinalState().getContext().get("validate").toString())
                     .contains("Validated");
@@ -1135,7 +920,7 @@ class WorkflowExecutorTest {
 
         @Test
         void shouldRouteGenericNodeOnHandlerFailure() throws Exception {
-            // Given: handler returns failure
+            // Handler returns failure → FailureTransition fires → failure-end.
             genericRegistry.registerGenericHandler(
                     "validator",
                     new GenericNodeHandler() {
@@ -1145,14 +930,12 @@ class WorkflowExecutorTest {
                         }
 
                         @Override
-                        public NodeResult handle(
-                                GenericNode node,
-                                io.hensu.core.execution.executor.ExecutionContext context) {
+                        public NodeResult handle(GenericNode node, ExecutionContext context) {
                             return NodeResult.failure("Validation failed");
                         }
                     });
 
-            Map<String, Node> nodes = new HashMap<>();
+            var nodes = new HashMap<String, Node>();
             nodes.put(
                     "validate",
                     GenericNode.builder()
@@ -1163,35 +946,20 @@ class WorkflowExecutorTest {
                                             new SuccessTransition("success-end"),
                                             new FailureTransition(0, "failure-end")))
                             .build());
-            nodes.put(
-                    "success-end",
-                    EndNode.builder().id("success-end").status(ExitStatus.SUCCESS).build());
-            nodes.put(
-                    "failure-end",
-                    EndNode.builder().id("failure-end").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
+            nodes.put("success-end", end("success-end"));
+            nodes.put("failure-end", failEnd("failure-end"));
+            var workflow =
                     Workflow.builder()
                             .id("generic-fail")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "generic-fail",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
                             .nodes(nodes)
                             .startNode("validate")
                             .build();
 
-            // When
-            ExecutionResult result = genericExecutor.execute(workflow, new HashMap<>());
+            var result = genericExecutor.execute(workflow, new HashMap<>());
 
-            // Then: handler failure → FailureTransition → failure-end
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.FAILURE);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.FAILURE);
         }
     }
 
@@ -1203,7 +971,7 @@ class WorkflowExecutorTest {
 
         @BeforeEach
         void setUpActionExecutor() {
-            mockActionExecutor = org.mockito.Mockito.mock(ActionExecutor.class);
+            mockActionExecutor = mock(ActionExecutor.class);
             actionNodeExecutor =
                     new WorkflowExecutor(
                             new DefaultNodeExecutorRegistry(),
@@ -1216,11 +984,10 @@ class WorkflowExecutorTest {
 
         @Test
         void shouldExecuteActionNodeAndContinue() throws Exception {
-            // Given
             when(mockActionExecutor.execute(any(), any()))
                     .thenReturn(ActionExecutor.ActionResult.success("Action done"));
 
-            Map<String, Node> nodes = new HashMap<>();
+            var nodes = new HashMap<String, Node>();
             nodes.put(
                     "action",
                     ActionNode.builder()
@@ -1228,39 +995,23 @@ class WorkflowExecutorTest {
                             .actions(List.of(new Action.Execute("git-commit")))
                             .transitionRules(List.of(new SuccessTransition("end")))
                             .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
+            nodes.put("end", end("end"));
+            var workflow =
+                    Workflow.builder().id("action-test").nodes(nodes).startNode("action").build();
 
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("action-test")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "action-test",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .nodes(nodes)
-                            .startNode("action")
-                            .build();
+            var result = actionNodeExecutor.execute(workflow, new HashMap<>());
 
-            // When
-            ExecutionResult result = actionNodeExecutor.execute(workflow, new HashMap<>());
-
-            // Then
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.SUCCESS);
         }
 
         @Test
         void shouldHandleActionFailure() throws Exception {
-            // Given
             when(mockActionExecutor.execute(any(), any()))
                     .thenReturn(ActionExecutor.ActionResult.failure("Action failed"));
 
-            Map<String, Node> nodes = new HashMap<>();
+            var nodes = new HashMap<String, Node>();
             nodes.put(
                     "action",
                     ActionNode.builder()
@@ -1271,35 +1022,16 @@ class WorkflowExecutorTest {
                                             new SuccessTransition("success-end"),
                                             new FailureTransition(0, "failure-end")))
                             .build());
-            nodes.put(
-                    "success-end",
-                    EndNode.builder().id("success-end").status(ExitStatus.SUCCESS).build());
-            nodes.put(
-                    "failure-end",
-                    EndNode.builder().id("failure-end").status(ExitStatus.FAILURE).build());
+            nodes.put("success-end", end("success-end"));
+            nodes.put("failure-end", failEnd("failure-end"));
+            var workflow =
+                    Workflow.builder().id("action-fail").nodes(nodes).startNode("action").build();
 
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("action-fail")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "action-fail",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .nodes(nodes)
-                            .startNode("action")
-                            .build();
+            var result = actionNodeExecutor.execute(workflow, new HashMap<>());
 
-            // When
-            ExecutionResult result = actionNodeExecutor.execute(workflow, new HashMap<>());
-
-            // Then: action failure → FailureTransition → failure-end
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.FAILURE);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.FAILURE);
         }
     }
 
@@ -1308,55 +1040,32 @@ class WorkflowExecutorTest {
 
         @Test
         void shouldPropagateCancelExitStatus() throws Exception {
-            // Given: workflow that routes to a CANCEL end node
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "start",
-                    StandardNode.builder()
-                            .id("start")
-                            .agentId("test-agent")
-                            .prompt("Process")
-                            .transitionRules(List.of(new SuccessTransition("cancel-end")))
-                            .build());
-            nodes.put(
-                    "cancel-end",
-                    EndNode.builder().id("cancel-end").status(ExitStatus.CANCEL).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("cancel-test")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "cancel-test",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("start")
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("cancel-test")
+                            .agent(agentCfg())
+                            .startNode(
+                                    StandardNode.builder()
+                                            .id("start")
+                                            .agentId("test-agent")
+                                            .prompt("Process")
+                                            .transitionRules(
+                                                    List.of(new SuccessTransition("cancel-end")))
+                                            .build())
+                            .node(
+                                    EndNode.builder()
+                                            .id("cancel-end")
+                                            .status(ExitStatus.CANCEL)
+                                            .build())
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
             when(mockAgent.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Done"));
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.CANCEL);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.CANCEL);
         }
     }
 
@@ -1365,49 +1074,26 @@ class WorkflowExecutorTest {
 
         @Test
         void shouldResolvePreviousNodeOutputAsPlaceholder() throws Exception {
-            // Given: step1 outputs "Hello", step2 prompt uses {step1}
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "step1",
-                    StandardNode.builder()
-                            .id("step1")
-                            .agentId("test-agent")
-                            .prompt("Generate greeting")
-                            .transitionRules(List.of(new SuccessTransition("step2")))
-                            .build());
-            nodes.put(
-                    "step2",
-                    StandardNode.builder()
-                            .id("step2")
-                            .agentId("test-agent")
-                            .prompt("Write about {step1}")
-                            .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("template-chain")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "template-chain",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("step1")
+            // step1 output stored under key "step1"; step2 uses {step1} in its prompt.
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("template-chain")
+                            .agent(agentCfg())
+                            .startNode(
+                                    StandardNode.builder()
+                                            .id("step1")
+                                            .agentId("test-agent")
+                                            .prompt("Generate greeting")
+                                            .transitionRules(
+                                                    List.of(new SuccessTransition("step2")))
+                                            .build())
+                            .node(
+                                    StandardNode.builder()
+                                            .id("step2")
+                                            .agentId("test-agent")
+                                            .prompt("Write about {step1}")
+                                            .transitionRules(List.of(new SuccessTransition("end")))
+                                            .build())
+                            .node(end("end"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
@@ -1415,61 +1101,40 @@ class WorkflowExecutorTest {
                     .thenReturn(AgentResponse.TextResponse.of("Hello World"))
                     .thenReturn(AgentResponse.TextResponse.of("Article about Hello World"));
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then: step1 output stored in context as "step1", used in step2's prompt
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getFinalState().getContext().get("step1"))
+            assertThat(
+                            ((ExecutionResult.Completed) result)
+                                    .getFinalState()
+                                    .getContext()
+                                    .get("step1"))
                     .isEqualTo("Hello World");
         }
 
         @Test
         void shouldResolveMultipleSourcesInOnePrompt() throws Exception {
-            // Given: context has {topic}, step1 output available as {step1}
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "step1",
-                    StandardNode.builder()
-                            .id("step1")
-                            .agentId("test-agent")
-                            .prompt("Research {topic}")
-                            .transitionRules(List.of(new SuccessTransition("step2")))
-                            .build());
-            nodes.put(
-                    "step2",
-                    StandardNode.builder()
-                            .id("step2")
-                            .agentId("test-agent")
-                            .prompt("Write about {topic} using research: {step1}")
-                            .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("multi-source")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "multi-source",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("step1")
+            // step2 prompt uses both {topic} from initial context and {step1} from previous node.
+            // The mock matcher verifies the exact resolved string, catching any resolution bug.
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("multi-source")
+                            .agent(agentCfg())
+                            .startNode(
+                                    StandardNode.builder()
+                                            .id("step1")
+                                            .agentId("test-agent")
+                                            .prompt("Research {topic}")
+                                            .transitionRules(
+                                                    List.of(new SuccessTransition("step2")))
+                                            .build())
+                            .node(
+                                    StandardNode.builder()
+                                            .id("step2")
+                                            .agentId("test-agent")
+                                            .prompt("Write about {topic} using research: {step1}")
+                                            .transitionRules(List.of(new SuccessTransition("end")))
+                                            .build())
+                            .node(end("end"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
@@ -1479,63 +1144,128 @@ class WorkflowExecutorTest {
                             eq("Write about AI using research: AI research findings"), any()))
                     .thenReturn(AgentResponse.TextResponse.of("Final article"));
 
-            Map<String, Object> context = new HashMap<>();
-            context.put("topic", "AI");
+            var ctx = new HashMap<String, Object>();
+            ctx.put("topic", "AI");
+            var result = executor.execute(workflow, ctx);
 
-            // When
-            ExecutionResult result = executor.execute(workflow, context);
-
-            // Then
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getFinalState().getContext().get("step1"))
+            assertThat(
+                            ((ExecutionResult.Completed) result)
+                                    .getFinalState()
+                                    .getContext()
+                                    .get("step1"))
                     .isEqualTo("AI research findings");
+        }
+    }
+
+    @Nested
+    class ExecuteFromTest {
+
+        @Test
+        void shouldResumeWorkflowFromSavedState() throws Exception {
+            // Resume from step2 with a pre-populated saved state.
+            // step1 must NOT execute — only step2 runs. History size proves it.
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("resume-test")
+                            .agent(agentCfg())
+                            .startNode(step("step1", "step2"))
+                            .node(step("step2", "end"))
+                            .node(end("end"))
+                            .build();
+
+            var savedState =
+                    new HensuState.Builder()
+                            .executionId("saved-exec")
+                            .workflowId("resume-test")
+                            .currentNode("step2")
+                            .context(new HashMap<>(Map.of("step1_result", "already computed")))
+                            .history(new ExecutionHistory())
+                            .build();
+
+            when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
+            when(mockAgent.execute(any(), any()))
+                    .thenReturn(AgentResponse.TextResponse.of("step2 result"));
+
+            var result = executor.executeFrom(workflow, savedState);
+
+            assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
+            var completed = (ExecutionResult.Completed) result;
+            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+            // Only step2 was executed — step1 was in the saved state already.
+            assertThat(completed.getFinalState().getHistory().getSteps()).hasSize(1);
+            assertThat(completed.getFinalState().getHistory().getSteps().getFirst().getNodeId())
+                    .isEqualTo("step2");
+        }
+    }
+
+    @Nested
+    class ContextIsolationTest {
+
+        @Test
+        void shouldNotLeakContextBetweenSeparateExecutions() throws Exception {
+            // If the executor reuses state between calls, "secret" from execution 1
+            // would appear in the final state of execution 2.
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("isolation-test")
+                            .agent(agentCfg())
+                            .startNode(step("start", "end"))
+                            .node(end("end"))
+                            .build();
+
+            when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
+            when(mockAgent.execute(any(), any()))
+                    .thenReturn(AgentResponse.TextResponse.of("output"));
+
+            var ctx1 = new HashMap<String, Object>();
+            ctx1.put("secret", "sensitive-data");
+            var result1 = executor.execute(workflow, ctx1);
+            var result2 = executor.execute(workflow, new HashMap<>());
+
+            assertThat(result1).isInstanceOf(ExecutionResult.Completed.class);
+            assertThat(result2).isInstanceOf(ExecutionResult.Completed.class);
+            assertThat(((ExecutionResult.Completed) result2).getFinalState().getContext())
+                    .doesNotContainKey("secret");
         }
     }
 
     @Nested
     class ParallelConsensusTest {
 
-        @Test
-        void shouldExecuteBranchesAndReachMajorityConsensus() throws Exception {
-            // Given: 3 branches, 2 approve with keywords → MAJORITY_VOTE → consensus reached
-            Agent agent1 = org.mockito.Mockito.mock(Agent.class);
-            Agent agent2 = org.mockito.Mockito.mock(Agent.class);
-            Agent agent3 = org.mockito.Mockito.mock(Agent.class);
-
+        @ParameterizedTest
+        @MethodSource("majorityConsensusCases")
+        void shouldRouteByMajorityVote(String r1, String r2, String r3, ExitStatus expected)
+                throws Exception {
+            var agent1 = mock(Agent.class);
+            var agent2 = mock(Agent.class);
+            var agent3 = mock(Agent.class);
             when(agentRegistry.getAgent("reviewer1")).thenReturn(Optional.of(agent1));
             when(agentRegistry.getAgent("reviewer2")).thenReturn(Optional.of(agent2));
             when(agentRegistry.getAgent("reviewer3")).thenReturn(Optional.of(agent3));
+            when(agent1.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of(r1));
+            when(agent2.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of(r2));
+            when(agent3.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of(r3));
 
-            when(agent1.execute(any(), any()))
-                    .thenReturn(AgentResponse.TextResponse.of("I approve this work. Score: 90"));
-            when(agent2.execute(any(), any()))
-                    .thenReturn(AgentResponse.TextResponse.of("I approve. Score: 85"));
-            when(agent3.execute(any(), any()))
-                    .thenReturn(AgentResponse.TextResponse.of("I reject this. Score: 30"));
-
-            Map<String, AgentConfig> agents =
+            var agents =
                     Map.of(
                             "reviewer1",
-                                    AgentConfig.builder()
-                                            .id("reviewer1")
-                                            .role("Reviewer")
-                                            .model("test")
-                                            .build(),
+                            AgentConfig.builder()
+                                    .id("reviewer1")
+                                    .role("Reviewer")
+                                    .model("test")
+                                    .build(),
                             "reviewer2",
-                                    AgentConfig.builder()
-                                            .id("reviewer2")
-                                            .role("Reviewer")
-                                            .model("test")
-                                            .build(),
+                            AgentConfig.builder()
+                                    .id("reviewer2")
+                                    .role("Reviewer")
+                                    .model("test")
+                                    .build(),
                             "reviewer3",
-                                    AgentConfig.builder()
-                                            .id("reviewer3")
-                                            .role("Reviewer")
-                                            .model("test")
-                                            .build());
-
-            Map<String, Node> nodes = new HashMap<>();
+                            AgentConfig.builder()
+                                    .id("reviewer3")
+                                    .role("Reviewer")
+                                    .model("test")
+                                    .build());
+            var nodes = new HashMap<String, Node>();
             nodes.put(
                     "parallel",
                     ParallelNode.builder("parallel")
@@ -1548,137 +1278,51 @@ class WorkflowExecutorTest {
                                             new SuccessTransition("success-end"),
                                             new FailureTransition(0, "failure-end")))
                             .build());
-            nodes.put(
-                    "success-end",
-                    EndNode.builder().id("success-end").status(ExitStatus.SUCCESS).build());
-            nodes.put(
-                    "failure-end",
-                    EndNode.builder().id("failure-end").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
+            nodes.put("success-end", end("success-end"));
+            nodes.put("failure-end", failEnd("failure-end"));
+            var workflow =
                     Workflow.builder()
-                            .id("consensus-majority")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "consensus-majority",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
+                            .id("majority-vote")
                             .agents(agents)
                             .nodes(nodes)
                             .startNode("parallel")
                             .build();
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then: 2/3 approve → majority consensus → SUCCESS
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus()).isEqualTo(expected);
         }
 
-        @Test
-        void shouldFailConsensusWhenMajorityRejects() throws Exception {
-            // Given: 3 branches, 2 reject → MAJORITY_VOTE → no consensus
-            Agent agent1 = org.mockito.Mockito.mock(Agent.class);
-            Agent agent2 = org.mockito.Mockito.mock(Agent.class);
-            Agent agent3 = org.mockito.Mockito.mock(Agent.class);
-
-            when(agentRegistry.getAgent("reviewer1")).thenReturn(Optional.of(agent1));
-            when(agentRegistry.getAgent("reviewer2")).thenReturn(Optional.of(agent2));
-            when(agentRegistry.getAgent("reviewer3")).thenReturn(Optional.of(agent3));
-
-            when(agent1.execute(any(), any()))
-                    .thenReturn(AgentResponse.TextResponse.of("I approve. Score: 90"));
-            when(agent2.execute(any(), any()))
-                    .thenReturn(AgentResponse.TextResponse.of("I reject this. Score: 20"));
-            when(agent3.execute(any(), any()))
-                    .thenReturn(AgentResponse.TextResponse.of("I reject this. Score: 15"));
-
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "reviewer1",
-                                    AgentConfig.builder()
-                                            .id("reviewer1")
-                                            .role("Reviewer")
-                                            .model("test")
-                                            .build(),
-                            "reviewer2",
-                                    AgentConfig.builder()
-                                            .id("reviewer2")
-                                            .role("Reviewer")
-                                            .model("test")
-                                            .build(),
-                            "reviewer3",
-                                    AgentConfig.builder()
-                                            .id("reviewer3")
-                                            .role("Reviewer")
-                                            .model("test")
-                                            .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "parallel",
-                    ParallelNode.builder("parallel")
-                            .branch("b1", "reviewer1", "Review this")
-                            .branch("b2", "reviewer2", "Review this")
-                            .branch("b3", "reviewer3", "Review this")
-                            .consensus(null, ConsensusStrategy.MAJORITY_VOTE)
-                            .transitionRules(
-                                    List.of(
-                                            new SuccessTransition("success-end"),
-                                            new FailureTransition(0, "failure-end")))
-                            .build());
-            nodes.put(
-                    "success-end",
-                    EndNode.builder().id("success-end").status(ExitStatus.SUCCESS).build());
-            nodes.put(
-                    "failure-end",
-                    EndNode.builder().id("failure-end").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("consensus-reject")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "consensus-reject",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("parallel")
-                            .build();
-
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
-
-            // Then: 2/3 reject → no majority consensus → FAILURE
-            assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.FAILURE);
+        static Stream<Arguments> majorityConsensusCases() {
+            return Stream.of(
+                    // 2 approve / 1 reject → majority approves → SUCCESS
+                    Arguments.of(
+                            "I approve this work. Score: 90",
+                            "I approve. Score: 85",
+                            "I reject this. Score: 30",
+                            ExitStatus.SUCCESS),
+                    // 1 approve / 2 reject → majority rejects → FAILURE
+                    Arguments.of(
+                            "I approve. Score: 90",
+                            "I reject this. Score: 20",
+                            "I reject this. Score: 15",
+                            ExitStatus.FAILURE));
         }
 
         @Test
         void shouldCollectBranchOutputsWithoutConsensus() throws Exception {
-            // Given: 2 branches, no consensus config → outputs collected as map
-            Agent agent1 = org.mockito.Mockito.mock(Agent.class);
-            Agent agent2 = org.mockito.Mockito.mock(Agent.class);
-
+            // No consensus config → all branch outputs collected → always SUCCESS.
+            var agent1 = mock(Agent.class);
+            var agent2 = mock(Agent.class);
             when(agentRegistry.getAgent("writer1")).thenReturn(Optional.of(agent1));
             when(agentRegistry.getAgent("writer2")).thenReturn(Optional.of(agent2));
-
             when(agent1.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("Draft from writer 1"));
             when(agent2.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("Draft from writer 2"));
 
-            Map<String, AgentConfig> agents =
+            var agents =
                     Map.of(
                             "writer1",
                                     AgentConfig.builder()
@@ -1692,8 +1336,7 @@ class WorkflowExecutorTest {
                                             .role("Writer")
                                             .model("test")
                                             .build());
-
-            Map<String, Node> nodes = new HashMap<>();
+            var nodes = new HashMap<String, Node>();
             nodes.put(
                     "parallel",
                     ParallelNode.builder("parallel")
@@ -1701,51 +1344,38 @@ class WorkflowExecutorTest {
                             .branch("b2", "writer2", "Write draft")
                             .transitionRules(List.of(new SuccessTransition("end")))
                             .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
+            nodes.put("end", end("end"));
+            var workflow =
                     Workflow.builder()
                             .id("no-consensus")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "no-consensus",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
                             .agents(agents)
                             .nodes(nodes)
                             .startNode("parallel")
                             .build();
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then: no consensus evaluation, outputs collected → SUCCESS
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.SUCCESS);
         }
 
         @Test
         void shouldEvaluateBranchRubricInConsensus() throws Exception {
-            // Given: 3 branches, 2 with rubricId; rubric passes for 2, fails for 1
-            Agent agent1 = org.mockito.Mockito.mock(Agent.class);
-            Agent agent2 = org.mockito.Mockito.mock(Agent.class);
-            Agent agent3 = org.mockito.Mockito.mock(Agent.class);
-
+            // 3 branches with rubricId; r1/r2 pass (90/85), r3 fails (40).
+            // 2/3 pass → MAJORITY_VOTE → consensus reached → SUCCESS.
+            var agent1 = mock(Agent.class);
+            var agent2 = mock(Agent.class);
+            var agent3 = mock(Agent.class);
             when(agentRegistry.getAgent("r1")).thenReturn(Optional.of(agent1));
             when(agentRegistry.getAgent("r2")).thenReturn(Optional.of(agent2));
             when(agentRegistry.getAgent("r3")).thenReturn(Optional.of(agent3));
-
             when(agent1.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("Good output"));
             when(agent2.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("Great output"));
             when(agent3.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("Poor output"));
-
             when(rubricEngine.exists("quality")).thenReturn(true);
             when(rubricEngine.evaluate(eq("quality"), any(), any()))
                     .thenReturn(
@@ -1767,28 +1397,15 @@ class WorkflowExecutorTest {
                                     .passed(false)
                                     .build());
 
-            Map<String, AgentConfig> agents =
+            var agents =
                     Map.of(
                             "r1",
-                                    AgentConfig.builder()
-                                            .id("r1")
-                                            .role("Reviewer")
-                                            .model("test")
-                                            .build(),
+                            AgentConfig.builder().id("r1").role("Reviewer").model("test").build(),
                             "r2",
-                                    AgentConfig.builder()
-                                            .id("r2")
-                                            .role("Reviewer")
-                                            .model("test")
-                                            .build(),
+                            AgentConfig.builder().id("r2").role("Reviewer").model("test").build(),
                             "r3",
-                                    AgentConfig.builder()
-                                            .id("r3")
-                                            .role("Reviewer")
-                                            .model("test")
-                                            .build());
-
-            Map<String, Node> nodes = new HashMap<>();
+                            AgentConfig.builder().id("r3").role("Reviewer").model("test").build());
+            var nodes = new HashMap<String, Node>();
             nodes.put(
                     "parallel",
                     ParallelNode.builder("parallel")
@@ -1801,69 +1418,44 @@ class WorkflowExecutorTest {
                                             new SuccessTransition("success-end"),
                                             new FailureTransition(0, "failure-end")))
                             .build());
-            nodes.put(
-                    "success-end",
-                    EndNode.builder().id("success-end").status(ExitStatus.SUCCESS).build());
-            nodes.put(
-                    "failure-end",
-                    EndNode.builder().id("failure-end").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
+            nodes.put("success-end", end("success-end"));
+            nodes.put("failure-end", failEnd("failure-end"));
+            var workflow =
                     Workflow.builder()
                             .id("rubric-consensus")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "rubric-consensus",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
                             .agents(agents)
                             .nodes(nodes)
                             .startNode("parallel")
                             .rubrics(Map.of("quality", "test-path"))
                             .build();
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then: 2/3 rubric-passed → APPROVE → majority consensus → SUCCESS
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.SUCCESS);
         }
 
         @Test
         void shouldSkipRubricWhenBranchHasNoRubricId() throws Exception {
-            // Given: branches without rubricId → fall through to keyword heuristics
-            Agent agent1 = org.mockito.Mockito.mock(Agent.class);
-            Agent agent2 = org.mockito.Mockito.mock(Agent.class);
-
+            // Branches without rubricId fall back to keyword heuristics.
+            // "approve" keyword → APPROVE for both → UNANIMOUS → SUCCESS.
+            var agent1 = mock(Agent.class);
+            var agent2 = mock(Agent.class);
             when(agentRegistry.getAgent("r1")).thenReturn(Optional.of(agent1));
             when(agentRegistry.getAgent("r2")).thenReturn(Optional.of(agent2));
-
             when(agent1.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("I approve this"));
             when(agent2.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("I approve this"));
 
-            Map<String, AgentConfig> agents =
+            var agents =
                     Map.of(
                             "r1",
-                                    AgentConfig.builder()
-                                            .id("r1")
-                                            .role("Reviewer")
-                                            .model("test")
-                                            .build(),
+                            AgentConfig.builder().id("r1").role("Reviewer").model("test").build(),
                             "r2",
-                                    AgentConfig.builder()
-                                            .id("r2")
-                                            .role("Reviewer")
-                                            .model("test")
-                                            .build());
-
-            Map<String, Node> nodes = new HashMap<>();
+                            AgentConfig.builder().id("r2").role("Reviewer").model("test").build());
+            var nodes = new HashMap<String, Node>();
             nodes.put(
                     "parallel",
                     ParallelNode.builder("parallel")
@@ -1875,72 +1467,46 @@ class WorkflowExecutorTest {
                                             new SuccessTransition("success-end"),
                                             new FailureTransition(0, "failure-end")))
                             .build());
-            nodes.put(
-                    "success-end",
-                    EndNode.builder().id("success-end").status(ExitStatus.SUCCESS).build());
-            nodes.put(
-                    "failure-end",
-                    EndNode.builder().id("failure-end").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
+            nodes.put("success-end", end("success-end"));
+            nodes.put("failure-end", failEnd("failure-end"));
+            var workflow =
                     Workflow.builder()
                             .id("no-rubric-consensus")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "no-rubric-consensus",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
                             .agents(agents)
                             .nodes(nodes)
                             .startNode("parallel")
                             .build();
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then: keyword "approve" → APPROVE for both → unanimous → SUCCESS
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.SUCCESS);
         }
 
         @Test
         void shouldHandleRubricEvaluationFailureGracefully() throws Exception {
-            // Given: rubricEngine throws → branch falls back to keyword heuristics
-            Agent agent1 = org.mockito.Mockito.mock(Agent.class);
-            Agent agent2 = org.mockito.Mockito.mock(Agent.class);
-
+            // rubricEngine throws RubricNotFoundException for branch evaluation.
+            // Executor must fall back to keyword heuristics rather than propagating the error.
+            var agent1 = mock(Agent.class);
+            var agent2 = mock(Agent.class);
             when(agentRegistry.getAgent("r1")).thenReturn(Optional.of(agent1));
             when(agentRegistry.getAgent("r2")).thenReturn(Optional.of(agent2));
-
             when(agent1.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("I approve this"));
             when(agent2.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("I approve this"));
-
             when(rubricEngine.exists("quality")).thenReturn(true);
             when(rubricEngine.evaluate(eq("quality"), any(), any()))
                     .thenThrow(new RubricNotFoundException("Rubric not found: quality"));
 
-            Map<String, AgentConfig> agents =
+            var agents =
                     Map.of(
                             "r1",
-                                    AgentConfig.builder()
-                                            .id("r1")
-                                            .role("Reviewer")
-                                            .model("test")
-                                            .build(),
+                            AgentConfig.builder().id("r1").role("Reviewer").model("test").build(),
                             "r2",
-                                    AgentConfig.builder()
-                                            .id("r2")
-                                            .role("Reviewer")
-                                            .model("test")
-                                            .build());
-
-            Map<String, Node> nodes = new HashMap<>();
+                            AgentConfig.builder().id("r2").role("Reviewer").model("test").build());
+            var nodes = new HashMap<String, Node>();
             nodes.put(
                     "parallel",
                     ParallelNode.builder("parallel")
@@ -1952,37 +1518,23 @@ class WorkflowExecutorTest {
                                             new SuccessTransition("success-end"),
                                             new FailureTransition(0, "failure-end")))
                             .build());
-            nodes.put(
-                    "success-end",
-                    EndNode.builder().id("success-end").status(ExitStatus.SUCCESS).build());
-            nodes.put(
-                    "failure-end",
-                    EndNode.builder().id("failure-end").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
+            nodes.put("success-end", end("success-end"));
+            nodes.put("failure-end", failEnd("failure-end"));
+            var workflow =
                     Workflow.builder()
                             .id("rubric-failure-fallback")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "rubric-failure-fallback",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
                             .agents(agents)
                             .nodes(nodes)
                             .startNode("parallel")
                             .rubrics(Map.of("quality", "test-path"))
                             .build();
 
-            // When: rubric fails → falls back to keyword heuristics → "approve" → SUCCESS
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            // rubric fails → keyword "approve" fallback → unanimous → SUCCESS
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.SUCCESS);
         }
     }
 
@@ -1994,7 +1546,7 @@ class WorkflowExecutorTest {
 
         @BeforeEach
         void setUpReviewExecutor() {
-            mockReviewHandler = org.mockito.Mockito.mock(ReviewHandler.class);
+            mockReviewHandler = mock(ReviewHandler.class);
             reviewExecutor =
                     new WorkflowExecutor(
                             new DefaultNodeExecutorRegistry(),
@@ -2006,221 +1558,127 @@ class WorkflowExecutorTest {
 
         @Test
         void shouldAutoApproveWhenReviewDisabled() throws Exception {
-            // Given: node with DISABLED review → reviewHandler never called
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "step",
-                    StandardNode.builder()
-                            .id("step")
-                            .agentId("test-agent")
-                            .prompt("Work")
-                            .reviewConfig(new ReviewConfig(ReviewMode.DISABLED, false, false))
-                            .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("review-disabled")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "review-disabled",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("step")
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("review-disabled")
+                            .agent(agentCfg())
+                            .startNode(
+                                    StandardNode.builder()
+                                            .id("step")
+                                            .agentId("test-agent")
+                                            .prompt("Work")
+                                            .reviewConfig(
+                                                    new ReviewConfig(
+                                                            ReviewMode.DISABLED, false, false))
+                                            .transitionRules(List.of(new SuccessTransition("end")))
+                                            .build())
+                            .node(end("end"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
             when(mockAgent.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Done"));
 
-            // When
-            ExecutionResult result = reviewExecutor.execute(workflow, new HashMap<>());
+            var result = reviewExecutor.execute(workflow, new HashMap<>());
 
-            // Then: reviewHandler never called, workflow continues
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            org.mockito.Mockito.verify(mockReviewHandler, org.mockito.Mockito.never())
+            verify(mockReviewHandler, never())
                     .requestReview(any(), any(), any(), any(), any(), any());
         }
 
         @Test
         void shouldAutoApproveSuccessWhenReviewOptional() throws Exception {
-            // Given: node with OPTIONAL review, agent succeeds → auto-approve
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "step",
-                    StandardNode.builder()
-                            .id("step")
-                            .agentId("test-agent")
-                            .prompt("Work")
-                            .reviewConfig(new ReviewConfig(ReviewMode.OPTIONAL, false, false))
-                            .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("review-optional-success")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "review-optional-success",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("step")
+            // OPTIONAL + agent SUCCESS → reviewHandler never called.
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("review-optional-success")
+                            .agent(agentCfg())
+                            .startNode(
+                                    StandardNode.builder()
+                                            .id("step")
+                                            .agentId("test-agent")
+                                            .prompt("Work")
+                                            .reviewConfig(
+                                                    new ReviewConfig(
+                                                            ReviewMode.OPTIONAL, false, false))
+                                            .transitionRules(List.of(new SuccessTransition("end")))
+                                            .build())
+                            .node(end("end"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
             when(mockAgent.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Done"));
 
-            // When
-            ExecutionResult result = reviewExecutor.execute(workflow, new HashMap<>());
+            var result = reviewExecutor.execute(workflow, new HashMap<>());
 
-            // Then: OPTIONAL + SUCCESS → auto-approve, reviewHandler not called
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            org.mockito.Mockito.verify(mockReviewHandler, org.mockito.Mockito.never())
+            verify(mockReviewHandler, never())
                     .requestReview(any(), any(), any(), any(), any(), any());
         }
 
         @Test
         void shouldAlwaysRequestReviewWhenRequired() throws Exception {
-            // Given: node with REQUIRED review, handler approves
             when(mockReviewHandler.requestReview(any(), any(), any(), any(), any(), any()))
                     .thenReturn(new ReviewDecision.Approve(null));
 
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "step",
-                    StandardNode.builder()
-                            .id("step")
-                            .agentId("test-agent")
-                            .prompt("Work")
-                            .reviewConfig(new ReviewConfig(ReviewMode.REQUIRED, true, true))
-                            .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("review-required")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "review-required",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("step")
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("review-required")
+                            .agent(agentCfg())
+                            .startNode(
+                                    StandardNode.builder()
+                                            .id("step")
+                                            .agentId("test-agent")
+                                            .prompt("Work")
+                                            .reviewConfig(
+                                                    new ReviewConfig(
+                                                            ReviewMode.REQUIRED, true, true))
+                                            .transitionRules(List.of(new SuccessTransition("end")))
+                                            .build())
+                            .node(end("end"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
             when(mockAgent.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Done"));
 
-            // When
-            ExecutionResult result = reviewExecutor.execute(workflow, new HashMap<>());
+            var result = reviewExecutor.execute(workflow, new HashMap<>());
 
-            // Then: REQUIRED → reviewHandler called even on success
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            org.mockito.Mockito.verify(mockReviewHandler)
-                    .requestReview(any(), any(), any(), any(), any(), any());
+            // REQUIRED → reviewHandler must be called even on success.
+            verify(mockReviewHandler).requestReview(any(), any(), any(), any(), any(), any());
         }
 
         @Test
         void shouldRejectWorkflowOnReviewRejection() throws Exception {
-            // Given: reviewer rejects
             when(mockReviewHandler.requestReview(any(), any(), any(), any(), any(), any()))
                     .thenReturn(new ReviewDecision.Reject("Quality insufficient"));
 
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "step",
-                    StandardNode.builder()
-                            .id("step")
-                            .agentId("test-agent")
-                            .prompt("Work")
-                            .reviewConfig(new ReviewConfig(ReviewMode.REQUIRED, true, true))
-                            .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("review-reject")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "review-reject",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("step")
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("review-reject")
+                            .agent(agentCfg())
+                            .startNode(
+                                    StandardNode.builder()
+                                            .id("step")
+                                            .agentId("test-agent")
+                                            .prompt("Work")
+                                            .reviewConfig(
+                                                    new ReviewConfig(
+                                                            ReviewMode.REQUIRED, true, true))
+                                            .transitionRules(List.of(new SuccessTransition("end")))
+                                            .build())
+                            .node(end("end"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
             when(mockAgent.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Done"));
 
-            // When
-            ExecutionResult result = reviewExecutor.execute(workflow, new HashMap<>());
+            var result = reviewExecutor.execute(workflow, new HashMap<>());
 
-            // Then: Reject → ExecutionResult.Rejected
             assertThat(result).isInstanceOf(ExecutionResult.Rejected.class);
-            ExecutionResult.Rejected rejected = (ExecutionResult.Rejected) result;
-            assertThat(rejected.getReason()).isEqualTo("Quality insufficient");
+            assertThat(((ExecutionResult.Rejected) result).getReason())
+                    .isEqualTo("Quality insufficient");
         }
 
         @Test
         void shouldBacktrackOnReviewBacktrack() throws Exception {
-            // Given: step1 → step2 (REQUIRED review), reviewer backtracks to step1
+            // First review backtracks to step1; second approves. step1 executes twice → 4+ history
+            // entries.
             when(mockReviewHandler.requestReview(any(), any(), any(), any(), any(), any()))
                     .thenAnswer(
                             invocation -> {
@@ -2229,64 +1687,39 @@ class WorkflowExecutorTest {
                             })
                     .thenReturn(new ReviewDecision.Approve(null));
 
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "test-agent",
-                            AgentConfig.builder()
-                                    .id("test-agent")
-                                    .role("Test")
-                                    .model("test")
-                                    .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "step1",
-                    StandardNode.builder()
-                            .id("step1")
-                            .agentId("test-agent")
-                            .prompt("Step 1")
-                            .transitionRules(List.of(new SuccessTransition("step2")))
-                            .build());
-            nodes.put(
-                    "step2",
-                    StandardNode.builder()
-                            .id("step2")
-                            .agentId("test-agent")
-                            .prompt("Step 2")
-                            .reviewConfig(new ReviewConfig(ReviewMode.REQUIRED, true, true))
-                            .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("review-backtrack")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "review-backtrack",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("step1")
+            var workflow =
+                    WorkflowTest.TestWorkflowBuilder.create("review-backtrack")
+                            .agent(agentCfg())
+                            .startNode(step("step1", "step2"))
+                            .node(
+                                    StandardNode.builder()
+                                            .id("step2")
+                                            .agentId("test-agent")
+                                            .prompt("Step 2")
+                                            .reviewConfig(
+                                                    new ReviewConfig(
+                                                            ReviewMode.REQUIRED, true, true))
+                                            .transitionRules(List.of(new SuccessTransition("end")))
+                                            .build())
+                            .node(end("end"))
                             .build();
 
             when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
             when(mockAgent.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("Output"));
 
-            // When
-            ExecutionResult result = reviewExecutor.execute(workflow, new HashMap<>());
+            var result = reviewExecutor.execute(workflow, new HashMap<>());
 
-            // Then: backtrack step1 → re-execute step1 → step2 → approve → end
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
-            // step1 executed twice, step2 executed twice → 4+ history entries
-            assertThat(completed.getFinalState().getHistory().getSteps().size())
+            assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                    .isEqualTo(ExitStatus.SUCCESS);
+            // step1 executed twice + step2 executed twice → at least 4 history entries.
+            assertThat(
+                            ((ExecutionResult.Completed) result)
+                                    .getFinalState()
+                                    .getHistory()
+                                    .getSteps()
+                                    .size())
                     .isGreaterThanOrEqualTo(4);
         }
     }
@@ -2296,10 +1729,9 @@ class WorkflowExecutorTest {
 
         @Test
         void shouldForkTargetsAndJoinWithCollectAll() throws Exception {
-            // Given: fork spawns taskA and taskB, join merges with COLLECT_ALL
-            Agent agentA = org.mockito.Mockito.mock(Agent.class);
-            Agent agentB = org.mockito.Mockito.mock(Agent.class);
-
+            // Fork spawns taskA + taskB; join merges with COLLECT_ALL → result stored in context.
+            var agentA = mock(Agent.class);
+            var agentB = mock(Agent.class);
             when(agentRegistry.getAgent("agent-a")).thenReturn(Optional.of(agentA));
             when(agentRegistry.getAgent("agent-b")).thenReturn(Optional.of(agentB));
             when(agentA.execute(any(), any()))
@@ -2307,22 +1739,21 @@ class WorkflowExecutorTest {
             when(agentB.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("Result B"));
 
-            Map<String, AgentConfig> agents =
+            var agents =
                     Map.of(
                             "agent-a",
-                                    AgentConfig.builder()
-                                            .id("agent-a")
-                                            .role("Worker A")
-                                            .model("test")
-                                            .build(),
+                            AgentConfig.builder()
+                                    .id("agent-a")
+                                    .role("Worker A")
+                                    .model("test")
+                                    .build(),
                             "agent-b",
-                                    AgentConfig.builder()
-                                            .id("agent-b")
-                                            .role("Worker B")
-                                            .model("test")
-                                            .build());
-
-            Map<String, Node> nodes = new HashMap<>();
+                            AgentConfig.builder()
+                                    .id("agent-b")
+                                    .role("Worker B")
+                                    .model("test")
+                                    .build());
+            var nodes = new HashMap<String, Node>();
             nodes.put(
                     "taskA",
                     StandardNode.builder()
@@ -2356,65 +1787,52 @@ class WorkflowExecutorTest {
                                             new SuccessTransition("end"),
                                             new FailureTransition(0, "fail-end")))
                             .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-            nodes.put(
-                    "fail-end",
-                    EndNode.builder().id("fail-end").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
+            nodes.put("end", end("end"));
+            nodes.put("fail-end", failEnd("fail-end"));
+            var workflow =
                     Workflow.builder()
                             .id("fork-join-test")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "fork-join-test",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
                             .agents(agents)
                             .nodes(nodes)
                             .startNode("fork1")
                             .build();
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then: fork + join → merged results → SUCCESS
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
+            var completed = (ExecutionResult.Completed) result;
             assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
             assertThat(completed.getFinalState().getContext()).containsKey("fork_results");
         }
 
-        @Test
-        void shouldFailJoinWhenAnyErrorAndFailOnAnyErrorTrue() throws Exception {
-            // Given: one fork target fails, failOnAnyError=true
-            Agent agentA = org.mockito.Mockito.mock(Agent.class);
-            Agent agentB = org.mockito.Mockito.mock(Agent.class);
-
+        @ParameterizedTest(name = "failOnAnyError={0} → {1}")
+        @MethodSource("failOnAnyErrorCases")
+        void shouldHandleJoinFailOnAnyError(boolean failOnAnyError, ExitStatus expected)
+                throws Exception {
+            // taskA succeeds, taskB always fails. Outcome depends on failOnAnyError flag.
+            var agentA = mock(Agent.class);
+            var agentB = mock(Agent.class);
             when(agentRegistry.getAgent("agent-a")).thenReturn(Optional.of(agentA));
             when(agentRegistry.getAgent("agent-b")).thenReturn(Optional.of(agentB));
             when(agentA.execute(any(), any()))
                     .thenReturn(AgentResponse.TextResponse.of("Result A"));
             when(agentB.execute(any(), any())).thenReturn(AgentResponse.Error.of("Task B failed"));
 
-            Map<String, AgentConfig> agents =
+            var agents =
                     Map.of(
                             "agent-a",
-                                    AgentConfig.builder()
-                                            .id("agent-a")
-                                            .role("Worker A")
-                                            .model("test")
-                                            .build(),
+                            AgentConfig.builder()
+                                    .id("agent-a")
+                                    .role("Worker A")
+                                    .model("test")
+                                    .build(),
                             "agent-b",
-                                    AgentConfig.builder()
-                                            .id("agent-b")
-                                            .role("Worker B")
-                                            .model("test")
-                                            .build());
-
-            Map<String, Node> nodes = new HashMap<>();
+                            AgentConfig.builder()
+                                    .id("agent-b")
+                                    .role("Worker B")
+                                    .model("test")
+                                    .build());
+            var nodes = new HashMap<String, Node>();
             nodes.put(
                     "taskA",
                     StandardNode.builder()
@@ -2442,519 +1860,64 @@ class WorkflowExecutorTest {
                     JoinNode.builder("join1")
                             .awaitTargets("fork1")
                             .mergeStrategy(MergeStrategy.COLLECT_ALL)
-                            .failOnAnyError(true)
+                            .failOnAnyError(failOnAnyError)
                             .transitionRules(
                                     List.of(
                                             new SuccessTransition("end"),
                                             new FailureTransition(0, "fail-end")))
                             .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-            nodes.put(
-                    "fail-end",
-                    EndNode.builder().id("fail-end").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
+            nodes.put("end", end("end"));
+            nodes.put("fail-end", failEnd("fail-end"));
+            var workflow =
                     Workflow.builder()
-                            .id("fork-join-fail")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "fork-join-fail",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
+                            .id("fork-join-fail-test")
                             .agents(agents)
                             .nodes(nodes)
                             .startNode("fork1")
                             .build();
 
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
+            var result = executor.execute(workflow, new HashMap<>());
 
-            // Then: taskB failed, failOnAnyError=true → join returns FAILURE
             assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.FAILURE);
+            assertThat(((ExecutionResult.Completed) result).getExitStatus()).isEqualTo(expected);
         }
 
-        @Test
-        void shouldContinueJoinWhenErrorAndFailOnAnyErrorFalse() throws Exception {
-            // Given: one fork target fails, failOnAnyError=false
-            Agent agentA = org.mockito.Mockito.mock(Agent.class);
-            Agent agentB = org.mockito.Mockito.mock(Agent.class);
-
-            when(agentRegistry.getAgent("agent-a")).thenReturn(Optional.of(agentA));
-            when(agentRegistry.getAgent("agent-b")).thenReturn(Optional.of(agentB));
-            when(agentA.execute(any(), any()))
-                    .thenReturn(AgentResponse.TextResponse.of("Result A"));
-            when(agentB.execute(any(), any())).thenReturn(AgentResponse.Error.of("Task B failed"));
-
-            Map<String, AgentConfig> agents =
-                    Map.of(
-                            "agent-a",
-                                    AgentConfig.builder()
-                                            .id("agent-a")
-                                            .role("Worker A")
-                                            .model("test")
-                                            .build(),
-                            "agent-b",
-                                    AgentConfig.builder()
-                                            .id("agent-b")
-                                            .role("Worker B")
-                                            .model("test")
-                                            .build());
-
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "taskA",
-                    StandardNode.builder()
-                            .id("taskA")
-                            .agentId("agent-a")
-                            .prompt("Do task A")
-                            .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put(
-                    "taskB",
-                    StandardNode.builder()
-                            .id("taskB")
-                            .agentId("agent-b")
-                            .prompt("Do task B")
-                            .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put(
-                    "fork1",
-                    ForkNode.builder("fork1")
-                            .targets("taskA", "taskB")
-                            .transitionRules(List.of(new SuccessTransition("join1")))
-                            .build());
-            nodes.put(
-                    "join1",
-                    JoinNode.builder("join1")
-                            .awaitTargets("fork1")
-                            .mergeStrategy(MergeStrategy.COLLECT_ALL)
-                            .failOnAnyError(false)
-                            .transitionRules(
-                                    List.of(
-                                            new SuccessTransition("end"),
-                                            new FailureTransition(0, "fail-end")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-            nodes.put(
-                    "fail-end",
-                    EndNode.builder().id("fail-end").status(ExitStatus.FAILURE).build());
-
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("fork-join-continue")
-                            .version("1.0.0")
-                            .metadata(
-                                    new WorkflowMetadata(
-                                            "fork-join-continue",
-                                            "Test",
-                                            "tester",
-                                            Instant.now(),
-                                            List.of()))
-                            .agents(agents)
-                            .nodes(nodes)
-                            .startNode("fork1")
-                            .build();
-
-            // When
-            ExecutionResult result = executor.execute(workflow, new HashMap<>());
-
-            // Then: failOnAnyError=false → merge successful results only → SUCCESS
-            assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-            ExecutionResult.Completed completed = (ExecutionResult.Completed) result;
-            assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+        static Stream<Arguments> failOnAnyErrorCases() {
+            return Stream.of(
+                    Arguments.of(
+                            true, ExitStatus.FAILURE), // taskB fails + failOnAnyError → FAILURE
+                    Arguments.of(false, ExitStatus.SUCCESS) // taskB fails but ignored → SUCCESS
+                    );
         }
     }
 
-    // Helper methods
+    // =========================================================================
+    // Helpers
+    // =========================================================================
 
-    private Workflow createSimpleWorkflow() {
-        Map<String, AgentConfig> agents = new HashMap<>();
-        agents.put(
-                "test-agent",
-                AgentConfig.builder()
-                        .id("test-agent")
-                        .role("Test Agent")
-                        .model("test-model")
-                        .build());
+    /// Creates an AgentConfig for the default "test-agent" used by {@link #step}.
+    private static AgentConfig agentCfg() {
+        return AgentConfig.builder().id("test-agent").role("Test").model("test").build();
+    }
 
-        Map<String, Node> nodes = new HashMap<>();
-        nodes.put(
-                "start",
-                StandardNode.builder()
-                        .id("start")
-                        .agentId("test-agent")
-                        .prompt("Process input")
-                        .transitionRules(List.of(new SuccessTransition("end")))
-                        .build());
-        nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-        return Workflow.builder()
-                .id("simple-workflow")
-                .version("1.0.0")
-                .metadata(
-                        new WorkflowMetadata(
-                                "simple-workflow", "Test", "tester", Instant.now(), List.of()))
-                .agents(agents)
-                .nodes(nodes)
-                .startNode("start")
+    /// Creates a StandardNode with agentId="test-agent", default prompt, and a single
+    /// SuccessTransition.
+    private static Node step(String id, String next) {
+        return StandardNode.builder()
+                .id(id)
+                .agentId("test-agent")
+                .prompt("Do work")
+                .transitionRules(List.of(new SuccessTransition(next)))
                 .build();
     }
 
-    private Workflow createWorkflowWithMissingNode() {
-        Map<String, AgentConfig> agents = new HashMap<>();
-        agents.put(
-                "test-agent",
-                AgentConfig.builder()
-                        .id("test-agent")
-                        .role("Test Agent")
-                        .model("test-model")
-                        .build());
-
-        Map<String, Node> nodes = new HashMap<>();
-        nodes.put(
-                "start",
-                StandardNode.builder()
-                        .id("start")
-                        .agentId("test-agent")
-                        .prompt("Process input")
-                        .transitionRules(List.of(new SuccessTransition("missing-node")))
-                        .build());
-        nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-        return Workflow.builder()
-                .id("missing-node-workflow")
-                .version("1.0.0")
-                .metadata(
-                        new WorkflowMetadata(
-                                "missing-node-workflow",
-                                "Test",
-                                "tester",
-                                Instant.now(),
-                                List.of()))
-                .agents(agents)
-                .nodes(nodes)
-                .startNode("start")
-                .build();
+    /// Creates an EndNode with ExitStatus.SUCCESS.
+    private static Node end(String id) {
+        return EndNode.builder().id(id).status(ExitStatus.SUCCESS).build();
     }
 
-    private Workflow createWorkflowWithTemplatePrompt() {
-        Map<String, AgentConfig> agents = new HashMap<>();
-        agents.put(
-                "test-agent",
-                AgentConfig.builder()
-                        .id("test-agent")
-                        .role("Test Agent")
-                        .model("test-model")
-                        .build());
-
-        Map<String, Node> nodes = new HashMap<>();
-        nodes.put(
-                "start",
-                StandardNode.builder()
-                        .id("start")
-                        .agentId("test-agent")
-                        .prompt("Write about {topic} in {style} style")
-                        .transitionRules(List.of(new SuccessTransition("end")))
-                        .build());
-        nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-        return Workflow.builder()
-                .id("template-workflow")
-                .version("1.0.0")
-                .metadata(
-                        new WorkflowMetadata(
-                                "template-workflow", "Test", "tester", Instant.now(), List.of()))
-                .agents(agents)
-                .nodes(nodes)
-                .startNode("start")
-                .build();
-    }
-
-    private Workflow createMultiStepWorkflow() {
-        Map<String, AgentConfig> agents = new HashMap<>();
-        agents.put(
-                "test-agent",
-                AgentConfig.builder()
-                        .id("test-agent")
-                        .role("Test Agent")
-                        .model("test-model")
-                        .build());
-
-        Map<String, Node> nodes = new HashMap<>();
-        nodes.put(
-                "step1",
-                StandardNode.builder()
-                        .id("step1")
-                        .agentId("test-agent")
-                        .prompt("Step 1")
-                        .transitionRules(List.of(new SuccessTransition("step2")))
-                        .build());
-        nodes.put(
-                "step2",
-                StandardNode.builder()
-                        .id("step2")
-                        .agentId("test-agent")
-                        .prompt("Step 2")
-                        .transitionRules(List.of(new SuccessTransition("end")))
-                        .build());
-        nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-        return Workflow.builder()
-                .id("multi-step-workflow")
-                .version("1.0.0")
-                .metadata(
-                        new WorkflowMetadata(
-                                "multi-step-workflow", "Test", "tester", Instant.now(), List.of()))
-                .agents(agents)
-                .nodes(nodes)
-                .startNode("step1")
-                .build();
-    }
-
-    private Workflow createWorkflowWithFailureTransition() {
-        Map<String, AgentConfig> agents = new HashMap<>();
-        agents.put(
-                "test-agent",
-                AgentConfig.builder()
-                        .id("test-agent")
-                        .role("Test Agent")
-                        .model("test-model")
-                        .build());
-
-        Map<String, Node> nodes = new HashMap<>();
-        nodes.put(
-                "start",
-                StandardNode.builder()
-                        .id("start")
-                        .agentId("test-agent")
-                        .prompt("Process input")
-                        .transitionRules(
-                                List.of(
-                                        new SuccessTransition("success-end"),
-                                        new FailureTransition(0, "failure-end")))
-                        .build());
-        nodes.put(
-                "success-end",
-                EndNode.builder().id("success-end").status(ExitStatus.SUCCESS).build());
-        nodes.put(
-                "failure-end",
-                EndNode.builder().id("failure-end").status(ExitStatus.FAILURE).build());
-
-        return Workflow.builder()
-                .id("failure-transition-workflow")
-                .version("1.0.0")
-                .metadata(
-                        new WorkflowMetadata(
-                                "failure-transition-workflow",
-                                "Test",
-                                "tester",
-                                Instant.now(),
-                                List.of()))
-                .agents(agents)
-                .nodes(nodes)
-                .startNode("start")
-                .build();
-    }
-
-    private Workflow createWorkflowWithFailureEnd() {
-        Map<String, AgentConfig> agents = new HashMap<>();
-        agents.put(
-                "test-agent",
-                AgentConfig.builder()
-                        .id("test-agent")
-                        .role("Test Agent")
-                        .model("test-model")
-                        .build());
-
-        Map<String, Node> nodes = new HashMap<>();
-        nodes.put(
-                "start",
-                StandardNode.builder()
-                        .id("start")
-                        .agentId("test-agent")
-                        .prompt("Process input")
-                        .transitionRules(List.of(new SuccessTransition("failure-end")))
-                        .build());
-        nodes.put(
-                "failure-end",
-                EndNode.builder().id("failure-end").status(ExitStatus.FAILURE).build());
-
-        return Workflow.builder()
-                .id("failure-workflow")
-                .version("1.0.0")
-                .metadata(
-                        new WorkflowMetadata(
-                                "failure-workflow", "Test", "tester", Instant.now(), List.of()))
-                .agents(agents)
-                .nodes(nodes)
-                .startNode("start")
-                .build();
-    }
-
-    private Workflow createWorkflowWithNoTransition() {
-        Map<String, AgentConfig> agents = new HashMap<>();
-        agents.put(
-                "test-agent",
-                AgentConfig.builder()
-                        .id("test-agent")
-                        .role("Test Agent")
-                        .model("test-model")
-                        .build());
-
-        Map<String, Node> nodes = new HashMap<>();
-        nodes.put(
-                "start",
-                StandardNode.builder()
-                        .id("start")
-                        .agentId("test-agent")
-                        .prompt("Process input")
-                        .transitionRules(List.of()) // No transitions
-                        .build());
-        nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-        return Workflow.builder()
-                .id("no-transition-workflow")
-                .version("1.0.0")
-                .metadata(
-                        new WorkflowMetadata(
-                                "no-transition-workflow",
-                                "Test",
-                                "tester",
-                                Instant.now(),
-                                List.of()))
-                .agents(agents)
-                .nodes(nodes)
-                .startNode("start")
-                .build();
-    }
-
-    private Workflow createWorkflowWithNullPrompt() {
-        Map<String, AgentConfig> agents = new HashMap<>();
-        agents.put(
-                "test-agent",
-                AgentConfig.builder()
-                        .id("test-agent")
-                        .role("Test Agent")
-                        .model("test-model")
-                        .build());
-
-        Map<String, Node> nodes = new HashMap<>();
-        nodes.put(
-                "start",
-                StandardNode.builder()
-                        .id("start")
-                        .agentId("test-agent")
-                        .prompt(null)
-                        .transitionRules(List.of(new SuccessTransition("end")))
-                        .build());
-        nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-        return Workflow.builder()
-                .id("null-prompt-workflow")
-                .version("1.0.0")
-                .metadata(
-                        new WorkflowMetadata(
-                                "null-prompt-workflow", "Test", "tester", Instant.now(), List.of()))
-                .agents(agents)
-                .nodes(nodes)
-                .startNode("start")
-                .build();
-    }
-
-    private Workflow createWorkflowWithOutputParams() {
-        Map<String, AgentConfig> agents = new HashMap<>();
-        agents.put(
-                "test-agent",
-                AgentConfig.builder()
-                        .id("test-agent")
-                        .role("Test Agent")
-                        .model("test-model")
-                        .build());
-
-        Map<String, Node> nodes = new HashMap<>();
-        nodes.put(
-                "step1",
-                StandardNode.builder()
-                        .id("step1")
-                        .agentId("test-agent")
-                        .prompt("Extract facts about Georgia")
-                        .outputParams(List.of("lake_name", "peak_height", "capital"))
-                        .transitionRules(List.of(new SuccessTransition("step2")))
-                        .build());
-        nodes.put(
-                "step2",
-                StandardNode.builder()
-                        .id("step2")
-                        .agentId("test-agent")
-                        .prompt("Use the facts: {lake_name}, {peak_height}, {capital}")
-                        .transitionRules(List.of(new SuccessTransition("end")))
-                        .build());
-        nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-        return Workflow.builder()
-                .id("output-params-workflow")
-                .version("1.0.0")
-                .metadata(
-                        new WorkflowMetadata(
-                                "output-params-workflow",
-                                "Test",
-                                "tester",
-                                Instant.now(),
-                                List.of()))
-                .agents(agents)
-                .nodes(nodes)
-                .startNode("step1")
-                .build();
-    }
-
-    private Workflow createWorkflowWithParamPlaceholders() {
-        Map<String, AgentConfig> agents = new HashMap<>();
-        agents.put(
-                "test-agent",
-                AgentConfig.builder()
-                        .id("test-agent")
-                        .role("Test Agent")
-                        .model("test-model")
-                        .build());
-
-        Map<String, Node> nodes = new HashMap<>();
-        nodes.put(
-                "extract",
-                StandardNode.builder()
-                        .id("extract")
-                        .agentId("test-agent")
-                        .prompt("Extract country and language info")
-                        .outputParams(List.of("country", "language"))
-                        .transitionRules(List.of(new SuccessTransition("use")))
-                        .build());
-        nodes.put(
-                "use",
-                StandardNode.builder()
-                        .id("use")
-                        .agentId("test-agent")
-                        .prompt("Write an article about {country} in {language}")
-                        .transitionRules(List.of(new SuccessTransition("end")))
-                        .build());
-        nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-        return Workflow.builder()
-                .id("param-placeholders-workflow")
-                .version("1.0.0")
-                .metadata(
-                        new WorkflowMetadata(
-                                "param-placeholders-workflow",
-                                "Test",
-                                "tester",
-                                Instant.now(),
-                                List.of()))
-                .agents(agents)
-                .nodes(nodes)
-                .startNode("extract")
-                .build();
+    /// Creates an EndNode with ExitStatus.FAILURE.
+    private static Node failEnd(String id) {
+        return EndNode.builder().id(id).status(ExitStatus.FAILURE).build();
     }
 }

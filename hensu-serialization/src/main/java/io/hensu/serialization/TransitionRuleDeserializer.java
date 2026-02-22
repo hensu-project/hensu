@@ -14,11 +14,12 @@ import java.io.Serial;
 import java.util.ArrayList;
 import java.util.List;
 
-/// Deserializes `TransitionRule` variants based on the `type` discriminator field.
+/// Deserializes the `TransitionRule` sealed hierarchy using a `"type"` discriminator field.
 ///
 /// All nested domain types (`ScoreCondition`, `DoubleRange`) are extracted manually from the
 /// `JsonNode` tree to avoid POJO reflection, keeping this deserializer native-image safe.
 ///
+/// @implNote Package-private. Registered by {@link HensuJacksonModule}.
 /// @see TransitionRuleSerializer for the inverse operation
 class TransitionRuleDeserializer extends StdDeserializer<TransitionRule> {
 
@@ -28,6 +29,20 @@ class TransitionRuleDeserializer extends StdDeserializer<TransitionRule> {
         super(TransitionRule.class);
     }
 
+    /// Reads the `"type"` field and dispatches to the appropriate `TransitionRule` constructor.
+    ///
+    /// Handled types:
+    /// - **`"success"`** → `SuccessTransition(targetNode)`
+    /// - **`"failure"`** → `FailureTransition(retryCount, targetNode)`
+    /// - **`"always"`** → `AlwaysTransition()`
+    /// - **`"score"`** → `ScoreTransition` with a manually extracted `ScoreCondition` list
+    /// - **`"rubricFail"`** → `RubricFailTransition` with a no-op lambda; the original
+    ///   predicate is not serializable and cannot be restored from JSON
+    ///
+    /// @param p the JSON parser positioned at the start of the transition rule object, not null
+    /// @param ctx the deserialization context, not null
+    /// @return the deserialized `TransitionRule`, never null
+    /// @throws IOException if the `"type"` value is unknown or a required field is absent
     @Override
     public TransitionRule deserialize(JsonParser p, DeserializationContext ctx) throws IOException {
         ObjectMapper mapper = (ObjectMapper) p.getCodec();

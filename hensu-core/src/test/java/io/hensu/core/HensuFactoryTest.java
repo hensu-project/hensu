@@ -1,29 +1,33 @@
 package io.hensu.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.agent.AgentRegistry;
-import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
-import io.hensu.core.rubric.RubricRepository;
-import java.util.HashMap;
+import io.hensu.core.execution.result.ExecutionResult;
+import io.hensu.core.execution.result.ExitStatus;
+import io.hensu.core.workflow.Workflow;
+import io.hensu.core.workflow.node.EndNode;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+@DisplayName("HensuFactory")
 @ExtendWith(MockitoExtension.class)
 class HensuFactoryTest {
 
     private HensuEnvironment environment;
 
     @Mock private NodeExecutorRegistry mockNodeExecutorRegistry;
-
     @Mock private AgentRegistry mockAgentRegistry;
-
     @Mock private ExecutorService mockExecutorService;
 
     @AfterEach
@@ -33,228 +37,103 @@ class HensuFactoryTest {
         }
     }
 
-    @Test
-    void shouldCreateEnvironmentWithDefaultConfig() {
-        // When
-        environment = HensuFactory.createEnvironment();
+    @Nested
+    @DisplayName("builder")
+    class Builder {
 
-        // Then
-        assertThat(environment).isNotNull();
-        assertThat(environment.getWorkflowExecutor()).isNotNull();
-        assertThat(environment.getAgentRegistry()).isNotNull();
-        assertThat(environment.getNodeExecutorRegistry()).isNotNull();
-        assertThat(environment.getRubricRepository()).isNotNull();
+        @Test
+        @DisplayName("executes a trivial workflow to completion")
+        void shouldExecuteTrivialWorkflowToCompletion() throws Exception {
+            environment = HensuFactory.builder().build();
+
+            var workflow =
+                    Workflow.builder()
+                            .id("smoke-test")
+                            .startNode("done")
+                            .nodes(
+                                    Map.of(
+                                            "done",
+                                            EndNode.builder()
+                                                    .id("done")
+                                                    .status(ExitStatus.SUCCESS)
+                                                    .build()))
+                            .build();
+
+            var result = environment.getWorkflowExecutor().execute(workflow, Map.of());
+
+            assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
+            assertThat(((ExecutionResult.Completed) result).exitStatus())
+                    .isEqualTo(ExitStatus.SUCCESS);
+        }
+
+        @Test
+        @DisplayName("throws NullPointerException on null workflow")
+        void shouldRejectNullWorkflow() {
+            environment = HensuFactory.builder().build();
+
+            assertThatThrownBy(() -> environment.getWorkflowExecutor().execute(null, Map.of()))
+                    .isInstanceOf(NullPointerException.class);
+        }
+
+        @Test
+        @DisplayName("wires custom NodeExecutorRegistry")
+        void shouldWireCustomNodeExecutorRegistry() {
+            environment =
+                    HensuFactory.builder().nodeExecutorRegistry(mockNodeExecutorRegistry).build();
+
+            assertThat(environment.getNodeExecutorRegistry()).isSameAs(mockNodeExecutorRegistry);
+        }
+
+        @Test
+        @DisplayName("wires custom AgentRegistry")
+        void shouldWireCustomAgentRegistry() {
+            environment = HensuFactory.builder().agentRegistry(mockAgentRegistry).build();
+
+            assertThat(environment.getAgentRegistry()).isSameAs(mockAgentRegistry);
+        }
     }
 
-    @Test
-    void shouldCreateEnvironmentWithCustomConfig() {
-        // Given
-        HensuConfig config =
-                HensuConfig.builder().useVirtualThreads(false).threadPoolSize(5).build();
+    @Nested
+    @DisplayName("createEnvironment overloads")
+    class CreateEnvironment {
 
-        // When
-        environment = HensuFactory.createEnvironment(config);
+        @Test
+        @DisplayName("wires custom NodeExecutorRegistry")
+        void shouldWireCustomNodeExecutorRegistry() {
+            environment =
+                    HensuFactory.createEnvironment(
+                            new HensuConfig(),
+                            mockNodeExecutorRegistry,
+                            mockAgentRegistry,
+                            mockExecutorService);
 
-        // Then
-        assertThat(environment).isNotNull();
-        assertThat(environment.getWorkflowExecutor()).isNotNull();
+            assertThat(environment.getNodeExecutorRegistry()).isSameAs(mockNodeExecutorRegistry);
+        }
+
+        @Test
+        @DisplayName("wires custom AgentRegistry")
+        void shouldWireCustomAgentRegistry() {
+            environment =
+                    HensuFactory.createEnvironment(
+                            new HensuConfig(),
+                            mockNodeExecutorRegistry,
+                            mockAgentRegistry,
+                            mockExecutorService);
+
+            assertThat(environment.getAgentRegistry()).isSameAs(mockAgentRegistry);
+        }
     }
 
-    @Test
-    void shouldCreateEnvironmentWithCustomCredentials() {
-        // Given
-        HensuConfig config = new HensuConfig();
-        Map<String, String> credentials = new HashMap<>();
-        credentials.put("ANTHROPIC_API_KEY", "test-key");
+    @Nested
+    @DisplayName("lifecycle")
+    class Lifecycle {
 
-        // When
-        environment = HensuFactory.createEnvironment(config, credentials);
+        @Test
+        @DisplayName("close does not throw")
+        void shouldCloseWithoutException() {
+            environment = HensuFactory.builder().build();
 
-        // Then
-        assertThat(environment).isNotNull();
-        assertThat(environment.getAgentRegistry()).isNotNull();
-    }
-
-    @Test
-    void shouldCreateEnvironmentWithCustomNodeExecutorRegistry() {
-        // Given
-        HensuConfig config = new HensuConfig();
-
-        // When
-        environment =
-                HensuFactory.createEnvironment(
-                        config, mockNodeExecutorRegistry, mockAgentRegistry, mockExecutorService);
-
-        // Then
-        assertThat(environment).isNotNull();
-        assertThat(environment.getNodeExecutorRegistry()).isSameAs(mockNodeExecutorRegistry);
-    }
-
-    @Test
-    void shouldCreateEnvironmentWithCustomAgentRegistry() {
-        // Given
-        HensuConfig config = new HensuConfig();
-
-        // When
-        environment =
-                HensuFactory.createEnvironment(
-                        config, mockNodeExecutorRegistry, mockAgentRegistry, mockExecutorService);
-
-        // Then
-        assertThat(environment).isNotNull();
-        assertThat(environment.getAgentRegistry()).isSameAs(mockAgentRegistry);
-    }
-
-    @Test
-    void shouldCreateBuilderWithFluentApi() {
-        // When
-        HensuFactory.Builder builder = HensuFactory.builder();
-
-        // Then
-        assertThat(builder).isNotNull();
-    }
-
-    @Test
-    void shouldBuildEnvironmentWithBuilder() {
-        // When
-        environment = HensuFactory.builder().config(new HensuConfig()).build();
-
-        // Then
-        assertThat(environment).isNotNull();
-        assertThat(environment.getWorkflowExecutor()).isNotNull();
-    }
-
-    @Test
-    void shouldBuildEnvironmentWithCredentials() {
-        // When
-        environment =
-                HensuFactory.builder()
-                        .anthropicApiKey("test-anthropic-key")
-                        .openAiApiKey("test-openai-key")
-                        .build();
-
-        // Then
-        assertThat(environment).isNotNull();
-        assertThat(environment.getAgentRegistry()).isNotNull();
-        assertThat(environment.getNodeExecutorRegistry()).isNotNull();
-    }
-
-    @Test
-    void shouldBuildEnvironmentWithSingleCredential() {
-        // When
-        environment = HensuFactory.builder().credential("CUSTOM_KEY", "custom-value").build();
-
-        // Then
-        assertThat(environment).isNotNull();
-    }
-
-    @Test
-    void shouldBuildEnvironmentWithCredentialsMap() {
-        // Given
-        Map<String, String> credentials = new HashMap<>();
-        credentials.put("ANTHROPIC_API_KEY", "test-key");
-        credentials.put("OPENAI_API_KEY", "openai-key");
-
-        // When
-        environment = HensuFactory.builder().credentials(credentials).build();
-
-        // Then
-        assertThat(environment).isNotNull();
-    }
-
-    @Test
-    void shouldBuildEnvironmentWithCustomNodeExecutorRegistry() {
-        // When
-        environment = HensuFactory.builder().nodeExecutorRegistry(mockNodeExecutorRegistry).build();
-
-        // Then
-        assertThat(environment).isNotNull();
-        assertThat(environment.getNodeExecutorRegistry()).isSameAs(mockNodeExecutorRegistry);
-    }
-
-    @Test
-    void shouldBuildEnvironmentWithCustomAgentRegistry() {
-        // When
-        environment = HensuFactory.builder().agentRegistry(mockAgentRegistry).build();
-
-        // Then
-        assertThat(environment).isNotNull();
-        assertThat(environment.getAgentRegistry()).isSameAs(mockAgentRegistry);
-    }
-
-    @Test
-    void shouldBuildEnvironmentWithCustomConfig() {
-        // Given
-        HensuConfig config =
-                HensuConfig.builder()
-                        .useVirtualThreads(false)
-                        .threadPoolSize(20)
-                        .rubricStorageType("memory")
-                        .build();
-
-        // When
-        environment = HensuFactory.builder().config(config).build();
-
-        // Then
-        assertThat(environment).isNotNull();
-    }
-
-    @Test
-    void shouldCloseEnvironmentProperly() {
-        // Given
-        environment = HensuFactory.createEnvironment();
-
-        // When
-        environment.close();
-
-        // Then - no exception should be thrown
-        assertThat(environment).isNotNull();
-    }
-
-    @Test
-    void shouldCreateInMemoryRubricRepository() {
-        // When
-        environment = HensuFactory.createEnvironment();
-
-        // Then
-        RubricRepository repository = environment.getRubricRepository();
-        assertThat(repository).isNotNull();
-    }
-
-    @Test
-    void shouldCreateWorkflowExecutor() {
-        // When
-        environment = HensuFactory.createEnvironment();
-
-        // Then
-        WorkflowExecutor executor = environment.getWorkflowExecutor();
-        assertThat(executor).isNotNull();
-    }
-
-    @Test
-    void shouldUseVirtualThreadsWhenConfigured() {
-        // Given
-        HensuConfig config = HensuConfig.builder().useVirtualThreads(true).build();
-
-        // When
-        environment = HensuFactory.createEnvironment(config);
-
-        // Then
-        assertThat(environment).isNotNull();
-        // Virtual threads are used internally - we verify environment is created successfully
-    }
-
-    @Test
-    void shouldUseFixedThreadPoolWhenVirtualThreadsDisabled() {
-        // Given
-        HensuConfig config =
-                HensuConfig.builder().useVirtualThreads(false).threadPoolSize(4).build();
-
-        // When
-        environment = HensuFactory.createEnvironment(config);
-
-        // Then
-        assertThat(environment).isNotNull();
-        // Fixed thread pool is used internally - we verify environment is created successfully
+            assertThatCode(() -> environment.close()).doesNotThrowAnyException();
+        }
     }
 }

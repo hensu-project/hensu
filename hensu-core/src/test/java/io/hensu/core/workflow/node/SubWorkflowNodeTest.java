@@ -1,6 +1,7 @@
 package io.hensu.core.workflow.node;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.workflow.transition.SuccessTransition;
 import io.hensu.core.workflow.transition.TransitionRule;
@@ -19,8 +20,13 @@ class SubWorkflowNodeTest {
 
         // When
         SubWorkflowNode node =
-                new SubWorkflowNode(
-                        "sub-1", "nested-workflow", inputMapping, outputMapping, transitions);
+                SubWorkflowNode.builder()
+                        .id("sub-1")
+                        .workflowId("nested-workflow")
+                        .inputMapping(inputMapping)
+                        .outputMapping(outputMapping)
+                        .transitionRules(transitions)
+                        .build();
 
         // Then
         assertThat(node.getId()).isEqualTo("sub-1");
@@ -33,7 +39,7 @@ class SubWorkflowNodeTest {
     @Test
     void shouldReturnSubWorkflowNodeType() {
         // When
-        SubWorkflowNode node = new SubWorkflowNode("sub-1", "nested", null, null, null);
+        SubWorkflowNode node = SubWorkflowNode.builder().id("sub-1").workflowId("nested").build();
 
         // Then
         assertThat(node.getNodeType()).isEqualTo(NodeType.SUB_WORKFLOW);
@@ -42,34 +48,63 @@ class SubWorkflowNodeTest {
     @Test
     void shouldReturnNullRubricId() {
         // When
-        SubWorkflowNode node = new SubWorkflowNode("sub-1", "nested", null, null, null);
+        SubWorkflowNode node = SubWorkflowNode.builder().id("sub-1").workflowId("nested").build();
 
         // Then
         assertThat(node.getRubricId()).isNull();
     }
 
     @Test
-    void shouldAllowNullMappings() {
-        // When
-        SubWorkflowNode node = new SubWorkflowNode("sub-1", "nested", null, null, null);
+    void shouldNormalizNullMappingsToEmpty() {
+        // When — omitting optional fields defaults to empty collections
+        SubWorkflowNode node = SubWorkflowNode.builder().id("sub-1").workflowId("nested").build();
 
         // Then
-        assertThat(node.getInputMapping()).isNull();
-        assertThat(node.getOutputMapping()).isNull();
-        assertThat(node.getTransitionRules()).isNull();
+        assertThat(node.getInputMapping()).isEmpty();
+        assertThat(node.getOutputMapping()).isEmpty();
+        assertThat(node.getTransitionRules()).isEmpty();
     }
 
     @Test
     void shouldImplementEquals() {
         // Given
         Map<String, String> inputMapping = Map.of("input", "value");
-        SubWorkflowNode node1 = new SubWorkflowNode("sub-1", "nested", inputMapping, null, null);
-        SubWorkflowNode node2 = new SubWorkflowNode("sub-1", "nested", inputMapping, null, null);
-        SubWorkflowNode node3 = new SubWorkflowNode("sub-2", "nested", inputMapping, null, null);
+        SubWorkflowNode node1 =
+                SubWorkflowNode.builder()
+                        .id("sub-1")
+                        .workflowId("nested")
+                        .inputMapping(inputMapping)
+                        .build();
+        SubWorkflowNode node2 =
+                SubWorkflowNode.builder()
+                        .id("sub-1")
+                        .workflowId("nested")
+                        .inputMapping(inputMapping)
+                        .build();
+        SubWorkflowNode node3 =
+                SubWorkflowNode.builder()
+                        .id("sub-2")
+                        .workflowId("nested")
+                        .inputMapping(inputMapping)
+                        .build();
 
         // Then
         assertThat(node1).isEqualTo(node2);
         assertThat(node1).isNotEqualTo(node3);
         assertThat(node1.hashCode()).isEqualTo(node2.hashCode());
+    }
+
+    @Test
+    void shouldThrowWhenIdMissing() {
+        assertThatThrownBy(() -> SubWorkflowNode.builder().workflowId("nested").build())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("id");
+    }
+
+    @Test
+    void shouldThrowWhenWorkflowIdMissing() {
+        assertThatThrownBy(() -> SubWorkflowNode.builder().id("sub-1").build())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("workflowId");
     }
 }

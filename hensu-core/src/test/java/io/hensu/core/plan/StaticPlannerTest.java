@@ -161,6 +161,25 @@ class StaticPlannerTest {
             List<String> items = (List<String>) result.getStep(0).arguments().get("items");
             assertThat(items).containsExactly("A", "B");
         }
+
+        @Test
+        void shouldConvertNonStringContextValueToString() {
+            // Context values are Object — e.g. Integer set by a previous node.
+            // A naive (String) cast crashes the workflow; planner must call toString().
+            Plan predefined =
+                    Plan.staticPlan(
+                            "node",
+                            List.of(
+                                    PlannedStep.pending(
+                                            0, "echo", Map.of("count", "{itemCount}"), "Echo")));
+
+            StaticPlanner planner = new StaticPlanner(predefined);
+            Plan result =
+                    planner.createPlan(
+                            new PlanRequest("Goal", List.of(), Map.of("itemCount", 42), null));
+
+            assertThat(result.getStep(0).arguments()).containsEntry("count", "42");
+        }
     }
 
     @Nested

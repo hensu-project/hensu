@@ -20,9 +20,9 @@ public final class EndNode extends Node {
     private final NodeType nodeType = NodeType.END;
     private final ExitStatus status;
 
-    public EndNode(Builder builder) {
-        super(Objects.requireNonNull(builder.id, "Workflow ID required"));
-        this.status = Objects.requireNonNull(builder.status, "Exit status required");
+    private EndNode(Builder builder) {
+        super(builder.id);
+        this.status = builder.status;
     }
 
     /// Creates a new end node builder.
@@ -67,7 +67,7 @@ public final class EndNode extends Node {
     /// Required fields: `id`, `type`, `actions`
     public static final class Builder {
         private String id;
-        public ExitStatus status;
+        private ExitStatus status;
 
         private Builder() {}
 
@@ -92,8 +92,14 @@ public final class EndNode extends Node {
         /// Builds the immutable end node.
         ///
         /// @return new EndNode instance, never null
-        /// @throws NullPointerException if required fields are null
+        /// @throws IllegalStateException if `id` or `status` is null
         public EndNode build() {
+            if (id == null || id.isBlank()) {
+                throw new IllegalStateException("EndNode id is required");
+            }
+            if (status == null) {
+                throw new IllegalStateException("EndNode status is required");
+            }
             return new EndNode(this);
         }
     }

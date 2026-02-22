@@ -42,16 +42,16 @@ class EndNodeTest {
     void shouldThrowExceptionWhenIdIsNull() {
         // When/Then
         assertThatThrownBy(() -> EndNode.builder().status(ExitStatus.SUCCESS).build())
-                .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("ID required");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("id");
     }
 
     @Test
     void shouldThrowExceptionWhenStatusIsNull() {
         // When/Then
         assertThatThrownBy(() -> EndNode.builder().id("test-node").build())
-                .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("Exit status required");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("status");
     }
 
     @Test

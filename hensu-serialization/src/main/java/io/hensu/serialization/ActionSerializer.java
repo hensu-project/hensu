@@ -7,8 +7,14 @@ import io.hensu.core.execution.action.Action;
 import java.io.IOException;
 import java.io.Serial;
 
-/// Serializes `Action` sealed class variants with a `type` discriminator.
+/// Serializes the `Action` sealed hierarchy with a `"type"` discriminator field.
 ///
+/// Emitted JSON shape per subtype:
+/// - **`Action.Send`**: `{"type":"send","handlerId":"...","payload":{...}}`.
+///   The `payload` object is omitted when empty.
+/// - **`Action.Execute`**: `{"type":"execute","commandId":"..."}`.
+///
+/// @implNote Package-private. Registered by {@link HensuJacksonModule}.
 /// @see ActionDeserializer for the inverse operation
 class ActionSerializer extends StdSerializer<Action> {
 
@@ -18,6 +24,12 @@ class ActionSerializer extends StdSerializer<Action> {
         super(Action.class);
     }
 
+    /// Writes the action to JSON, selecting fields by the concrete `Action` subtype.
+    ///
+    /// @param action the action to serialize, not null
+    /// @param gen the JSON generator, not null
+    /// @param provider the serializer provider, not null
+    /// @throws IOException if the generator encounters a write error
     @Override
     public void serialize(Action action, JsonGenerator gen, SerializerProvider provider)
             throws IOException {

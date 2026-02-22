@@ -84,16 +84,16 @@ class StandardNodeTest {
 
         // When/Then
         assertThatThrownBy(() -> StandardNode.builder().transitionRules(transitions).build())
-                .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("Node ID required");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("id");
     }
 
     @Test
     void shouldThrowExceptionWhenTransitionRulesAreNull() {
         // When/Then
         assertThatThrownBy(() -> StandardNode.builder().id("test-node").build())
-                .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("Transition Rules required");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("transitionRules");
     }
 
     @Test

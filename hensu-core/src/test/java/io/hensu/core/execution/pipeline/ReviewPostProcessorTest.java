@@ -2,6 +2,8 @@ package io.hensu.core.execution.pipeline;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.hensu.core.execution.executor.ExecutionContext;
@@ -67,7 +69,7 @@ class ReviewPostProcessorTest {
         }
 
         @Test
-        @DisplayName("returns empty when OPTIONAL and result is SUCCESS")
+        @DisplayName("returns empty when OPTIONAL and result is SUCCESS — handler never called")
         void shouldSkipOptionalOnSuccess() {
             var config = new ReviewConfig(ReviewMode.OPTIONAL, false, false);
             var ctx = contextWithReview("node", config);
@@ -75,6 +77,8 @@ class ReviewPostProcessorTest {
             var result = processor.process(ctx);
 
             assertThat(result).isEmpty();
+            // The handler must not be invoked — calling it would block automation unnecessarily.
+            verify(reviewHandler, never()).requestReview(any(), any(), any(), any(), any(), any());
         }
     }
 
