@@ -7,8 +7,18 @@ import io.hensu.core.workflow.transition.*;
 import java.io.IOException;
 import java.io.Serial;
 
-/// Serializes `TransitionRule` sealed interface variants with a `type` discriminator.
+/// Serializes the `TransitionRule` sealed hierarchy with a `"type"` discriminator field.
 ///
+/// Emitted JSON shape per subtype:
+/// - **`SuccessTransition`**: `{"type":"success","targetNode":"..."}`
+/// - **`FailureTransition`**: `{"type":"failure","retryCount":N,"targetNode":"..."}`
+/// - **`AlwaysTransition`**: `{"type":"always"}`
+/// - **`ScoreTransition`**: `{"type":"score","conditions":[...]}` — conditions delegated
+///   to the default `ScoreCondition` serializer via `defaultSerializeField`
+/// - **`RubricFailTransition`**: `{"type":"rubricFail"}` — the handler predicate is not
+///   serializable and is reconstructed as a no-op lambda on deserialization
+///
+/// @implNote Package-private. Registered by {@link HensuJacksonModule}.
 /// @see TransitionRuleDeserializer for the inverse operation
 class TransitionRuleSerializer extends StdSerializer<TransitionRule> {
 
@@ -18,6 +28,12 @@ class TransitionRuleSerializer extends StdSerializer<TransitionRule> {
         super(TransitionRule.class);
     }
 
+    /// Writes a `TransitionRule` to JSON, selecting fields by the concrete subtype.
+    ///
+    /// @param rule the transition rule to serialize, not null
+    /// @param gen the JSON generator, not null
+    /// @param provider the serializer provider, not null
+    /// @throws IOException if the generator encounters a write error
     @Override
     public void serialize(TransitionRule rule, JsonGenerator gen, SerializerProvider provider)
             throws IOException {

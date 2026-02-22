@@ -7,8 +7,28 @@ import io.hensu.core.workflow.node.*;
 import java.io.IOException;
 import java.io.Serial;
 
-/// Serializes all `Node` subtypes to JSON with a `nodeType` discriminator.
+/// Serializes all `Node` subtypes to JSON with a `"nodeType"` discriminator field.
 ///
+/// Every serialized object begins with `"id"` and `"nodeType"`, followed by subtype-specific
+/// fields. Optional fields (e.g., `agentId`, `prompt`) are omitted when null or empty.
+///
+/// ```
+/// NodeType       Additional fields
+/// ———————————————+————————————————————————————————————————————————————————————————————————
+/// STANDARD       │ agentId, prompt, rubricId, reviewConfig, transitionRules,
+///                │ outputParams, planningConfig, staticPlan, planFailureTarget
+/// END            │ status
+/// ACTION         │ actions, transitionRules
+/// GENERIC        │ executorType, config, transitionRules, rubricId
+/// PARALLEL       │ branches, consensusConfig, transitionRules
+/// FORK           │ targets, targetConfigs, transitionRules, waitForAll
+/// JOIN           │ awaitTargets, mergeStrategy, outputField, timeoutMs,
+///                │ failOnAnyError, transitionRules
+/// SUB_WORKFLOW   │ workflowId, inputMapping, outputMapping, transitionRules
+/// LOOP           │ (none — only id and nodeType are written)
+/// ```
+///
+/// @implNote Package-private. Registered by {@link HensuJacksonModule}.
 /// @see NodeDeserializer for the inverse operation
 class NodeSerializer extends StdSerializer<Node> {
 
@@ -18,6 +38,12 @@ class NodeSerializer extends StdSerializer<Node> {
         super(Node.class);
     }
 
+    /// Writes a `Node` object to JSON, dispatching on the concrete subtype.
+    ///
+    /// @param node the node to serialize, not null
+    /// @param gen the JSON generator, not null
+    /// @param provider the serializer provider, not null
+    /// @throws IOException if the node subtype is unrecognized or a write error occurs
     @Override
     public void serialize(Node node, JsonGenerator gen, SerializerProvider provider)
             throws IOException {

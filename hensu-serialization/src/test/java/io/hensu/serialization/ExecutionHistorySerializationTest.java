@@ -17,10 +17,9 @@ import org.junit.jupiter.api.Test;
 
 /// Round-trip serialization tests for execution history types.
 ///
-/// Verifies that `NodeResult`, `ExecutionStep`, `BacktrackEvent`, and
-/// `ExecutionHistory` survive JSON serialization via the `HensuJacksonModule`
-/// mixins. These types are persisted as JSONB in the server's PostgreSQL
-/// `execution_states` table.
+/// Verifies that `NodeResult`, `ExecutionStep`, `BacktrackEvent`, and `ExecutionHistory`
+/// survive JSON serialization via the `HensuJacksonModule` mixins.
+/// These types are persisted as JSONB in the server's PostgreSQL `execution_states` table.
 ///
 /// @see HensuJacksonModule for mixin registrations
 /// @see WorkflowSerializerTest for workflow-level serialization tests

@@ -21,11 +21,10 @@ public final class ActionNode extends Node {
     private final List<Action> actions;
     private final List<TransitionRule> transitionRules;
 
-    public ActionNode(Builder builder) {
-        super(Objects.requireNonNull(builder.id, "Node ID required"));
-        this.actions = Objects.requireNonNull(builder.actions, "Actions required");
-        this.transitionRules =
-                Objects.requireNonNull(builder.transitionRules, "Transition rules required");
+    private ActionNode(Builder builder) {
+        super(builder.id);
+        this.actions = builder.actions;
+        this.transitionRules = builder.transitionRules;
     }
 
     /// Creates a new action node builder.
@@ -106,8 +105,17 @@ public final class ActionNode extends Node {
         /// Builds the immutable action node.
         ///
         /// @return new ActionNode instance, never null
-        /// @throws NullPointerException if required fields are null
+        /// @throws IllegalStateException if `id`, `actions`, or `transitionRules` is null
         public ActionNode build() {
+            if (id == null || id.isBlank()) {
+                throw new IllegalStateException("ActionNode id is required");
+            }
+            if (actions == null) {
+                throw new IllegalStateException("ActionNode actions is required");
+            }
+            if (transitionRules == null) {
+                throw new IllegalStateException("ActionNode transitionRules is required");
+            }
             return new ActionNode(this);
         }
     }

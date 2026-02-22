@@ -11,8 +11,17 @@ import java.io.IOException;
 import java.io.Serial;
 import java.util.Map;
 
-/// Deserializes `Action` variants based on the `type` discriminator field.
+/// Deserializes the `Action` sealed hierarchy using a `"type"` discriminator field.
 ///
+/// Handles two subtypes:
+/// - **`"send"`** — constructs `Action.Send` with `handlerId` and an optional `payload` map.
+///   `payload` is extracted via `convertValue` — no POJO reflection required.
+/// - **`"execute"`** — constructs `Action.Execute` with `commandId`.
+///
+/// Both subtypes are constructed directly from `JsonNode` values, making this deserializer
+/// native-image safe without any `reflect-config.json` entries.
+///
+/// @implNote Package-private. Registered by {@link HensuJacksonModule}.
 /// @see ActionSerializer for the inverse operation
 class ActionDeserializer extends StdDeserializer<Action> {
 
@@ -22,6 +31,13 @@ class ActionDeserializer extends StdDeserializer<Action> {
         super(Action.class);
     }
 
+    /// Reads the `"type"` field from the token stream and dispatches to the appropriate
+    /// `Action` subtype constructor.
+    ///
+    /// @param p the JSON parser positioned at the start of the action object, not null
+    /// @param ctx the deserialization context, not null
+    /// @return the deserialized `Action` instance, never null
+    /// @throws IOException if the `"type"` value is unknown or a required field is absent
     @Override
     public Action deserialize(JsonParser p, DeserializationContext ctx) throws IOException {
         ObjectMapper mapper = (ObjectMapper) p.getCodec();

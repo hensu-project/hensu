@@ -27,14 +27,13 @@ class PlanExecutorTest {
     private ActionExecutor mockActionExecutor;
     private PlanExecutor executor;
     private List<PlanEvent> capturedEvents;
-    private PlanObserver captureObserver;
 
     @BeforeEach
     void setUp() {
         mockActionExecutor = mock(ActionExecutor.class);
         executor = new PlanExecutor(mockActionExecutor);
         capturedEvents = new ArrayList<>();
-        captureObserver = capturedEvents::add;
+        PlanObserver captureObserver = capturedEvents::add;
         executor.addObserver(captureObserver);
     }
 
@@ -79,7 +78,7 @@ class PlanExecutorTest {
         @Test
         void shouldNotFailOnObserverException() {
             PlanObserver failingObserver =
-                    event -> {
+                    _ -> {
                         throw new RuntimeException("Observer failed");
                     };
 
@@ -252,18 +251,12 @@ class PlanExecutorTest {
 
         @Test
         void shouldTimeoutIfDurationExceeded() {
-            // Create a plan with very short duration constraint
+            // Duration.ZERO: any elapsed time between plan creation and the timeout
+            // check exceeds the constraint. No sleep required — JVM execution takes > 0ns.
             Plan plan =
                     Plan.staticPlan("node", List.of(PlannedStep.simple(0, "tool", "Step")))
                             .withConstraints(
                                     PlanConstraints.defaults().withMaxDuration(Duration.ZERO));
-
-            // Sleep briefly to ensure we exceed the zero duration
-            try {
-                Thread.sleep(1);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
 
             PlanResult result = executor.execute(plan, Map.of());
 

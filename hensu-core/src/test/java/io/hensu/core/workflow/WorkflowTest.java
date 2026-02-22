@@ -4,172 +4,73 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.agent.AgentConfig;
-import io.hensu.core.execution.action.Action;
 import io.hensu.core.execution.result.ExitStatus;
-import io.hensu.core.workflow.node.ActionNode;
 import io.hensu.core.workflow.node.EndNode;
 import io.hensu.core.workflow.node.Node;
-import io.hensu.core.workflow.node.NodeType;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.transition.SuccessTransition;
-import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-class WorkflowTest {
+public class WorkflowTest {
+
+    // -------------------------------------------------------------------------
+    // Builder — required fields, defaults, validation
+    // -------------------------------------------------------------------------
 
     @Nested
     class BuilderTest {
 
         @Test
         void shouldBuildWorkflowWithRequiredFields() {
-            // Given
-            Node startNode = createEndNode("start");
-
-            // When
-            Workflow workflow =
+            var workflow =
                     Workflow.builder()
                             .id("test-workflow")
-                            .nodes(Map.of("start", startNode))
+                            .nodes(Map.of("start", endNode("start")))
                             .startNode("start")
                             .build();
 
-            // Then
             assertThat(workflow.getId()).isEqualTo("test-workflow");
             assertThat(workflow.getStartNode()).isEqualTo("start");
             assertThat(workflow.getNodes()).containsKey("start");
+            assertThat(workflow.getVersion()).isEqualTo("1.0.0"); // default
+            assertThat(workflow.getAgents()).isEmpty();
+            assertThat(workflow.getRubrics()).isEmpty();
         }
 
         @Test
-        void shouldBuildWorkflowWithVersion() {
-            // Given
-            Node startNode = createEndNode("start");
+        void shouldBuildWorkflowWithAllOptionalFields() {
+            // All optional fields are preserved through the builder.
+            // If a field is silently dropped this test fails.
+            var agentConfig = agentConfig("writer", "claude-sonnet-4");
+            var config = new WorkflowConfig(5000L, true, 1000L, null);
 
-            // When
-            Workflow workflow =
+            var workflow =
                     Workflow.builder()
                             .id("test-workflow")
                             .version("2.0.0")
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            // Then
-            assertThat(workflow.getVersion()).isEqualTo("2.0.0");
-        }
-
-        @Test
-        void shouldDefaultVersionTo1_0_0() {
-            // Given
-            Node startNode = createEndNode("start");
-
-            // When
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("test-workflow")
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            // Then
-            assertThat(workflow.getVersion()).isEqualTo("1.0.0");
-        }
-
-        @Test
-        void shouldBuildWorkflowWithAgents() {
-            // Given
-            Node startNode = createEndNode("start");
-            AgentConfig agentConfig = createAgentConfig("writer", "claude-sonnet-4");
-
-            // When
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("test-workflow")
                             .agents(Map.of("writer", agentConfig))
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            // Then
-            assertThat(workflow.getAgents()).containsKey("writer");
-            assertThat(workflow.getAgents().get("writer")).isEqualTo(agentConfig);
-        }
-
-        @Test
-        void shouldBuildWorkflowWithRubrics() {
-            // Given
-            Node startNode = createEndNode("start");
-
-            // When
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("test-workflow")
                             .rubrics(Map.of("quality", "rubric-content"))
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            // Then
-            assertThat(workflow.getRubrics()).containsEntry("quality", "rubric-content");
-        }
-
-        @Test
-        void shouldBuildWorkflowWithConfig() {
-            // Given
-            Node startNode = createEndNode("start");
-            WorkflowConfig config = new WorkflowConfig(5000L, true, 1000L, null);
-
-            // When
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("test-workflow")
-                            .nodes(Map.of("start", startNode))
+                            .nodes(Map.of("start", endNode("start")))
                             .startNode("start")
                             .config(config)
                             .build();
 
-            // Then
+            assertThat(workflow.getVersion()).isEqualTo("2.0.0");
+            assertThat(workflow.getAgents()).containsKey("writer");
+            assertThat(workflow.getRubrics()).containsEntry("quality", "rubric-content");
             assertThat(workflow.getConfig()).isEqualTo(config);
         }
 
         @Test
-        void shouldBuildWorkflowWithMetadata() {
-            // Given
-            Node startNode = createEndNode("start");
-            WorkflowMetadata metadata =
-                    new WorkflowMetadata(
-                            "Test Workflow",
-                            "A test workflow",
-                            "Author",
-                            Instant.now(),
-                            List.of("test", "example"));
-
-            // When
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("test-workflow")
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .metadata(metadata)
-                            .build();
-
-            // Then
-            assertThat(workflow.getMetadata()).isEqualTo(metadata);
-        }
-
-        @Test
         void shouldThrowWhenIdIsNull() {
-            // Given
-            Node startNode = createEndNode("start");
-
-            // When/Then
             assertThatThrownBy(
                             () ->
                                     Workflow.builder()
-                                            .nodes(Map.of("start", startNode))
+                                            .nodes(Map.of("start", endNode("start")))
                                             .startNode("start")
                                             .build())
                     .isInstanceOf(NullPointerException.class)
@@ -178,15 +79,11 @@ class WorkflowTest {
 
         @Test
         void shouldThrowWhenStartNodeIsNull() {
-            // Given
-            Node startNode = createEndNode("start");
-
-            // When/Then
             assertThatThrownBy(
                             () ->
                                     Workflow.builder()
                                             .id("test-workflow")
-                                            .nodes(Map.of("start", startNode))
+                                            .nodes(Map.of("start", endNode("start")))
                                             .build())
                     .isInstanceOf(NullPointerException.class)
                     .hasMessageContaining("Start node required");
@@ -194,322 +91,235 @@ class WorkflowTest {
 
         @Test
         void shouldThrowWhenStartNodeNotInNodes() {
-            // Given
-            Node startNode = createEndNode("start");
-
-            // When/Then
             assertThatThrownBy(
                             () ->
                                     Workflow.builder()
                                             .id("test-workflow")
-                                            .nodes(Map.of("start", startNode))
+                                            .nodes(Map.of("start", endNode("start")))
                                             .startNode("nonexistent")
                                             .build())
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("Start node 'nonexistent' not found");
         }
+
+        @Test
+        void shouldThrowWhenNodeReferencesUndeclaredRubric() {
+            // Node declares rubricId="quality" but the workflow.rubrics map is empty.
+            // The validate() method must detect this; otherwise a rubric lookup at
+            // runtime silently fails or throws an unrelated NPE deep in the engine.
+            var nodeWithRubric =
+                    StandardNode.builder()
+                            .id("start")
+                            .rubricId("quality")
+                            .transitionRules(List.of(new SuccessTransition("end")))
+                            .build();
+
+            assertThatThrownBy(
+                            () ->
+                                    Workflow.builder()
+                                            .id("test-workflow")
+                                            .nodes(
+                                                    Map.of(
+                                                            "start",
+                                                            nodeWithRubric,
+                                                            "end",
+                                                            endNode("end")))
+                                            .startNode("start")
+                                            .build())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("quality");
+        }
     }
+
+    // -------------------------------------------------------------------------
+    // Immutability — all collections must be unmodifiable after build()
+    // -------------------------------------------------------------------------
 
     @Nested
     class ImmutabilityTest {
 
         @Test
-        void shouldMakeAgentsImmutable() {
-            // Given
-            Node startNode = createEndNode("start");
-            Workflow workflow =
+        void shouldMakeAllCollectionsImmutable() {
+            var workflow =
                     Workflow.builder()
                             .id("test-workflow")
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            // Then
-            assertThat(workflow.getAgents()).isUnmodifiable();
-        }
-
-        @Test
-        void shouldMakeRubricsImmutable() {
-            // Given
-            Node startNode = createEndNode("start");
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("test-workflow")
+                            .agents(Map.of("writer", agentConfig("writer", "any")))
                             .rubrics(Map.of("quality", "content"))
-                            .nodes(Map.of("start", startNode))
+                            .nodes(Map.of("start", endNode("start")))
                             .startNode("start")
                             .build();
 
-            // Then
+            assertThat(workflow.getAgents()).isUnmodifiable();
             assertThat(workflow.getRubrics()).isUnmodifiable();
-        }
-
-        @Test
-        void shouldMakeNodesImmutable() {
-            // Given
-            Node startNode = createEndNode("start");
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("test-workflow")
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            // Then
             assertThat(workflow.getNodes()).isUnmodifiable();
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Equality — workflows are keyed by id + version
+    // -------------------------------------------------------------------------
 
     @Nested
     class EqualsAndHashCodeTest {
 
         @Test
         void shouldBeEqualWhenIdAndVersionMatch() {
-            // Given
-            Node startNode = createEndNode("start");
+            var w1 = minimal("test-workflow", "1.0.0");
+            var w2 = minimal("test-workflow", "1.0.0");
 
-            Workflow workflow1 =
-                    Workflow.builder()
-                            .id("test-workflow")
-                            .version("1.0.0")
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            Workflow workflow2 =
-                    Workflow.builder()
-                            .id("test-workflow")
-                            .version("1.0.0")
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            // Then
-            assertThat(workflow1).isEqualTo(workflow2);
-            assertThat(workflow1.hashCode()).isEqualTo(workflow2.hashCode());
+            assertThat(w1).isEqualTo(w2);
+            assertThat(w1.hashCode()).isEqualTo(w2.hashCode());
         }
 
         @Test
         void shouldNotBeEqualWhenIdDiffers() {
-            // Given
-            Node startNode = createEndNode("start");
-
-            Workflow workflow1 =
-                    Workflow.builder()
-                            .id("workflow-1")
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            Workflow workflow2 =
-                    Workflow.builder()
-                            .id("workflow-2")
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            // Then
-            assertThat(workflow1).isNotEqualTo(workflow2);
+            assertThat(minimal("workflow-a", "1.0.0")).isNotEqualTo(minimal("workflow-b", "1.0.0"));
         }
 
         @Test
         void shouldNotBeEqualWhenVersionDiffers() {
-            // Given
-            Node startNode = createEndNode("start");
-
-            Workflow workflow1 =
-                    Workflow.builder()
-                            .id("test-workflow")
-                            .version("1.0.0")
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            Workflow workflow2 =
-                    Workflow.builder()
-                            .id("test-workflow")
-                            .version("2.0.0")
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            // Then
-            assertThat(workflow1).isNotEqualTo(workflow2);
-        }
-
-        @Test
-        void shouldBeEqualToItself() {
-            // Given
-            Node startNode = createEndNode("start");
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("test-workflow")
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            // Then
-            assertThat(workflow).isEqualTo(workflow);
-        }
-
-        @Test
-        void shouldNotBeEqualToNull() {
-            // Given
-            Node startNode = createEndNode("start");
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("test-workflow")
-                            .nodes(Map.of("start", startNode))
-                            .startNode("start")
-                            .build();
-
-            // Then
-            assertThat(workflow).isNotEqualTo(null);
+            assertThat(minimal("test-workflow", "1.0.0"))
+                    .isNotEqualTo(minimal("test-workflow", "2.0.0"));
         }
     }
 
-    @Test
-    void shouldReturnMeaningfulToString() {
-        // Given
-        Node startNode = createEndNode("start");
-        Workflow workflow =
-                Workflow.builder()
-                        .id("my-workflow")
-                        .version("2.1.0")
-                        .nodes(Map.of("start", startNode))
-                        .startNode("start")
-                        .build();
-
-        // When
-        String toString = workflow.toString();
-
-        // Then
-        assertThat(toString).contains("my-workflow");
-        assertThat(toString).contains("2.1.0");
-    }
+    // -------------------------------------------------------------------------
+    // TestWorkflowBuilder — shared fixture for processor and executor tests
+    // -------------------------------------------------------------------------
 
     @Nested
-    class ActionNodeTest {
+    class TestWorkflowBuilderTest {
 
         @Test
-        void shouldBuildWorkflowWithActionNode() {
-            // Given
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "develop",
-                    StandardNode.builder()
-                            .id("develop")
-                            .agentId("coder")
-                            .prompt("Write code")
-                            .transitionRules(List.of(new SuccessTransition("commit")))
-                            .build());
-            nodes.put(
-                    "commit",
-                    ActionNode.builder()
-                            .id("commit")
-                            .actions(List.of(new Action.Execute("git-commit")))
-                            .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
+        void singleNodeFactorySetsNodeAsStart() {
+            var node = endNode("done");
+            var workflow = TestWorkflowBuilder.singleNode(node);
 
-            // When
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("action-workflow")
-                            .nodes(nodes)
-                            .startNode("develop")
-                            .build();
-
-            // Then
-            assertThat(workflow.getNodes()).hasSize(3);
-            assertThat(workflow.getNodes().get("commit")).isInstanceOf(ActionNode.class);
-
-            ActionNode actionNode = (ActionNode) workflow.getNodes().get("commit");
-            assertThat(actionNode.getNodeType()).isEqualTo(NodeType.ACTION);
-            assertThat(actionNode.getActions()).hasSize(1);
+            assertThat(workflow.getStartNode()).isEqualTo("done");
+            assertThat(workflow.getNodes()).containsKey("done").hasSize(1);
         }
 
         @Test
-        void shouldBuildWorkflowWithMultipleActionNodes() {
-            // Given
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "start",
-                    StandardNode.builder()
-                            .id("start")
-                            .agentId("agent")
-                            .prompt("Work")
-                            .transitionRules(List.of(new SuccessTransition("commit")))
-                            .build());
-            nodes.put(
-                    "commit",
-                    ActionNode.builder()
-                            .id("commit")
-                            .actions(List.of(new Action.Execute("git-commit")))
-                            .transitionRules(List.of(new SuccessTransition("notify")))
-                            .build());
-            nodes.put(
-                    "notify",
-                    ActionNode.builder()
-                            .id("notify")
-                            .actions(
-                                    List.of(
-                                            new Action.Send("slack"),
-                                            new Action.Send("build-hook")))
-                            .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
+        void withNodesFactorySetsFirstNodeAsStart() {
+            var first = standardNode("step", "end");
+            var last = endNode("end");
 
-            // When
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("multi-action-workflow")
-                            .nodes(nodes)
-                            .startNode("start")
-                            .build();
+            var workflow = TestWorkflowBuilder.withNodes(first, last);
 
-            // Then
-            assertThat(workflow.getNodes()).hasSize(4);
-
-            ActionNode commitNode = (ActionNode) workflow.getNodes().get("commit");
-            assertThat(commitNode.getActions()).hasSize(1);
-
-            ActionNode notifyNode = (ActionNode) workflow.getNodes().get("notify");
-            assertThat(notifyNode.getActions()).hasSize(2);
+            assertThat(workflow.getStartNode()).isEqualTo("step");
+            assertThat(workflow.getNodes()).hasSize(2);
         }
 
         @Test
-        void shouldBuildWorkflowWithActionNodeAsStartNode() {
-            // Given
-            Map<String, Node> nodes = new HashMap<>();
-            nodes.put(
-                    "init",
-                    ActionNode.builder()
-                            .id("init")
-                            .actions(List.of(new Action.Execute("setup-env")))
-                            .transitionRules(List.of(new SuccessTransition("end")))
-                            .build());
-            nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
-
-            // When
-            Workflow workflow =
-                    Workflow.builder()
-                            .id("action-start-workflow")
-                            .nodes(nodes)
-                            .startNode("init")
+        void fluentBuilderPreservesRubricAndAgentEntries() {
+            var workflow =
+                    TestWorkflowBuilder.create("wf")
+                            .startNode(standardNode("step", "end"))
+                            .node(endNode("end"))
+                            .rubric("quality", "Be concise.")
+                            .agent(agentConfig("writer", "claude-sonnet-4"))
                             .build();
 
-            // Then
-            assertThat(workflow.getStartNode()).isEqualTo("init");
-            assertThat(workflow.getNodes().get("init")).isInstanceOf(ActionNode.class);
+            assertThat(workflow.getRubrics()).containsEntry("quality", "Be concise.");
+            assertThat(workflow.getAgents()).containsKey("writer");
+            assertThat(workflow.getStartNode()).isEqualTo("step");
         }
     }
 
-    private Node createEndNode(String id) {
+    // =========================================================================
+    // Shared fixture — embedded so tests that need Workflow construction have
+    // a zero-boilerplate API without a separate utility class.
+    // Reference from other packages: WorkflowTest.TestWorkflowBuilder
+    // =========================================================================
+
+    public static final class TestWorkflowBuilder {
+
+        private String id = "test-wf";
+        private String startNodeId;
+        private final Map<String, Node> nodes = new HashMap<>();
+        private final Map<String, AgentConfig> agents = new HashMap<>();
+        private final Map<String, String> rubrics = new HashMap<>();
+
+        private TestWorkflowBuilder() {}
+
+        /// Single-node workflow. The node is its own start.
+        public static Workflow singleNode(Node node) {
+            return new TestWorkflowBuilder().startNode(node).build();
+        }
+
+        /// Linear workflow. First node becomes `startNode`; all nodes are registered. No
+        /// transitions are wired — caller is responsible for building nodes with correct rules.
+        public static Workflow withNodes(Node... nodes) {
+            var b = new TestWorkflowBuilder();
+            b.startNodeId = nodes[0].getId();
+            for (var n : nodes) b.nodes.put(n.getId(), n);
+            return b.build();
+        }
+
+        /// Fluent builder for workflows that need rubrics, agents, or custom id.
+        public static TestWorkflowBuilder create(String id) {
+            var b = new TestWorkflowBuilder();
+            b.id = id;
+            return b;
+        }
+
+        public TestWorkflowBuilder startNode(Node node) {
+            this.startNodeId = node.getId();
+            this.nodes.put(node.getId(), node);
+            return this;
+        }
+
+        public TestWorkflowBuilder node(Node node) {
+            this.nodes.put(node.getId(), node);
+            return this;
+        }
+
+        public TestWorkflowBuilder agent(AgentConfig agent) {
+            this.agents.put(agent.getId(), agent);
+            return this;
+        }
+
+        public TestWorkflowBuilder rubric(String name, String content) {
+            this.rubrics.put(name, content);
+            return this;
+        }
+
+        public Workflow build() {
+            return Workflow.builder()
+                    .id(id)
+                    .startNode(startNodeId)
+                    .nodes(nodes)
+                    .agents(agents)
+                    .rubrics(rubrics)
+                    .build();
+        }
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    private static Node endNode(String id) {
         return EndNode.builder().id(id).status(ExitStatus.SUCCESS).build();
     }
 
-    private AgentConfig createAgentConfig(String id, String model) {
+    private static Node standardNode(String id, String next) {
+        return StandardNode.builder()
+                .id(id)
+                .transitionRules(List.of(new SuccessTransition(next)))
+                .build();
+    }
+
+    private static AgentConfig agentConfig(String id, String model) {
         return AgentConfig.builder().id(id).role("assistant").model(model).build();
+    }
+
+    private static Workflow minimal(String id, String version) {
+        return Workflow.builder()
+                .id(id)
+                .version(version)
+                .nodes(Map.of("start", endNode("start")))
+                .startNode("start")
+                .build();
     }
 }

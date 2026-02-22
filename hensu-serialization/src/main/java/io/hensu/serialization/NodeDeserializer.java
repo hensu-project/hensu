@@ -23,13 +23,22 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/// Deserializes JSON to the appropriate `Node` subtype based on `nodeType` field.
+/// Deserializes JSON to the appropriate `Node` subtype using the `"nodeType"` discriminator field.
 ///
-/// Simple nested types (`ReviewConfig`, `ConsensusConfig`, `Branch`) are extracted manually from
-/// the `JsonNode` tree. Complex types with `Duration` fields (`PlanningConfig`, `Plan`) delegate
-/// to `treeToValue` and are registered for reflection in
-/// `io.hensu.server.config.NativeImageConfig`.
+/// ### Extraction strategy
 ///
+/// Simple nested types — all fields are primitives, strings, or enums — are extracted manually
+/// from the `JsonNode` tree to avoid POJO reflection:
+/// - `ReviewConfig` (mode + two booleans)
+/// - `ConsensusConfig` (judgeAgentId, strategy, threshold)
+/// - `Branch` (id, agentId, prompt, rubricId, weight)
+///
+/// Complex types that contain `Duration` or deeply nested structures delegate to `treeToValue`
+/// and require reflection registration in `NativeImageConfig` in `hensu-server`:
+/// - `PlanningConfig` (contains `PlanConstraints` which contains `java.time.Duration`)
+/// - `Plan` (contains `List<PlannedStep>` and `PlanConstraints`)
+///
+/// @implNote Package-private. Registered by {@link HensuJacksonModule}.
 /// @see NodeSerializer for the inverse operation
 class NodeDeserializer extends StdDeserializer<Node> {
 
@@ -46,6 +55,13 @@ class NodeDeserializer extends StdDeserializer<Node> {
         super(Node.class);
     }
 
+    /// Reads `"id"` and `"nodeType"` from the token stream and dispatches to the
+    /// appropriate subtype builder.
+    ///
+    /// @param p the JSON parser positioned at the start of the node object, not null
+    /// @param ctxt the deserialization context, not null
+    /// @return the constructed `Node`, never null
+    /// @throws IOException if a required field is absent or the `"nodeType"` value is unrecognized
     @Override
     public Node deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
         ObjectMapper mapper = (ObjectMapper) p.getCodec();
@@ -201,16 +217,19 @@ class NodeDeserializer extends StdDeserializer<Node> {
 
     private SubWorkflowNode deserializeSubWorkflow(ObjectMapper mapper, JsonNode root, String id)
             throws IOException {
-        return new SubWorkflowNode(
-                id,
-                root.get("workflowId").asText(),
-                root.has("inputMapping")
-                        ? mapper.convertValue(root.get("inputMapping"), STRING_MAP)
-                        : Map.of(),
-                root.has("outputMapping")
-                        ? mapper.convertValue(root.get("outputMapping"), STRING_MAP)
-                        : Map.of(),
-                readValue(mapper, root, "transitionRules", TRANSITION_LIST));
+        return SubWorkflowNode.builder()
+                .id(id)
+                .workflowId(root.get("workflowId").asText())
+                .inputMapping(
+                        root.has("inputMapping")
+                                ? mapper.convertValue(root.get("inputMapping"), STRING_MAP)
+                                : Map.of())
+                .outputMapping(
+                        root.has("outputMapping")
+                                ? mapper.convertValue(root.get("outputMapping"), STRING_MAP)
+                                : Map.of())
+                .transitionRules(readValue(mapper, root, "transitionRules", TRANSITION_LIST))
+                .build();
     }
 
     private List<Branch> deserializeBranches(JsonNode array) {

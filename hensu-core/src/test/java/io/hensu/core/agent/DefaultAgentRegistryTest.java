@@ -6,8 +6,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
+import io.hensu.core.agent.stub.StubAgentProvider;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -282,6 +285,42 @@ class DefaultAgentRegistryTest {
 
         // Then
         assertThat(result).isSameAs(agentFactory);
+    }
+
+    @Nested
+    class RealIntegration {
+
+        @BeforeEach
+        void enableStubMode() {
+            System.setProperty("hensu.stub.enabled", "true");
+        }
+
+        @AfterEach
+        void disableStubMode() {
+            System.clearProperty("hensu.stub.enabled");
+        }
+
+        @Test
+        void shouldCreateAndInvokeRealStubAgent() {
+            // Uses real AgentFactory wired with StubAgentProvider — no mocks.
+            // Verifies the registry → factory → provider chain works end-to-end.
+            // If AgentFactory constructor changes or StubAgentProvider is broken,
+            // this is the first test to fail.
+            AgentFactory realFactory = new AgentFactory(Map.of(), List.of(new StubAgentProvider()));
+            DefaultAgentRegistry realRegistry = new DefaultAgentRegistry(realFactory);
+
+            AgentConfig config =
+                    AgentConfig.builder().id("writer").role("assistant").model("any-model").build();
+
+            Agent agent = realRegistry.registerAgent("writer", config);
+
+            assertThat(agent).isNotNull();
+            assertThat(agent.getId()).isEqualTo("writer");
+            assertThat(realRegistry.hasAgent("writer")).isTrue();
+
+            var response = agent.execute("Hello", Map.of());
+            assertThat(response).isNotNull();
+        }
     }
 
     private AgentConfig createConfig(String id, String model) {
