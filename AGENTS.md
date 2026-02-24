@@ -115,6 +115,9 @@ concerns (e.g., adding a new rubric) from the core agent execution logic.
 - `ExecutionResource` - REST API for execution runtime (start/resume/status/plan)
 - `JdbcWorkflowRepository` - PostgreSQL-backed workflow storage (plain class, not CDI bean)
 - `JdbcWorkflowStateRepository` - PostgreSQL-backed execution state storage (plain class, not CDI bean)
+- `ExecutionLeaseManager` - Distributed lease manager; generates `server_node_id`, bumps heartbeats, atomically claims stale executions (`@ApplicationScoped`)
+- `ExecutionHeartbeatJob` - Scheduled heartbeat; runs every `hensu.lease.heartbeat-interval` (default 30s) (`@ApplicationScoped`)
+- `WorkflowRecoveryJob` - Scheduled sweeper; claims orphaned executions older than `hensu.lease.stale-threshold` (default 90s) and resumes them (`@ApplicationScoped`)
 
 **AI Provider Interface**:
 
@@ -176,6 +179,24 @@ Execution state flows through three types:
 2. `WorkflowService` saves snapshot with reason `"paused"`
 3. Later: `WorkflowService.resumeExecution()` loads snapshot → restores `HensuState` → calls
    `WorkflowExecutor.executeFrom()` → saves final snapshot
+
+**Distributed Recovery & Leasing:**
+
+Each `HensuSnapshot` with `checkpointReason = "checkpoint"` is tied to a server lease via two
+columns in `hensu.execution_states`:
+
+- `server_node_id` — set to the owning server's UUID on `save("checkpoint")`; cleared to `NULL`
+  on `"completed"`, `"paused"`, `"failed"`, or `"rejected"`
+- `last_heartbeat_at` — bumped every `hensu.lease.heartbeat-interval` (default 30s) by
+  `ExecutionHeartbeatJob`
+
+`WorkflowRecoveryJob` periodically scans for rows where
+`last_heartbeat_at < NOW() - stale-threshold` (default 90s) and atomically claims them via a
+single `UPDATE … RETURNING` statement (safe under PostgreSQL `READ COMMITTED`). Claimed
+executions are immediately passed to `WorkflowService.resumeExecution()` on the surviving node.
+
+`findPaused()` filters `WHERE server_node_id IS NULL` — human-review checkpoints never appear in
+the recovery sweeper's scope.
 
 **Key context keys** (set by `WorkflowService.startExecution()`):
 
@@ -347,6 +368,10 @@ CRUD operations, UPSERT semantics, FK constraints, tenant isolation, and seriali
 - `hensu-server/.../persistence/JdbcWorkflowRepository.java` - PostgreSQL workflow storage (plain JDBC, JSONB)
 - `hensu-server/.../persistence/JdbcWorkflowStateRepository.java` - PostgreSQL execution state storage (plain JDBC, JSONB)
 - `hensu-server/src/main/resources/db/migration/V1__create_persistence_tables.sql` - Flyway schema migration
+- `hensu-server/src/main/resources/db/migration/V2__add_execution_leases.sql` - Lease columns migration
+- `hensu-server/.../persistence/ExecutionLeaseManager.java` - Distributed lease manager (heartbeat + atomic claim)
+- `hensu-server/.../service/ExecutionHeartbeatJob.java` - Heartbeat emission (@Scheduled)
+- `hensu-server/.../service/WorkflowRecoveryJob.java` - Recovery sweeper (@Scheduled)
 
 **CLI:**
 

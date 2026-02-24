@@ -16,6 +16,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.Serial;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.jboss.logging.Logger;
 
@@ -56,21 +57,40 @@ public class WorkflowService {
                 Objects.requireNonNull(workflowRepository, "workflowRepository must not be null");
     }
 
-    /// Starts a new workflow execution.
+    /// Accepts a new workflow execution and dispatches it asynchronously.
     ///
-    /// @param tenantId the tenant requesting execution, not null
+    /// Validates that the workflow exists, then immediately returns an execution ID while
+    /// running the workflow on a background virtual thread. The caller does not block on
+    /// workflow completion — progress and outcome are delivered via SSE events.
+    ///
+    /// ### Contracts
+    /// - **Precondition**: workflow identified by `workflowId` must be registered for the tenant
+    /// - **Postcondition**: `ExecutionStarted` SSE event is published before this method returns
+    ///
+    /// @apiNote **Side effects**:
+    /// - Publishes an `ExecutionStarted` event to the SSE stream synchronously
+    /// - Dispatches a virtual thread that persists checkpoints and publishes completion events
+    /// - Background thread publishes `ExecutionCompleted` on success (with `output` — the
+    ///   public workflow context, all keys prefixed with `_` stripped) or `ExecutionError`
+    ///   on unrecoverable failure
+    ///
+    /// @implNote Execution runs on a dedicated `Thread.ofVirtual()` thread; the HTTP response
+    /// is returned before the workflow completes. Both {@link TenantContext} and the
+    /// execution-scoped broadcaster are explicitly rebound inside the background thread.
+    ///
+    /// @param tenantId the tenant requesting execution; typically the JWT {@code tenant_id}
+    ///        claim resolved by {@code RequestTenantResolver} at the API layer, not null
     /// @param workflowId the workflow to execute, not null
     /// @param context initial context variables, not null
-    /// @return execution result containing execution ID, never null
-    /// @throws WorkflowNotFoundException if workflow not found
-    /// @throws WorkflowExecutionException if execution fails
+    /// @return execution result containing the assigned execution ID, never null
+    /// @throws WorkflowNotFoundException if the workflow does not exist
     public ExecutionStartResult startExecution(
             String tenantId, String workflowId, Map<String, Object> context) {
         Objects.requireNonNull(tenantId, "tenantId must not be null");
         Objects.requireNonNull(workflowId, "workflowId must not be null");
         Objects.requireNonNull(context, "context must not be null");
 
-        LOG.infov("Starting workflow execution: workflow={0}, tenant={1}", workflowId, tenantId);
+        LOG.infov("Accepting workflow execution: workflow={0}, tenant={1}", workflowId, tenantId);
 
         String executionId = UUID.randomUUID().toString();
 
@@ -81,11 +101,55 @@ public class WorkflowService {
                         ? TenantContext.current()
                         : TenantInfo.simple(tenantId);
 
-        // Publish execution started event before entering the scoped execution frame
+        // Validate workflow existence synchronously — fail fast before accepting the request.
+        workflowRepository
+                .findById(tenantId, workflowId)
+                .orElseThrow(
+                        () -> new WorkflowNotFoundException("Workflow not found: " + workflowId));
+
+        Map<String, Object> executionContext = new HashMap<>(context);
+        executionContext.put("_tenant_id", tenantId);
+        executionContext.put("_execution_id", executionId);
+
         eventBroadcaster.publish(
                 executionId,
                 ExecutionEvent.ExecutionStarted.now(executionId, workflowId, tenantId));
 
+        // Dispatch execution on a virtual thread — HTTP response returns immediately.
+        Thread.ofVirtual()
+                .name("wf-exec-" + executionId)
+                .start(
+                        () ->
+                                runExecutionAsync(
+                                        executionId,
+                                        workflowId,
+                                        tenantId,
+                                        tenant,
+                                        executionContext));
+
+        LOG.infov("Workflow execution accepted: executionId={0}", executionId);
+        return new ExecutionStartResult(executionId, workflowId);
+    }
+
+    /// Runs a workflow execution on the calling (virtual) thread.
+    ///
+    /// Rebinds both {@link TenantContext} and execution-scoped broadcaster before executing,
+    /// then handles all result variants by persisting state and publishing the appropriate event.
+    /// Always calls {@link ExecutionEventBroadcaster#complete} in a `finally` block to
+    /// close the SSE stream regardless of outcome.
+    ///
+    /// @param executionId the execution identifier, not null
+    /// @param workflowId the workflow to execute, not null
+    /// @param tenantId the owning tenant, not null
+    /// @param tenant the tenant info for scoped context, not null
+    /// @param executionContext the pre-built execution context, not null
+    private void runExecutionAsync(
+            String executionId,
+            String workflowId,
+            String tenantId,
+            TenantInfo tenant,
+            Map<String, Object> executionContext) {
+        AtomicReference<HensuState> lastCheckpoint = new AtomicReference<>();
         try {
             eventBroadcaster.runAs(
                     executionId,
@@ -95,18 +159,13 @@ public class WorkflowService {
                                 () -> {
                                     Workflow workflow = loadWorkflow(workflowId);
 
-                                    // Inject tenant ID into context for sub-workflow resolution
-                                    Map<String, Object> executionContext = new HashMap<>(context);
-                                    executionContext.put("_tenant_id", tenantId);
-                                    executionContext.put("_execution_id", executionId);
-
                                     ExecutionResult result =
                                             workflowExecutor.execute(
                                                     workflow,
                                                     executionContext,
-                                                    checkpointListener(tenantId));
+                                                    trackingCheckpointListener(
+                                                            tenantId, lastCheckpoint));
 
-                                    // Save final state and publish completion event
                                     if (result instanceof ExecutionResult.Completed completed) {
                                         HensuSnapshot snapshot =
                                                 HensuSnapshot.from(
@@ -167,6 +226,7 @@ public class WorkflowService {
                                 });
                         return null;
                     });
+            LOG.infov("Workflow execution completed: executionId={0}", executionId);
         } catch (Exception e) {
             LOG.errorv(
                     e, "Workflow execution failed: workflow={0}, tenant={1}", workflowId, tenantId);
@@ -174,13 +234,34 @@ public class WorkflowService {
                     executionId,
                     ExecutionEvent.ExecutionError.now(
                             executionId, e.getClass().getSimpleName(), e.getMessage(), null));
-            throw new WorkflowExecutionException("Workflow execution failed: " + e.getMessage(), e);
+            // Persist a terminal "failed" snapshot so that status queries return "failed"
+            // rather than a stale "checkpoint" or a missing record, and so that
+            // WorkflowRecoveryJob does not attempt to re-claim an execution that ended
+            // with an unrecoverable error. Mirrors the ExecutionResult.Failure branch above,
+            // which handles failures that the executor wraps; this handles those that escape.
+            HensuState ls = lastCheckpoint.get();
+            if (ls != null) {
+                stateRepository.save(tenantId, HensuSnapshot.from(ls, "failed"));
+            }
         } finally {
             eventBroadcaster.complete(executionId);
         }
+    }
 
-        LOG.infov("Workflow execution completed: executionId={0}", executionId);
-        return new ExecutionStartResult(executionId, workflowId);
+    /// Creates a checkpoint listener that persists state after each node and tracks the latest.
+    ///
+    /// @param tenantId the owning tenant, not null
+    /// @param lastCheckpoint holder updated with every checkpoint state, not null
+    /// @return listener that saves checkpoints and updates the reference, never null
+    private ExecutionListener trackingCheckpointListener(
+            String tenantId, AtomicReference<HensuState> lastCheckpoint) {
+        return new ExecutionListener() {
+            @Override
+            public void onCheckpoint(HensuState state) {
+                lastCheckpoint.set(state);
+                stateRepository.save(tenantId, HensuSnapshot.from(state, "checkpoint"));
+            }
+        };
     }
 
     /// Resumes a paused workflow execution.

@@ -3,6 +3,8 @@ package io.hensu.serialization;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
+import io.hensu.core.rubric.model.DoubleRange;
+import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.workflow.transition.*;
 import java.io.IOException;
 import java.io.Serial;
@@ -13,8 +15,8 @@ import java.io.Serial;
 /// - **`SuccessTransition`**: `{"type":"success","targetNode":"..."}`
 /// - **`FailureTransition`**: `{"type":"failure","retryCount":N,"targetNode":"..."}`
 /// - **`AlwaysTransition`**: `{"type":"always"}`
-/// - **`ScoreTransition`**: `{"type":"score","conditions":[...]}` — conditions delegated
-///   to the default `ScoreCondition` serializer via `defaultSerializeField`
+/// - **`ScoreTransition`**: `{"type":"score","conditions":[...]}` — each condition written
+///   manually: `operator` (string), `value` (number|null), `range` (object|null), `targetNode`
 /// - **`RubricFailTransition`**: `{"type":"rubricFail"}` — the handler predicate is not
 ///   serializable and is reconstructed as a no-op lambda on deserialization
 ///
@@ -52,7 +54,28 @@ class TransitionRuleSerializer extends StdSerializer<TransitionRule> {
             case AlwaysTransition _ -> gen.writeStringField("type", "always");
             case ScoreTransition t -> {
                 gen.writeStringField("type", "score");
-                provider.defaultSerializeField("conditions", t.conditions(), gen);
+                gen.writeArrayFieldStart("conditions");
+                for (ScoreCondition c : t.conditions()) {
+                    gen.writeStartObject();
+                    gen.writeStringField("operator", c.operator().name());
+                    if (c.value() != null) {
+                        gen.writeNumberField("value", c.value());
+                    } else {
+                        gen.writeNullField("value");
+                    }
+                    DoubleRange range = c.range();
+                    if (range != null) {
+                        gen.writeObjectFieldStart("range");
+                        gen.writeNumberField("start", range.start());
+                        gen.writeNumberField("end", range.end());
+                        gen.writeEndObject();
+                    } else {
+                        gen.writeNullField("range");
+                    }
+                    gen.writeStringField("targetNode", c.targetNode());
+                    gen.writeEndObject();
+                }
+                gen.writeEndArray();
             }
             case RubricFailTransition _ -> gen.writeStringField("type", "rubricFail");
         }

@@ -1,12 +1,10 @@
 package io.hensu.server.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.service.WorkflowService.ExecutionStartResult;
-import io.hensu.server.service.WorkflowService.WorkflowExecutionException;
 import io.quarkus.test.junit.QuarkusTest;
 import java.util.List;
 import java.util.Map;
@@ -52,7 +50,13 @@ class SubWorkflowIntegrationTest extends IntegrationTestBase {
 
         registerStub("prepare", "Prepared data for processing");
 
-        assertThatThrownBy(() -> pushAndExecute(parent, Map.of("topic", "integration testing")))
-                .isInstanceOf(WorkflowExecutionException.class);
+        ExecutionStartResult result =
+                pushAndExecute(parent, Map.of("topic", "integration testing"));
+
+        HensuSnapshot snapshot =
+                workflowStateRepository
+                        .findByExecutionId(TEST_TENANT, result.executionId())
+                        .orElseThrow();
+        assertThat(snapshot.checkpointReason()).isEqualTo("failed");
     }
 }

@@ -81,7 +81,8 @@ class PlanExecutionIntegrationTest extends IntegrationTestBase {
         registerStub("execute", "Dynamic execution complete");
         registerStub(
                 "_planning_agent",
-                "[{\"tool\":\"test-tool\",\"arguments\":{\"action\":\"fetch\"},\"description\":\"Fetch data\"}]");
+                "[{\"tool\":\"test-tool\",\"arguments\":{\"action\":\"fetch\"},\"description\":\"Fetch"
+                        + " data\"}]");
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("task", "dynamic task"));
 
