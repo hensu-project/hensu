@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.service.WorkflowService.ExecutionStartResult;
-import io.hensu.server.service.WorkflowService.WorkflowExecutionException;
 import io.hensu.server.service.WorkflowService.WorkflowNotFoundException;
 import io.quarkus.test.junit.QuarkusTest;
 import java.util.List;
@@ -67,8 +66,7 @@ class WorkflowLifecycleIntegrationTest extends IntegrationTestBase {
                         () ->
                                 workflowService.startExecution(
                                         "other-tenant", workflow.getId(), Map.of()))
-                .isInstanceOf(WorkflowExecutionException.class)
-                .hasCauseInstanceOf(WorkflowNotFoundException.class);
+                .isInstanceOf(WorkflowNotFoundException.class);
     }
 
     @Test
@@ -77,7 +75,6 @@ class WorkflowLifecycleIntegrationTest extends IntegrationTestBase {
                         () ->
                                 workflowService.startExecution(
                                         TEST_TENANT, "non-existent-id", Map.of()))
-                .isInstanceOf(WorkflowExecutionException.class)
-                .hasCauseInstanceOf(WorkflowNotFoundException.class);
+                .isInstanceOf(WorkflowNotFoundException.class);
     }
 }

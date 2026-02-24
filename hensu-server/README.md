@@ -44,7 +44,41 @@ to external MCP servers.
 +—————————————————————————————————————————————————————————————————+
 ```
 
+## Local Development
+
+JWT authentication is required in all profiles — including dev mode. Each developer generates
+their own RSA keypair; keys are gitignored and never committed.
+
+See **[Local Development](../docs/developer-guide-server.md#local-development)** in the Server
+Developer Guide for the full setup (keypair generation, docker-compose, token generation).
+
+Quick reference:
+
+```bash
+# 1. Configure environment
+cp .env.example .env  # fill in HENSU_DB_PASSWORD
+
+# 2. Generate keypair
+mkdir -p dev/keys
+openssl genrsa -out dev/keys/privateKey.pem 2048
+openssl rsa -in dev/keys/privateKey.pem -pubout -out dev/keys/publicKey.pem
+# Then set HENSU_JWT_PUBLIC_KEY=file:/absolute/path/to/repo/dev/keys/publicKey.pem in .env
+
+# 3. Start database
+docker-compose up -d
+
+# 4. Run server (Flyway migrations run automatically)
+./gradlew :hensu-server:quarkusDev
+
+# 5. Get a token (valid 1 hour)
+TOKEN=$(bash dev/gen-jwt.sh)
+```
+
+---
+
 ## Quick Start
+
+> Requires local development setup above. Use `$TOKEN` from step 5.
 
 ### Running the Server
 
@@ -90,7 +124,7 @@ curl -X POST http://localhost:8080/api/v1/executions \
 
 All API and MCP endpoints require a valid JWT bearer token (`Authorization: Bearer <jwt>`).
 Tenant identity is extracted from the `tenant_id` claim. In dev/test mode, authentication
-is disabled and a default tenant is used (see [Local Development Tokens](#local-development-tokens)).
+is disabled and a default tenant is used (see [Local Development](#local-development)).
 
 ### Workflow Definition Management
 
@@ -266,69 +300,29 @@ hensu.mcp.pool-size=10
 hensu.planning.default-max-steps=10
 hensu.planning.default-max-replans=3
 hensu.planning.default-timeout=5m
-# PostgreSQL (Dev Services auto-starts a container in dev/test mode)
+# PostgreSQL
+# Dev: docker-compose (set HENSU_DB_USER, HENSU_DB_PASSWORD, HENSU_DB_NAME in .env)
+# Prod: set HENSU_DB_URL, HENSU_DB_USER, HENSU_DB_PASSWORD as environment variables
 quarkus.datasource.db-kind=postgresql
-%prod.quarkus.datasource.username=hensu
-%prod.quarkus.datasource.password=hensu
-%prod.quarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/hensu
-# Flyway schema migrations
+%dev.quarkus.datasource.devservices.enabled=false
+%dev.quarkus.datasource.username=${HENSU_DB_USER}
+%dev.quarkus.datasource.password=${HENSU_DB_PASSWORD}
+%dev.quarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/${HENSU_DB_NAME:hensu}
+%prod.quarkus.datasource.username=${HENSU_DB_USER}
+%prod.quarkus.datasource.password=${HENSU_DB_PASSWORD}
+%prod.quarkus.datasource.jdbc.url=${HENSU_DB_URL}
+# Flyway — migrates runtime schema on startup
 quarkus.flyway.migrate-at-start=true
-quarkus.flyway.schemas=hensu
-# In-memory profile (no PostgreSQL, no leasing)
+quarkus.flyway.schemas=runtime
+# In-memory profile: for integration tests only (no PostgreSQL, no leasing, auth disabled)
 %inmem.quarkus.datasource.active=false
 %inmem.quarkus.datasource.devservices.enabled=false
 %inmem.quarkus.flyway.migrate-at-start=false
 %inmem.quarkus.scheduler.enabled=false
 # Distributed recovery leasing
-hensu.node.id=
 hensu.lease.heartbeat-interval=30s
 hensu.lease.recovery-interval=60s
 hensu.lease.stale-threshold=90s
-```
-
-### Local Development Tokens
-
-In **dev mode** (`quarkusDev`), JWT auth is permissive and `RequestTenantResolver` falls back to the
-`hensu.tenant.default` property. No token is required for local development.
-
-For **production-like testing** with real JWT validation, generate an RSA key pair and a signed token
-outside the repository:
-
-```bash
-# 1. Generate RSA 2048-bit key pair (store outside the repo, e.g., ~/.hensu/)
-mkdir -p ~/.hensu
-openssl genrsa -out ~/.hensu/privateKey.pem 2048
-openssl rsa -in ~/.hensu/privateKey.pem -pubout -out ~/.hensu/publicKey.pem
-
-# 2. Point the server at the public key via environment variable
-export HENSU_JWT_PUBLIC_KEY=~/.hensu/publicKey.pem
-
-# 3. Generate a signed dev JWT
-#    Required claims:
-#      - "iss": must match mp.jwt.verify.issuer (default: "https://hensu.io")
-#      - "sub": any subject identifier
-#      - "tenant_id": tenant claim read by RequestTenantResolver
-#      - "exp": expiration timestamp
-HEADER=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 -w0 | tr '+/' '-_' | tr -d '=')
-PAYLOAD=$(echo -n "{\"iss\":\"https://hensu.io\",\"sub\":\"dev-user\",\"tenant_id\":\"dev-tenant\",\"exp\":$(($(date +%s) + 86400))}" | base64 -w0 | tr '+/' '-_' | tr -d '=')
-SIGNATURE=$(echo -n "$HEADER.$PAYLOAD" | openssl dgst -sha256 -sign ~/.hensu/privateKey.pem | base64 -w0 | tr '+/' '-_' | tr -d '=')
-export TOKEN="$HEADER.$PAYLOAD.$SIGNATURE"
-
-# 4. Use the token
-curl -X POST http://localhost:8080/api/v1/workflows \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @workflow.json
-
-# Or pass to CLI
-hensu push my-workflow --token "$TOKEN"
-```
-
-**Server JWT configuration** (in `application.properties`):
-
-```properties
-mp.jwt.verify.publickey.location=${HENSU_JWT_PUBLIC_KEY:publicKey.pem}
-mp.jwt.verify.issuer=${HENSU_JWT_ISSUER:https://hensu.io}
 ```
 
 ## Module Structure

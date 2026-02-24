@@ -7,8 +7,10 @@ import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.plan.Plan;
 import io.hensu.core.plan.PlanConstraints;
+import io.hensu.core.plan.PlanSnapshot;
 import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.plan.PlanningConfig;
+import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
@@ -35,8 +37,14 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 /// Jackson's POJO reflection can reach their fields at runtime.
 ///
 /// Simple nested types (`ReviewConfig`, `ConsensusConfig`, `Branch`, `ScoreCondition`,
-/// `DoubleRange`) are extracted manually in their respective deserializers and do **not** need
-/// registration here.
+/// `DoubleRange`) are extracted manually in both serializer and deserializer — no registration
+/// needed.
+///
+/// ### 3. Record types in execution state snapshots
+/// `HensuSnapshot` is embedded in `ExecutionStep` (via `ExecutionStep.Builder.snapshot`) and
+/// serialized as part of JDBC state persistence. Its nested `PlanSnapshot` record hierarchy
+/// (`PlanSnapshot`, `PlannedStepSnapshot`, `StepResultSnapshot`) must also be registered so
+/// Jackson can reach the canonical constructors and component accessors at runtime.
 ///
 /// @implNote No Quarkus annotations are placed on `hensu-core` types. All native image metadata
 /// lives in `hensu-server`, keeping the core module dependency-free.
@@ -60,6 +68,11 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
             PlanningConfig.class,
             PlanConstraints.class,
             Plan.class,
-            PlannedStep.class
+            PlannedStep.class,
+            // --- Record types for execution state snapshots ---
+            HensuSnapshot.class,
+            PlanSnapshot.class,
+            PlanSnapshot.PlannedStepSnapshot.class,
+            PlanSnapshot.StepResultSnapshot.class
         })
 public class NativeImageConfig {}

@@ -288,7 +288,7 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                 PreparedStatement ps =
                         conn.prepareStatement(
                                 "SELECT server_node_id, last_heartbeat_at"
-                                        + " FROM hensu.execution_states"
+                                        + " FROM runtime.execution_states"
                                         + " WHERE tenant_id = ? AND execution_id = ?")) {
             ps.setString(1, tenantId);
             ps.setString(2, executionId);

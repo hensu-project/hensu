@@ -53,6 +53,14 @@ Thumbs.db
 !gradle.properties
 local.properties
 
+# Developer JWT keys (personal per-developer, never committed)
+dev/keys/
+**/key/publicKey.pem
+**/key/privateKey.pem
+dev/keys/privateKey.pem
+dev/keys/publicKey.pem
+publicKey.pem
+
 # GraalVM / Native Image
 *.exe
 *.so

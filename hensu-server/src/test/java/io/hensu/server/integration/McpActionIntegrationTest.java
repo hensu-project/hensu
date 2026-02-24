@@ -1,7 +1,6 @@
 package io.hensu.server.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,7 +9,6 @@ import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.mcp.McpSessionManager;
 import io.hensu.server.service.WorkflowService.ExecutionStartResult;
-import io.hensu.server.service.WorkflowService.WorkflowExecutionException;
 import io.quarkus.test.junit.QuarkusTest;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
@@ -55,14 +53,18 @@ class McpActionIntegrationTest extends IntegrationTestBase {
     /// {@link io.hensu.core.execution.action.ActionExecutor.ActionResult#failure},
     /// which causes the action node to produce a FAILURE result. Since the
     /// `mcp-action.json` workflow only defines a "success" transition, no valid
-    /// transition is found and execution fails with an {@link IllegalStateException}.
+    /// transition is found and execution is persisted as `failed`.
     @Test
     void shouldRejectMcpWithoutTenantEndpoint() {
         Workflow workflow = loadWorkflow("mcp-action.json");
 
-        assertThatThrownBy(() -> pushAndExecute(workflow, Map.of()))
-                .isInstanceOf(WorkflowExecutionException.class)
-                .hasMessageContaining("Workflow execution failed");
+        ExecutionStartResult result = pushAndExecute(workflow, Map.of());
+
+        HensuSnapshot snapshot =
+                workflowStateRepository
+                        .findByExecutionId(TEST_TENANT, result.executionId())
+                        .orElseThrow();
+        assertThat(snapshot.checkpointReason()).isEqualTo("failed");
     }
 
     /// Verifies a full MCP tool call round-trip through the SSE split-pipe transport.

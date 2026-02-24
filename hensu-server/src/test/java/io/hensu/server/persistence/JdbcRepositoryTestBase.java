@@ -43,7 +43,7 @@ abstract class JdbcRepositoryTestBase {
 
     /// Initializes the PostgreSQL DataSource and runs Flyway migrations.
     ///
-    /// @apiNote **Side effects**: creates `hensu` schema and all persistence tables
+    /// @apiNote **Side effects**: creates `runtime` schema and all persistence tables
     @BeforeAll
     static void initPostgres() {
         PGSimpleDataSource ds = new PGSimpleDataSource();
@@ -54,7 +54,7 @@ abstract class JdbcRepositoryTestBase {
 
         Flyway.configure()
                 .dataSource(dataSource)
-                .schemas("hensu")
+                .schemas("runtime")
                 .locations("classpath:db/migration")
                 .cleanDisabled(false)
                 .load()

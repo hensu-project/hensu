@@ -1,0 +1,23 @@
+# Local development only — NOT for production use.
+# Copy .env.example to .env, fill in values, then: docker-compose up -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hensu-postgres
+    environment:
+      POSTGRES_USER: ${HENSU_DB_USER}
+      POSTGRES_PASSWORD: ${HENSU_DB_PASSWORD}
+      POSTGRES_DB: ${HENSU_DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - hensu-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  hensu-pgdata:
+    

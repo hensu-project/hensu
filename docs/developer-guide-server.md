@@ -5,6 +5,7 @@ This guide covers the architecture, patterns, and best practices for developing 
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
+- [Local Development](#local-development)
 - [Server Initialization](#server-initialization)
 - [Package Structure](#package-structure)
 - [Multi-Tenancy](#multi-tenancy)
@@ -70,6 +71,80 @@ via `HensuFactory.builder()` - **never** by constructing components directly.
 4. Service layer processes business logic
 5. Core engine executes workflow
 6. Events broadcast via SSE to subscribed clients
+
+---
+
+## Local Development
+
+### Prerequisites
+
+- Docker (`docker-compose up -d`)
+- `openssl` (keypair generation)
+
+### Setup
+
+**1. Configure environment**
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` — set `HENSU_DB_PASSWORD` and verify `HENSU_JWT_PUBLIC_KEY` path.
+`.env` is gitignored; never commit it.
+
+**2. Generate your JWT keypair**
+
+Keys are personal per-developer. There is no shared dev key — every developer generates their own.
+
+```bash
+mkdir -p dev/keys
+
+# Private key — never commit
+openssl genrsa -out dev/keys/privateKey.pem 2048
+
+# Public key — used by the server to verify tokens
+openssl rsa -in dev/keys/privateKey.pem -pubout -out dev/keys/publicKey.pem
+```
+
+Both files land in `dev/keys/` (gitignored). Set `HENSU_JWT_PUBLIC_KEY=file:/absolute/path/to/repo/dev/keys/publicKey.pem` in `.env`.
+
+**3. Start PostgreSQL**
+
+```bash
+docker-compose up -d
+```
+
+Flyway runs `V1__create_schema` automatically on server startup. No manual DB setup needed.
+
+**4. Run the server**
+
+```bash
+./gradlew :hensu-server:quarkusDev
+```
+
+The `%dev` profile reads DB credentials from your environment (sourced from `.env` by your shell
+or IDE). Quarkus Dev Services is disabled — the docker-compose container is used instead.
+
+**5. Generate a dev JWT token**
+
+```bash
+TOKEN=$(bash dev/gen-jwt.sh)
+```
+
+Token is valid for 1 hour. Pass it as a Bearer header:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/workflows
+hensu push my-workflow --token "$TOKEN"
+```
+
+### Profile Reference
+
+| Profile  | Database                  | Auth         | Use case          |
+|----------|---------------------------|--------------|-------------------|
+| `%dev`   | docker-compose PostgreSQL | JWT required | Local development |
+| `%inmem` | In-memory (no DB)         | Disabled     | Integration tests |
+| `%prod`  | Env var `HENSU_DB_URL`    | JWT required | Production        |
 
 ---
 
@@ -1127,18 +1202,25 @@ public Object dynamicBean() {
             AgentConfig.class, AgentConfig.Builder.class,
             // ...
             // --- treeToValue delegation (Duration / nested types) ---
-            PlanningConfig.class, PlanConstraints.class, Plan.class, PlannedStep.class
+            PlanningConfig.class, PlanConstraints.class, Plan.class, PlannedStep.class,
+            // --- Record types for execution state snapshots ---
+            HensuSnapshot.class,
+            PlanSnapshot.class,
+            PlanSnapshot.PlannedStepSnapshot.class,
+            PlanSnapshot.StepResultSnapshot.class
         })
 public class NativeImageConfig {}
 ```
 
-**Two patterns require registration here:**
+**Three patterns require registration here:**
 
 1. **`@JsonPOJOBuilder` mixin targets** — Jackson instantiates the builder via its private no-arg constructor, calls each setter, then calls `build()`. GraalVM cannot trace these calls through the generic mixin machinery.
 
 2. **`treeToValue` delegation** — When a custom deserializer calls `mapper.treeToValue(node, SomeClass.class)`, Jackson uses POJO reflection for `SomeClass`. Simple records (primitives, strings, enums only) should be **fixed** by switching to manual `JsonNode` extraction instead. Register only types where manual extraction is impractical (e.g., nested `Duration` fields).
 
-**When to add vs. fix:** if the class is a simple record with no `Duration`/nested-complex fields, fix the deserializer. If it contains `Duration` or deeply nested types, add it here. See [hensu-serialization Developer Guide](developer-guide-serialization.md#the-treetovalue-rule) for the full rule.
+3. **Record types embedded in builder classes** — When a `record` is a field inside a mixin-registered builder type, Jackson reaches it via its canonical constructor and component accessors. GraalVM cannot trace those calls statically. Register the record and every nested record transitively. No mixin or custom deserializer is needed — registration alone is sufficient.
+
+**When to add vs. fix:** if the class is a simple record with no `Duration`/nested-complex fields, fix the deserializer. If it contains `Duration` or deeply nested types, add it here. For records embedded in builder types, always register them. See [hensu-serialization Developer Guide](developer-guide-serialization.md#the-treetovalue-rule) for the full rule.
 
 ### Resource Bundling
 

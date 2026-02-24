@@ -115,7 +115,7 @@ class ExecutionLeaseTest extends JdbcRepositoryTestBase {
         try (Connection conn = dataSource.getConnection();
                 PreparedStatement ps =
                         conn.prepareStatement(
-                                "UPDATE hensu.execution_states"
+                                "UPDATE runtime.execution_states"
                                         + " SET last_heartbeat_at ="
                                         + "     last_heartbeat_at - (? * INTERVAL '1 second')"
                                         + " WHERE tenant_id = ? AND execution_id = ?")) {
@@ -130,7 +130,7 @@ class ExecutionLeaseTest extends JdbcRepositoryTestBase {
         try (Connection conn = dataSource.getConnection();
                 PreparedStatement ps =
                         conn.prepareStatement(
-                                "SELECT server_node_id FROM hensu.execution_states"
+                                "SELECT server_node_id FROM runtime.execution_states"
                                         + " WHERE tenant_id = ? AND execution_id = ?")) {
             ps.setString(1, tenantId);
             ps.setString(2, executionId);
@@ -145,7 +145,7 @@ class ExecutionLeaseTest extends JdbcRepositoryTestBase {
         try (Connection conn = dataSource.getConnection();
                 PreparedStatement ps =
                         conn.prepareStatement(
-                                "SELECT last_heartbeat_at FROM hensu.execution_states"
+                                "SELECT last_heartbeat_at FROM runtime.execution_states"
                                         + " WHERE tenant_id = ? AND execution_id = ?")) {
             ps.setString(1, tenantId);
             ps.setString(2, executionId);

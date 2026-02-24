@@ -31,8 +31,7 @@ import javax.sql.DataSource;
 /// running on a now-dead node, never safely-paused human-review executions.
 ///
 /// ### Contracts
-/// - **Precondition**: Flyway migrations `V1__create_persistence_tables` and
-///   `V2__add_execution_leases` have run
+/// - **Precondition**: Flyway migration `V1__create_schema` has run
 /// - **Postcondition**: `save` is idempotent per `(tenant_id, execution_id)`
 ///
 /// @implNote Thread-safe. Each call acquires its own JDBC connection from the
@@ -48,7 +47,7 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
 
     private static final String SQL_SAVE =
             """
-            INSERT INTO hensu.execution_states
+            INSERT INTO runtime.execution_states
                 (tenant_id, execution_id, workflow_id, current_node_id,
                  context, history, active_plan, checkpoint_reason, created_at,
                  server_node_id, last_heartbeat_at)
@@ -60,7 +59,6 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
                 history           = EXCLUDED.history,
                 active_plan       = EXCLUDED.active_plan,
                 checkpoint_reason = EXCLUDED.checkpoint_reason,
-                created_at        = EXCLUDED.created_at,
                 server_node_id    = EXCLUDED.server_node_id,
                 last_heartbeat_at = EXCLUDED.last_heartbeat_at
             """;
@@ -69,7 +67,7 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
             """
             SELECT workflow_id, current_node_id, context, history,
                    active_plan, checkpoint_reason, created_at
-            FROM hensu.execution_states
+            FROM runtime.execution_states
             WHERE tenant_id = ? AND execution_id = ?
             """;
 
@@ -79,7 +77,7 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
             """
             SELECT execution_id, workflow_id, current_node_id, context, history,
                    active_plan, checkpoint_reason, created_at
-            FROM hensu.execution_states
+            FROM runtime.execution_states
             WHERE tenant_id = ? AND current_node_id IS NOT NULL AND server_node_id IS NULL
             ORDER BY created_at
             """;
@@ -88,16 +86,16 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
             """
             SELECT execution_id, workflow_id, current_node_id, context, history,
                    active_plan, checkpoint_reason, created_at
-            FROM hensu.execution_states
+            FROM runtime.execution_states
             WHERE tenant_id = ? AND workflow_id = ?
             ORDER BY created_at
             """;
 
     private static final String SQL_DELETE =
-            "DELETE FROM hensu.execution_states WHERE tenant_id = ? AND execution_id = ?";
+            "DELETE FROM runtime.execution_states WHERE tenant_id = ? AND execution_id = ?";
 
     private static final String SQL_DELETE_ALL =
-            "DELETE FROM hensu.execution_states WHERE tenant_id = ?";
+            "DELETE FROM runtime.execution_states WHERE tenant_id = ?";
 
     // --- Fields ---
 

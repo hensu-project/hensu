@@ -297,11 +297,11 @@ class LLMRubricEvaluatorTest {
         stubRegistry.registerResponse(
                 "evaluator",
                 """
-            {
-              "score": 82,
-              "reasoning": "The content meets most quality criteria with minor areas for improvement."
-            }
-            """);
+                {
+                  "score": 82,
+                  "reasoning": "The content meets most quality criteria with minor areas for improvement."
+                }
+                """);
 
         AgentConfig config =
                 AgentConfig.builder()

@@ -19,7 +19,7 @@ import org.jboss.logging.Logger;
 /// Manages distributed recovery leases for workflow executions.
 ///
 /// Each server node holds a lease on the executions it is currently running by
-/// periodically bumping `last_heartbeat_at` in {@code hensu.execution_states}.
+/// periodically bumping `last_heartbeat_at` in {@code runtime.execution_states}.
 /// A recovery sweeper on any surviving node can detect stale leases and
 /// atomically claim the orphaned executions for re-execution.
 ///
@@ -65,14 +65,15 @@ public class ExecutionLeaseManager {
     // --- SQL constants ---
 
     static final String SQL_UPDATE_HEARTBEATS =
-            "UPDATE hensu.execution_states SET last_heartbeat_at = NOW() WHERE server_node_id = ?";
+            "UPDATE runtime.execution_states SET last_heartbeat_at = NOW() WHERE server_node_id ="
+                    + " ?";
 
     /// Uses PostgreSQL's UPDATE … RETURNING for single-pass atomic claiming.
     /// Executed via {@link JdbcSupport#queryList} which calls {@code executeQuery()},
     /// compatible with DML RETURNING in the PostgreSQL JDBC driver.
     static final String SQL_CLAIM_STALE =
             """
-            UPDATE hensu.execution_states
+            UPDATE runtime.execution_states
                SET server_node_id    = ?,
                    last_heartbeat_at = NOW()
              WHERE server_node_id    IS NOT NULL

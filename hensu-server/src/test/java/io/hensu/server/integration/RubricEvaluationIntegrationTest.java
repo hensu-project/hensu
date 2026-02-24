@@ -105,7 +105,8 @@ class RubricEvaluationIntegrationTest extends IntegrationTestBase {
                 "draft",
                 """
                 {"score": 0.65, "recommendation": "The draft could benefit from \
-                more specific examples and stronger source citations."}""");
+                more specific examples and stronger source citations."}\
+                """);
 
         ExecutionStartResult result =
                 pushAndExecute(workflow, Map.of("topic", "quantum computing"));

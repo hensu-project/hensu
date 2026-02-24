@@ -175,11 +175,13 @@ Violations return `400 Bad Request`. See [Server Developer Guide — Input Valid
 └── DELETE /{workflowId}        Delete workflow
 
 /api/v1/executions   → ExecutionResource (runtime operations - client integration)
-├── POST   /                    Start execution
-├── GET    /{executionId}       Get execution status
-├── POST   /{executionId}/resume  Resume paused execution
-├── GET    /{executionId}/plan    Get pending plan
-└── GET    /paused              List paused executions
+├── POST   /                          Start execution (202 Accepted — async; progress via SSE)
+├── GET    /{executionId}             Get execution status
+├── GET    /{executionId}/events      Subscribe to execution events (SSE stream)
+├── POST   /{executionId}/resume      Resume paused execution
+├── GET    /{executionId}/plan        Get pending plan
+├── GET    /{executionId}/result      Get final output (public context, _-keys stripped)
+└── GET    /paused                    List paused executions
 ```
 
 ---
