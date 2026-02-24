@@ -15,7 +15,7 @@ import javax.sql.DataSource;
 /// tenant-scoped via composite primary key `(tenant_id, workflow_id)`.
 ///
 /// ### Contracts
-/// - **Precondition**: Flyway migration `V1__create_persistence_tables` has run
+/// - **Precondition**: Flyway migration `V1__create_schema` has run
 /// - **Postcondition**: `save` is idempotent (UPSERT semantics)
 ///
 /// @implNote Thread-safe. Each call acquires its own JDBC connection from the
@@ -30,28 +30,29 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
 
     private static final String SQL_SAVE =
             """
-            INSERT INTO hensu.workflows (tenant_id, workflow_id, definition, created_at, updated_at)
+            INSERT INTO runtime.workflows (tenant_id, workflow_id, definition, created_at, updated_at)
             VALUES (?, ?, ?::jsonb, now(), now())
             ON CONFLICT (tenant_id, workflow_id)
             DO UPDATE SET definition = EXCLUDED.definition, updated_at = now()
             """;
 
     private static final String SQL_FIND_BY_ID =
-            "SELECT definition FROM hensu.workflows WHERE tenant_id = ? AND workflow_id = ?";
+            "SELECT definition FROM runtime.workflows WHERE tenant_id = ? AND workflow_id = ?";
 
     private static final String SQL_FIND_ALL =
-            "SELECT definition FROM hensu.workflows WHERE tenant_id = ? ORDER BY workflow_id";
+            "SELECT definition FROM runtime.workflows WHERE tenant_id = ? ORDER BY workflow_id";
 
     private static final String SQL_EXISTS =
-            "SELECT 1 FROM hensu.workflows WHERE tenant_id = ? AND workflow_id = ?";
+            "SELECT 1 FROM runtime.workflows WHERE tenant_id = ? AND workflow_id = ?";
 
     private static final String SQL_DELETE =
-            "DELETE FROM hensu.workflows WHERE tenant_id = ? AND workflow_id = ?";
+            "DELETE FROM runtime.workflows WHERE tenant_id = ? AND workflow_id = ?";
 
-    private static final String SQL_DELETE_ALL = "DELETE FROM hensu.workflows WHERE tenant_id = ?";
+    private static final String SQL_DELETE_ALL =
+            "DELETE FROM runtime.workflows WHERE tenant_id = ?";
 
     private static final String SQL_COUNT =
-            "SELECT count(*) FROM hensu.workflows WHERE tenant_id = ?";
+            "SELECT count(*) FROM runtime.workflows WHERE tenant_id = ?";
 
     // --- Fields ---
 

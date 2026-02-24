@@ -188,6 +188,34 @@ Current exceptions (registered in `NativeImageConfig`):
 
 ---
 
+## Record Types Embedded in Builder Classes
+
+Java records have no inner `Builder` class — Jackson deserializes them via the **canonical constructor** and component accessor methods. When a record appears as a field inside a mixin-registered builder type, Jackson's POJO machinery reaches it automatically, but GraalVM cannot trace those constructor calls statically.
+
+### Rule
+
+> Any record type that is a field (direct or nested) of a mixin/builder-registered class must be registered in `NativeImageConfig`.
+
+### Current registrations
+
+| Class                              | Embedded in                      | Reason                                      |
+|------------------------------------|----------------------------------|---------------------------------------------|
+| `HensuSnapshot`                    | `ExecutionStep.Builder.snapshot` | Canonical constructor + component accessors |
+| `PlanSnapshot`                     | `HensuSnapshot.planSnapshot`     | Nested record inside `HensuSnapshot`        |
+| `PlanSnapshot.PlannedStepSnapshot` | `PlanSnapshot.steps()`           | Nested record inside `PlanSnapshot`         |
+| `PlanSnapshot.StepResultSnapshot`  | `PlanSnapshot.results()`         | Nested record inside `PlanSnapshot`         |
+
+Unlike the `treeToValue` pattern, these records do **not** need a custom deserializer or mixin. Registration alone is sufficient because Jackson's built-in record support handles the canonical constructor mapping.
+
+### Checklist before adding a new record type
+
+- [ ] Is it a `record` embedded in a mixin-registered builder type? → register it
+- [ ] Does it contain nested record fields? → register those too
+- [ ] Does it contain `Duration` or other complex JDK types? → `treeToValue` rule applies instead
+- [ ] Added to `NativeImageConfig` in `hensu-server`? → verify the entry is present
+
+---
+
 ## Adding a New Serializable Type
 
 ### Sealed Hierarchy (polymorphic)

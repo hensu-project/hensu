@@ -3,7 +3,7 @@ import com.diffplug.gradle.spotless.SpotlessExtension
 plugins {
     java
     kotlin("jvm") version "2.3.0" apply false
-    id("com.diffplug.spotless") version "7.0.0.BETA4" apply false
+    id("com.diffplug.spotless") version "6.25.0" apply false
 }
 
 allprojects {
@@ -55,7 +55,9 @@ subprojects {
     configure<SpotlessExtension> {
         java {
             target("src/*/java/**/*.java")
-            googleJavaFormat("1.28.0").aosp()
+            googleJavaFormat("1.28.0")
+                .groupArtifact("com.google.googlejavaformat:google-java-format")
+                .aosp()
         }
 
         kotlin {

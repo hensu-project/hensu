@@ -1,8 +1,11 @@
 package io.hensu.server.integration;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.agent.stub.StubResponseRegistry;
+import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
@@ -13,13 +16,16 @@ import io.hensu.server.tenant.TenantContext;
 import io.hensu.server.tenant.TenantContext.TenantInfo;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.TestProfile;
+import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 
 /// Shared base class for full-stack integration tests.
@@ -49,6 +55,7 @@ import org.junit.jupiter.api.BeforeEach;
 /// - **Postcondition**: Each test starts with empty repositories and stub registry
 /// - **Invariant**: All executions run under {@link #TEST_TENANT} unless overridden
 /// - **Cleanup**: Per-test `@BeforeEach` deletes tenant data via repository interfaces
+/// - **Async**: `startExecution` dispatches asynchronously; helpers block until terminal state
 /// - **Profile**: Uses {@link InMemoryTestProfile} (`inmem`) — no Docker or PostgreSQL required
 ///
 /// @implNote Package-private. Not part of the public API.
@@ -95,43 +102,84 @@ abstract class IntegrationTestBase {
         return WorkflowSerializer.fromJson(json);
     }
 
-    /// Saves a workflow to the repository and executes it via the service layer.
+    /// Saves a workflow to the repository, starts execution, and blocks until terminal state.
     ///
-    /// Uses {@link #TEST_TENANT} for both repository storage and execution.
+    /// Because {@link WorkflowService#startExecution} dispatches asynchronously, this helper
+    /// polls via {@link #awaitTerminalState} before returning. This ensures that test assertions
+    /// observe stable state and that `@BeforeEach` cleanup cannot race with an in-flight
+    /// background thread from the previous test.
     ///
     /// @param workflow the workflow to persist and execute, not null
     /// @param context initial execution context variables, not null
     /// @return execution result containing the execution ID, never null
-    /// @throws io.hensu.server.service.WorkflowService.WorkflowExecutionException if execution
-    ///     fails
+    /// @throws AssertionError if the execution does not reach terminal state within 5 seconds
     ExecutionStartResult pushAndExecute(Workflow workflow, Map<String, Object> context) {
         workflowRepository.save(TEST_TENANT, workflow);
-        return workflowService.startExecution(TEST_TENANT, workflow.getId(), context);
+        ExecutionStartResult result =
+                workflowService.startExecution(TEST_TENANT, workflow.getId(), context);
+        awaitTerminalState(result.executionId());
+        return result;
     }
 
-    /// Saves a workflow and executes with an MCP-enabled tenant context.
+    /// Saves a workflow and executes with an MCP-enabled tenant context, blocking until done.
     ///
-    /// Wraps execution in {@link TenantContext#runAs} with
-    /// {@link TenantInfo#withMcp} so that {@link io.hensu.server.mcp.McpSidecar}
-    /// can resolve the tenant's MCP endpoint.
+    /// Wraps execution in {@link TenantContext#runAs} with {@link TenantInfo#withMcp} so that
+    /// {@link io.hensu.server.mcp.McpSidecar} can resolve the tenant's MCP endpoint.
+    /// Blocks until terminal state — see {@link #pushAndExecute}.
     ///
     /// @param workflow the workflow to persist and execute, not null
     /// @param context initial execution context variables, not null
-    /// @param mcpEndpoint the MCP server endpoint (e.g. `"sse://clientId"`), not null
+    /// @param mcpEndpoint the MCP server endpoint (e.g. `sse://clientId`), not null
     /// @return execution result, never null
-    /// @throws RuntimeException wrapping the underlying exception if execution fails
+    /// @throws AssertionError if the execution does not reach terminal state within 5 seconds
+    /// @throws RuntimeException wrapping the underlying exception if the tenant context fails
     ExecutionStartResult pushAndExecuteWithMcp(
             Workflow workflow, Map<String, Object> context, String mcpEndpoint) {
         workflowRepository.save(TEST_TENANT, workflow);
 
         TenantInfo tenant = TenantInfo.withMcp(TEST_TENANT, mcpEndpoint);
         try {
-            return TenantContext.runAs(
-                    tenant,
-                    () -> workflowService.startExecution(TEST_TENANT, workflow.getId(), context));
+            ExecutionStartResult result =
+                    TenantContext.runAs(
+                            tenant,
+                            () ->
+                                    workflowService.startExecution(
+                                            TEST_TENANT, workflow.getId(), context));
+            awaitTerminalState(result.executionId());
+            return result;
         } catch (Exception e) {
             throw new RuntimeException("Execution failed", e);
         }
+    }
+
+    /// Polls until the given execution reaches a terminal checkpoint state.
+    ///
+    /// Uses Mutiny retry (10 ms fixed backoff) with AssertJ condition checks; the outer
+    /// `await().atMost()` enforces a 5-second deadline. Terminal reasons are:
+    /// `completed`, `failed`, `rejected`, `paused`.
+    ///
+    /// @param executionId the execution to await, not null
+    private void awaitTerminalState(String executionId) {
+        Uni.createFrom()
+                .deferred(
+                        () -> {
+                            Optional<HensuSnapshot> snapshot =
+                                    workflowStateRepository.findByExecutionId(
+                                            TEST_TENANT, executionId);
+                            assertThat(snapshot)
+                                    .describedAs("snapshot for execution %s", executionId)
+                                    .isPresent();
+                            assertThat(snapshot.get().checkpointReason())
+                                    .describedAs("checkpoint reason for execution %s", executionId)
+                                    .isIn("completed", "failed", "rejected", "paused");
+                            return Uni.createFrom().item(snapshot.get());
+                        })
+                .onFailure(AssertionError.class)
+                .retry()
+                .withBackOff(Duration.ofMillis(10), Duration.ofMillis(10))
+                .indefinitely()
+                .await()
+                .atMost(Duration.ofSeconds(5));
     }
 
     /// Registers a programmatic stub response for the default scenario.
@@ -161,7 +209,7 @@ abstract class IntegrationTestBase {
     /// paths, so this method copies `/rubrics/{resourceName}` to a temporary file
     /// and returns its absolute path.
     ///
-    /// @param resourceName rubric file name (e.g. `"quality-high.md"`), not null
+    /// @param resourceName rubric file name (e.g. `quality-high.md`), not null
     /// @return absolute filesystem path to the temporary copy, never null
     /// @throws RuntimeException if the resource cannot be found or copied
     String resolveRubricPath(String resourceName) {
@@ -178,7 +226,7 @@ abstract class IntegrationTestBase {
 
     /// Loads a classpath resource as a UTF-8 string.
     ///
-    /// @param path absolute classpath path (e.g. `"/workflows/basic.json"`), not null
+    /// @param path absolute classpath path (e.g. `/workflows/basic.json`), not null
     /// @return resource content, never null
     /// @throws IllegalArgumentException if the resource is not found
     /// @throws RuntimeException if an I/O error occurs
