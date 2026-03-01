@@ -40,6 +40,7 @@ cannot resolve subtypes without reflection or annotations on the sealed interfac
 | `Node`           | `NodeSerializer`            | `NodeDeserializer`            |
 | `TransitionRule` | `TransitionRuleSerializer`  | `TransitionRuleDeserializer`  |
 | `Action`         | `ActionSerializer`          | `ActionDeserializer`          |
+| `PlanStepAction` | `PlanStepActionSerializer`  | `PlanStepActionDeserializer`  |
 
 Each serializer writes a `"type"` discriminator field. The deserializer reads it to select the concrete class.
 
@@ -74,6 +75,10 @@ hensu-serialization/src/main/java/io/hensu/serialization/
 ├── TransitionRuleDeserializer.java  # TransitionRule sealed hierarchy deserializer
 ├── ActionSerializer.java            # Action sealed hierarchy serializer
 ├── ActionDeserializer.java          # Action sealed hierarchy deserializer
+├── PlanStepActionSerializer.java    # PlanStepAction sealed hierarchy serializer
+├── PlanStepActionDeserializer.java  # PlanStepAction sealed hierarchy deserializer
+├── plan/
+│   └── JacksonPlanResponseParser.java  # Parses LLM JSON responses into PlannedStep lists
 └── mixin/
     ├── WorkflowMixin.java           # Workflow builder deserialization
     ├── WorkflowBuilderMixin.java

@@ -1,5 +1,6 @@
 package io.hensu.core;
 
+import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentFactory;
 import io.hensu.core.agent.AgentProvider;
 import io.hensu.core.agent.AgentRegistry;
@@ -7,8 +8,19 @@ import io.hensu.core.agent.DefaultAgentRegistry;
 import io.hensu.core.agent.stub.StubAgentProvider;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.action.ActionExecutor;
+import io.hensu.core.execution.executor.AgenticNodeExecutor;
 import io.hensu.core.execution.executor.DefaultNodeExecutorRegistry;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
+import io.hensu.core.plan.DefaultStepHandlerRegistry;
+import io.hensu.core.plan.LlmPlanner;
+import io.hensu.core.plan.PlanExecutor;
+import io.hensu.core.plan.PlanObserver;
+import io.hensu.core.plan.PlanResponseParser;
+import io.hensu.core.plan.Planner;
+import io.hensu.core.plan.StepHandler;
+import io.hensu.core.plan.StepHandlerRegistry;
+import io.hensu.core.plan.SynthesizeStepHandler;
+import io.hensu.core.plan.ToolCallStepHandler;
 import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.rubric.*;
 import io.hensu.core.rubric.InMemoryRubricRepository;
@@ -20,6 +32,8 @@ import io.hensu.core.state.InMemoryWorkflowStateRepository;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.template.TemplateResolver;
+import io.hensu.core.tool.ToolDefinition;
+import io.hensu.core.tool.ToolRegistry;
 import io.hensu.core.workflow.InMemoryWorkflowRepository;
 import io.hensu.core.workflow.WorkflowRepository;
 import java.util.*;
@@ -55,6 +69,23 @@ import java.util.concurrent.Executors;
 /// @see HensuConfig
 /// @see Builder
 public final class HensuFactory {
+
+    /// Empty {@link ToolRegistry} used as a safe default when no registry is configured.
+    private static final ToolRegistry EMPTY_TOOL_REGISTRY =
+            new ToolRegistry() {
+                @Override
+                public void register(ToolDefinition tool) {}
+
+                @Override
+                public Optional<ToolDefinition> get(String name) {
+                    return Optional.empty();
+                }
+
+                @Override
+                public List<ToolDefinition> all() {
+                    return List.of();
+                }
+            };
 
     private HensuFactory() {
         // Utility class - prevent instantiation
@@ -238,10 +269,40 @@ public final class HensuFactory {
             ExecutorService executorService,
             WorkflowRepository workflowRepository,
             WorkflowStateRepository workflowStateRepository) {
-        // Create core components
+        return buildCoreComponents(
+                config,
+                nodeExecutorRegistry,
+                agentRegistry,
+                evaluatorAgentId,
+                reviewHandler,
+                actionExecutor,
+                executorService,
+                workflowRepository,
+                workflowStateRepository,
+                null,
+                null);
+    }
+
+    /// Internal factory shared by the public static overloads and {@link Builder#build()}.
+    ///
+    /// Constructs all runtime components (rubric engine, template resolver, workflow executor)
+    /// and assembles the final {@link HensuEnvironment}. The {@code planner} and
+    /// {@code stepHandlerRegistry} parameters are {@code null} when called from the
+    /// public static overloads and populated by the builder when planning is configured.
+    private static HensuEnvironment buildCoreComponents(
+            HensuConfig config,
+            NodeExecutorRegistry nodeExecutorRegistry,
+            AgentRegistry agentRegistry,
+            String evaluatorAgentId,
+            ReviewHandler reviewHandler,
+            ActionExecutor actionExecutor,
+            ExecutorService executorService,
+            WorkflowRepository workflowRepository,
+            WorkflowStateRepository workflowStateRepository,
+            Planner planner,
+            StepHandlerRegistry stepHandlerRegistry) {
         RubricRepository rubricRepository = createRubricRepository(config);
 
-        // Create evaluator - use LLM-based if evaluator agent is specified
         RubricEvaluator rubricEvaluator;
         if (evaluatorAgentId != null && !evaluatorAgentId.isBlank()) {
             rubricEvaluator = new LLMRubricEvaluator(agentRegistry, evaluatorAgentId);
@@ -249,13 +310,9 @@ public final class HensuFactory {
             rubricEvaluator = new DefaultRubricEvaluator();
         }
 
-        // Create engines
         RubricEngine rubricEngine = new RubricEngine(rubricRepository, rubricEvaluator);
-
-        // Create TemplateResolver
         TemplateResolver templateResolver = createTemplateResolver();
 
-        // Create workflow executor with review handler, action executor, and workflow repository
         WorkflowExecutor workflowExecutor =
                 new WorkflowExecutor(
                         nodeExecutorRegistry,
@@ -275,7 +332,9 @@ public final class HensuFactory {
                 executorService,
                 actionExecutor,
                 workflowRepository,
-                workflowStateRepository);
+                workflowStateRepository,
+                planner,
+                stepHandlerRegistry);
     }
 
     /// Discovers and loads API credentials from environment variables.
@@ -412,6 +471,11 @@ public final class HensuFactory {
         private WorkflowRepository workflowRepository;
         private WorkflowStateRepository workflowStateRepository;
         private ExecutorService executorService;
+        private Planner planner;
+        private PlanResponseParser planResponseParser;
+        private final List<StepHandler<?>> stepHandlers = new ArrayList<>();
+        private ToolRegistry toolRegistry;
+        private final List<PlanObserver> planObservers = new ArrayList<>();
 
         /// Sets the configuration options.
         ///
@@ -629,6 +693,83 @@ public final class HensuFactory {
             return this;
         }
 
+        /// Configures the planner for dynamic plan generation.
+        ///
+        /// When set, {@link #build()} wires an {@link AgenticNodeExecutor} as the default
+        /// executor for {@link io.hensu.core.workflow.node.StandardNode}, overriding
+        /// {@link io.hensu.core.execution.executor.StandardNodeExecutor}.
+        ///
+        /// @param planner the planner implementation, not null
+        /// @return this builder for chaining, never null
+        public Builder planner(Planner planner) {
+            this.planner = planner;
+            return this;
+        }
+
+        /// Configures the plan response parser and enables auto-wiring of {@link LlmPlanner}.
+        ///
+        /// When set and no explicit {@link #planner(Planner)} is configured, {@link #build()}
+        /// auto-constructs an {@link LlmPlanner} using the built {@link AgentRegistry}.
+        /// A default {@code _planning_agent} is registered if absent.
+        ///
+        /// When only {@code planResponseParser} is set (no explicit planner), the default
+        /// {@link LlmPlanner} is constructed automatically with a {@code _planning_agent}.
+        /// Use {@link #planner(Planner)} to supply a custom implementation instead.
+        ///
+        /// @param parser the parser that converts LLM text responses to step lists, not null
+        /// @return this builder for chaining, never null
+        public Builder planResponseParser(PlanResponseParser parser) {
+            this.planResponseParser = parser;
+            return this;
+        }
+
+        /// Registers a single step handler for plan execution.
+        ///
+        /// @param handler the step handler, not null
+        /// @return this builder for chaining, never null
+        public Builder stepHandler(StepHandler<?> handler) {
+            this.stepHandlers.add(handler);
+            return this;
+        }
+
+        /// Registers multiple step handlers for plan execution.
+        ///
+        /// @param handlers the step handlers, not null
+        /// @return this builder for chaining, never null
+        public Builder stepHandlers(List<StepHandler<?>> handlers) {
+            this.stepHandlers.addAll(handlers);
+            return this;
+        }
+
+        /// Configures the tool registry used by the planner to discover available tools.
+        ///
+        /// Defaults to an empty registry when not set.
+        ///
+        /// @param toolRegistry the tool registry, not null
+        /// @return this builder for chaining, never null
+        public Builder toolRegistry(ToolRegistry toolRegistry) {
+            this.toolRegistry = toolRegistry;
+            return this;
+        }
+
+        /// Registers a single plan observer for lifecycle events.
+        ///
+        /// @param observer the observer, not null
+        /// @return this builder for chaining, never null
+        public Builder planObserver(PlanObserver observer) {
+            this.planObservers.add(observer);
+            return this;
+        }
+
+        /// Registers multiple plan observers for lifecycle events.
+        ///
+        /// @param observers the observers, not null
+        /// @return this builder for chaining, never null
+        public Builder planObservers(List<PlanObserver> observers) {
+            this.planObservers.addAll(observers);
+            return this;
+        }
+
         /// Builds and returns the configured {@link HensuEnvironment}.
         ///
         /// ### Contracts
@@ -662,7 +803,6 @@ public final class HensuFactory {
                 agentRegistry = new DefaultAgentRegistry(agentFactory);
             }
             if (nodeExecutorRegistry == null) {
-                // Stateless executors get services from ExecutionContext at runtime
                 nodeExecutorRegistry = new DefaultNodeExecutorRegistry();
             }
             if (workflowRepository == null) {
@@ -671,7 +811,52 @@ public final class HensuFactory {
             if (workflowStateRepository == null) {
                 workflowStateRepository = new InMemoryWorkflowStateRepository();
             }
-            return createEnvironment(
+
+            // Auto-construct LlmPlanner when a parser is provided but no explicit planner
+            if (planResponseParser != null && planner == null) {
+                if (!agentRegistry.hasAgent("_planning_agent")) {
+                    agentRegistry.registerAgent(
+                            "_planning_agent",
+                            AgentConfig.builder()
+                                    .id("_planning_agent")
+                                    .role("planner")
+                                    .model("gemini-2.5-pro")
+                                    .temperature(0.3)
+                                    .build());
+                }
+                planner =
+                        new LlmPlanner(
+                                agentRegistry
+                                        .getAgent("_planning_agent")
+                                        .orElseThrow(
+                                                () ->
+                                                        new IllegalStateException(
+                                                                "_planning_agent not found after registration")),
+                                planResponseParser);
+            }
+
+            // Wire planning if a planner was configured
+            StepHandlerRegistry builtStepHandlerRegistry = null;
+            if (planner != null) {
+                DefaultStepHandlerRegistry registry = new DefaultStepHandlerRegistry();
+                // Register defaults first so user-provided handlers can override them
+                registry.register(new SynthesizeStepHandler(agentRegistry));
+                if (actionExecutor != null) {
+                    registry.register(new ToolCallStepHandler(actionExecutor));
+                }
+                stepHandlers.forEach(registry::register);
+                PlanExecutor planExecutor = new PlanExecutor(registry);
+                List<PlanObserver> safeObservers = List.copyOf(planObservers);
+                safeObservers.forEach(planExecutor::addObserver);
+                ToolRegistry effectiveTools =
+                        toolRegistry != null ? toolRegistry : EMPTY_TOOL_REGISTRY;
+                nodeExecutorRegistry.register(
+                        new AgenticNodeExecutor(
+                                planner, planExecutor, effectiveTools, safeObservers));
+                builtStepHandlerRegistry = registry;
+            }
+
+            return buildCoreComponents(
                     config,
                     nodeExecutorRegistry,
                     agentRegistry,
@@ -680,7 +865,9 @@ public final class HensuFactory {
                     actionExecutor,
                     executorService,
                     workflowRepository,
-                    workflowStateRepository);
+                    workflowStateRepository,
+                    planner,
+                    builtStepHandlerRegistry);
         }
     }
 

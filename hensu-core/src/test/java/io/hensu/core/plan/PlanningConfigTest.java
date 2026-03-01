@@ -17,7 +17,7 @@ class PlanningConfigTest {
 
             assertThat(config.mode()).isEqualTo(PlanningMode.DISABLED);
             assertThat(config.isEnabled()).isFalse();
-            assertThat(config.reviewBeforeExecute()).isFalse();
+            assertThat(config.review()).isFalse();
         }
 
         @Test
@@ -35,7 +35,7 @@ class PlanningConfigTest {
             PlanningConfig config = PlanningConfig.forStaticWithReview();
 
             assertThat(config.mode()).isEqualTo(PlanningMode.STATIC);
-            assertThat(config.reviewBeforeExecute()).isTrue();
+            assertThat(config.review()).isTrue();
         }
 
         @Test
@@ -53,7 +53,7 @@ class PlanningConfigTest {
             PlanningConfig config = PlanningConfig.forDynamicWithReview();
 
             assertThat(config.mode()).isEqualTo(PlanningMode.DYNAMIC);
-            assertThat(config.reviewBeforeExecute()).isTrue();
+            assertThat(config.review()).isTrue();
         }
     }
 
@@ -94,7 +94,7 @@ class PlanningConfigTest {
 
             assertThat(updated.constraints()).isEqualTo(newConstraints);
             assertThat(updated.mode()).isEqualTo(original.mode());
-            assertThat(updated.reviewBeforeExecute()).isEqualTo(original.reviewBeforeExecute());
+            assertThat(updated.review()).isEqualTo(original.review());
         }
 
         @Test
@@ -103,7 +103,7 @@ class PlanningConfigTest {
 
             PlanningConfig updated = original.withReview();
 
-            assertThat(updated.reviewBeforeExecute()).isTrue();
+            assertThat(updated.review()).isTrue();
             assertThat(updated.mode()).isEqualTo(original.mode());
         }
 
@@ -113,7 +113,7 @@ class PlanningConfigTest {
 
             PlanningConfig updated = original.withoutReview();
 
-            assertThat(updated.reviewBeforeExecute()).isFalse();
+            assertThat(updated.review()).isFalse();
         }
 
         @Test

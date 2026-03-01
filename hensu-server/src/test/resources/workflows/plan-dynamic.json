@@ -25,7 +25,7 @@
           "maxTokenBudget" : 0,
           "allowReplan" : true
         },
-        "reviewBeforeExecute" : false
+        "review" : false
       },
       "transitionRules" : [ {
         "type" : "success",

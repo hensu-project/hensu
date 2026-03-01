@@ -663,29 +663,73 @@ MCP Server ──► ToolDefinition ──► ToolRegistry ──► Planner ─
 
 ## Plan Engine
 
-Supports static or LLM-generated step-by-step plan execution within nodes.
+The Plan Engine executes multi-step, tool-driven logic within a single `StandardNode`. It is
+built around a **pipeline of processors** (`PlanPipeline`) that operate on a shared mutable
+`PlanContext`, replacing the previous monolithic execution loop with composable,
+single-responsibility stages.
 
 ### Planning Modes
 
-| Mode       | Description                                   |
-|------------|-----------------------------------------------|
-| `DISABLED` | No planning, direct agent execution (default) |
-| `STATIC`   | Predefined plan from DSL `plan { }` block     |
-| `DYNAMIC`  | LLM generates plan at runtime based on goal   |
+| Mode       | Description                                    |
+|------------|------------------------------------------------|
+| `DISABLED` | No planning, direct agent execution (default)  |
+| `STATIC`   | Predefined plan from DSL `plan { }` block      |
+| `DYNAMIC`  | LLM generates plan at runtime via `LlmPlanner` |
 
-### Static Plan Execution
+### Architecture: PlanPipeline
 
-```java
-PlanExecutor executor = new PlanExecutor(actionExecutor);
-executor.addObserver(event -> log.info("Event: " + event));
+`AgenticNodeExecutor` drives two sequential `PlanPipeline` instances per node execution — one
+for **plan preparation** and one for **plan execution**:
 
-Plan plan = Plan.staticPlan("node", steps);
-PlanResult result = executor.execute(plan, Map.of("orderId", "123"));
-
-if (result.isSuccess()) {
-    process(result.output());
-}
 ```
++—————————————————————————————————————————————————————————————————+
+│  PREPARATION PIPELINE                                           │
+│                                                                 │
+│  1. PlanCreationProcessor        — resolves static plan or      │
+│       calls LlmPlanner for DYNAMIC mode                         │
+│  2. SynthesizeEnrichmentProcessor — injects agent ID into       │
+│       Synthesize steps                                          │
+│  3. ReviewGateProcessor          — pauses for human plan review │
+│       when planning.review = true (returns PENDING)             │
++——————————————————————————————+——————————————————————————————————+
+                               V  (PlanContext carries active Plan)
++—————————————————————————————————————————————————————————————————+
+│  EXECUTION PIPELINE                                             │
+│                                                                 │
+│  1. PlanExecutionProcessor       — iterates plan steps via      │
+│       PlanExecutor + StepHandlerRegistry; triggers replanning   │
+│       on step failure (up to maxReplans)                        │
+│  2. PostExecutionReviewGateProcessor — pauses for human review  │
+│       of execution results when configured                      │
++—————————————————————————————————————————————————————————————————+
+```
+
+Each `PlanProcessor` receives the same `PlanContext` instance and may short-circuit the pipeline
+by returning a terminal result — analogous to how `ProcessorPipeline` works at the node level.
+
+### PlanContext
+
+`PlanContext` is the mutable state carrier that flows through the entire pipeline. It holds:
+
+- The resolved `StandardNode` (prompt, tools, `PlanningConfig`)
+- The active `Plan` (written by `PlanCreationProcessor`, updated on replanning)
+- The `ExecutionContext` (workflow state, tenant context)
+
+Processors read and write `PlanContext` in place rather than passing individual arguments.
+
+### StepHandlerRegistry and StepHandler
+
+`PlanExecutor` dispatches each `PlannedStep` to a registered `StepHandler` based on the step's
+`PlanStepAction` type:
+
+| Handler                 | Action type  | What it does                               |
+|-------------------------|--------------|--------------------------------------------|
+| `ToolCallStepHandler`   | `ToolCall`   | Sends the tool call to `ActionExecutor`    |
+| `SynthesizeStepHandler` | `Synthesize` | Invokes an agent to produce a synthesis    |
+
+This replaces the previous `if/else` dispatch inside the executor with polymorphic lookup.
+Custom handlers can be added to `StepHandlerRegistry` to support new action types without
+modifying core execution logic.
 
 ### Observability
 
@@ -1072,8 +1116,21 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `rubric/model/Rubric.java`                              | Rubric definition model                                           |
 | `tool/ToolDefinition.java`                              | Protocol-agnostic tool descriptor                                 |
 | `tool/ToolRegistry.java`                                | Tool registration/lookup interface                                |
-| `plan/PlanExecutor.java`                                | Step-by-step plan execution                                       |
+| `plan/PlanExecutor.java`                                | Iterates plan steps via `StepHandlerRegistry`                     |
 | `plan/Plan.java`                                        | Plan model (steps + constraints)                                  |
+| `plan/PlanPipeline.java`                                | Executes an ordered chain of `PlanProcessor`s                     |
+| `plan/PlanProcessor.java`                               | Single-phase processor interface for the plan lifecycle           |
+| `plan/PlanContext.java`                                 | Mutable state carrier flowing through the plan pipeline           |
+| `plan/StepHandlerRegistry.java`                         | Registry for `StepHandler` lookup by `PlanStepAction` type        |
+| `plan/StepHandler.java`                                 | Handler interface for a single `PlanStepAction` type              |
+| `plan/PlannedStep.java`                                 | Immutable representation of a single plan step                    |
+| `plan/PlanStepAction.java`                              | Sealed type hierarchy: `ToolCall` and `Synthesize`                |
+| `plan/ToolCallStepHandler.java`                         | Dispatches `ToolCall` actions to `ActionExecutor`                 |
+| `plan/SynthesizeStepHandler.java`                       | Invokes an agent for `Synthesize` actions                         |
+| `plan/Planner.java`                                     | Planner interface (`createPlan` / `revisePlan`)                   |
+| `plan/StaticPlanner.java`                               | Resolves predefined `plan { }` steps from `PlanningConfig`        |
+| `plan/LlmPlanner.java`                                  | LLM-based plan generation and revision (`DYNAMIC` mode)           |
+| `execution/executor/AgenticNodeExecutor.java`           | Drives preparation + execution `PlanPipeline`s for `StandardNode` |
 | `template/SimpleTemplateResolver.java`                  | `{variable}` substitution                                         |
 | `review/ReviewHandler.java`                             | Human review interface                                            |
 | `execution/pipeline/ProcessorPipeline.java`             | Orchestrates pre/post processor chains                            |

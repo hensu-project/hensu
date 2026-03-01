@@ -2,28 +2,19 @@ package io.hensu.server.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hensu.core.HensuEnvironment;
-import io.hensu.core.agent.Agent;
-import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.execution.WorkflowExecutor;
-import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
-import io.hensu.core.plan.PlanExecutor;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.server.mcp.McpConnectionFactory;
 import io.hensu.server.mcp.McpException;
-import io.hensu.server.planner.LlmPlanner;
 import java.time.Duration;
-import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -95,46 +86,6 @@ class ServerConfigurationTest {
     class ServerExtensions {
 
         @Test
-        void shouldProducePlanExecutor() {
-            ActionExecutor mockAction = mock(ActionExecutor.class);
-            when(env.getActionExecutor()).thenReturn(mockAction);
-
-            PlanExecutor planExecutor = config.planExecutor(env);
-            assertThat(planExecutor).isNotNull();
-        }
-
-        @Test
-        void shouldProduceLlmPlannerRegisteringDefaultAgent() {
-            Agent mockAgent = mock(Agent.class);
-            AgentRegistry mockRegistry = mock(AgentRegistry.class);
-            when(env.getAgentRegistry()).thenReturn(mockRegistry);
-            when(mockRegistry.hasAgent("_planning_agent")).thenReturn(false);
-            when(mockRegistry.registerAgent(eq("_planning_agent"), any(AgentConfig.class)))
-                    .thenReturn(mockAgent);
-            when(mockRegistry.getAgent("_planning_agent")).thenReturn(Optional.of(mockAgent));
-
-            ObjectMapper mapper = config.objectMapper();
-            LlmPlanner planner = config.llmPlanner(env, mapper);
-
-            assertThat(planner).isNotNull();
-            verify(mockRegistry).registerAgent(eq("_planning_agent"), any(AgentConfig.class));
-        }
-
-        @Test
-        void shouldProduceLlmPlannerWithExistingAgent() {
-            Agent mockAgent = mock(Agent.class);
-            AgentRegistry mockRegistry = mock(AgentRegistry.class);
-            when(env.getAgentRegistry()).thenReturn(mockRegistry);
-            when(mockRegistry.hasAgent("_planning_agent")).thenReturn(true);
-            when(mockRegistry.getAgent("_planning_agent")).thenReturn(Optional.of(mockAgent));
-
-            ObjectMapper mapper = config.objectMapper();
-            LlmPlanner planner = config.llmPlanner(env, mapper);
-
-            assertThat(planner).isNotNull();
-        }
-
-        @Test
         void shouldProduceStubMcpConnectionFactory() {
             McpConnectionFactory factory = config.mcpConnectionFactory();
 
@@ -147,25 +98,6 @@ class ServerConfigurationTest {
                                             Duration.ofSeconds(60)))
                     .isInstanceOf(McpException.class)
                     .hasMessageContaining("not configured");
-        }
-    }
-
-    @Nested
-    class PlanningAgentRegistration {
-
-        @Test
-        void shouldRegisterDefaultAgentWithExpectedConfig() {
-            Agent mockAgent = mock(Agent.class);
-            AgentRegistry mockRegistry = mock(AgentRegistry.class);
-            when(env.getAgentRegistry()).thenReturn(mockRegistry);
-            when(mockRegistry.hasAgent("_planning_agent")).thenReturn(false);
-            when(mockRegistry.registerAgent(eq("_planning_agent"), any(AgentConfig.class)))
-                    .thenReturn(mockAgent);
-            when(mockRegistry.getAgent("_planning_agent")).thenReturn(Optional.of(mockAgent));
-
-            config.llmPlanner(env, config.objectMapper());
-
-            verify(mockRegistry).registerAgent(eq("_planning_agent"), any(AgentConfig.class));
         }
     }
 }

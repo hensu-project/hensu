@@ -77,6 +77,8 @@ public class ExecutionEventBroadcaster implements PlanObserver {
                         });
 
         return processor
+                .onOverflow()
+                .buffer(256)
                 .onCancellation()
                 .invoke(() -> LOG.debugv("Client disconnected from execution: {0}", executionId));
     }

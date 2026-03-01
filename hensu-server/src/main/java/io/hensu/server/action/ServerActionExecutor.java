@@ -5,6 +5,7 @@ import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.action.ActionHandler;
 import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.template.TemplateResolver;
+import io.hensu.server.mcp.McpSidecar;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -70,6 +71,19 @@ public class ServerActionExecutor implements ActionExecutor {
 
         ActionHandler handler = handlers.get(handlerId);
         if (handler == null) {
+            // Fallback: MCP tools are registered under their tool name in ToolRegistry but routed
+            // through the single "mcp" ActionHandler. Wrap the call in the expected MCP envelope.
+            ActionHandler mcpHandler = handlers.get(McpSidecar.HANDLER_ID);
+            if (mcpHandler != null) {
+                LOG.debugv("Routing tool '{0}' through MCP handler", handlerId);
+                Map<String, Object> mcpPayload =
+                        Map.of(
+                                McpSidecar.TOOL_KEY,
+                                handlerId,
+                                McpSidecar.ARGUMENTS_KEY,
+                                resolvePayload(send.getPayload(), context));
+                return mcpHandler.execute(mcpPayload, context);
+            }
             LOG.warnv(
                     "Action handler not found: {0}. Registered: {1}", handlerId, handlers.keySet());
             return ActionResult.failure("Action handler not found: " + handlerId);

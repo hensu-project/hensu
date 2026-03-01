@@ -17,14 +17,19 @@ package io.hensu.core.plan;
 /// {@snippet :
 /// PlanObserver logger = event -> {
 ///     switch (event) {
-///         case PlanEvent.StepStarted s -> log.info("Starting step: " + s.step().toolName());
+///         case PlanEvent.StepStarted s -> {
+///             String label = s.step().isSynthesize() ? "_synthesize" : s.step().toolName();
+///             log.info("Starting step: " + label);
+///         }
 ///         case PlanEvent.StepCompleted c -> log.info("Completed step: " + c.result().success());
+///         case PlanEvent.PlanRevised r   -> log.info("Plan revised: " + r.reason());
 ///         case PlanEvent.PlanCompleted p -> log.info("Plan finished: " + p.success());
-///         default -> { }
+///         case PlanEvent.PlanCreated cr  -> { }
+///         case PlanEvent.PlanPaused pa   -> { }
 ///     }
 /// };
 ///
-/// executor.addObserver(logger);
+/// hensuEnvironment.getWorkflowExecutor().addPlanObserver(logger);
 /// }
 ///
 /// @see PlanEvent for event types

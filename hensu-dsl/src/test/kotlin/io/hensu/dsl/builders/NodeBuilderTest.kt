@@ -240,7 +240,7 @@ class NodeBuilderTest {
                     maxSteps = 15
                     maxReplans = 5
                     allowReplan = true
-                    reviewBeforeExecute = true
+                    review = true
                 }
                 onSuccess goto "next"
             }
@@ -253,7 +253,7 @@ class NodeBuilderTest {
             assertThat(node.planningConfig.constraints().maxSteps()).isEqualTo(15)
             assertThat(node.planningConfig.constraints().maxReplans()).isEqualTo(5)
             assertThat(node.planningConfig.constraints().allowReplan()).isTrue()
-            assertThat(node.planningConfig.reviewBeforeExecute()).isTrue()
+            assertThat(node.planningConfig.review()).isTrue()
             assertThat(node.staticPlan).isNull()
         }
 
@@ -336,7 +336,7 @@ class NodeBuilderTest {
 
             // Then
             assertThat(node.planningConfig.isDynamic).isTrue()
-            assertThat(node.planningConfig.reviewBeforeExecute()).isTrue()
+            assertThat(node.planningConfig.review()).isTrue()
             assertThat(node.planningConfig.constraints().allowReplan()).isTrue()
         }
 

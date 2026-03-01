@@ -9,12 +9,12 @@ import static org.mockito.Mockito.when;
 import io.hensu.core.execution.action.Action;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.action.ActionExecutor.ActionResult;
-import io.hensu.core.plan.PlanEvent.PlanCompleted;
 import io.hensu.core.plan.PlanEvent.PlanCreated;
 import io.hensu.core.plan.PlanEvent.StepCompleted;
 import io.hensu.core.plan.PlanEvent.StepStarted;
 import io.hensu.core.plan.PlanResult.PlanStatus;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -31,20 +31,55 @@ class PlanExecutorTest {
     @BeforeEach
     void setUp() {
         mockActionExecutor = mock(ActionExecutor.class);
-        executor = new PlanExecutor(mockActionExecutor);
+
+        // Bridge mockActionExecutor into the StepHandlerRegistry expected by PlanExecutor.
+        // This inline handler mirrors ToolCallStepHandler from hensu-server so we can
+        // test PlanExecutor behavior without a server dependency.
+        StepHandler<PlanStepAction.ToolCall> toolHandler =
+                new StepHandler<>() {
+                    @Override
+                    public Class<PlanStepAction.ToolCall> getActionType() {
+                        return PlanStepAction.ToolCall.class;
+                    }
+
+                    @Override
+                    public StepResult handle(
+                            PlannedStep step,
+                            PlanStepAction.ToolCall action,
+                            Map<String, Object> context) {
+                        Instant start = Instant.now();
+                        ActionResult result =
+                                mockActionExecutor.execute(
+                                        new Action.Send(action.toolName(), action.arguments()),
+                                        context);
+                        Duration duration = Duration.between(start, Instant.now());
+                        return result.success()
+                                ? StepResult.success(
+                                        step.index(), action.toolName(), result.output(), duration)
+                                : StepResult.failure(
+                                        step.index(),
+                                        action.toolName(),
+                                        result.message(),
+                                        duration);
+                    }
+                };
+
+        DefaultStepHandlerRegistry registry = new DefaultStepHandlerRegistry();
+        registry.register(toolHandler);
+
+        executor = new PlanExecutor(registry);
         capturedEvents = new ArrayList<>();
-        PlanObserver captureObserver = capturedEvents::add;
-        executor.addObserver(captureObserver);
+        executor.addObserver(capturedEvents::add);
     }
 
     @Nested
     class Construction {
 
         @Test
-        void shouldThrowWhenActionExecutorIsNull() {
+        void shouldThrowWhenRegistryIsNull() {
             assertThatThrownBy(() -> new PlanExecutor(null))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessageContaining("actionExecutor");
+                    .hasMessageContaining("stepHandlerRegistry");
         }
     }
 
@@ -110,9 +145,8 @@ class PlanExecutorTest {
 
             executor.execute(plan, Map.of());
 
-            assertThat(capturedEvents).hasSize(2);
-            assertThat(capturedEvents.get(0)).isInstanceOf(PlanCreated.class);
-            assertThat(capturedEvents.get(1)).isInstanceOf(PlanCompleted.class);
+            assertThat(capturedEvents).hasSize(1);
+            assertThat(capturedEvents.getFirst()).isInstanceOf(PlanCreated.class);
         }
     }
 
@@ -147,15 +181,12 @@ class PlanExecutorTest {
 
             executor.execute(plan, Map.of());
 
-            // PlanCreated, StepStarted, StepCompleted, PlanCompleted
-            assertThat(capturedEvents).hasSize(4);
+            // PlanCreated, StepStarted, StepCompleted — PlanCompleted owned by
+            // PlanExecutionProcessor
+            assertThat(capturedEvents).hasSize(3);
             assertThat(capturedEvents.get(0)).isInstanceOf(PlanCreated.class);
             assertThat(capturedEvents.get(1)).isInstanceOf(StepStarted.class);
             assertThat(capturedEvents.get(2)).isInstanceOf(StepCompleted.class);
-            assertThat(capturedEvents.get(3)).isInstanceOf(PlanCompleted.class);
-
-            PlanCompleted completed = (PlanCompleted) capturedEvents.get(3);
-            assertThat(completed.success()).isTrue();
         }
 
         @Test
@@ -218,14 +249,13 @@ class PlanExecutorTest {
 
             executor.execute(plan, Map.of());
 
-            PlanCompleted completed =
-                    capturedEvents.stream()
-                            .filter(e -> e instanceof PlanCompleted)
-                            .map(e -> (PlanCompleted) e)
-                            .findFirst()
-                            .orElseThrow();
-
-            assertThat(completed.success()).isFalse();
+            // PlanCompleted is owned by PlanExecutionProcessor — PlanExecutor emits StepCompleted
+            assertThat(capturedEvents).hasSize(3);
+            assertThat(capturedEvents.get(0)).isInstanceOf(PlanCreated.class);
+            assertThat(capturedEvents.get(1)).isInstanceOf(StepStarted.class);
+            StepCompleted stepCompleted = (StepCompleted) capturedEvents.get(2);
+            assertThat(stepCompleted.result().isFailure()).isTrue();
+            assertThat(stepCompleted.result().error()).isEqualTo("Error");
         }
     }
 

@@ -58,7 +58,8 @@ via `HensuFactory.builder()` - **never** by constructing components directly.
                       │  (HensuEnvironment) │
                       │  WorkflowExecutor   │
                       │  AgentRegistry      │
-                      │  PlanExecutor       │
+                      │  PlanPipeline       │
+                      │  StepHandlerRegistry│
                       │  ToolRegistry       │
                       +—————————————————————+
 ```
@@ -276,8 +277,9 @@ io.hensu.server/
 │   ├── ServerBootstrap          # Startup registrations
 │   └── ServerConfiguration      # CDI delegation + server beans
 │
-├── executor/              # Planning-aware execution
-│   └── AgenticNodeExecutor      # StandardNode executor with planning
+├── execution/             # Server-side execution listeners
+│   ├── LoggingExecutionListener   # Logs plan/step lifecycle events
+│   └── CompositeExecutionListener # Combines multiple ExecutionListeners
 │
 ├── mcp/                   # MCP protocol implementation
 │   ├── JsonRpc                  # JSON-RPC 2.0 message helper
@@ -293,9 +295,6 @@ io.hensu.server/
 │   ├── ExecutionLeaseManager          # Distributed lease management (@ApplicationScoped)
 │   ├── JdbcSupport                    # JDBC helper (queryList, update)
 │   └── PersistenceException           # Unchecked wrapper for SQLException
-│
-├── planner/               # LLM planning
-│   └── LlmPlanner              # LLM-based plan generation
 │
 ├── service/               # Business logic layer
 │   ├── WorkflowService              # Workflow operations
@@ -1105,7 +1104,7 @@ All lease operations are no-ops; `WorkflowRecoveryJob` guards with `if (!leaseMa
 
 ### Testing
 
-Lease behaviour is tested in `io.hensu.server.persistence.ExecutionLeaseTest` (Testcontainers
+Lease behavior is tested in `io.hensu.server.persistence.ExecutionLeaseTest` (Testcontainers
 PostgreSQL, no Quarkus context). Key properties covered:
 
 - Orphaned row (stale heartbeat) is claimed by the sweeper node
@@ -1122,14 +1121,15 @@ The server is deployed as a GraalVM native image via Quarkus. All server code �
 
 Quarkus performs heavy build-time processing that relaxes some raw GraalVM constraints:
 
-| Feature                            | Raw GraalVM                | With Quarkus                                               |
-|------------------------------------|----------------------------|------------------------------------------------------------|
-| CDI injection (`@Inject`)          | Requires reflection config | Works — Quarkus resolves beans at build time (ArC)         |
-| `@ConfigProperty`                  | Requires reflection config | Works — processed at build time                            |
-| JAX-RS resources (`@Path`, `@GET`) | Requires reflection config | Works — REST layer is build-time wired                     |
-| Jackson `@JsonProperty` on DTOs    | Requires reflection config | Works — `quarkus-jackson` registers metadata               |
-| `ServiceLoader`                    | Fails at runtime           | Works — Quarkus scans `META-INF/services` at build time    |
-| LangChain4j AI services            | Requires reflection config | Works — `quarkus-langchain4j` extensions register metadata |
+| Feature                                | Raw GraalVM                | With Quarkus                                                                                    |
+|----------------------------------------|----------------------------|-------------------------------------------------------------------------------------------------|
+| CDI injection (`@Inject`)              | Requires reflection config | Works — Quarkus resolves beans at build time (ArC)                                              |
+| `@ConfigProperty`                      | Requires reflection config | Works — processed at build time                                                                 |
+| JAX-RS resources (`@Path`, `@GET`)     | Requires reflection config | Works — REST layer is build-time wired                                                          |
+| Jackson `@JsonProperty` on DTOs        | Requires reflection config | Works — `quarkus-jackson` registers metadata                                                    |
+| `ServiceLoader`                        | Fails at runtime           | Works — Quarkus scans `META-INF/services` at build time                                         |
+| LangChain4j AI services (CDI)          | Requires reflection config | Works — `quarkus-langchain4j` extensions register CDI beans                                     |
+| LangChain4j AI services (programmatic) | Requires reflection config | **Manual** — extensions only wire CDI; programmatic `ChatModel` builders bypass build-time scan |
 
 **Key insight**: Within Quarkus-managed code, standard annotations and CDI work normally. The constraints only bite when you introduce code that Quarkus doesn't know about — custom reflection, third-party libraries without Quarkus extensions, or `hensu-core` internals that bypass the framework.
 
@@ -1191,26 +1191,16 @@ public Object dynamicBean() {
 
 `hensu-core` domain classes are deliberately free of Quarkus annotations. When Jackson needs to access them reflectively at runtime (private constructors, builder setters, `build()` methods), GraalVM static analysis cannot trace the call sites. The fix lives entirely in `hensu-server`.
 
-`NativeImageConfig` is the **single registration point** for all `@RegisterForReflection` entries needed by the serialization module:
+Registrations are split across four dedicated classes to keep each concern isolated:
 
-```java
-// hensu-server/src/main/java/io/hensu/server/config/NativeImageConfig.java
-@RegisterForReflection(
-        targets = {
-            // --- Mixin/builder pattern (private constructors + setters) ---
-            Workflow.class, Workflow.Builder.class,
-            AgentConfig.class, AgentConfig.Builder.class,
-            // ...
-            // --- treeToValue delegation (Duration / nested types) ---
-            PlanningConfig.class, PlanConstraints.class, Plan.class, PlannedStep.class,
-            // --- Record types for execution state snapshots ---
-            HensuSnapshot.class,
-            PlanSnapshot.class,
-            PlanSnapshot.PlannedStepSnapshot.class,
-            PlanSnapshot.StepResultSnapshot.class
-        })
-public class NativeImageConfig {}
-```
+| Class                              | Covers                                                                                    |
+|------------------------------------|-------------------------------------------------------------------------------------------|
+| `NativeImageConfig`                | Hensu domain model — Jackson mixin/builder targets, `treeToValue` types, embedded records |
+| `LangChain4jNativeConfig`          | Shared JDK HTTP transport — `ServiceLoader`-instantiated client factory/builder/client    |
+| `LangChain4jAnthropicNativeConfig` | Anthropic API request/response DTOs and enums                                             |
+| `LangChain4jGeminiNativeConfig`    | Google AI Gemini API request/response DTOs and enums                                      |
+
+#### NativeImageConfig — Hensu domain model
 
 **Three patterns require registration here:**
 
@@ -1221,6 +1211,14 @@ public class NativeImageConfig {}
 3. **Record types embedded in builder classes** — When a `record` is a field inside a mixin-registered builder type, Jackson reaches it via its canonical constructor and component accessors. GraalVM cannot trace those calls statically. Register the record and every nested record transitively. No mixin or custom deserializer is needed — registration alone is sufficient.
 
 **When to add vs. fix:** if the class is a simple record with no `Duration`/nested-complex fields, fix the deserializer. If it contains `Duration` or deeply nested types, add it here. For records embedded in builder types, always register them. See [hensu-serialization Developer Guide](developer-guide-serialization.md#the-treetovalue-rule) for the full rule.
+
+#### LangChain4j*NativeConfig — third-party provider DTOs
+
+`LangChain4jProvider` creates all `ChatModel` instances **programmatically** via builders, outside CDI. This bypasses the Quarkiverse build-time scan that would normally wire reflection metadata. Two additional patterns arise:
+
+1. **`ServiceLoader` HTTP transport** (`LangChain4jNativeConfig`) — The JDK HTTP client is resolved at runtime via `ServiceLoader`. GraalVM cannot trace `ServiceLoader` statically. Three classes must be registered (factory, builder, client), and the service file must also be bundled via `quarkus.native.resources.includes` in `application.properties`.
+
+2. **Static `ObjectMapper` in provider SDKs** (`LangChain4jAnthropicNativeConfig`, `LangChain4jGeminiNativeConfig`) — Each provider SDK owns a **static `ObjectMapper`** instance independent of the Quarkus-managed one. Quarkus's build-time Jackson configuration never reaches it. All request-path DTOs (Java → JSON) and response-path DTOs (JSON → Java) must be registered explicitly, including enums. Builder inner classes are omitted — these SDKs use direct field access, not the builder pattern, for Jackson binding.
 
 ### Resource Bundling
 
@@ -1258,19 +1256,20 @@ quarkus.native.resources.includes=stubs/**
 
 ### Quick Reference (Server-Specific)
 
-| Pattern                                             | Safe  | Notes                                                                  |
-|-----------------------------------------------------|-------|------------------------------------------------------------------------|
-| `@Inject` / `@Produces`                             | Yes   | Quarkus ArC — build-time CDI                                           |
-| `@ConfigProperty`                                   | Yes   | Build-time processed                                                   |
-| Quarkus extensions                                  | Yes   | Provide native metadata                                                |
-| Raw third-party libs                                | Maybe | Need `reflect-config.json` if reflective                               |
-| `ObjectMapper.readTree()`                           | Yes   | No reflection — tree-model parsing                                     |
-| `new ObjectMapper().readValue(json, MyClass.class)` | Maybe | Needs entry in `NativeImageConfig` unless Quarkus-managed              |
-| `mapper.treeToValue(node, SimpleRecord.class)`      | No    | Fix the deserializer — extract fields manually from `JsonNode`         |
-| `getResourceAsStream("/path/" + dynamic + ".txt")`  | No    | Add pattern to `quarkus.native.resources.includes`                     |
-| `@RegisterForReflection` on `hensu-core` classes    | No    | Keep Quarkus annotations out of core — register in `NativeImageConfig` |
-| `quarkus-jackson` for mixin-pattern types           | No    | Extension only scans direct annotations; mixins are runtime events     |
-| Mutiny `Uni`/`Multi`                                | Yes   | Quarkus-managed                                                        |
+| Pattern                                             | Safe  | Notes                                                                                 |
+|-----------------------------------------------------|-------|---------------------------------------------------------------------------------------|
+| `@Inject` / `@Produces`                             | Yes   | Quarkus ArC — build-time CDI                                                          |
+| `@ConfigProperty`                                   | Yes   | Build-time processed                                                                  |
+| Quarkus extensions                                  | Yes   | Provide native metadata                                                               |
+| Raw third-party libs                                | Maybe | Need `reflect-config.json` if reflective                                              |
+| `ObjectMapper.readTree()`                           | Yes   | No reflection — tree-model parsing                                                    |
+| `new ObjectMapper().readValue(json, MyClass.class)` | Maybe | Needs entry in `NativeImageConfig` unless Quarkus-managed                             |
+| `mapper.treeToValue(node, SimpleRecord.class)`      | No    | Fix the deserializer — extract fields manually from `JsonNode`                        |
+| `getResourceAsStream("/path/" + dynamic + ".txt")`  | No    | Add pattern to `quarkus.native.resources.includes`                                    |
+| `@RegisterForReflection` on `hensu-core` classes    | No    | Keep Quarkus annotations out of core — register in `NativeImageConfig`                |
+| `quarkus-jackson` for mixin-pattern types           | No    | Extension only scans direct annotations; mixins are runtime events                    |
+| LangChain4j `ChatModel` created via builder         | No    | Programmatic creation bypasses CDI scan — register DTOs in `LangChain4j*NativeConfig` |
+| Mutiny `Uni`/`Multi`                                | Yes   | Quarkus-managed                                                                       |
 
 ---
 

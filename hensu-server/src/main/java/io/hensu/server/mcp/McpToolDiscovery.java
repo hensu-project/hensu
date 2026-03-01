@@ -111,8 +111,8 @@ public class McpToolDiscovery {
             LOG.infov("Discovered {0} tools from {1}", tools.size(), endpoint);
             return List.copyOf(tools);
         } catch (McpException e) {
-            LOG.errorv(e, "Failed to discover tools from {0}", endpoint);
-            throw new RuntimeException("Tool discovery failed: " + e.getMessage(), e);
+            LOG.warnv("Failed to discover tools from {0}: {1}", endpoint, e.getMessage());
+            throw e;
         }
     }
 

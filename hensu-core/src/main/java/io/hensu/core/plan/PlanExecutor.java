@@ -1,9 +1,5 @@
 package io.hensu.core.plan;
 
-import io.hensu.core.execution.action.Action;
-import io.hensu.core.execution.action.ActionExecutor;
-import io.hensu.core.execution.action.ActionExecutor.ActionResult;
-import io.hensu.core.plan.PlanEvent.PlanCompleted;
 import io.hensu.core.plan.PlanEvent.PlanCreated;
 import io.hensu.core.plan.PlanEvent.StepCompleted;
 import io.hensu.core.plan.PlanEvent.StepStarted;
@@ -15,57 +11,57 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-/// Executes plans step by step using registered action handlers.
+/// Executes plans step by step by dispatching each {@link PlannedStep} to its
+/// registered {@link StepHandler} via a {@link StepHandlerRegistry}.
 ///
-/// The executor iterates through plan steps, invoking the appropriate
-/// {@link ActionExecutor} for each step. Events are emitted to registered
-/// observers for monitoring and logging.
+/// Events are emitted to registered {@link PlanObserver}s so external components
+/// (e.g. SSE broadcasters) can stream progress in real time.
 ///
 /// ### Execution Flow
-/// 1. Emit `PlanCreated` event
-/// 2. For each step:
-///    - Emit `StepStarted` event
-///    - Execute step via ActionExecutor
-///    - Emit `StepCompleted` event
-///    - On failure: return failed result (no automatic retry)
-/// 3. Emit `PlanCompleted` event
-/// 4. Return aggregated result
+/// 1. Emit {@link PlanEvent.PlanCreated} event
+/// 2. For each step in order:
+///    - Check elapsed time against {@link PlanConstraints#maxDuration()}
+///    - Emit {@link PlanEvent.StepStarted}
+///    - Delegate to {@link StepHandlerRegistry#dispatch(PlannedStep, Map)}
+///    - Emit {@link PlanEvent.StepCompleted}
+///    - On failure: return failed result immediately (no automatic retry here)
+///    - On success: merge step output into context for subsequent steps
 ///
-/// ### Thread Safety
-/// @implNote Thread-safe for observer registration. Execution should occur
-/// from a single thread per plan execution.
+/// {@link PlanEvent.PlanCompleted} is intentionally **not** emitted here.
+/// The calling {@link io.hensu.core.execution.executor.PlanExecutionProcessor}
+/// owns the terminal event because it has the full picture — replanning
+/// attempts, revision failures, and max-replan exhaustion all happen above
+/// this class.
 ///
-/// ### Usage
-/// {@snippet :
-/// PlanExecutor executor = new PlanExecutor(actionExecutor);
-/// executor.addObserver(event -> log.info("Event: " + event));
+/// ### Retry / Revision
+/// Retry and plan revision are the responsibility of the caller
+/// ({@link io.hensu.core.execution.executor.AgenticNodeExecutor}), not this class.
 ///
-/// Plan plan = Plan.staticPlan("node", steps);
-/// PlanResult result = executor.execute(plan, Map.of("orderId", "123"));
-///
-/// if (result.isSuccess()) {
-///     process(result.output());
-/// }
-/// }
+/// @implNote Thread-safe for observer registration ({@link CopyOnWriteArrayList}).
+/// A single {@code PlanExecutor} instance must not be shared across concurrent
+/// plan executions — use one per execution or protect externally.
 ///
 /// @see Plan for plan structure
-/// @see PlanResult for execution outcome
-/// @see PlanObserver for event handling
+/// @see StepHandlerRegistry for handler dispatch
+/// @see PlanResult for the aggregated outcome
+/// @see PlanObserver for event subscription
 public class PlanExecutor {
 
-    private final ActionExecutor actionExecutor;
+    private final StepHandlerRegistry stepHandlerRegistry;
     private final List<PlanObserver> observers = new CopyOnWriteArrayList<>();
 
-    /// Creates an executor with the given action executor.
+    /// Creates an executor backed by the given step-handler registry.
     ///
-    /// @param actionExecutor executor for individual steps, not null
-    /// @throws NullPointerException if actionExecutor is null
-    public PlanExecutor(ActionExecutor actionExecutor) {
-        this.actionExecutor =
-                Objects.requireNonNull(actionExecutor, "actionExecutor must not be null");
+    /// @param stepHandlerRegistry registry that dispatches each step, not null
+    /// @throws NullPointerException if stepHandlerRegistry is null
+    public PlanExecutor(StepHandlerRegistry stepHandlerRegistry) {
+        this.stepHandlerRegistry =
+                Objects.requireNonNull(stepHandlerRegistry, "stepHandlerRegistry must not be null");
     }
 
-    /// Adds an observer to receive plan events.
+    /// Registers an observer to receive plan lifecycle events.
+    ///
+    /// @apiNote **Side effects**: adds to the internal observer list; duplicates are allowed.
     ///
     /// @param observer the observer to add, not null
     public void addObserver(PlanObserver observer) {
@@ -73,19 +69,19 @@ public class PlanExecutor {
         observers.add(observer);
     }
 
-    /// Removes an observer.
+    /// Removes a previously registered observer.
     ///
     /// @param observer the observer to remove
-    /// @return true if the observer was removed
+    /// @return {@code true} if the observer was present and removed
     public boolean removeObserver(PlanObserver observer) {
         return observers.remove(observer);
     }
 
-    /// Executes a plan with the given context.
+    /// Executes all steps of the plan in order.
     ///
-    /// @param plan the plan to execute, not null
-    /// @param context workflow variables for template resolution, not null
-    /// @return execution result, never null
+    /// @param plan    the plan to execute, not null
+    /// @param context mutable workflow variables available to step handlers, not null
+    /// @return aggregated execution result, never null
     public PlanResult execute(Plan plan, Map<String, Object> context) {
         Objects.requireNonNull(plan, "plan must not be null");
         Objects.requireNonNull(context, "context must not be null");
@@ -93,9 +89,7 @@ public class PlanExecutor {
         notifyObservers(PlanCreated.now(plan));
 
         if (!plan.hasSteps()) {
-            PlanResult result = PlanResult.completed(List.of());
-            notifyObservers(PlanCompleted.success(plan.id(), "No steps to execute"));
-            return result;
+            return PlanResult.completed(List.of());
         }
 
         List<StepResult> results = new ArrayList<>();
@@ -103,92 +97,68 @@ public class PlanExecutor {
         Map<String, Object> currentContext = new java.util.HashMap<>(context);
 
         for (PlannedStep step : plan.steps()) {
-            // Check duration constraint
             Duration elapsed = Duration.between(planStart, Instant.now());
             if (elapsed.compareTo(plan.constraints().maxDuration()) > 0) {
-                PlanResult timeout = PlanResult.timeout(results, plan.constraints().maxDuration());
-                notifyObservers(PlanCompleted.failure(plan.id(), timeout.error()));
-                return timeout;
+                return PlanResult.timeout(results, plan.constraints().maxDuration());
             }
 
             notifyObservers(StepStarted.now(plan.id(), step));
 
             try {
-                StepResult stepResult = executeStep(step, currentContext);
+                StepResult stepResult = stepHandlerRegistry.dispatch(step, currentContext);
                 results.add(stepResult);
                 notifyObservers(StepCompleted.now(plan.id(), stepResult));
 
                 if (stepResult.isFailure()) {
-                    PlanResult failure =
-                            PlanResult.failed(results, step.index(), stepResult.error());
-                    notifyObservers(PlanCompleted.failure(plan.id(), stepResult.error()));
-                    return failure;
+                    return PlanResult.failed(results, step.index(), stepResult.error());
                 }
 
-                // Update context with step output for next steps
                 if (stepResult.output() != null) {
                     currentContext = mergeStepOutput(currentContext, step, stepResult);
                 }
 
             } catch (Exception e) {
+                String msg = e.getMessage();
                 StepResult errorResult =
                         StepResult.failure(
                                 step.index(),
-                                step.toolName(),
-                                e.getMessage(),
+                                stepLabel(step),
+                                msg,
                                 Duration.between(planStart, Instant.now()));
                 results.add(errorResult);
                 notifyObservers(StepCompleted.now(plan.id(), errorResult));
-
-                PlanResult failure = PlanResult.failed(results, step.index(), e.getMessage());
-                notifyObservers(PlanCompleted.failure(plan.id(), e.getMessage()));
-                return failure;
+                return PlanResult.failed(results, step.index(), msg);
             }
         }
 
-        PlanResult success = PlanResult.completed(results);
-        String output = success.output() != null ? success.output().toString() : "Plan completed";
-        notifyObservers(PlanCompleted.success(plan.id(), output));
-        return success;
+        return PlanResult.completed(results);
     }
 
-    /// Executes a single step using the action executor.
-    private StepResult executeStep(PlannedStep step, Map<String, Object> context) {
-        Instant start = Instant.now();
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
 
-        // Create a Send action for the tool
-        Action action = new Action.Send(step.toolName(), step.arguments());
-
-        ActionResult result = actionExecutor.execute(action, context);
-
-        Duration duration = Duration.between(start, Instant.now());
-
-        if (result.success()) {
-            return StepResult.success(step.index(), step.toolName(), result.output(), duration);
-        } else {
-            return StepResult.failure(step.index(), step.toolName(), result.message(), duration);
-        }
-    }
-
-    /// Merges step output into context for subsequent steps.
     private Map<String, Object> mergeStepOutput(
             Map<String, Object> context, PlannedStep step, StepResult result) {
         Map<String, Object> updated = new java.util.HashMap<>(context);
-
-        // Store output under tool name and step index keys
         updated.put("_step_" + step.index() + "_output", result.output());
         updated.put("_last_output", result.output());
-
         return updated;
     }
 
-    /// Notifies all observers of an event.
+    private static String stepLabel(PlannedStep step) {
+        return switch (step.action()) {
+            case PlanStepAction.ToolCall tc -> tc.toolName();
+            case PlanStepAction.Synthesize ignored -> "synthesize";
+        };
+    }
+
     private void notifyObservers(PlanEvent event) {
         for (PlanObserver observer : observers) {
             try {
                 observer.onEvent(event);
             } catch (Exception e) {
-                // Don't let observer failures break execution
+                // Observer failures must not break plan execution
             }
         }
     }

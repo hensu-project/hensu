@@ -11,10 +11,11 @@ import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import picocli.CommandLine.Option;
 
-/// Base class for all workflow-related CLI commands.
+/// Base class for all local workflow-related CLI commands.
 ///
-/// Provides common functionality for workflow loading, working directory resolution,
-/// and banner display. Subclasses implement specific command behavior in {@link #execute()}.
+/// Provides working directory resolution and workflow loading for commands that
+/// operate on local Kotlin DSL files. Subclasses implement specific command
+/// behavior in {@link #execute()}.
 ///
 /// ### Working Directory Resolution
 /// Priority order for determining the working directory:
@@ -31,32 +32,12 @@ import picocli.CommandLine.Option;
 /// @see WorkflowRunCommand
 /// @see WorkflowValidateCommand
 /// @see WorkflowVisualizeCommand
-public abstract class WorkflowCommand implements Runnable {
-
-    private static final String[] BANNER = {
-        "",
-        "  _",
-        " | |__    ___  _ __   ___  _   _",
-        " | '_ \\  / _ \\| '_ \\ / __|| | | |",
-        " | | | ||  __/| | | |\\__ \\| |_| |",
-        " |_| |_| \\___||_| |_||___/ \\__,_|",
-        "",
-        " The Agentic Workflow Engine",
-        ""
-    };
+public abstract class WorkflowCommand extends HensuCommand {
 
     @Option(
             names = {"-d", "--working-dir"},
             description = "Working directory containing workflows/, prompts/, and rubrics/")
     protected Path workingDirPath;
-
-    @Override
-    public final void run() {
-        for (String line : BANNER) {
-            System.out.println(line);
-        }
-        execute();
-    }
 
     protected abstract void execute();
 

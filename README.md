@@ -242,6 +242,30 @@ custom instructions or CLAUDE.md files.
 
 ---
 
+## Integration Example
+
+The [`integrations/spring-reference-client`](integrations/spring-reference-client/README.md) directory contains a
+standalone Spring Boot application that demonstrates a full end-to-end integration with `hensu-server`:
+
+| What it shows              | How                                                                                      |
+|:---------------------------|:-----------------------------------------------------------------------------------------|
+| **MCP split-pipe**         | Client connects outbound via SSE; server pushes tool requests back over the same channel |
+| **Real MCP tools**         | `fetch_customer_data` and `calculate_risk_score` implemented as local Spring beans        |
+| **SSE event streaming**    | Reactive subscriber printing live execution events to the console                        |
+| **Human-in-the-loop gate** | Workflow pauses after analysis; reviewer approves/rejects via `POST /demo/review/{id}`   |
+
+**Scenario:** a credit risk analyst agent evaluates a fictional credit-limit increase for customer `C-42`. Run it with
+three commands:
+
+```bash
+./gradlew hensu-server:quarkusDev -Dquarkus.profile=inmem   # start server (no DB, no JWT)
+./hensu build risk-assessment -d integrations/spring-reference-client/working-dir && \
+./hensu push risk-assessment -d integrations/spring-reference-client/working-dir --server http://localhost:8080  # push compiled workflow
+cd integrations/spring-reference-client && ./gradlew bootRun # start demo client
+```
+
+---
+
 ## Security Model
 
 Hensu is designed for Zero-Trust environments. The server is a **pure orchestrator** — it never executes

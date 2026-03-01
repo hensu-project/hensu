@@ -4,9 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.service.WorkflowService;
-import io.hensu.server.service.WorkflowService.ExecutionStartResult;
-import io.hensu.server.service.WorkflowService.ResumeDecision;
+import io.hensu.server.workflow.WorkflowService;
+import io.hensu.server.workflow.WorkflowService.ExecutionStartResult;
+import io.hensu.server.workflow.WorkflowService.ResumeDecision;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.util.List;

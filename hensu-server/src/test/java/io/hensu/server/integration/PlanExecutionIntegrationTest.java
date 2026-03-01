@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.service.WorkflowService.ExecutionStartResult;
+import io.hensu.server.workflow.WorkflowService.ExecutionStartResult;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.util.List;
@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 /// Integration tests for plan execution: static and dynamic planning modes.
 ///
 /// Covers static plan step dispatch via {@link io.hensu.core.plan.PlanExecutor}
-/// and dynamic plan generation via {@link io.hensu.server.planner.LlmPlanner} with
+/// and dynamic plan generation via {@link io.hensu.core.plan.LlmPlanner} with
 /// the auto-registered `_planning_agent`.
 ///
 /// ### Contracts
@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
 /// @see IntegrationTestBase for shared test infrastructure
 /// @see TestActionHandler for the `"test-tool"` action handler
 /// @see io.hensu.core.plan.PlanExecutor for static plan step execution
-/// @see io.hensu.server.planner.LlmPlanner for dynamic plan generation
+/// @see io.hensu.core.plan.LlmPlanner for dynamic plan generation
 @QuarkusTest
 class PlanExecutionIntegrationTest extends IntegrationTestBase {
 

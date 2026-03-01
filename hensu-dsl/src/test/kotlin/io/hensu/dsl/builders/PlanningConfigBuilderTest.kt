@@ -38,7 +38,7 @@ class PlanningConfigBuilderTest {
 
             val config = builder.build()
 
-            assertThat(config.reviewBeforeExecute()).isFalse()
+            assertThat(config.review()).isFalse()
         }
     }
 
@@ -126,13 +126,13 @@ class PlanningConfigBuilderTest {
     inner class ReviewConfiguration {
 
         @Test
-        fun `should set reviewBeforeExecute`() {
+        fun `should set review`() {
             val builder = PlanningConfigBuilder()
-            builder.reviewBeforeExecute = true
+            builder.review = true
 
             val config = builder.build()
 
-            assertThat(config.reviewBeforeExecute()).isTrue()
+            assertThat(config.review()).isTrue()
         }
 
         @Test
@@ -142,7 +142,7 @@ class PlanningConfigBuilderTest {
 
             val config = builder.build()
 
-            assertThat(config.reviewBeforeExecute()).isTrue()
+            assertThat(config.review()).isTrue()
         }
     }
 
@@ -202,7 +202,7 @@ class PlanningConfigBuilderTest {
             builder.maxDuration = Duration.ofMinutes(10)
             builder.maxTokenBudget = 25000
             builder.allowReplan = true
-            builder.reviewBeforeExecute = true
+            builder.review = true
 
             val config = builder.build()
 
@@ -212,7 +212,7 @@ class PlanningConfigBuilderTest {
             assertThat(config.constraints().maxDuration()).isEqualTo(Duration.ofMinutes(10))
             assertThat(config.constraints().maxTokenBudget()).isEqualTo(25000)
             assertThat(config.constraints().allowReplan()).isTrue()
-            assertThat(config.reviewBeforeExecute()).isTrue()
+            assertThat(config.review()).isTrue()
         }
     }
 }
