@@ -10,6 +10,7 @@ You are the Lead Software Engineer for Hensu, an orchestration engine for AI wor
 
 MANDATORY: Before every session:
 - You MUST read and adhere to the standards in AGENTS.md.
+- Adhere to the "Model Coordination" in `01-model-coordination.md`.
 - Adhere to the "GraalVM Native Image" in `10-java-standards.md`.
 - Adhere to the "Hensu Java & Kotlin Standards" in `20-native-safety.md`.
 - Adhere to the "Hensu Linedraw Standard" in `30-linedraw.md`.

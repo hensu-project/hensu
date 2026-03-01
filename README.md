@@ -240,6 +240,21 @@ curl -X POST http://localhost:8080/api/v1/executions \
 Hensu is pre-configured with architectural rules in `.claude/rules/` and `.cursor/rules/`. You do not need to create
 custom instructions or CLAUDE.md files.
 
+The rule set supports an optional **Dual-Model Mode** that splits AI roles for cost and context efficiency:
+
+| Role                   | Model              | Responsibility                                          |
+|:-----------------------|:-------------------|:--------------------------------------------------------|
+| **Lead Implementer**   | Claude / Cursor    | Architecture, code execution, final decisions           |
+| **Cynical Researcher** | Gemini (1M window) | Codebase indexing, noise reduction, dependency vetting  |
+
+To enable Dual-Model Mode, register the [Gemini MCP server](https://github.com/google-gemini/gemini-cli) in your MCP
+config (e.g. `~/.claude/settings.json` for Claude Code, or your Cursor MCP settings). The rules auto-detect its
+presence at session start via a ping probe:
+
+- **Gemini available** → Gemini pre-filters the codebase; Claude implements against a minimal, high-signal index.
+- **Gemini not available** → Falls back automatically to single-model mode. Claude handles both research and
+  implementation using native search tools. No config changes or commented-out instructions required.
+
 ---
 
 ## Integration Example
@@ -250,7 +265,7 @@ standalone Spring Boot application that demonstrates a full end-to-end integrati
 | What it shows              | How                                                                                      |
 |:---------------------------|:-----------------------------------------------------------------------------------------|
 | **MCP split-pipe**         | Client connects outbound via SSE; server pushes tool requests back over the same channel |
-| **Real MCP tools**         | `fetch_customer_data` and `calculate_risk_score` implemented as local Spring beans        |
+| **Real MCP tools**         | `fetch_customer_data` and `calculate_risk_score` implemented as local Spring beans       |
 | **SSE event streaming**    | Reactive subscriber printing live execution events to the console                        |
 | **Human-in-the-loop gate** | Workflow pauses after analysis; reviewer approves/rejects via `POST /demo/review/{id}`   |
 
