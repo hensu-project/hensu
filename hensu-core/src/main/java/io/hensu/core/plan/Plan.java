@@ -19,16 +19,12 @@ import java.util.UUID;
 ///
 /// ### Usage
 /// {@snippet :
-/// // Static plan created from DSL
-/// Plan staticPlan = new Plan(
-///     UUID.randomUUID().toString(),
+/// Plan staticPlan = Plan.staticPlan(
 ///     "process-order",
-///     PlanSource.STATIC,
 ///     List.of(
 ///         PlannedStep.pending(0, "get_order", Map.of("id", "{orderId}"), "Fetch order"),
 ///         PlannedStep.pending(1, "validate", Map.of(), "Validate order")
-///     ),
-///     PlanConstraints.forStaticPlan()
+///     )
 /// );
 /// }
 ///

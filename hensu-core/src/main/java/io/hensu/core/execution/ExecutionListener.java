@@ -2,8 +2,10 @@ package io.hensu.core.execution;
 
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.execution.executor.NodeResult;
+import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.node.Node;
+import java.util.List;
 
 /// Listener for workflow execution lifecycle events.
 ///
@@ -15,11 +17,14 @@ import io.hensu.core.workflow.node.Node;
 /// Each non-end node in the execution loop triggers callbacks in this order:
 ///
 /// ```
-/// onCheckpoint(state)          — state is consistent, safe to persist
-/// onNodeStart(node)            — about to execute node
-/// onAgentStart(nodeId, ...)    — about to call LLM (from node executor)
-/// onAgentComplete(nodeId, ...) — LLM returned result
-/// onNodeComplete(node, result) — node execution finished (state NOT yet updated)
+/// onCheckpoint(state)             — state is consistent, safe to persist
+/// onNodeStart(node)               — about to execute node
+/// onAgentStart(nodeId, ...)       — about to call LLM (simple agent call)
+/// onAgentComplete(nodeId, ...)    — LLM returned result
+///   — OR, if planning is enabled —
+/// onPlannerStart(nodeId, prompt)  — about to call planning LLM (dynamic mode)
+/// onPlannerComplete(nodeId, ...)  — planning LLM returned steps
+/// onNodeComplete(node, result)    — node execution finished (state NOT yet updated)
 /// [state mutations: output → history → review → rubric → transitions]
 /// ```
 ///
@@ -60,6 +65,20 @@ public interface ExecutionListener {
     /// @param node the node that completed execution, not null
     /// @param result the execution result containing status and output, not null
     default void onNodeComplete(Node node, NodeResult result) {}
+
+    /// Called before the planning agent executes a micro-planning prompt.
+    ///
+    /// Fires during dynamic plan creation, before the LLM is invoked.
+    ///
+    /// @param nodeId         identifier of the node requesting a plan, not null
+    /// @param planningPrompt the full prompt sent to the planning agent, not null
+    default void onPlannerStart(String nodeId, String planningPrompt) {}
+
+    /// Called after the planning agent returns a plan.
+    ///
+    /// @param nodeId identifier of the node that requested the plan, not null
+    /// @param steps  the planned steps returned by the LLM, not null
+    default void onPlannerComplete(String nodeId, List<PlannedStep> steps) {}
 
     /// Called when workflow state is fully consistent and safe to persist.
     ///

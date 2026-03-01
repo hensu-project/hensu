@@ -1,5 +1,6 @@
 package io.hensu.server.streaming;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import io.hensu.core.plan.PlanEvent;
 import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.plan.StepResult;
@@ -29,7 +30,11 @@ public sealed interface ExecutionEvent {
 
     /// Returns the event type identifier.
     ///
-    /// @return event type string for SSE event field
+    /// Included in the JSON payload so clients can discriminate event types
+    /// without relying on the SSE {@code event:} field.
+    ///
+    /// @return event type string, e.g. {@code "step.started"}
+    @JsonProperty("type")
     String type();
 
     /// Returns the execution ID this event belongs to.
@@ -280,8 +285,9 @@ public sealed interface ExecutionEvent {
     record StepInfo(int index, String toolName, String description, Map<String, Object> arguments) {
 
         public static StepInfo from(PlannedStep step) {
-            return new StepInfo(
-                    step.index(), step.toolName(), step.description(), step.arguments());
+            String label = step.isSynthesize() ? "_synthesize" : step.toolName();
+            Map<String, Object> args = step.isSynthesize() ? Map.of() : step.arguments();
+            return new StepInfo(step.index(), label, step.description(), args);
         }
     }
 }

@@ -53,47 +53,69 @@ public interface Planner {
 
     /// Request for plan creation.
     ///
-    /// @param goal the objective to achieve, not null
+    /// @param prompt the resolved node prompt driving this plan, not null
     /// @param availableTools tools that can be used in the plan, not null
     /// @param context workflow variables for template resolution, not null
     /// @param constraints limits on plan generation, not null
     record PlanRequest(
-            String goal,
+            String prompt,
             List<ToolDefinition> availableTools,
             Map<String, Object> context,
             PlanConstraints constraints) {
         /// Compact constructor with defaults.
         public PlanRequest {
-            goal = goal != null ? goal : "";
+            prompt = prompt != null ? prompt : "";
             availableTools = availableTools != null ? List.copyOf(availableTools) : List.of();
             context = context != null ? Map.copyOf(context) : Map.of();
             constraints = constraints != null ? constraints : PlanConstraints.defaults();
         }
 
-        /// Creates a simple request with just a goal.
+        /// Creates a simple request with just a prompt.
         ///
-        /// @param goal the objective to achieve
+        /// @param prompt the resolved node prompt
         /// @return new request, never null
-        public static PlanRequest simple(String goal) {
-            return new PlanRequest(goal, List.of(), Map.of(), PlanConstraints.defaults());
+        public static PlanRequest simple(String prompt) {
+            return new PlanRequest(prompt, List.of(), Map.of(), PlanConstraints.defaults());
         }
     }
 
     /// Context for plan revision after failure.
     ///
+    /// Carries the original node prompt and available tools so the planner can
+    /// produce a meaningful revised plan without re-deriving them from the node.
+    ///
     /// @param failedAtStep index of the step that failed
     /// @param failureResult the failed step's result, not null
     /// @param revisionReason explanation for why revision is needed, not null
-    record RevisionContext(int failedAtStep, StepResult failureResult, String revisionReason) {
+    /// @param prompt the resolved node prompt that drove the original plan, not null
+    /// @param availableTools tools available for the revised plan, not null
+    record RevisionContext(
+            int failedAtStep,
+            StepResult failureResult,
+            String revisionReason,
+            String prompt,
+            List<ToolDefinition> availableTools) {
+
+        /// Compact constructor with defaults.
+        public RevisionContext {
+            prompt = prompt != null ? prompt : "";
+            availableTools = availableTools != null ? List.copyOf(availableTools) : List.of();
+        }
+
         /// Creates a context from a failed step result.
         ///
         /// @param stepResult the failed step result, not null
+        /// @param prompt the resolved node prompt that drove the original plan, not null
+        /// @param availableTools tools available for replanning, not null
         /// @return revision context, never null
-        public static RevisionContext fromFailure(StepResult stepResult) {
+        public static RevisionContext fromFailure(
+                StepResult stepResult, String prompt, List<ToolDefinition> availableTools) {
             return new RevisionContext(
                     stepResult.stepIndex(),
                     stepResult,
-                    "Step " + stepResult.stepIndex() + " failed: " + stepResult.error());
+                    "Step " + stepResult.stepIndex() + " failed: " + stepResult.error(),
+                    prompt,
+                    availableTools);
         }
     }
 }

@@ -121,52 +121,65 @@ approve", else goto "revise").
 
 ## Plan Engine
 
-Supports static or LLM-generated step-by-step plan execution within nodes. Plans define sequences of tool invocations to
-achieve a goal.
+Pipeline-driven multi-step execution within a single `StandardNode`. `AgenticNodeExecutor`
+runs two sequential `PlanPipeline` instances sharing a `PlanContext` carrier:
 
 ```
-+————————————————————————————————————————————————————+
-│  Node with Planning                                │
-│                                                    │
-│  Goal ———> Planner ———> Plan [S1, S2, S3, ...]     │
-│            │                    │                  │
-│            │  +—————————————————+                  │
-│            │  │                                    │
-│            │  V                                    │
-│            │  PlanExecutor                         │
-│            │  +——————+   +———————+   +———————+     │
-│            │  │Exec  │——>│Observe│——>│Reflect│——+  │
-│            │  │Step  │   │Result │   │       │  │  │
-│            │  +——————+   +———————+   +———————+  │  │
-│            │      ^                             │  │
-│            │      │                             │  │
-│            │      +—————————————————————————————+  │
-│            │            (next step or replan)      │
-│  +—————————+——————+                                │
-│  │ StaticPlanner  │  (from DSL plan {} block)      │
-│  │ LLM Planner    │  (server-side, dynamic)        │
-│  +————————————————+                                │
-+————————————————————————————————————————————————————+
++——————————————————————————————————————————————————————————————+
+│  PREPARATION PIPELINE                                        │
+│                                                              │
+│  +————————————————+   +————————————————+   +——————————————+  │
+│  │PlanCreation    │   │Synthesize      │   │ReviewGate    │  │
+│  │Processor       │——>│Enrichment      │——>│Processor     │  │
+│  │(Static or LLM) │   │(inject agentId)│   │(pause if     │  │
+│  +————————————————+   +————————————————+   │ review=true) │  │
+│                                            +——————+———————+  │
++——————————————————————————————————————————————+———————————————+
+                                               │ PlanContext
+                                               V (Plan ready)
++——————————————————————————————————————————————————————————————+
+│  EXECUTION PIPELINE                                          │
+│                                                              │
+│  PlanExecutionProcessor                                      │
+│  +————————————————————————————————————————+                  │
+│  │  PlanExecutor                          │                  │
+│  │  S1 ——> S2 ——> S3 ——> ...              │                  │
+│  │   │   StepHandlerRegistry              │                  │
+│  │   V                                    │                  │
+│  │  +—————————————+  +—————————————+      │                  │
+│  │  │ToolCall     │  │Synthesize   │      │                  │
+│  │  │Handler      │  │Handler      │      │                  │
+│  │  │(ActionExec) │  │(Agent call) │      │                  │
+│  │  +—————————————+  +—————————————+      │                  │
+│  +————————————————————————————————————————+                  │
+│                                                              │
+│  PostExecutionReviewGateProcessor (optional pause)           │
++——————————————————————————————————————————————————————————————+
 ```
 
 **Planning modes:**
 
-| Mode       | Description                                   |
-|------------|-----------------------------------------------|
-| `DISABLED` | No planning, direct agent execution (default) |
-| `STATIC`   | Predefined plan from DSL `plan { }` block     |
-| `DYNAMIC`  | LLM generates plan at runtime based on goal   |
+| Mode       | Description                                    |
+|------------|------------------------------------------------|
+| `DISABLED` | No planning, direct agent execution (default)  |
+| `STATIC`   | Predefined plan from DSL `plan { }` block      |
+| `DYNAMIC`  | LLM generates plan at runtime via `LlmPlanner` |
 
 **Key types:**
 
-| Type              | Description                                              |
-|-------------------|----------------------------------------------------------|
-| `Plan`            | Sequence of steps with constraints and metadata          |
-| `PlannedStep`     | Single tool invocation with parameters                   |
-| `PlanExecutor`    | Executes plan steps via ActionExecutor, emits events     |
-| `Planner`         | Interface for plan creation (StaticPlanner, LLM planner) |
-| `PlanConstraints` | Max steps, max replans, timeout limits                   |
-| `PlanObserver`    | Callback for monitoring plan execution events            |
+| Type                  | Description                                                  |
+|-----------------------|--------------------------------------------------------------|
+| `Plan`                | Sequence of steps with constraints and metadata              |
+| `PlannedStep`         | Single step carrying a `PlanStepAction`                      |
+| `PlanStepAction`      | Sealed type: `ToolCall` or `Synthesize`                      |
+| `PlanPipeline`        | Executes an ordered chain of `PlanProcessor`s                |
+| `PlanContext`         | Mutable carrier: node, active plan, execution context        |
+| `PlanExecutor`        | Iterates plan steps via `StepHandlerRegistry`, emits events  |
+| `StepHandlerRegistry` | Dispatches each step action to its `StepHandler`             |
+| `Planner`             | Interface: `createPlan` / `revisePlan`                       |
+| `StaticPlanner`       | Resolves predefined DSL steps (`STATIC` mode)                |
+| `LlmPlanner`          | Generates and revises plans via LLM agent (`DYNAMIC` mode)   |
+| `PlanObserver`        | Callback for monitoring plan lifecycle events                |
 
 ## Tool Registry
 
@@ -218,7 +231,8 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── WorkflowExecutor.java          # Main graph traversal engine (execute + executeFrom for resume)
 │   ├── executor/
 │   │   ├── NodeExecutor.java          # Interface for node type executors
-│   │   ├── StandardNodeExecutor.java  # LLM prompt execution
+│   │   ├── AgenticNodeExecutor.java   # Drives preparation + execution PlanPipelines for StandardNode
+│   │   ├── StandardNodeExecutor.java  # LLM prompt execution (no planning)
 │   │   ├── ParallelNodeExecutor.java  # Concurrent branch execution
 │   │   ├── ForkNodeExecutor.java      # Fork into parallel paths
 │   │   ├── JoinNodeExecutor.java      # Merge parallel results
@@ -271,13 +285,22 @@ hensu-core/src/main/java/io/hensu/core/
 │   └── DefaultToolRegistry.java   # Thread-safe ConcurrentHashMap implementation
 ├── plan/                          # Agentic planning engine
 │   ├── Plan.java                  # Plan model (steps + constraints)
-│   ├── PlannedStep.java           # Single tool invocation step
-│   ├── PlanExecutor.java          # Step-by-step execution with events
-│   ├── Planner.java               # Plan creation interface
-│   ├── StaticPlanner.java         # Creates plans from DSL definitions
+│   ├── PlannedStep.java           # Single step with PlanStepAction
+│   ├── PlanStepAction.java        # Sealed type: ToolCall | Synthesize
+│   ├── PlanPipeline.java          # Executes ordered PlanProcessor chain
+│   ├── PlanProcessor.java         # Single-phase processor interface
+│   ├── PlanContext.java           # Mutable state carrier for plan pipelines
+│   ├── PlanExecutor.java          # Iterates steps via StepHandlerRegistry
+│   ├── StepHandlerRegistry.java   # Dispatches PlanStepAction to StepHandler
+│   ├── StepHandler.java           # Handler interface for one action type
+│   ├── ToolCallStepHandler.java   # Handles ToolCall via ActionExecutor
+│   ├── SynthesizeStepHandler.java # Handles Synthesize via agent invocation
+│   ├── Planner.java               # Plan creation/revision interface
+│   ├── StaticPlanner.java         # Resolves DSL plan {} steps (STATIC mode)
+│   ├── LlmPlanner.java            # LLM-based plan generation (DYNAMIC mode)
 │   ├── PlanningMode.java          # DISABLED, STATIC, DYNAMIC
 │   ├── PlanningConfig.java        # Planning constraints configuration
-│   ├── PlanConstraints.java       # Max steps, replans, timeout
+│   ├── PlanResponseParser.java    # Parses LLM response into PlannedStep list
 │   ├── PlanObserver.java          # Event callback interface
 │   └── PlanEvent.java             # Plan lifecycle events
 ├── review/                        # Human review support

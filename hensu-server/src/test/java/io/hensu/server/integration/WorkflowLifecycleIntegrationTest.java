@@ -5,8 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.service.WorkflowService.ExecutionStartResult;
-import io.hensu.server.service.WorkflowService.WorkflowNotFoundException;
+import io.hensu.server.workflow.WorkflowService.ExecutionStartResult;
+import io.hensu.server.workflow.WorkflowService.WorkflowNotFoundException;
 import io.quarkus.test.junit.QuarkusTest;
 import java.util.List;
 import java.util.Map;
@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
 /// - **Invariant**: All executions use {@link #TEST_TENANT} unless explicitly overridden
 ///
 /// @see IntegrationTestBase for shared test infrastructure
-/// @see io.hensu.server.service.WorkflowService for the service layer under test
+/// @see io.hensu.server.workflow.WorkflowService for the service layer under test
 @QuarkusTest
 class WorkflowLifecycleIntegrationTest extends IntegrationTestBase {
 

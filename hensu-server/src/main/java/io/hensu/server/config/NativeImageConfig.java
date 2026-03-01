@@ -10,13 +10,14 @@ import io.hensu.core.plan.PlanConstraints;
 import io.hensu.core.plan.PlanSnapshot;
 import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.plan.PlanningConfig;
+import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 /// GraalVM native image reflection registrations for `hensu-core` domain model classes.
 ///
-/// Two patterns require explicit registration:
+/// Three patterns require explicit registration:
 ///
 /// ### 1. Jackson `@JsonPOJOBuilder` mixin pattern
 /// {@link io.hensu.serialization.HensuJacksonModule} maps each of these types to a builder mixin.
@@ -34,20 +35,22 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 /// `io.hensu.serialization.NodeDeserializer` delegates `PlanningConfig` and `Plan`
 /// deserialization to `mapper.treeToValue()` because their nested `Duration` / `PlannedStep`
 /// fields make manual `JsonNode` extraction error-prone. These types must be registered so
-/// Jackson's POJO reflection can reach their fields at runtime.
+/// Jackson's POJO reflection can reach their fields at runtime. Simple nested types
+/// (`ConsensusConfig`, `Branch`, `ScoreCondition`, `DoubleRange`) are extracted manually —
+/// no registration needed.
 ///
-/// Simple nested types (`ReviewConfig`, `ConsensusConfig`, `Branch`, `ScoreCondition`,
-/// `DoubleRange`) are extracted manually in both serializer and deserializer — no registration
-/// needed.
+/// ### 3. Plain records (canonical constructor + component accessors)
+/// Records expose state via canonical constructors and component accessors. GraalVM cannot
+/// trace these statically when Jackson uses default POJO machinery. Affected types:
 ///
-/// ### 3. Record types in execution state snapshots
-/// `HensuSnapshot` is embedded in `ExecutionStep` (via `ExecutionStep.Builder.snapshot`) and
-/// serialized as part of JDBC state persistence. Its nested `PlanSnapshot` record hierarchy
-/// (`PlanSnapshot`, `PlannedStepSnapshot`, `StepResultSnapshot`) must also be registered so
-/// Jackson can reach the canonical constructors and component accessors at runtime.
+/// - `ReviewConfig` — embedded in workflow nodes via `AgentConfig`
+/// - `HensuSnapshot`, `PlanSnapshot` hierarchy — embedded in `ExecutionStep` for JDBC persistence
 ///
 /// @implNote No Quarkus annotations are placed on `hensu-core` types. All native image metadata
-/// lives in `hensu-server`, keeping the core module dependency-free.
+/// lives in `hensu-server`, keeping the core module dependency-free. LangChain4j transport and
+/// provider-specific registrations are in dedicated classes.
+/// @see LangChain4jNativeConfig for shared LangChain4j transport registrations
+/// @see LangChain4jGeminiNativeConfig for Google AI Gemini DTO registrations
 /// @see io.hensu.serialization.HensuJacksonModule for the mixin registrations and
 ///     `treeToValue` delegation sites
 @RegisterForReflection(
@@ -69,7 +72,8 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
             PlanConstraints.class,
             Plan.class,
             PlannedStep.class,
-            // --- Record types for execution state snapshots ---
+            // --- Plain records (canonical constructor + component accessors) ---
+            ReviewConfig.class,
             HensuSnapshot.class,
             PlanSnapshot.class,
             PlanSnapshot.PlannedStepSnapshot.class,

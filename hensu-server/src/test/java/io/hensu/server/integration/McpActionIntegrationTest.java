@@ -8,7 +8,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.mcp.McpSessionManager;
-import io.hensu.server.service.WorkflowService.ExecutionStartResult;
+import io.hensu.server.workflow.WorkflowService.ExecutionStartResult;
 import io.quarkus.test.junit.QuarkusTest;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;

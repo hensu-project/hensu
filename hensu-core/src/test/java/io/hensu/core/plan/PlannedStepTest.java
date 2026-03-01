@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.plan.PlannedStep.StepStatus;
+import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -16,56 +17,98 @@ class PlannedStepTest {
         @Test
         void shouldThrowWhenIndexIsNegative() {
             assertThatThrownBy(
-                            () -> new PlannedStep(-1, "tool", Map.of(), "desc", StepStatus.PENDING))
+                            () ->
+                                    new PlannedStep(
+                                            -1,
+                                            new PlanStepAction.ToolCall("tool", Map.of()),
+                                            "desc",
+                                            StepStatus.PENDING))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("index must be >= 0");
         }
 
         @Test
+        void shouldThrowWhenActionIsNull() {
+            // PlannedStep compact constructor guards against null action
+            assertThatThrownBy(() -> new PlannedStep(0, null, "desc", StepStatus.PENDING))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("action");
+        }
+
+        @Test
         void shouldThrowWhenToolNameIsNull() {
-            assertThatThrownBy(() -> new PlannedStep(0, null, Map.of(), "desc", StepStatus.PENDING))
+            // Null toolName is validated inside PlanStepAction.ToolCall
+            assertThatThrownBy(
+                            () ->
+                                    new PlannedStep(
+                                            0,
+                                            new PlanStepAction.ToolCall(null, Map.of()),
+                                            "desc",
+                                            StepStatus.PENDING))
                     .isInstanceOf(NullPointerException.class)
                     .hasMessageContaining("toolName");
         }
 
         @Test
         void shouldThrowWhenToolNameIsBlank() {
-            assertThatThrownBy(() -> new PlannedStep(0, "  ", Map.of(), "desc", StepStatus.PENDING))
+            assertThatThrownBy(
+                            () ->
+                                    new PlannedStep(
+                                            0,
+                                            new PlanStepAction.ToolCall("  ", Map.of()),
+                                            "desc",
+                                            StepStatus.PENDING))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("blank");
         }
 
         @Test
         void shouldDefaultArgumentsToEmptyMap() {
-            PlannedStep step = new PlannedStep(0, "tool", null, "desc", StepStatus.PENDING);
+            // null arguments in ToolCall are normalised to Map.of()
+            PlannedStep step = PlannedStep.pending(0, "tool", null, "desc");
 
             assertThat(step.arguments()).isNotNull().isEmpty();
         }
 
         @Test
         void shouldDefaultDescriptionToEmpty() {
-            PlannedStep step = new PlannedStep(0, "tool", Map.of(), null, StepStatus.PENDING);
+            PlannedStep step =
+                    new PlannedStep(
+                            0,
+                            new PlanStepAction.ToolCall("tool", Map.of()),
+                            null,
+                            StepStatus.PENDING);
 
             assertThat(step.description()).isNotNull().isEmpty();
         }
 
         @Test
         void shouldDefaultStatusToPending() {
-            PlannedStep step = new PlannedStep(0, "tool", Map.of(), "desc", null);
+            PlannedStep step =
+                    new PlannedStep(0, new PlanStepAction.ToolCall("tool", Map.of()), "desc", null);
 
             assertThat(step.status()).isEqualTo(StepStatus.PENDING);
         }
 
         @Test
         void shouldMakeDefensiveCopyOfArguments() {
-            Map<String, Object> args = new java.util.HashMap<>();
+            // Mutations after construction must not affect the step
+            Map<String, Object> args = new HashMap<>();
             args.put("key", "value");
-
-            PlannedStep step = new PlannedStep(0, "tool", args, "desc", StepStatus.PENDING);
+            PlannedStep step = PlannedStep.pending(0, "tool", args, "desc");
 
             args.put("newKey", "newValue");
 
             assertThat(step.arguments()).doesNotContainKey("newKey");
+        }
+
+        @Test
+        void shouldRejectMutationOfReturnedArgumentMap() {
+            // The map returned by arguments() must be unmodifiable
+            PlannedStep step = PlannedStep.pending(0, "tool", Map.of("k", "v"), "desc");
+
+            assertThatThrownBy(() -> step.arguments().put("extra", "x"))
+                    .isInstanceOf(UnsupportedOperationException.class);
         }
     }
 

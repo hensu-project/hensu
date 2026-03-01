@@ -191,7 +191,7 @@ class StaticPlannerTest {
             StaticPlanner planner = new StaticPlanner(predefined);
 
             StepResult failedResult = StepResult.failure(0, "tool", "error", Duration.ZERO);
-            RevisionContext context = RevisionContext.fromFailure(failedResult);
+            RevisionContext context = RevisionContext.fromFailure(failedResult, "", List.of());
 
             assertThatThrownBy(() -> planner.revisePlan(predefined, context))
                     .isInstanceOf(PlanRevisionException.class)
@@ -206,7 +206,7 @@ class StaticPlannerTest {
         void shouldCreateSimpleRequest() {
             PlanRequest request = PlanRequest.simple("Do something");
 
-            assertThat(request.goal()).isEqualTo("Do something");
+            assertThat(request.prompt()).isEqualTo("Do something");
             assertThat(request.availableTools()).isEmpty();
             assertThat(request.context()).isEmpty();
             assertThat(request.constraints()).isNotNull();
@@ -216,7 +216,7 @@ class StaticPlannerTest {
         void shouldDefaultNullValues() {
             PlanRequest request = new PlanRequest(null, null, null, null);
 
-            assertThat(request.goal()).isEmpty();
+            assertThat(request.prompt()).isEmpty();
             assertThat(request.availableTools()).isEmpty();
             assertThat(request.context()).isEmpty();
             assertThat(request.constraints()).isNotNull();
@@ -231,7 +231,7 @@ class StaticPlannerTest {
             StepResult failure =
                     StepResult.failure(2, "api_call", "Timeout", Duration.ofSeconds(5));
 
-            RevisionContext context = RevisionContext.fromFailure(failure);
+            RevisionContext context = RevisionContext.fromFailure(failure, "", List.of());
 
             assertThat(context.failedAtStep()).isEqualTo(2);
             assertThat(context.failureResult()).isSameAs(failure);

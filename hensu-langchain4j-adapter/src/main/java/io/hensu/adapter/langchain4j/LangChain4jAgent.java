@@ -75,6 +75,8 @@ public class LangChain4jAgent implements Agent {
             AiMessage aiMessage = response.aiMessage();
             String output = aiMessage.text();
 
+            logger.fine("Agent '" + id + "' output:\n" + output);
+
             if (config.isMaintainContext()) {
                 conversationHistory.add(UserMessage.from(prompt));
                 conversationHistory.add(aiMessage);
@@ -102,14 +104,28 @@ public class LangChain4jAgent implements Agent {
     }
 
     /// Builds the ordered message list: system prompt, history, then user prompt.
+    ///
+    /// For Gemini/Gemma models, system content is merged into the user message as a
+    /// prefix rather than passed as a {@link SystemMessage}. Some versions of
+    /// LangChain4j's {@code GoogleAiGeminiChatModel} place the {@code SystemMessage}
+    /// in {@code systemInstruction} and silently drop the subsequent {@code UserMessage}
+    /// from {@code contents}, causing a Gemini API 400 "contents is not specified" error.
+    ///
+    /// @see <a href="https://github.com/langchain4j/langchain4j/issues/3616">LangChain4j #3616</a>
     private List<ChatMessage> buildMessages(String prompt, Map<String, Object> context) {
         List<ChatMessage> messages = new ArrayList<>();
+        String model = config.getModel();
+        boolean isGemini = model.startsWith("gemini") || model.startsWith("gemma");
 
         if (!config.getRole().isEmpty()) {
-            messages.add(
-                    SystemMessage.from(
-                            buildSystemPrompt(
-                                    config.getRole(), config.getInstructions(), context)));
+            String systemContent =
+                    buildSystemPrompt(config.getRole(), config.getInstructions(), context);
+            if (isGemini) {
+                // Gemini: prepend system content to the user message so contents is never empty.
+                prompt = systemContent + prompt;
+            } else {
+                messages.add(SystemMessage.from(systemContent));
+            }
         }
 
         if (config.isMaintainContext() && !conversationHistory.isEmpty()) {

@@ -12,4 +12,7 @@ dependencies {
     implementation("dev.langchain4j:langchain4j-anthropic")
     implementation("dev.langchain4j:langchain4j-open-ai")
     implementation("dev.langchain4j:langchain4j-google-ai-gemini")
+    // JDK HTTP client — required for programmatic ChatModel instantiation outside CDI.
+    // HttpClientBuilderLoader uses ServiceLoader; native image only registers services it sees at build time.
+    implementation("dev.langchain4j:langchain4j-http-client-jdk")
 }

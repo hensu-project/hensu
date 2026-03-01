@@ -42,7 +42,7 @@ This three-layer boundary means a CLI or embedded deployment can swap in a diffe
 │  HensuJacksonModule (SimpleModule)                               │
 │    │                                                             │
 │    ├── addSerializer / addDeserializer (polymorphic hierarchies) │
-│    │     Node, TransitionRule, Action                            │
+│    │     Node, TransitionRule, Action, PlanStepAction            │
 │    │                                                             │
 │    └── setMixInAnnotations (builder-pattern domain objects)      │
 │          Workflow, AgentConfig, ExecutionStep,                   │
@@ -109,11 +109,12 @@ context.setMixInAnnotations(Workflow.Builder.class, WorkflowBuilderMixin.class);
 
 Used for **sealed polymorphic hierarchies** where a `"type"` discriminator field determines the concrete subtype. Custom `StdDeserializer` subclasses read the JSON tree manually.
 
-| Type             | Serializer                 | Deserializer                 |
-|------------------|----------------------------|------------------------------|
-| `Node`           | `NodeSerializer`           | `NodeDeserializer`           |
-| `TransitionRule` | `TransitionRuleSerializer` | `TransitionRuleDeserializer` |
-| `Action`         | `ActionSerializer`         | `ActionDeserializer`         |
+| Type             | Serializer                  | Deserializer                  |
+|------------------|-----------------------------|-------------------------------|
+| `Node`           | `NodeSerializer`            | `NodeDeserializer`            |
+| `TransitionRule` | `TransitionRuleSerializer`  | `TransitionRuleDeserializer`  |
+| `Action`         | `ActionSerializer`          | `ActionDeserializer`          |
+| `PlanStepAction` | `PlanStepActionSerializer`  | `PlanStepActionDeserializer`  |
 
 Each deserializer follows the same skeleton:
 
@@ -326,15 +327,17 @@ The root rule: **`hensu-core` owns no serialization metadata. `hensu-serializati
 
 ## Key Classes Reference
 
-| Class                                                     | Description                                                       |
-|-----------------------------------------------------------|-------------------------------------------------------------------|
-| `WorkflowSerializer`                                      | Factory — creates the configured `ObjectMapper`                   |
-| `HensuJacksonModule`                                      | `SimpleModule` — registers all serializers, deserializers, mixins |
-| `NodeSerializer` / `NodeDeserializer`                     | Polymorphic `Node` hierarchy (discriminator: `nodeType`)          |
-| `TransitionRuleSerializer` / `TransitionRuleDeserializer` | Polymorphic `TransitionRule` (discriminator: `type`)              |
-| `ActionSerializer` / `ActionDeserializer`                 | Polymorphic `Action` (discriminator: `type`)                      |
-| `mixin/*Mixin.java`                                       | `@JsonDeserialize` bridge for builder-pattern types               |
-| `mixin/*BuilderMixin.java`                                | `@JsonPOJOBuilder` configuration for builder inner classes        |
+| Class                                                     | Description                                                                |
+|-----------------------------------------------------------|----------------------------------------------------------------------------|
+| `WorkflowSerializer`                                      | Factory — creates the configured `ObjectMapper`                            |
+| `HensuJacksonModule`                                      | `SimpleModule` — registers all serializers, deserializers, mixins          |
+| `NodeSerializer` / `NodeDeserializer`                     | Polymorphic `Node` hierarchy (discriminator: `nodeType`)                   |
+| `TransitionRuleSerializer` / `TransitionRuleDeserializer` | Polymorphic `TransitionRule` (discriminator: `type`)                       |
+| `ActionSerializer` / `ActionDeserializer`                 | Polymorphic `Action` (discriminator: `type`)                               |
+| `PlanStepActionSerializer` / `PlanStepActionDeserializer` | Polymorphic `PlanStepAction` (discriminator: `type`)                       |
+| `plan/JacksonPlanResponseParser`                          | Parses LLM JSON responses into `PlannedStep` lists; strips markdown fences |
+| `mixin/*Mixin.java`                                       | `@JsonDeserialize` bridge for builder-pattern types                        |
+| `mixin/*BuilderMixin.java`                                | `@JsonPOJOBuilder` configuration for builder inner classes                 |
 
 > **See also**:
 > - [hensu-core Developer Guide — GraalVM](developer-guide-core.md#graalvm-native-image-constraints) for foundational native-image rules

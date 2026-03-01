@@ -6,7 +6,7 @@ import io.hensu.core.execution.result.BacktrackEvent;
 import io.hensu.core.review.ReviewDecision;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.service.WorkflowService.ExecutionStartResult;
+import io.hensu.server.workflow.WorkflowService.ExecutionStartResult;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.util.List;

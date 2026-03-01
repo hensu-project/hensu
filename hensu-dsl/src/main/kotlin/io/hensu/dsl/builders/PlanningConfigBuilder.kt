@@ -22,7 +22,7 @@ import java.time.Duration
  *         maxReplans = 5
  *         maxDuration = Duration.ofMinutes(10)
  *         allowReplan = true
- *         reviewBeforeExecute = true
+ *         review = true    // enables both pre- and post-execution review gates
  *     }
  *     prompt = "Research and analyze topic X"
  *     onSuccess goto "synthesize"
@@ -51,8 +51,13 @@ class PlanningConfigBuilder {
     /** Whether plan revision is allowed when a step fails. Default: true */
     var allowReplan: Boolean = true
 
-    /** Whether to pause for human review before executing the plan. Default: false */
-    var reviewBeforeExecute: Boolean = false
+    /**
+     * Whether to enable review gates before and after plan execution. Default: false.
+     *
+     * When `true`, pauses for human review both after plan creation (Gate 1) and after plan
+     * execution (Gate 2).
+     */
+    var review: Boolean = false
 
     /** Maximum total execution time. Default: 5 minutes */
     var maxDuration: Duration = Duration.ofMinutes(5)
@@ -69,7 +74,7 @@ class PlanningConfigBuilder {
         PlanningConfig(
             mode,
             PlanConstraints(maxSteps, maxReplans, maxDuration, maxTokenBudget, allowReplan),
-            reviewBeforeExecute,
+            review,
         )
 
     /**
@@ -99,9 +104,9 @@ class PlanningConfigBuilder {
         maxTokenBudget = 10000
     }
 
-    /** Enables human review before plan execution. */
+    /** Enables human review gates (both before and after plan execution). */
     fun withReview() {
-        reviewBeforeExecute = true
+        review = true
     }
 
     /** Disables replanning on step failure. */

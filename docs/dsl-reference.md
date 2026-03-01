@@ -425,6 +425,14 @@ end("cancelled", ExitStatus.CANCELLED)
 onSuccess goto "next-node"
 ```
 
+### Direct Failure Transition
+
+```kotlin
+onFailure goto "error-node"
+```
+
+Routes immediately to the target node on failure, with no retries.
+
 ### Failure with Retry
 
 ```kotlin
@@ -680,15 +688,15 @@ planning {
 
 ### Planning Properties
 
-| Property              | Type         | Default   | Description                                     |
-|-----------------------|--------------|-----------|-------------------------------------------------|
-| `mode`                | PlanningMode | DISABLED  | DISABLED, STATIC, or DYNAMIC                    |
-| `maxSteps`            | Int          | 10        | Maximum steps allowed in a plan                 |
-| `maxReplans`          | Int          | 3         | Maximum plan revisions on failure               |
-| `allowReplan`         | Boolean      | true      | Whether plan revision is allowed                |
-| `reviewBeforeExecute` | Boolean      | false     | Pause for human review before execution         |
-| `maxDuration`         | Duration     | 5 minutes | Maximum total execution time                    |
-| `maxTokenBudget`      | Int          | 10000     | Maximum LLM tokens for planning (0 = unlimited) |
+| Property         | Type         | Default   | Description                                     |
+|------------------|--------------|-----------|-------------------------------------------------|
+| `mode`           | PlanningMode | DISABLED  | DISABLED, STATIC, or DYNAMIC                    |
+| `maxSteps`       | Int          | 10        | Maximum steps allowed in a plan                 |
+| `maxReplans`     | Int          | 3         | Maximum plan revisions on failure               |
+| `allowReplan`    | Boolean      | true      | Whether plan revision is allowed                |
+| `review`         | Boolean      | false     | Pause for human review before execution         |
+| `maxDuration`    | Duration     | 5 minutes | Maximum total execution time                    |
+| `maxTokenBudget` | Int          | 10000     | Maximum LLM tokens for planning (0 = unlimited) |
 
 ### Planning Modes
 

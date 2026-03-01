@@ -31,11 +31,12 @@ import java.time.Duration;
 ///
 /// @param mode how planning is handled, not null
 /// @param constraints limits on plan generation and execution, not null
-/// @param reviewBeforeExecute whether to pause for human review before executing
+/// @param review whether to enable review gates before and after plan execution;
+///              when {@code true} both the pre-execution gate (review the plan structure)
+///              and the post-execution gate (review the plan results) are activated
 /// @see PlanningMode for mode options
 /// @see PlanConstraints for constraint details
-public record PlanningConfig(
-        PlanningMode mode, PlanConstraints constraints, boolean reviewBeforeExecute) {
+public record PlanningConfig(PlanningMode mode, PlanConstraints constraints, boolean review) {
 
     /// Compact constructor with validation.
     public PlanningConfig {
@@ -71,7 +72,7 @@ public record PlanningConfig(
         return new PlanningConfig(PlanningMode.DYNAMIC, PlanConstraints.defaults(), false);
     }
 
-    /// Returns configuration for dynamic plans with review.
+    /// Returns configuration for dynamic plans with review gates enabled.
     ///
     /// @return dynamic planning config with review, never null
     public static PlanningConfig forDynamicWithReview() {
@@ -104,17 +105,17 @@ public record PlanningConfig(
     /// @param newConstraints the new constraints, not null
     /// @return new config with updated constraints, never null
     public PlanningConfig withConstraints(PlanConstraints newConstraints) {
-        return new PlanningConfig(mode, newConstraints, reviewBeforeExecute);
+        return new PlanningConfig(mode, newConstraints, review);
     }
 
-    /// Returns a copy with review enabled.
+    /// Returns a copy with review gates enabled (both pre- and post-execution).
     ///
     /// @return new config with review enabled, never null
     public PlanningConfig withReview() {
         return new PlanningConfig(mode, constraints, true);
     }
 
-    /// Returns a copy with review disabled.
+    /// Returns a copy with review gates disabled.
     ///
     /// @return new config with review disabled, never null
     public PlanningConfig withoutReview() {
@@ -126,7 +127,7 @@ public record PlanningConfig(
     /// @param duration the new max duration, not null
     /// @return new config with updated duration, never null
     public PlanningConfig withMaxDuration(Duration duration) {
-        return new PlanningConfig(mode, constraints.withMaxDuration(duration), reviewBeforeExecute);
+        return new PlanningConfig(mode, constraints.withMaxDuration(duration), review);
     }
 
     /// Returns a copy with updated max steps.
@@ -134,6 +135,6 @@ public record PlanningConfig(
     /// @param maxSteps the new max steps
     /// @return new config with updated steps, never null
     public PlanningConfig withMaxSteps(int maxSteps) {
-        return new PlanningConfig(mode, constraints.withMaxSteps(maxSteps), reviewBeforeExecute);
+        return new PlanningConfig(mode, constraints.withMaxSteps(maxSteps), review);
     }
 }

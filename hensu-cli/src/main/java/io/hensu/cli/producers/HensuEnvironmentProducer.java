@@ -8,6 +8,8 @@ import io.hensu.core.HensuEnvironment;
 import io.hensu.core.HensuFactory;
 import io.hensu.core.execution.executor.GenericNodeHandler;
 import io.hensu.core.review.ReviewHandler;
+import io.hensu.serialization.WorkflowSerializer;
+import io.hensu.serialization.plan.JacksonPlanResponseParser;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
@@ -77,6 +79,8 @@ public class HensuEnvironmentProducer {
                         .agentProviders(List.of(new LangChain4jProvider()))
                         .reviewHandler(reviewHandler)
                         .actionExecutor(actionExecutor)
+                        .planResponseParser(
+                                new JacksonPlanResponseParser(WorkflowSerializer.createMapper()))
                         .build();
 
         logger.info("Configured HensuEnvironment with CLIActionExecutor");

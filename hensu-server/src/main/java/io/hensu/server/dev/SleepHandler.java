@@ -31,7 +31,7 @@ import org.jboss.logging.Logger;
 /// 6. Verify execution status reaches COMPLETED
 /// ```
 ///
-/// @see io.hensu.server.service.WorkflowRecoveryJob
+/// @see io.hensu.server.workflow.WorkflowRecoveryJob
 @ApplicationScoped
 public class SleepHandler implements GenericNodeHandler {
 

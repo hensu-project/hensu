@@ -338,7 +338,13 @@ CRUD operations, UPSERT semantics, FK constraints, tenant isolation, and seriali
 - `hensu-core/.../workflow/Workflow.java` - Core data model
 - `hensu-core/.../rubric/RubricEngine.java` - Quality evaluation engine
 - `hensu-core/.../tool/ToolRegistry.java` - Protocol-agnostic tool descriptors
-- `hensu-core/.../plan/PlanExecutor.java` - Step-by-step plan execution
+- `hensu-core/.../plan/PlanPipeline.java` - Executes ordered `PlanProcessor` chains (preparation + execution)
+- `hensu-core/.../plan/PlanContext.java` - Mutable state carrier flowing through both plan pipelines
+- `hensu-core/.../plan/PlanExecutor.java` - Iterates plan steps via `StepHandlerRegistry`
+- `hensu-core/.../plan/StepHandlerRegistry.java` - Dispatches `PlanStepAction` to registered `StepHandler` instances
+- `hensu-core/.../plan/StaticPlanner.java` - Resolves predefined DSL `plan { }` steps (`STATIC` mode)
+- `hensu-core/.../plan/LlmPlanner.java` - Generates and revises plans via LLM agent (`DYNAMIC` mode)
+- `hensu-core/.../execution/executor/AgenticNodeExecutor.java` - Drives the two-pipeline plan flow for `StandardNode`
 - `hensu-core/.../workflow/WorkflowRepository.java` - Tenant-scoped workflow storage interface
 - `hensu-core/.../state/WorkflowStateRepository.java` - Tenant-scoped execution state storage interface
 
