@@ -9,7 +9,7 @@ The `hensu-server` module extends `hensu-core` with:
 - **REST API** for workflow definition management and execution
 - **Multi-Tenant Isolation** using Java 25 ScopedValues
 - **MCP Gateway** for external tool integration (server never executes locally)
-- **Dynamic Planning** via LLM-based plan generation
+- **Dynamic Planning** via `hensu-core` plan pipeline (`LlmPlanner`, `PlanPipeline`, `StepHandlerRegistry`)
 - **Human-in-the-Loop** support with plan review workflows
 - **SSE Streaming** for real-time execution monitoring
 
@@ -256,15 +256,6 @@ TenantContext.runAs(tenant, () -> {
 });
 ```
 
-### Agentic Node Executor
-
-Planning-aware executor for StandardNodes:
-
-- **Static Plans**: Predefined steps from DSL
-- **Dynamic Plans**: LLM-generated plans at runtime
-- **Plan Revision**: Automatic retry with revised plans on failure
-- **Human Review**: Optional pause before plan execution
-
 ### Persistence
 
 Repository interfaces and in-memory defaults live in `hensu-core`. The server provides PostgreSQL
@@ -348,12 +339,16 @@ hensu-server/
 │   │   ├── LogSanitizer.java               # Strips CR/LF for log injection prevention
 │   │   └── ConstraintViolationExceptionMapper.java  # Global 400 error mapper
 │   ├── config/                            # CDI configuration
-│   │   ├── HensuEnvironmentProducer.java  # HensuFactory → HensuEnvironment
-│   │   ├── NativeImageConfig.java         # GraalVM @RegisterForReflection (Jackson mixin targets)
-│   │   ├── ServerBootstrap.java           # Startup registrations
-│   │   └── ServerConfiguration.java       # CDI delegation + server beans
-│   ├── executor/                          # Planning-aware execution
-│   │   └── AgenticNodeExecutor.java
+│   │   ├── HensuEnvironmentProducer.java          # HensuFactory → HensuEnvironment
+│   │   ├── NativeImageConfig.java                 # @RegisterForReflection — Hensu domain model (mixin/builder, treeToValue, records)
+│   │   ├── LangChain4jNativeConfig.java           # @RegisterForReflection — JDK HTTP transport (ServiceLoader)
+│   │   ├── LangChain4jAnthropicNativeConfig.java  # @RegisterForReflection — Anthropic API request/response DTOs
+│   │   ├── LangChain4jGeminiNativeConfig.java     # @RegisterForReflection — Google AI Gemini API request/response DTOs
+│   │   ├── ServerBootstrap.java                   # Startup registrations
+│   │   └── ServerConfiguration.java               # CDI delegation + server beans
+│   ├── execution/                         # Server-side execution listeners
+│   │   ├── LoggingExecutionListener.java  # Structured log output for plan/step events
+│   │   └── CompositeExecutionListener.java # Combines multiple ExecutionListeners
 │   ├── mcp/                               # MCP integration (SSE split-pipe transport)
 │   │   ├── JsonRpc.java
 │   │   ├── McpConnection.java
@@ -368,9 +363,7 @@ hensu-server/
 │   │   ├── ExecutionLeaseManager.java         # Distributed lease management (@ApplicationScoped)
 │   │   ├── JdbcSupport.java                   # JDBC helper (queryList, update)
 │   │   └── PersistenceException.java          # Unchecked wrapper for SQLException
-│   ├── planner/               # LLM planning
-│   │   └── LlmPlanner.java
-│   ├── service/               # Business logic
+│   ├── workflow/              # Business logic
 │   │   ├── WorkflowService.java
 │   │   ├── ExecutionHeartbeatJob.java     # Periodic heartbeat emission (@Scheduled)
 │   │   └── WorkflowRecoveryJob.java       # Orphaned execution sweeper (@Scheduled)
@@ -386,12 +379,10 @@ hensu-server/
         ├── action/
         ├── api/
         ├── config/
-        ├── executor/
         ├── integration/       # Full-stack tests via IntegrationTestBase (inmem profile)
         ├── mcp/
         ├── persistence/       # JDBC repo tests via Testcontainers PostgreSQL
-        ├── planner/
-        ├── service/
+        ├── workflow/
         ├── streaming/
         └── tenant/
 ```

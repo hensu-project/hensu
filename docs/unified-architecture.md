@@ -248,7 +248,16 @@ Zero-dependency Java library. Contains:
 - `NodeExecutorRegistry` — Pluggable node type executors
 - `AgentRegistry` / `AgentFactory` — Agent management with explicit provider wiring
 - `ActionExecutor` — Pluggable action dispatch (Send/Execute)
-- `PlanExecutor` — Step-by-step plan execution
+- `PlanPipeline` / `PlanProcessor` / `PlanContext` — Pipeline-driven plan execution:
+  `AgenticNodeExecutor` runs a preparation pipeline (`PlanCreationProcessor` →
+  `SynthesizeEnrichmentProcessor` → `ReviewGateProcessor`) then an execution pipeline
+  (`PlanExecutionProcessor` → `PostExecutionReviewGateProcessor`); `PlanContext` is the mutable
+  carrier flowing through both
+- `PlanExecutor` / `StepHandlerRegistry` / `StepHandler` — `PlanExecutor` iterates plan steps
+  dispatching each `PlanStepAction` via registry lookup; built-in handlers: `ToolCallStepHandler`
+  and `SynthesizeStepHandler`
+- `StaticPlanner` / `LlmPlanner` — Planner implementations: `StaticPlanner` resolves predefined
+  DSL steps; `LlmPlanner` generates and revises plans dynamically via an LLM agent
 - `ToolRegistry` / `ToolDefinition` — Protocol-agnostic tool descriptors for MCP integration
 - `RubricEngine` — Quality evaluation (rubrics embedded in workflow JSON)
 - `WorkflowRepository` / `WorkflowStateRepository` — Tenant-scoped storage interfaces with in-memory defaults
@@ -277,7 +286,6 @@ Extends core with HTTP, MCP, and multi-tenancy:
 - `WorkflowResource` — Workflow definition management (push/pull/delete/list)
 - `ExecutionResource` — Execution runtime (start/resume/status/plan)
 - `McpSidecar` / `McpGateway` — MCP protocol integration
-- `LlmPlanner` — LLM-based plan generation
 - `TenantContext` — Java 25 `ScopedValue` carrying tenant identity for the scope of a request; `TenantContext.runAs()` is the safe propagation entry point
 - `ExecutionLeaseManager` / `ExecutionHeartbeatJob` / `WorkflowRecoveryJob` — Distributed recovery: heartbeat emission and orphaned-execution sweeper
 - `JdbcWorkflowRepository` / `JdbcWorkflowStateRepository` — PostgreSQL-backed storage (JSONB workflow definitions, execution state + lease columns)
@@ -358,7 +366,7 @@ node("research-topic") {
         mode = PlanningMode.DYNAMIC
         maxSteps = 5
         allowReplan = true
-        reviewBeforeExecute = false
+        review = false
     }
 
     prompt = "Research {topic} comprehensively"
@@ -397,38 +405,48 @@ processor pipeline** that wraps each node, and the **inner plan-step loop** with
 
 Any processor can short-circuit by returning a terminal `ExecutionResult`.
 
-**Inner Plan Loop** — what `node.execute()` runs for `StandardNode`:
+**Inner Plan Loop** — what `node.execute()` runs for `StandardNode` via `AgenticNodeExecutor`:
 
 ```
-+———————————————————————————————————————————————————————————————+
-│                     Node Execution                            │
-│                                                               │
-│  +—————————+     +—————————————+     +—————————————————————+  │
-│  │  Goal   │————>│   Planner   │————>│       Plan          │  │
-│  │ (Prompt)│     │(Static/LLM) │     │ [S1, S2, S3, ...]   │  │
-│  +—————————+     +—————————————+     +——————————+——————————+  │
-│                                                 │             │
-│                 +———————————————————————————————+             │
-│                 │                                             │
-│                 V                                             │
-│  +—————————————————————————————————————————————————————————+  │
-│  │                   Execution Loop                        │  │
-│  │                                                         │  │
-│  │      +————————+     +————————+     +————————+           │  │
-│  │      │Execute │————>│Observe │————>│Reflect │——+        │  │
-│  │      │ Step   │     │ Result │     │        │  │        │  │
-│  │      +————————+     +————————+     +————————+  │        │  │
-│  │        ^                                       │        │  │
-│  │        │                                       │        │  │
-│  │        +———————————————————————————————————————+        │  │
-│  │                    (next step or replan)                │  │
-│  +———————————————————————————+—————————————————————————————+  │
-│                              │                                │
-│                              V                                │
-│                    +—————————————————+                        │
-│                    │  Final Output   │                        │
-│                    +—————————————————+                        │
-+———————————————————————————————————————————————————————————————+
++——————————————————————————————————————————————————————————————————+
+│  AgenticNodeExecutor                                             │
+│                                                                  │
+│  PREPARATION PIPELINE                                            │
+│  +——————————————————+   +————————————————+   +————————————————+  │
+│  │PlanCreation      │   │Synthesize      │   │ReviewGate      │  │
+│  │Processor         │   │Enrichment      │   │Processor       │  │
+│  │(Static/LlmPlanner│——>│Processor       │——>│(pause if       │  │
+│  │ creates Plan)    │   │(inject agentId)│   │ review=true)   │  │
+│  +——————————————————+   +————————————————+   +———————+————————+  │
+│                                                      │           │
+│                                 PlanContext (Plan)   V           │
+│  EXECUTION PIPELINE             ——————————————————>              │
+│  +————————————————————————————————————————————————————————————+  │
+│  │  PlanExecutionProcessor                                    │  │
+│  │                                                            │  │
+│  │  PlanExecutor                                              │  │
+│  │  +—————+   +—————+   +—————+                               │  │
+│  │  │ S1  │——>│ S2  │——>│ S3  │——> ... (replan on failure)    │  │
+│  │  +——+——+   +—————+   +—————+                               │  │
+│  │     │  StepHandlerRegistry lookup                          │  │
+│  │     V                                                      │  │
+│  │  +—————————————+  +—————————————+                          │  │
+│  │  │ToolCall     │  │Synthesize   │                          │  │
+│  │  │Handler      │  │Handler      │                          │  │
+│  │  │(ActionExec) │  │(Agent call) │                          │  │
+│  │  +—————————————+  +—————————————+                          │  │
+│  +————————————————————————————+———————————————————————————————+  │
+│                               │                                  │
+│                               V                                  │
+│  +——————————————————————————————————+                            │
+│  │ PostExecutionReviewGateProcessor │ (pause if configured)      │
+│  +——————————————————+———————————————+                            │
+│                     │                                            │
+│                     V                                            │
+│           +—————————————————+                                    │
+│           │ ExecutionResult │                                    │
+│           +—————————————————+                                    │
++——————————————————————————————————————————————————————————————————+
 ```
 
 ---
@@ -561,7 +579,7 @@ state cleanup, and helpers (`registerStub`, `pushAndExecute`, `resolveRubricPath
 
 Tests in `io.hensu.server.persistence` extend `JdbcRepositoryTestBase`, which starts a real
 PostgreSQL container and runs Flyway migrations — no Quarkus context involved. These tests
-cover CRUD, UPSERT semantics, FK constraints, tenant isolation, lease column behaviour, and
+cover CRUD, UPSERT semantics, FK constraints, tenant isolation, lease column behavior, and
 distributed recovery operations.
 
 ### Test Coverage Map

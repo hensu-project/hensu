@@ -7,7 +7,9 @@ import io.hensu.core.HensuEnvironment;
 import io.hensu.core.HensuFactory;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.GenericNodeHandler;
+import io.hensu.core.plan.PlanObserver;
 import io.hensu.core.review.ReviewHandler;
+import io.hensu.serialization.plan.JacksonPlanResponseParser;
 import io.hensu.server.persistence.ExecutionLeaseManager;
 import io.hensu.server.persistence.JdbcWorkflowRepository;
 import io.hensu.server.persistence.JdbcWorkflowStateRepository;
@@ -68,6 +70,8 @@ public class HensuEnvironmentProducer {
 
     @Inject ExecutionLeaseManager leaseManager;
 
+    @Inject Instance<PlanObserver> planObservers;
+
     /// Produces the Hensu runtime environment for CDI injection.
     ///
     /// Configures virtual threads, loads credentials from `hensu.credentials.*`
@@ -85,7 +89,9 @@ public class HensuEnvironmentProducer {
                         .config(HensuConfig.builder().useVirtualThreads(true).build())
                         .loadCredentials(properties)
                         .agentProviders(List.of(new LangChain4jProvider()))
-                        .actionExecutor(actionExecutor);
+                        .actionExecutor(actionExecutor)
+                        .planObservers(planObservers.stream().toList())
+                        .planResponseParser(new JacksonPlanResponseParser(objectMapper));
 
         boolean dsActive =
                 config.getOptionalValue("quarkus.datasource.active", Boolean.class).orElse(true);

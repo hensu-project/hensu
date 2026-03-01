@@ -1,10 +1,10 @@
 package io.hensu.server.api;
 
 import io.hensu.server.security.RequestTenantResolver;
-import io.hensu.server.service.WorkflowService;
-import io.hensu.server.service.WorkflowService.*;
 import io.hensu.server.validation.LogSanitizer;
 import io.hensu.server.validation.ValidId;
+import io.hensu.server.workflow.WorkflowService;
+import io.hensu.server.workflow.WorkflowService.*;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;

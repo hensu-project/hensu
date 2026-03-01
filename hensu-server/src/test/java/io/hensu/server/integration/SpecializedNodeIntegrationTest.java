@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.service.WorkflowService.ExecutionStartResult;
+import io.hensu.server.workflow.WorkflowService.ExecutionStartResult;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.util.List;
@@ -122,7 +122,6 @@ class SpecializedNodeIntegrationTest extends IntegrationTestBase {
         assertThat(snapshot.context().get("validate").toString()).contains("Validation passed");
     }
 
-    @SuppressWarnings("unchecked")
     @Test
     void shouldExecuteForkJoin() {
         Workflow workflow = loadWorkflow("fork-join.json");

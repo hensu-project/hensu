@@ -67,6 +67,17 @@ class TransitionBuilder {
     }
 
     /**
+     * Defines a direct failure transition without retry.
+     *
+     * Usage: `onFailure goto "error-node"`
+     *
+     * @param targetNode the node to transition to on failure
+     */
+    infix fun onFailure.goto(targetNode: String) {
+        addFailureTransition(targetNode)
+    }
+
+    /**
      * Defines a failure transition with retry.
      *
      * Usage: `onFailure retry 3 otherwise "fallback"`

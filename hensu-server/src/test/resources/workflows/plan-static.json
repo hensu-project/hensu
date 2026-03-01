@@ -25,7 +25,7 @@
           "maxTokenBudget" : 0,
           "allowReplan" : false
         },
-        "reviewBeforeExecute" : false
+        "review" : false
       },
       "staticPlan" : {
         "id" : "static-plan-001",
@@ -33,19 +33,25 @@
         "source" : "STATIC",
         "steps" : [ {
           "index" : 0,
-          "toolName" : "test-tool",
-          "arguments" : {
-            "action" : "search",
-            "query" : "test data"
+          "action" : {
+            "type" : "tool_call",
+            "toolName" : "test-tool",
+            "arguments" : {
+              "action" : "search",
+              "query" : "test data"
+            }
           },
           "description" : "Search for relevant data",
           "status" : "PENDING"
         }, {
           "index" : 1,
-          "toolName" : "test-tool",
-          "arguments" : {
-            "action" : "process",
-            "format" : "json"
+          "action" : {
+            "type" : "tool_call",
+            "toolName" : "test-tool",
+            "arguments" : {
+              "action" : "process",
+              "format" : "json"
+            }
           },
           "description" : "Process the search results",
           "status" : "PENDING"

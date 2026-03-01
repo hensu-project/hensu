@@ -12,13 +12,14 @@ import picocli.CommandLine.Option;
 /// Base class for CLI commands that interact with the Hensu server.
 ///
 /// Provides shared HTTP client utilities and server/token options.
-/// Extends `WorkflowCommand` to inherit banner display and working directory resolution.
+/// Does not include working directory resolution — only {@link WorkflowPushCommand}
+/// needs local file access among server commands.
 ///
 /// @see WorkflowPushCommand
 /// @see WorkflowPullCommand
 /// @see WorkflowDeleteCommand
 /// @see WorkflowListCommand
-public abstract class ServerCommand extends WorkflowCommand {
+public abstract class ServerCommand extends HensuCommand {
 
     @Option(
             names = {"--server"},

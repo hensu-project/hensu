@@ -70,6 +70,11 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
         transitionBuilder.addSuccessTransition(targetNode)
     }
 
+    /** Define direct failure transition without retry. Usage: onFailure goto "error-node" */
+    infix fun onFailure.goto(targetNode: String) {
+        transitionBuilder.addFailureTransition(targetNode)
+    }
+
     /** Define transition on failure with retry. Usage: onFailure retry 3 otherwise "fallback" */
     infix fun onFailure.retry(count: Int): RetryBuilder =
         transitionBuilder.createRetryBuilder(count)
@@ -153,7 +158,7 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
      *     maxSteps = 15
      *     maxReplans = 5
      *     allowReplan = true
-     *     reviewBeforeExecute = true
+     *     review = true
      * }
      * ```
      *

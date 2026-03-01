@@ -1,11 +1,7 @@
 package io.hensu.dsl.builders
 
 import io.hensu.core.plan.Plan
-import io.hensu.core.plan.Plan.PlanSource
-import io.hensu.core.plan.PlanConstraints
 import io.hensu.core.plan.PlannedStep
-import io.hensu.core.plan.PlannedStep.StepStatus
-import java.util.UUID
 
 /**
  * DSL builder for defining static execution plans within nodes.
@@ -59,7 +55,7 @@ class PlanBuilder {
      * @param description human-readable description
      */
     fun step(toolName: String, description: String) {
-        steps.add(PlannedStep(steps.size, toolName, emptyMap(), description, StepStatus.PENDING))
+        steps.add(PlannedStep.simple(steps.size, toolName, description))
     }
 
     /**
@@ -67,14 +63,7 @@ class PlanBuilder {
      *
      * @return new static plan, never null
      */
-    fun build(): Plan =
-        Plan(
-            UUID.randomUUID().toString(),
-            "", // nodeId set by parent
-            PlanSource.STATIC,
-            steps.toList(),
-            PlanConstraints.forStaticPlan(),
-        )
+    fun build(): Plan = Plan.staticPlan("", steps.toList())
 
     /**
      * Builds the plan for a specific node.
@@ -82,14 +71,7 @@ class PlanBuilder {
      * @param nodeId the owning node's ID
      * @return new static plan, never null
      */
-    fun build(nodeId: String): Plan =
-        Plan(
-            UUID.randomUUID().toString(),
-            nodeId,
-            PlanSource.STATIC,
-            steps.toList(),
-            PlanConstraints.forStaticPlan(),
-        )
+    fun build(nodeId: String): Plan = Plan.staticPlan(nodeId, steps.toList())
 }
 
 /**
@@ -134,6 +116,5 @@ class StepBuilder(private val index: Int, private val toolName: String) {
      *
      * @return new planned step, never null
      */
-    fun build(): PlannedStep =
-        PlannedStep(index, toolName, arguments.toMap(), description, StepStatus.PENDING)
+    fun build(): PlannedStep = PlannedStep.pending(index, toolName, arguments.toMap(), description)
 }

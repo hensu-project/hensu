@@ -67,19 +67,27 @@ public class StaticPlanner implements Planner {
         throw new PlanRevisionException("Static plans cannot be revised");
     }
 
-    /// Resolves placeholders in a step's arguments.
+    /// Resolves placeholders in a step's action arguments and description.
     private PlannedStep resolveStep(PlannedStep step, Map<String, Object> context) {
-        Map<String, Object> resolvedArgs =
-                step.arguments().entrySet().stream()
-                        .collect(
-                                Collectors.toMap(
-                                        Map.Entry::getKey,
-                                        e -> resolveValue(e.getValue(), context)));
+        PlanStepAction resolvedAction =
+                switch (step.action()) {
+                    case PlanStepAction.ToolCall tc -> {
+                        Map<String, Object> resolvedArgs =
+                                tc.arguments().entrySet().stream()
+                                        .collect(
+                                                Collectors.toMap(
+                                                        Map.Entry::getKey,
+                                                        e -> resolveValue(e.getValue(), context)));
+                        yield new PlanStepAction.ToolCall(tc.toolName(), resolvedArgs);
+                    }
+                    case PlanStepAction.Synthesize s ->
+                            new PlanStepAction.Synthesize(
+                                    s.agentId(), resolvePlaceholders(s.prompt(), context));
+                };
 
         return new PlannedStep(
                 step.index(),
-                step.toolName(),
-                resolvedArgs,
+                resolvedAction,
                 resolvePlaceholders(step.description(), context),
                 step.status());
     }

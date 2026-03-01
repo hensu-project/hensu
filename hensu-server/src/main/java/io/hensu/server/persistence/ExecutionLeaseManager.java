@@ -55,8 +55,8 @@ import org.jboss.logging.Logger;
 /// Agroal pool via {@link JdbcSupport}. Safe to call from virtual threads.
 ///
 /// @see JdbcWorkflowStateRepository
-/// @see io.hensu.server.service.ExecutionHeartbeatJob
-/// @see io.hensu.server.service.WorkflowRecoveryJob
+/// @see io.hensu.server.workflow.ExecutionHeartbeatJob
+/// @see io.hensu.server.workflow.WorkflowRecoveryJob
 @ApplicationScoped
 public class ExecutionLeaseManager {
 

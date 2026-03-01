@@ -129,11 +129,14 @@ class KotlinScriptParser {
                 "io.hensu.dsl.builders.onNoConsensus",
                 "io.hensu.dsl.builders.whenScore",
                 "io.hensu.dsl.builders.onComplete",
+                "io.hensu.dsl.builders.OnPlanFailure",
                 "io.hensu.dsl.builders.Models",
                 "io.hensu.core.review.ReviewMode",
                 "io.hensu.core.execution.result.ExitStatus",
-                "io.hensu.core.workflow.node.MergeStrategy",
                 "io.hensu.core.execution.parallel.ConsensusStrategy",
+                "io.hensu.core.plan.PlanningMode",
+                "io.hensu.core.workflow.node.MergeStrategy",
+                "java.time.Duration",
             )
         }
 

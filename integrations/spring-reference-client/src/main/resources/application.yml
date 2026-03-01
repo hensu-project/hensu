@@ -1,0 +1,26 @@
+server:
+  port: 8081
+
+hensu:
+  # URL of the running hensu-server instance
+  server-url: http://localhost:8080
+
+  # JWT bearer token. Leave empty (or unset HENSU_TOKEN) when targeting the server in inmem
+  # profile (auth disabled). For dev/prod profiles, set the HENSU_TOKEN environment variable.
+  token: ${HENSU_TOKEN:}
+
+  # Tenant identifier — used both as the JWT claim and as the MCP session key.
+  # McpConnectionPool routes tool calls to the session keyed by sse://<tenant-id>.
+  tenant-id: dev-tenant
+
+  demo:
+    # Set to true to auto-start the demo execution on startup
+    enabled: true
+    # ID of the workflow to execute — must be pushed to the server first via hensu CLI
+    workflow-id: risk-assessment
+
+logging:
+  level:
+    io.hensu: DEBUG
+    # Suppress Catalina internal startup steps — Spring Boot's own startup messages still show
+    org.apache.catalina: WARN

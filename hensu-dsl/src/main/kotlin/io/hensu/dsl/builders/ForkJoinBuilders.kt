@@ -166,6 +166,17 @@ class JoinNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMarke
         transitionBuilder.createRetryBuilder(count)
 
     /**
+     * Defines a direct failure transition without retry.
+     *
+     * Usage: `onFailure goto "error-handler"`
+     *
+     * @param targetNode the node to transition to on failure
+     */
+    infix fun onFailure.goto(targetNode: String) {
+        transitionBuilder.addFailureTransition(targetNode)
+    }
+
+    /**
      * Builds the immutable [JoinNode] from this builder.
      *
      * @return compiled join node, never null
