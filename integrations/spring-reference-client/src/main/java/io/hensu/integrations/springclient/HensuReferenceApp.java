@@ -16,7 +16,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 /// 2. The `risk-assessment` workflow pushed via the Hensu CLI:
 ///    ```
 ///    ./hensu build risk-assessment -d integrations/spring-reference-client/working-dir
-///    ./hensu push risk-assessment --server http://localhost:8080
+///    ./hensu push risk-assessment -d integrations/spring-reference-client/working-dir --server http://localhost:8080
 ///    ```
 /// 3. Configure `hensu.token` in `application.yml` if targeting a JWT-protected server
 ///

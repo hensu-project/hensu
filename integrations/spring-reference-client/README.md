@@ -44,7 +44,7 @@ From the repo root:
 ```bash
 ./hensu build risk-assessment -d integrations/spring-reference-client/working-dir
 
-./hensu push risk-assessment --server http://localhost:8080
+./hensu push risk-assessment -d integrations/spring-reference-client/working-dir --server http://localhost:8080
 ```
 
 ### 3 — Start the reference client
