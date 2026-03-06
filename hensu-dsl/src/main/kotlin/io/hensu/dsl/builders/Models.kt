@@ -23,7 +23,8 @@ object Models {
     const val GPT_4O = "gpt-4o"
 
     // Google Gemini models
-    const val GEMINI_3_FLASH = "gemini-3-flash"
+    const val GEMINI_3_1_FLASH_LITE = "gemini-3.1-flash-lite-preview"
+    const val GEMINI_3_1_PRO = "gemini-3.1-pro-preview"
     const val GEMINI_2_5_FLASH = "gemini-2.5-flash"
     const val GEMINI_2_5_PRO = "gemini-2.5-pro"
 

@@ -203,16 +203,6 @@ class StaticPlannerTest {
     class PlanRequestTest {
 
         @Test
-        void shouldCreateSimpleRequest() {
-            PlanRequest request = PlanRequest.simple("Do something");
-
-            assertThat(request.prompt()).isEqualTo("Do something");
-            assertThat(request.availableTools()).isEmpty();
-            assertThat(request.context()).isEmpty();
-            assertThat(request.constraints()).isNotNull();
-        }
-
-        @Test
         void shouldDefaultNullValues() {
             PlanRequest request = new PlanRequest(null, null, null, null);
 

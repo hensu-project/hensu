@@ -1,0 +1,61 @@
+name: Release CLI
+
+on:
+  push:
+    tags: ['cli/v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: graalvm/setup-graalvm@54b4f5a65c1a84b2fdfdc2078fe43df32819e4b1 # v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.4.3
+
+      - name: Build and test all modules
+        run: ./gradlew build
+
+      - name: Build CLI uber-jar
+        run: ./gradlew hensu-cli:build -Dquarkus.package.type=uber-jar -x test
+
+      - name: Prepare release artifacts
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#cli/}"
+
+          CLI_JAR=$(find hensu-cli/build -name '*-runner.jar' -type f)
+          cp "$CLI_JAR" "hensu-cli-${VERSION}-runner.jar"
+
+          cp hensu-cli/scripts/install.sh install.sh
+          cp hensu-cli/scripts/update.sh  update.sh
+          cp hensu-cli/scripts/remove.sh  remove.sh
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#cli/}"
+
+          PRERELEASE_FLAG=""
+          if [[ "$VERSION" =~ -(alpha|beta|rc) ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          gh release create "$TAG" \
+            --title "CLI $VERSION" \
+            --generate-notes \
+            $PRERELEASE_FLAG \
+            "hensu-cli-${VERSION}-runner.jar" \
+            install.sh \
+            update.sh \
+            remove.sh

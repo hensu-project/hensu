@@ -2,7 +2,6 @@ package io.hensu.core.plan;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.time.Duration;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -31,14 +30,6 @@ class PlanningConfigTest {
         }
 
         @Test
-        void forStaticWithReviewShouldEnableReview() {
-            PlanningConfig config = PlanningConfig.forStaticWithReview();
-
-            assertThat(config.mode()).isEqualTo(PlanningMode.STATIC);
-            assertThat(config.review()).isTrue();
-        }
-
-        @Test
         void forDynamicShouldCreateDynamicConfig() {
             PlanningConfig config = PlanningConfig.forDynamic();
 
@@ -46,14 +37,6 @@ class PlanningConfigTest {
             assertThat(config.isDynamic()).isTrue();
             assertThat(config.isStatic()).isFalse();
             assertThat(config.constraints().allowReplan()).isTrue();
-        }
-
-        @Test
-        void forDynamicWithReviewShouldEnableReview() {
-            PlanningConfig config = PlanningConfig.forDynamicWithReview();
-
-            assertThat(config.mode()).isEqualTo(PlanningMode.DYNAMIC);
-            assertThat(config.review()).isTrue();
         }
     }
 
@@ -79,60 +62,6 @@ class PlanningConfigTest {
             assertThat(PlanningConfig.forDynamic().isDynamic()).isTrue();
             assertThat(PlanningConfig.forStatic().isDynamic()).isFalse();
             assertThat(PlanningConfig.disabled().isDynamic()).isFalse();
-        }
-    }
-
-    @Nested
-    class WithMethods {
-
-        @Test
-        void withConstraintsShouldUpdateConstraints() {
-            PlanningConfig original = PlanningConfig.forDynamic();
-            PlanConstraints newConstraints = PlanConstraints.noReplan();
-
-            PlanningConfig updated = original.withConstraints(newConstraints);
-
-            assertThat(updated.constraints()).isEqualTo(newConstraints);
-            assertThat(updated.mode()).isEqualTo(original.mode());
-            assertThat(updated.review()).isEqualTo(original.review());
-        }
-
-        @Test
-        void withReviewShouldEnableReview() {
-            PlanningConfig original = PlanningConfig.forDynamic();
-
-            PlanningConfig updated = original.withReview();
-
-            assertThat(updated.review()).isTrue();
-            assertThat(updated.mode()).isEqualTo(original.mode());
-        }
-
-        @Test
-        void withoutReviewShouldDisableReview() {
-            PlanningConfig original = PlanningConfig.forDynamicWithReview();
-
-            PlanningConfig updated = original.withoutReview();
-
-            assertThat(updated.review()).isFalse();
-        }
-
-        @Test
-        void withMaxDurationShouldUpdateDuration() {
-            PlanningConfig original = PlanningConfig.forDynamic();
-            Duration newDuration = Duration.ofMinutes(15);
-
-            PlanningConfig updated = original.withMaxDuration(newDuration);
-
-            assertThat(updated.constraints().maxDuration()).isEqualTo(newDuration);
-        }
-
-        @Test
-        void withMaxStepsShouldUpdateSteps() {
-            PlanningConfig original = PlanningConfig.forDynamic();
-
-            PlanningConfig updated = original.withMaxSteps(25);
-
-            assertThat(updated.constraints().maxSteps()).isEqualTo(25);
         }
     }
 

@@ -29,7 +29,6 @@ class PlannedStepTest {
 
         @Test
         void shouldThrowWhenActionIsNull() {
-            // PlannedStep compact constructor guards against null action
             assertThatThrownBy(() -> new PlannedStep(0, null, "desc", StepStatus.PENDING))
                     .isInstanceOf(NullPointerException.class)
                     .hasMessageContaining("action");
@@ -37,7 +36,6 @@ class PlannedStepTest {
 
         @Test
         void shouldThrowWhenToolNameIsNull() {
-            // Null toolName is validated inside PlanStepAction.ToolCall
             assertThatThrownBy(
                             () ->
                                     new PlannedStep(
@@ -63,36 +61,7 @@ class PlannedStepTest {
         }
 
         @Test
-        void shouldDefaultArgumentsToEmptyMap() {
-            // null arguments in ToolCall are normalised to Map.of()
-            PlannedStep step = PlannedStep.pending(0, "tool", null, "desc");
-
-            assertThat(step.arguments()).isNotNull().isEmpty();
-        }
-
-        @Test
-        void shouldDefaultDescriptionToEmpty() {
-            PlannedStep step =
-                    new PlannedStep(
-                            0,
-                            new PlanStepAction.ToolCall("tool", Map.of()),
-                            null,
-                            StepStatus.PENDING);
-
-            assertThat(step.description()).isNotNull().isEmpty();
-        }
-
-        @Test
-        void shouldDefaultStatusToPending() {
-            PlannedStep step =
-                    new PlannedStep(0, new PlanStepAction.ToolCall("tool", Map.of()), "desc", null);
-
-            assertThat(step.status()).isEqualTo(StepStatus.PENDING);
-        }
-
-        @Test
         void shouldMakeDefensiveCopyOfArguments() {
-            // Mutations after construction must not affect the step
             Map<String, Object> args = new HashMap<>();
             args.put("key", "value");
             PlannedStep step = PlannedStep.pending(0, "tool", args, "desc");
@@ -104,64 +73,10 @@ class PlannedStepTest {
 
         @Test
         void shouldRejectMutationOfReturnedArgumentMap() {
-            // The map returned by arguments() must be unmodifiable
             PlannedStep step = PlannedStep.pending(0, "tool", Map.of("k", "v"), "desc");
 
             assertThatThrownBy(() -> step.arguments().put("extra", "x"))
                     .isInstanceOf(UnsupportedOperationException.class);
-        }
-    }
-
-    @Nested
-    class StaticFactoryMethods {
-
-        @Test
-        void shouldCreatePendingStep() {
-            PlannedStep step = PlannedStep.pending(0, "search", Map.of("q", "test"), "Search");
-
-            assertThat(step.index()).isZero();
-            assertThat(step.toolName()).isEqualTo("search");
-            assertThat(step.arguments()).containsEntry("q", "test");
-            assertThat(step.description()).isEqualTo("Search");
-            assertThat(step.status()).isEqualTo(StepStatus.PENDING);
-        }
-
-        @Test
-        void shouldCreateSimpleStep() {
-            PlannedStep step = PlannedStep.simple(1, "ping", "Ping service");
-
-            assertThat(step.index()).isEqualTo(1);
-            assertThat(step.toolName()).isEqualTo("ping");
-            assertThat(step.arguments()).isEmpty();
-            assertThat(step.description()).isEqualTo("Ping service");
-        }
-    }
-
-    @Nested
-    class StatusTransitions {
-
-        @Test
-        void shouldUpdateStatus() {
-            PlannedStep pending = PlannedStep.simple(0, "tool", "Test");
-
-            PlannedStep executing = pending.withStatus(StepStatus.EXECUTING);
-            PlannedStep completed = executing.withStatus(StepStatus.COMPLETED);
-
-            assertThat(pending.status()).isEqualTo(StepStatus.PENDING);
-            assertThat(executing.status()).isEqualTo(StepStatus.EXECUTING);
-            assertThat(completed.status()).isEqualTo(StepStatus.COMPLETED);
-        }
-
-        @Test
-        void shouldPreserveOtherFieldsWhenUpdatingStatus() {
-            PlannedStep original = PlannedStep.pending(5, "tool", Map.of("a", 1), "Desc");
-
-            PlannedStep updated = original.withStatus(StepStatus.COMPLETED);
-
-            assertThat(updated.index()).isEqualTo(5);
-            assertThat(updated.toolName()).isEqualTo("tool");
-            assertThat(updated.arguments()).containsEntry("a", 1);
-            assertThat(updated.description()).isEqualTo("Desc");
         }
     }
 

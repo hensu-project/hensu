@@ -163,7 +163,9 @@ class LlmPlannerTest {
                             argThat(
                                     prompt ->
                                             prompt.contains("search")
-                                                    && prompt.contains("Search the web")),
+                                                    && prompt.contains("Search the web")
+                                                    && prompt.contains("query")
+                                                    && prompt.contains("required")),
                             any());
         }
     }
@@ -239,6 +241,33 @@ class LlmPlannerTest {
             assertThatThrownBy(() -> planner.revisePlan(originalPlan, context))
                     .isInstanceOf(PlanRevisionException.class)
                     .hasMessageContaining("Failed to parse");
+        }
+
+        @Test
+        void shouldIncludeFailureContextInRevisionPrompt() throws Exception {
+            Plan originalPlan =
+                    Plan.dynamicPlan(
+                            "node-1", List.of(PlannedStep.simple(0, "fetch", "Fetch data")));
+            List<PlannedStep> revisedSteps = List.of(PlannedStep.simple(0, "retry", "Retry"));
+
+            when(planningAgent.execute(anyString(), any()))
+                    .thenReturn(AgentResponse.PlanProposal.of(revisedSteps, ""));
+
+            StepResult failedResult =
+                    StepResult.failure(2, "api_call", "Connection timeout", Duration.ZERO);
+            Planner.RevisionContext context =
+                    Planner.RevisionContext.fromFailure(failedResult, "Fetch user data", List.of());
+
+            planner.revisePlan(originalPlan, context);
+
+            verify(planningAgent)
+                    .execute(
+                            argThat(
+                                    prompt ->
+                                            prompt.contains("Fetch user data")
+                                                    && prompt.contains("2")
+                                                    && prompt.contains("Connection timeout")),
+                            any());
         }
     }
 

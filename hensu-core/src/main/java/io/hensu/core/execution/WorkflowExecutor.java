@@ -36,9 +36,22 @@ import java.util.logging.Logger;
 /// - **Postcondition**: Returns `Completed`, `Paused`, `Rejected`, or `Failure`, never null
 /// - **Invariant**: State history is append-only during execution
 ///
-/// @implNote **Not thread-safe**. Each workflow execution should use a dedicated
-/// instance. The executor maintains no mutable state between executions, but
-/// concurrent executions of the same instance are not supported.
+/// @implNote **Conditionally thread-safe for concurrent `execute()` calls.**
+/// The executor itself holds only `final` fields and creates a fresh {@link HensuState}
+/// per call — it carries no mutable state between executions.
+///
+/// The one shared side effect is agent auto-registration in {@code registerWorkflowAgents()}:
+/// before each execution, agents declared in the workflow are registered into the
+/// shared {@link AgentRegistry} if not already present. Under concurrent calls with the
+/// same workflow, two threads may race past the {@code hasAgent()} check and both invoke
+/// {@code registerAgent()} for the same id. With {@link io.hensu.core.agent.DefaultAgentRegistry}
+/// (backed by {@link java.util.concurrent.ConcurrentHashMap}) this race is **benign** —
+/// both threads register an equivalent agent from the same config and the second call
+/// overwrites the first with an identical value. No data corruption occurs.
+///
+/// If a custom {@link AgentRegistry} implementation is injected that is not thread-safe,
+/// external synchronization around {@code execute()} is required.
+///
 /// @see ProcessorPipeline for post-execution processing chain
 /// @see NodeExecutorRegistry for node type dispatch
 public class WorkflowExecutor {

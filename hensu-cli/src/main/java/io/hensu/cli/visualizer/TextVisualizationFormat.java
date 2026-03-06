@@ -113,23 +113,25 @@ public class TextVisualizationFormat implements VisualizationFormat {
                 if (standardNode.getAgentId() != null) {
                     sb.append(
                             String.format(
-                                    "%s%s  Agent: %s%n",
+                                    "%s%s  %-9s %s%n",
                                     indent,
                                     styles.boxMid(),
+                                    "agent",
                                     styles.bold(standardNode.getAgentId())));
                 }
                 if (standardNode.getRubricId() != null) {
                     sb.append(
                             String.format(
-                                    "%s%s  Rubric: %s%n",
-                                    indent, styles.boxMid(), standardNode.getRubricId()));
+                                    "%s%s  %-9s %s%n",
+                                    indent, styles.boxMid(), "rubric", standardNode.getRubricId()));
                 }
                 if (standardNode.getReviewConfig() != null) {
                     sb.append(
                             String.format(
-                                    "%s%s  Review: %s%n",
+                                    "%s%s  %-9s %s%n",
                                     indent,
                                     styles.boxMid(),
+                                    "review",
                                     styles.warn(
                                             standardNode.getReviewConfig().getMode().toString())));
                 }
@@ -138,32 +140,35 @@ public class TextVisualizationFormat implements VisualizationFormat {
             case LoopNode loopNode -> {
                 sb.append(
                         String.format(
-                                "%s%s  Max iterations: %s%n",
+                                "%s%s  %-9s %s%n",
                                 indent,
                                 styles.boxMid(),
+                                "max",
                                 styles.accent(String.valueOf(loopNode.getMaxIterations()))));
                 sb.append(
                         String.format(
-                                "%s%s  Condition: %s%n",
-                                indent, styles.boxMid(), loopNode.getCondition()));
+                                "%s%s  %-9s %s%n",
+                                indent, styles.boxMid(), "condition", loopNode.getCondition()));
                 if (loopNode.getBreakRules() != null) {
                     for (BreakRule rule : loopNode.getBreakRules()) {
                         sb.append(
                                 String.format(
-                                        "%s%s  Break %s %s%n",
+                                        "%s%s  %s %-14s %s%n",
                                         indent,
                                         styles.boxMid(),
                                         styles.arrow(),
-                                        styles.bold(rule.getTargetNode())));
+                                        styles.bold(rule.getTargetNode()),
+                                        styles.dim("on break")));
                     }
                 }
             }
             case ParallelNode parallelNode -> {
                 sb.append(
                         String.format(
-                                "%s%s  Branches: %s%n",
+                                "%s%s  %-9s %s%n",
                                 indent,
                                 styles.boxMid(),
+                                "branches",
                                 styles.accent(String.valueOf(parallelNode.getBranches().length))));
                 for (Branch branch : parallelNode.getBranches()) {
                     sb.append(
@@ -173,14 +178,15 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                     styles.boxMid(),
                                     styles.bullet(),
                                     branch.getId(),
-                                    styles.gray("(" + branch.getAgentId() + ")")));
+                                    styles.dim("(" + branch.getAgentId() + ")")));
                 }
                 if (parallelNode.getConsensusConfig() != null) {
                     sb.append(
                             String.format(
-                                    "%s%s  Consensus: %s%n",
+                                    "%s%s  %-9s %s%n",
                                     indent,
                                     styles.boxMid(),
+                                    "consensus",
                                     styles.warn(
                                             parallelNode
                                                     .getConsensusConfig()
@@ -191,9 +197,10 @@ public class TextVisualizationFormat implements VisualizationFormat {
             case ForkNode forkNode -> {
                 sb.append(
                         String.format(
-                                "%s%s  Targets: %s%n",
+                                "%s%s  %-9s %s%n",
                                 indent,
                                 styles.boxMid(),
+                                "targets",
                                 styles.accent(String.valueOf(forkNode.getTargets().size()))));
                 for (String target : forkNode.getTargets()) {
                     sb.append(
@@ -203,9 +210,10 @@ public class TextVisualizationFormat implements VisualizationFormat {
                 }
                 sb.append(
                         String.format(
-                                "%s%s  Wait for all: %s%n",
+                                "%s%s  %-9s %s%n",
                                 indent,
                                 styles.boxMid(),
+                                "wait all",
                                 styles.successOrWarn(
                                         String.valueOf(forkNode.isWaitForAll()),
                                         forkNode.isWaitForAll())));
@@ -214,9 +222,10 @@ public class TextVisualizationFormat implements VisualizationFormat {
             case JoinNode joinNode -> {
                 sb.append(
                         String.format(
-                                "%s%s  Awaiting: %s fork(s)%n",
+                                "%s%s  %-9s %s%n",
                                 indent,
                                 styles.boxMid(),
+                                "awaiting",
                                 styles.accent(String.valueOf(joinNode.getAwaitTargets().size()))));
                 for (String target : joinNode.getAwaitTargets()) {
                     sb.append(
@@ -229,45 +238,50 @@ public class TextVisualizationFormat implements VisualizationFormat {
                 }
                 sb.append(
                         String.format(
-                                "%s%s  Merge: %s%n",
+                                "%s%s  %-9s %s%n",
                                 indent,
                                 styles.boxMid(),
+                                "merge",
                                 styles.warn(joinNode.getMergeStrategy().toString())));
                 sb.append(
                         String.format(
-                                "%s%s  Output: %s%n",
-                                indent, styles.boxMid(), joinNode.getOutputField()));
+                                "%s%s  %-9s %s%n",
+                                indent, styles.boxMid(), "output", joinNode.getOutputField()));
                 appendTransitions(sb, indent, joinNode.getTransitionRules(), styles);
             }
             case GenericNode genericNode -> {
                 sb.append(
                         String.format(
-                                "%s%s  Executor: %s%n",
+                                "%s%s  %-9s %s%n",
                                 indent,
                                 styles.boxMid(),
+                                "executor",
                                 styles.accent(genericNode.getExecutorType())));
                 if (!genericNode.getConfig().isEmpty()) {
                     sb.append(
                             String.format(
-                                    "%s%s  Config: %s entries%n",
+                                    "%s%s  %-9s %s%n",
                                     indent,
                                     styles.boxMid(),
-                                    styles.accent(String.valueOf(genericNode.getConfig().size()))));
+                                    "config",
+                                    styles.accent(String.valueOf(genericNode.getConfig().size()))
+                                            + " entries"));
                 }
                 if (genericNode.getRubricId() != null) {
                     sb.append(
                             String.format(
-                                    "%s%s  Rubric: %s%n",
-                                    indent, styles.boxMid(), genericNode.getRubricId()));
+                                    "%s%s  %-9s %s%n",
+                                    indent, styles.boxMid(), "rubric", genericNode.getRubricId()));
                 }
                 appendTransitions(sb, indent, genericNode.getTransitionRules(), styles);
             }
             case ActionNode actionNode -> {
                 sb.append(
                         String.format(
-                                "%s%s  Actions: %s%n",
+                                "%s%s  %-9s %s%n",
                                 indent,
                                 styles.boxMid(),
+                                "actions",
                                 styles.accent(String.valueOf(actionNode.getActions().size()))));
                 for (var action : actionNode.getActions()) {
                     String actionType = action.getClass().getSimpleName();
@@ -285,9 +299,10 @@ public class TextVisualizationFormat implements VisualizationFormat {
                 boolean isSuccess = endNode.getExitStatus().toString().equals("SUCCESS");
                 sb.append(
                         String.format(
-                                "%s%s  Exit: %s%n",
+                                "%s%s  %-9s %s%n",
                                 indent,
                                 styles.boxMid(),
+                                "exit",
                                 styles.successOrError(
                                         endNode.getExitStatus().toString(), isSuccess)));
             }
@@ -306,42 +321,39 @@ public class TextVisualizationFormat implements VisualizationFormat {
         if (rules.isEmpty()) {
             return;
         }
-        sb.append(String.format("%s%s  Transitions:%n", indent, styles.boxMid()));
         for (TransitionRule rule : rules) {
             if (rule instanceof SuccessTransition success) {
                 sb.append(
                         String.format(
-                                "%s%s    %s %s %s%n",
+                                "%s%s  %s %-14s %s%n",
                                 indent,
                                 styles.boxMid(),
                                 styles.arrow(),
                                 styles.bold(success.getTargetNode()),
-                                styles.success("(on success)")));
+                                styles.dim("on success")));
             } else if (rule instanceof FailureTransition failure) {
                 sb.append(
                         String.format(
-                                "%s%s    %s %s %s%n",
+                                "%s%s  %s %-14s %s%n",
                                 indent,
                                 styles.boxMid(),
                                 styles.arrow(),
                                 styles.bold(failure.getThenTargetNode()),
-                                styles.error(
-                                        "(on failure, retry: " + failure.getRetryCount() + ")")));
+                                styles.dim("on failure  retry " + failure.getRetryCount())));
             } else if (rule instanceof ScoreTransition score) {
                 for (ScoreCondition cond : score.getConditions()) {
                     sb.append(
                             String.format(
-                                    "%s%s    %s %s %s%n",
+                                    "%s%s  %s %-14s %s%n",
                                     indent,
                                     styles.boxMid(),
                                     styles.arrow(),
                                     styles.bold(cond.getTargetNode()),
-                                    styles.accent(
-                                            "(score "
+                                    styles.dim(
+                                            "score "
                                                     + cond.getOperator()
                                                     + " "
-                                                    + cond.getValue()
-                                                    + ")")));
+                                                    + cond.getValue())));
                 }
             }
         }

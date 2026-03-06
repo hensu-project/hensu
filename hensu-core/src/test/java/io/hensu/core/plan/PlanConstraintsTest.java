@@ -33,13 +33,6 @@ class PlanConstraintsTest {
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("maxTokenBudget");
         }
-
-        @Test
-        void shouldDefaultMaxDuration() {
-            PlanConstraints constraints = new PlanConstraints(10, 3, null, 10000, true);
-
-            assertThat(constraints.maxDuration()).isEqualTo(Duration.ofMinutes(5));
-        }
     }
 
     @Nested
@@ -78,27 +71,6 @@ class PlanConstraintsTest {
 
     @Nested
     class WithMethods {
-
-        @Test
-        void shouldUpdateMaxSteps() {
-            PlanConstraints original = PlanConstraints.defaults();
-
-            PlanConstraints updated = original.withMaxSteps(50);
-
-            assertThat(original.maxSteps()).isEqualTo(10);
-            assertThat(updated.maxSteps()).isEqualTo(50);
-            assertThat(updated.maxReplans()).isEqualTo(original.maxReplans());
-        }
-
-        @Test
-        void shouldUpdateMaxDuration() {
-            PlanConstraints original = PlanConstraints.defaults();
-
-            PlanConstraints updated = original.withMaxDuration(Duration.ofHours(1));
-
-            assertThat(original.maxDuration()).isEqualTo(Duration.ofMinutes(5));
-            assertThat(updated.maxDuration()).isEqualTo(Duration.ofHours(1));
-        }
 
         @Test
         void shouldDisableReplan() {

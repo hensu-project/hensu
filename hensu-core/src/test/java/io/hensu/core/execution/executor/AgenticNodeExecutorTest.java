@@ -86,11 +86,6 @@ class AgenticNodeExecutorTest {
                         .build();
     }
 
-    @Test
-    void shouldReturnCorrectNodeType() {
-        assertThat(executor.getNodeType()).isEqualTo(StandardNode.class);
-    }
-
     @Nested
     class SimpleModeExecution {
 

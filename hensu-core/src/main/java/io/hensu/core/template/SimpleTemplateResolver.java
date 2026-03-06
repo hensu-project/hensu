@@ -7,7 +7,7 @@ import java.util.regex.Pattern;
 /// Simple template resolver using regex.
 public class SimpleTemplateResolver implements TemplateResolver {
 
-    private static final Pattern TEMPLATE_PATTERN = Pattern.compile("\\{([^}]+)}");
+    private static final Pattern TEMPLATE_PATTERN = Pattern.compile("\\{([a-zA-Z_][a-zA-Z0-9_]*)}");
 
     @Override
     public String resolve(String template, Map<String, Object> context) {

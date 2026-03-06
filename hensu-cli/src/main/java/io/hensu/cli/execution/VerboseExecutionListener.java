@@ -15,11 +15,13 @@ import java.io.PrintStream;
 ///
 /// ### Output Format
 /// ```
-/// ┌─────────────────────────────────────────────────────────────
-///   * INPUT [nodeId] → agentId
-///  ─────────────────────────────────────────────────────────────
+/// ┌─ input · nodeId → agentId ─────────────────────────────────
 ///   (prompt content)
-/// └─────────────────────────────────────────────────────────────
+/// └────────────────────────────────────────────────────────────
+///
+/// ┌─ output · nodeId ← agentId · OK ──────────────────────────
+///   (response content)
+/// └────────────────────────────────────────────────────────────
 /// ```
 ///
 /// @implNote **Not thread-safe**. Output may interleave if used with parallel execution.
@@ -32,24 +34,28 @@ public class VerboseExecutionListener implements ExecutionListener {
     private final boolean useColor;
     private final Workflow workflow;
     private final TextVisualizationFormat visualizer;
+    private final int termWidth;
 
-    /// Creates a verbose listener with full configuration.
+    /// Creates a verbose listener with explicit terminal width for box-drawing alignment.
     ///
     /// @param out        output stream for printing (typically System.out), not null
     /// @param useColor   whether to apply ANSI color codes
     /// @param workflow   the workflow being executed for node lookup, may be null
-    /// to skip visualization
+    ///                   to skip visualization
     /// @param visualizer text visualizer for node rendering, may be null to skip visualization
+    /// @param termWidth  terminal width in columns (caller reads {@code COLUMNS} or defaults to 80)
     public VerboseExecutionListener(
             PrintStream out,
             boolean useColor,
             Workflow workflow,
-            TextVisualizationFormat visualizer) {
+            TextVisualizationFormat visualizer,
+            int termWidth) {
         this.out = out;
         this.styles = AnsiStyles.of(useColor);
         this.useColor = useColor;
         this.workflow = workflow;
         this.visualizer = visualizer;
+        this.termWidth = termWidth;
     }
 
     @Override
@@ -61,31 +67,30 @@ public class VerboseExecutionListener implements ExecutionListener {
             }
         }
 
-        // INPUT block rendering
-        out.println(styles.separatorTop());
-        out.printf(
-                "  %s %s [%s] %s %s%n",
-                styles.accent("*"), styles.bold("INPUT"), nodeId, styles.arrow(), agentId);
-        out.println(styles.separatorMid());
+        String label = styles.dim("input · ") + nodeId + " " + styles.arrow() + " " + agentId;
+        out.println(styles.boxTopWithLabel(label, termWidth));
         printIndented(prompt, false);
-        out.println(styles.separatorBottom());
+        out.println(styles.separatorBottom(termWidth));
         out.println();
     }
 
     @Override
     public void onAgentComplete(String nodeId, String agentId, AgentResponse response) {
-        out.println(styles.separatorTop());
         boolean isSuccess = !(response instanceof AgentResponse.Error);
-        String output = extractOutput(response);
-        String status = styles.successOrError("OK", isSuccess);
-        String leftArrow = styles.successOrError("←", isSuccess);
-        String marker = styles.successOrError("*", isSuccess);
-        out.printf(
-                "  %s %s [%s] %s %s (%s)%n",
-                marker, styles.bold("OUTPUT"), nodeId, leftArrow, agentId, status);
-        out.println(styles.separatorMid());
-        printIndented(output, true);
-        out.println(styles.separatorBottom());
+        String arrow = styles.successOrError("←", isSuccess);
+        String statusTag = styles.successOrError(isSuccess ? "OK" : "ERROR", isSuccess);
+        String label =
+                styles.dim("output · ")
+                        + nodeId
+                        + " "
+                        + arrow
+                        + " "
+                        + agentId
+                        + styles.dim(" · ")
+                        + statusTag;
+        out.println(styles.boxTopWithLabel(label, termWidth));
+        printIndented(extractOutput(response), true);
+        out.println(styles.separatorBottom(termWidth));
         out.println();
     }
 

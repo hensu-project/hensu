@@ -113,6 +113,23 @@ class ConsensusEvaluatorTest {
         }
 
         @Test
+        void shouldThrowClassCastExceptionWhenWeightIsString() {
+            // Production code: ((Number) metadata.get("weight")).doubleValue()
+            // If weight arrives as a String (common from JSON parsers without type info),
+            // this hard cast throws ClassCastException and kills the entire evaluation.
+            // This test pins the current behavior; the fix is to use Number instanceof check.
+            Map<String, Object> metadata = new HashMap<>();
+            metadata.put("score", 90.0);
+            metadata.put("weight", "0.6"); // String, not Double — the bug trigger
+            BranchResult br = branchWithMetadata("b1", "I approve", metadata);
+            ConsensusConfig config =
+                    new ConsensusConfig(null, ConsensusStrategy.WEIGHTED_VOTE, 0.5);
+
+            assertThatThrownBy(() -> evaluator.extractVotes(List.of(br), config))
+                    .isInstanceOf(ClassCastException.class);
+        }
+
+        @Test
         void shouldDefaultToNeutralScoreWhenNothingFound() {
             // Given: no score in metadata, no patterns in output, no keywords
             BranchResult br = branchWithOutput("b1", "Some generic response");

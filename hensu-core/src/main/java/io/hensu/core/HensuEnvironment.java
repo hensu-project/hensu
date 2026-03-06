@@ -22,9 +22,13 @@ import java.util.concurrent.ExecutorService;
 /// - **Postcondition**: All getters return the same instances passed to constructor
 /// - **Invariant**: Component references are immutable after construction
 ///
-/// @implNote **Not thread-safe** for mutation, but safe for concurrent reads.
-/// All fields are final and set at construction time. The contained components
-/// may have their own thread-safety guarantees.
+/// @implNote **Thread-safe for concurrent use after construction.**
+/// All fields are final — the environment itself carries no mutable state.
+/// {@link WorkflowExecutor} is safe for concurrent {@code execute()} calls when
+/// backed by {@link io.hensu.core.agent.DefaultAgentRegistry} (the default);
+/// see {@link WorkflowExecutor} for the precise thread-safety contract.
+/// {@link io.hensu.core.agent.DefaultAgentRegistry} uses
+/// {@link java.util.concurrent.ConcurrentHashMap} and is explicitly thread-safe.
 ///
 /// @apiNote Create instances via {@link HensuFactory#createEnvironment()} or
 /// {@link HensuFactory.Builder} rather than direct construction.

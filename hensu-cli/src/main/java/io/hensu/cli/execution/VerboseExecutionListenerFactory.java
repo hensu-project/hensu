@@ -18,12 +18,18 @@ public class VerboseExecutionListenerFactory {
 
     @Inject private TextVisualizationFormat visualizer;
 
-    /// Creates a verbose execution listener for the specified workflow.
+    /// Creates a verbose execution listener writing to the given stream.
     ///
-    /// @param workflow the workflow being executed, not null
-    /// @param useColor whether to apply ANSI color codes
-    /// @return configured listener writing to System.out, never null
-    public ExecutionListener create(Workflow workflow, boolean useColor) {
-        return new VerboseExecutionListener(System.out, useColor, workflow, visualizer);
+    /// Used for both inline and daemon execution. The caller supplies the terminal width
+    /// so box-drawing aligns correctly regardless of how the listener is invoked.
+    ///
+    /// @param workflow  the workflow being executed, not null
+    /// @param out       output stream for agent I/O display, not null
+    /// @param useColor  whether to apply ANSI color codes
+    /// @param termWidth terminal width in columns for box-drawing alignment
+    /// @return configured listener writing to {@code out}, never null
+    public ExecutionListener create(
+            Workflow workflow, java.io.PrintStream out, boolean useColor, int termWidth) {
+        return new VerboseExecutionListener(out, useColor, workflow, visualizer, termWidth);
     }
 }

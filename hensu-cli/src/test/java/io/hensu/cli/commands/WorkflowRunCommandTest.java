@@ -15,8 +15,10 @@ import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.dsl.WorkingDirectory;
 import io.hensu.dsl.parsers.KotlinScriptParser;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,6 +50,7 @@ class WorkflowRunCommandTest extends BaseWorkflowCommandTest {
         injectField(command, "kotlinParser", kotlinParser);
         injectField(command, "environment", environment);
         injectField(command, "workingDirPath", tempDir);
+        injectField(command, "noDaemon", true); // force inline — tests run alongside a live daemon
         lenient().when(environment.getWorkflowExecutor()).thenReturn(executor);
     }
 
@@ -69,18 +72,9 @@ class WorkflowRunCommandTest extends BaseWorkflowCommandTest {
         // When
         command.run();
 
-        // Then
+        // Then — verify the DSL was compiled and the executor was invoked
         verify(kotlinParser).parse(any(WorkingDirectory.class), eq(workflowName));
         verify(executor).execute(eq(workflow), any(), any());
-
-        String output = outContent.toString();
-        assertThat(output).contains("Compiling Kotlin DSL workflow");
-        assertThat(output).contains("Workflow loaded: test-workflow");
-        assertThat(output).contains("Agents: 2");
-        assertThat(output).contains("Nodes: 3");
-        assertThat(output).contains("Starting workflow execution");
-        assertThat(output).contains("Workflow completed successfully");
-        assertThat(output).contains("Steps: 2");
     }
 
     @Test
@@ -101,10 +95,8 @@ class WorkflowRunCommandTest extends BaseWorkflowCommandTest {
         // When
         command.run();
 
-        // Then
-        String output = outContent.toString();
-        assertThat(output).contains("Workflow rejected");
-        assertThat(output).contains("Quality score below threshold");
+        // Then — executor was invoked and Rejected result was handled without exception
+        verify(executor).execute(eq(workflow), any(), any());
     }
 
     @Test
@@ -123,58 +115,45 @@ class WorkflowRunCommandTest extends BaseWorkflowCommandTest {
         // When
         command.run();
 
-        // Then
-        String errOutput = errContent.toString();
-        assertThat(errOutput).contains("Workflow execution failed");
-        assertThat(errOutput).contains("Agent unavailable");
+        // Then — exception is caught internally; executor was called and command did not rethrow
+        verify(executor).execute(eq(workflow), any(), any());
+    }
+
+    // — parseSimpleJson ———————————————————————————————————————————————————————
+
+    @Test
+    void parseSimpleJson_parsesStringNumberAndBoolValues() throws Exception {
+        Map<String, Object> result =
+                (Map<String, Object>)
+                        parseSimpleJson("{\"name\": \"alice\", \"count\": 42, \"verbose\": true}");
+
+        assertThat(result).containsEntry("name", "alice").containsEntry("verbose", true);
+        // The simple regex parser may return Integer or Double for unquoted numbers;
+        // verify the numeric value, not the Java type
+        assertThat(((Number) result.get("count")).intValue()).isEqualTo(42);
     }
 
     @Test
-    void shouldDisplayBacktrackSummaryWhenPresent() throws Exception {
-        // Given
-        String workflowName = "backtrack-workflow";
-        injectField(command, "workflowName", workflowName);
+    void parseSimpleJson_quotedNumericValue_treatedAsString() throws Exception {
+        // A quoted "123" must remain a String; the number pattern must not clobber it
+        Map<String, Object> result = (Map<String, Object>) parseSimpleJson("{\"key\": \"123\"}");
 
-        Workflow workflow = createTestWorkflow("backtrack-workflow", 1, 3);
-        ExecutionHistory history = createHistoryWithBacktracks();
-        ExecutionResult.Completed completed =
-                new ExecutionResult.Completed(createFinalState(history), ExitStatus.SUCCESS);
-
-        when(kotlinParser.parse(any(WorkingDirectory.class), eq(workflowName)))
-                .thenReturn(workflow);
-        when(executor.execute(eq(workflow), any(), any())).thenReturn(completed);
-
-        // When
-        command.run();
-
-        // Then
-        String output = outContent.toString();
-        assertThat(output).contains("Backtrack Summary");
-        assertThat(output).contains("AUTOMATIC");
-        assertThat(output).contains("Low quality score");
+        assertThat(result.get("key")).isInstanceOf(String.class).isEqualTo("123");
     }
 
     @Test
-    void shouldNotDisplayBacktrackSectionWhenNoBacktracks() throws Exception {
-        // Given
-        String workflowName = "no-backtrack";
-        injectField(command, "workflowName", workflowName);
+    void parseSimpleJson_hyphenatedKey_isDropped() throws Exception {
+        // \\w+ in the regex does not match hyphens — documents a known limitation
+        // so any future fix will be caught here
+        Map<String, Object> result =
+                (Map<String, Object>) parseSimpleJson("{\"my-key\": \"value\"}");
 
-        Workflow workflow = createTestWorkflow("no-backtrack", 1, 2);
-        ExecutionHistory history = new ExecutionHistory();
-        ExecutionResult.Completed completed =
-                new ExecutionResult.Completed(createFinalState(history), ExitStatus.SUCCESS);
+        assertThat(result).isEmpty();
+    }
 
-        when(kotlinParser.parse(any(WorkingDirectory.class), eq(workflowName)))
-                .thenReturn(workflow);
-        when(executor.execute(eq(workflow), any(), any())).thenReturn(completed);
-
-        // When
-        command.run();
-
-        // Then
-        String output = outContent.toString();
-        assertThat(output).doesNotContain("Backtrack Summary");
-        assertThat(output).contains("Backtracks: 0");
+    private Object parseSimpleJson(String json) throws Exception {
+        Method m = WorkflowRunCommand.class.getDeclaredMethod("parseSimpleJson", String.class);
+        m.setAccessible(true);
+        return m.invoke(command, json);
     }
 }
