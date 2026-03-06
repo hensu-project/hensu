@@ -1,5 +1,9 @@
 package io.hensu.cli.commands;
 
+import io.hensu.cli.daemon.DaemonClient;
+import io.hensu.cli.daemon.DaemonFrame;
+import io.hensu.cli.execution.ExecutionSink;
+import io.hensu.cli.execution.LocalExecutionSink;
 import io.hensu.cli.execution.VerboseExecutionListenerFactory;
 import io.hensu.cli.ui.AnsiStyles;
 import io.hensu.core.HensuEnvironment;
@@ -8,12 +12,15 @@ import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.workflow.Workflow;
+import io.hensu.serialization.WorkflowSerializer;
 import jakarta.inject.Inject;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import picocli.CommandLine.Command;
@@ -22,22 +29,32 @@ import picocli.CommandLine.Parameters;
 
 /// CLI command for executing workflows with agent orchestration.
 ///
-/// Loads and executes a workflow, optionally with verbose output showing agent
-/// inputs/outputs and interactive human review mode for manual approval/backtracking.
+/// Loads and executes a workflow either inline (when no daemon is running) or by
+/// delegating to the background daemon (when one is alive on
+/// {@link io.hensu.cli.daemon.DaemonPaths#socket()}).
+///
+/// ### Daemon mode
+/// When the daemon is running, the command:
+/// 1. Compiles the Kotlin DSL to a {@link Workflow} (client-side, as usual)
+/// 2. Serializes the workflow to JSON and sends it to the daemon via Unix socket
+/// 3. Streams output back to the terminal until the execution completes or Ctrl+C
+///
+/// Pressing Ctrl+C **detaches** the client — the execution keeps running in the
+/// daemon. Use {@code hensu attach <id>} to reconnect, or {@code hensu cancel <id>}
+/// to stop it.
+///
+/// ### Inline mode
+/// When no daemon is running the workflow executes in-process, identical to the
+/// previous behavior.
 ///
 /// ### Usage
 /// ```bash
 /// hensu run [-d <working-dir>] [-v] [-i] [--no-color] [-c <context>] <workflow-name>
 /// ```
 ///
-/// ### Options
-/// - `-v, --verbose` - Show agent inputs and outputs during execution
-/// - `-i, --interactive` - Enable human review checkpoints with backtracking
-/// - `-c, --context` - Provide initial context as JSON string or file path
-/// - `--no-color` - Disable ANSI color output
-///
 /// @see io.hensu.core.execution.WorkflowExecutor
 /// @see io.hensu.cli.review.CLIReviewManager
+/// @see io.hensu.cli.daemon.DaemonServer
 @Command(name = "run", description = "Run a workflow")
 class WorkflowRunCommand extends WorkflowCommand {
 
@@ -68,6 +85,11 @@ class WorkflowRunCommand extends WorkflowCommand {
             negatable = true)
     private boolean color = true;
 
+    @Option(
+            names = {"--no-daemon"},
+            description = "Force inline execution even if daemon is running")
+    private boolean noDaemon = false;
+
     @Inject private HensuEnvironment environment;
     @Inject private VerboseExecutionListenerFactory listenerFactory;
 
@@ -76,97 +98,184 @@ class WorkflowRunCommand extends WorkflowCommand {
         AnsiStyles styles = AnsiStyles.of(color);
 
         try {
-            // Set interactive mode system property for CLIReviewManager
             if (interactive) {
                 System.setProperty("hensu.review.interactive", "true");
             }
 
             Workflow workflow = getWorkflow(workflowName);
 
-            System.out.printf(
+            ExecutionSink sink = LocalExecutionSink.INSTANCE;
+            @SuppressWarnings("resource") // wraps System.out — must not be closed
+            PrintStream sinkOut = sink.out();
+            sinkOut.printf(
                     "%n%s %s%n",
-                    styles.checkmark(),
-                    styles.bold("Workflow loaded: " + workflow.getMetadata().getName()));
-            System.out.printf(
-                    "%s%n%n",
-                    styles.gray(
-                            "  Agents: "
-                                    + workflow.getAgents().size()
-                                    + " "
-                                    + styles.bullet()
-                                    + " Nodes: "
-                                    + workflow.getNodes().size()));
+                    styles.checkmark(), styles.bold(workflow.getMetadata().getName() + " loaded"));
+            sinkOut.printf("  agents   %d%n", workflow.getAgents().size());
+            sinkOut.printf("  nodes    %d%n%n", workflow.getNodes().size());
 
             Map<String, Object> context = loadContext(contextInput);
 
-            System.out.println(styles.gray("  Starting workflow execution..."));
-            if (verbose) {
-                System.out.println(styles.gray("  (verbose mode enabled)"));
+            // — Daemon mode ——————————————————————————————————————————————
+            if (!noDaemon && DaemonClient.isAlive()) {
+                runViaDaemon(workflow, context, styles);
+                return;
             }
-            if (interactive) {
-                System.out.println(styles.gray("  (interactive review mode enabled)"));
-            }
-            System.out.println();
 
-            // Configure stub registry with filesystem stubs directory
-            configureStubsDirectory();
+            // — Inline mode ——————————————————————————————————————————————
+            runInline(workflow, context, styles, sink);
 
-            // Configure action executor with working directory for command registry
-            configureActionExecutor();
-
-            WorkflowExecutor workflowExecutor = environment.getWorkflowExecutor();
-
-            // Create listener for verbose output
-            ExecutionListener listener =
-                    verbose ? listenerFactory.create(workflow, color) : ExecutionListener.NOOP;
-            ExecutionResult result = workflowExecutor.execute(workflow, context, listener);
-
-            if (result instanceof ExecutionResult.Completed completed) {
-                System.out.printf(
-                        "%n%s %s%n",
-                        styles.checkmark(), styles.bold("Workflow completed successfully!"));
-                System.out.printf(
-                        "  Status: %s %s Steps: %d %s Backtracks: %d%n",
-                        styles.success(completed.getExitStatus().toString()),
-                        styles.bullet(),
-                        completed.getFinalState().getHistory().getSteps().size(),
-                        styles.bullet(),
-                        completed.getFinalState().getHistory().getBacktracks().size());
-
-                if (!completed.getFinalState().getHistory().getBacktracks().isEmpty()) {
-                    System.out.printf("%n%s%n", styles.bold("  Backtrack Summary:"));
-                    completed
-                            .getFinalState()
-                            .getHistory()
-                            .getBacktracks()
-                            .forEach(
-                                    bt ->
-                                            System.out.printf(
-                                                    "  %s %s %s %s%n",
-                                                    styles.bold(bt.getFrom()),
-                                                    styles.arrow(),
-                                                    styles.bold(bt.getTo()),
-                                                    styles.gray(
-                                                            bt.getType()
-                                                                    + "("
-                                                                    + bt.getReason()
-                                                                    + ")")));
-                }
-            } else if (result instanceof ExecutionResult.Rejected rejected) {
-                System.out.printf(
-                        "%n%s %s%n", styles.crossmark(), styles.bold("Workflow rejected!"));
-                System.out.printf("  Reason: %s%n", rejected.getReason());
-            }
         } catch (Exception e) {
+            AnsiStyles s = AnsiStyles.of(color);
             System.err.printf(
                     "%s %s %s%n",
-                    styles.crossmark(), styles.bold("Workflow execution failed:"), e.getMessage());
+                    s.crossmark(), s.bold("Workflow execution failed:"), e.getMessage());
             e.printStackTrace();
         }
     }
 
-    /// Configures the stub response registry with the working directory's stubs folder,
-    /// enabling filesystem-based stub resolution for CLI executions.
+    // — Daemon path ——————————————————————————————————————————————————————————
+
+    private void runViaDaemon(Workflow workflow, Map<String, Object> context, AnsiStyles styles)
+            throws IOException {
+
+        String execId = UUID.randomUUID().toString();
+        String workflowJson = WorkflowSerializer.toJson(workflow);
+
+        // Build run frame
+        DaemonFrame req = new DaemonFrame();
+        req.type = "run";
+        req.execId = execId;
+        req.workflowId = workflow.getMetadata().getName();
+        req.workflowJson = workflowJson;
+        req.context = context;
+        req.verbose = verbose;
+        req.color = color;
+        req.termWidth = terminalWidth();
+
+        // Detach on Ctrl+C instead of killing the execution
+        boolean[] completed = {false};
+        Runtime.getRuntime()
+                .addShutdownHook(
+                        new Thread(
+                                () -> {
+                                    if (completed[0]) return;
+                                    new DaemonClient().detach(execId);
+                                    System.err.printf(
+                                            "%nDetached. Execution %s is still running in the daemon.%n",
+                                            execId);
+                                    System.err.printf("Re-attach: hensu attach %s%n", execId);
+                                    System.err.printf("Cancel:    hensu cancel %s%n", execId);
+                                }));
+
+        System.out.println(styles.gray("  Delegating to daemon"));
+        System.out.printf("  exec     %s%n", styles.accent(execId));
+        if (verbose) System.out.println(styles.gray("  verbose mode enabled"));
+        System.out.println();
+
+        new DaemonClient()
+                .run(
+                        req,
+                        frame -> {
+                            if ("exec_end".equals(frame.type)) completed[0] = true;
+                            handleDaemonFrame(frame, styles);
+                        });
+    }
+
+    private void handleDaemonFrame(DaemonFrame frame, AnsiStyles styles) {
+        switch (frame.type) {
+            case "out" -> DaemonClient.printOutFrame(frame);
+            case "exec_end" -> printCompletionSummary(frame, styles);
+            case "error" ->
+                    System.err.printf(
+                            "%s %s%n",
+                            styles.crossmark(),
+                            styles.error(
+                                    frame.message != null
+                                            ? frame.message
+                                            : "Unknown daemon error"));
+            case "daemon_full" ->
+                    System.err.println(
+                            styles.warn(
+                                    "Daemon is at capacity (max "
+                                            + frame.maxConcurrent
+                                            + " concurrent executions). Try again shortly."));
+            default -> {
+                /* ignore node_start / node_end / ping */
+            }
+        }
+    }
+
+    private void printCompletionSummary(DaemonFrame frame, AnsiStyles styles) {
+        String status = frame.status != null ? frame.status : "UNKNOWN";
+        boolean ok = status.startsWith("SUCCESS") || "COMPLETED".equals(status);
+        System.out.printf(
+                "%n%s %s%n",
+                ok ? styles.checkmark() : styles.crossmark(),
+                styles.bold(ok ? "Workflow completed successfully" : "Workflow ended"));
+        System.out.printf("  status   %s%n", ok ? styles.success(status) : styles.error(status));
+    }
+
+    // — Inline path ——————————————————————————————————————————————————————————
+
+    private void runInline(
+            Workflow workflow, Map<String, Object> context, AnsiStyles styles, ExecutionSink sink)
+            throws Exception {
+
+        PrintStream out = sink.out();
+        out.println(styles.gray("  Starting inline execution..."));
+        if (verbose) out.println(styles.gray("  verbose mode enabled"));
+        if (interactive) out.println(styles.gray("  interactive review mode enabled"));
+        out.println();
+
+        configureStubsDirectory();
+        configureActionExecutor();
+
+        WorkflowExecutor workflowExecutor = environment.getWorkflowExecutor();
+        ExecutionListener listener =
+                verbose
+                        ? listenerFactory.create(workflow, out, color, terminalWidth())
+                        : ExecutionListener.NOOP;
+
+        ExecutionResult result = workflowExecutor.execute(workflow, context, listener);
+
+        if (result instanceof ExecutionResult.Completed completed) {
+            out.printf(
+                    "%n%s %s%n",
+                    styles.checkmark(), styles.bold("Workflow completed successfully"));
+            out.printf("  status      %s%n", styles.success(completed.getExitStatus().toString()));
+            out.printf(
+                    "  steps       %d%n", completed.getFinalState().getHistory().getSteps().size());
+            out.printf(
+                    "  backtracks  %d%n",
+                    completed.getFinalState().getHistory().getBacktracks().size());
+
+            if (!completed.getFinalState().getHistory().getBacktracks().isEmpty()) {
+                out.printf("%n%s%n", styles.bold("  Backtrack Summary:"));
+                completed
+                        .getFinalState()
+                        .getHistory()
+                        .getBacktracks()
+                        .forEach(
+                                bt ->
+                                        out.printf(
+                                                "  %s %s %s %s%n",
+                                                styles.bold(bt.getFrom()),
+                                                styles.arrow(),
+                                                styles.bold(bt.getTo()),
+                                                styles.gray(
+                                                        bt.getType()
+                                                                + "("
+                                                                + bt.getReason()
+                                                                + ")")));
+            }
+        } else if (result instanceof ExecutionResult.Rejected rejected) {
+            out.printf("%n%s %s%n", styles.crossmark(), styles.bold("Workflow rejected!"));
+            out.printf("  Reason: %s%n", rejected.getReason());
+        }
+    }
+
+    // — Helpers ——————————————————————————————————————————————————————————————
+
     private void configureStubsDirectory() {
         Path stubsDir = getWorkingDirectory().getStubsDir();
         if (Files.isDirectory(stubsDir)) {
@@ -174,8 +283,6 @@ class WorkflowRunCommand extends WorkflowCommand {
         }
     }
 
-    /// Configure the action executor with the workflow's working directory. This loads the command
-    /// registry for Execute actions.
     private void configureActionExecutor() {
         var actionExecutor = environment.getActionExecutor();
         if (actionExecutor != null) {
@@ -183,73 +290,65 @@ class WorkflowRunCommand extends WorkflowCommand {
         }
     }
 
-    /// Load context from JSON string or file path. If input starts with '{', treat as JSON string.
-    /// Otherwise, treat as file path.
     private Map<String, Object> loadContext(String input) {
         if (input == null || input.isBlank()) {
             return new HashMap<>();
         }
-
         String json;
         if (input.trim().startsWith("{")) {
-            // Direct JSON string
             json = input;
         } else {
-            // File path
             try {
                 json = Files.readString(Path.of(input));
             } catch (IOException e) {
                 throw new IllegalArgumentException("Failed to read context file: " + input, e);
             }
         }
-
         return parseSimpleJson(json);
     }
 
-    /// Simple JSON parser for flat key-value maps. Handles: {"key": "value", "key2": "value2",
-    /// "key3": 123, "key4": true}
+    /// Simple JSON parser for flat key-value maps.
+    ///
+    /// Handles: `{"key": "value", "key2": 123, "key3": true}`
     private Map<String, Object> parseSimpleJson(String json) {
         Map<String, Object> result = new HashMap<>();
-
-        // Remove outer braces and whitespace
         json = json.trim();
         if (json.startsWith("{")) json = json.substring(1);
         if (json.endsWith("}")) json = json.substring(0, json.length() - 1);
 
-        // Pattern for key-value pairs
         Pattern stringPattern = Pattern.compile("\"(\\w+)\"\\s*:\\s*\"([^\"]*)\"");
         Pattern numberPattern = Pattern.compile("\"(\\w+)\"\\s*:\\s*(\\d+(?:\\.\\d+)?)");
         Pattern boolPattern = Pattern.compile("\"(\\w+)\"\\s*:\\s*(true|false)");
 
-        // Extract string values
-        Matcher stringMatcher = stringPattern.matcher(json);
-        while (stringMatcher.find()) {
-            result.put(stringMatcher.group(1), stringMatcher.group(2));
-        }
+        Matcher m = stringPattern.matcher(json);
+        while (m.find()) result.put(m.group(1), m.group(2));
 
-        // Extract number values (only if not already found as string)
-        Matcher numberMatcher = numberPattern.matcher(json);
-        while (numberMatcher.find()) {
-            String key = numberMatcher.group(1);
-            if (!result.containsKey(key)) {
-                String value = numberMatcher.group(2);
-                if (value.contains(".")) {
-                    result.put(key, Double.parseDouble(value));
-                } else {
-                    result.put(key, Integer.parseInt(value));
-                }
+        m = numberPattern.matcher(json);
+        while (m.find()) {
+            if (!result.containsKey(m.group(1))) {
+                String v = m.group(2);
+                result.put(
+                        m.group(1), v.contains(".") ? Double.parseDouble(v) : Integer.parseInt(v));
             }
         }
 
-        // Extract boolean values (only if not already found)
-        Matcher boolMatcher = boolPattern.matcher(json);
-        while (boolMatcher.find()) {
-            String key = boolMatcher.group(1);
-            if (!result.containsKey(key)) {
-                result.put(key, Boolean.parseBoolean(boolMatcher.group(2)));
-            }
+        m = boolPattern.matcher(json);
+        while (m.find()) {
+            if (!result.containsKey(m.group(1)))
+                result.put(m.group(1), Boolean.parseBoolean(m.group(2)));
         }
 
         return result;
+    }
+
+    private int terminalWidth() {
+        String cols = System.getenv("COLUMNS");
+        if (cols != null) {
+            try {
+                return Integer.parseInt(cols.trim());
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return 80;
     }
 }

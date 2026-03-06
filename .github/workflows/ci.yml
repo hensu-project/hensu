@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -17,12 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: graalvm/setup-graalvm@v1
+      - uses: graalvm/setup-graalvm@54b4f5a65c1a84b2fdfdc2078fe43df32819e4b1 # v1
         with:
           java-version: '25'
           distribution: 'graalvm'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.4.3
 
       - name: Check formatting
         run: ./gradlew spotlessCheck
@@ -33,12 +36,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: graalvm/setup-graalvm@v1
+      - uses: graalvm/setup-graalvm@54b4f5a65c1a84b2fdfdc2078fe43df32819e4b1 # v1
         with:
           java-version: '25'
           distribution: 'graalvm'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.4.3
 
       - name: Build and test all modules
         run: ./gradlew build

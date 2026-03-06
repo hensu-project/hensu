@@ -25,21 +25,21 @@ fun selfEvalTestWorkflow() = workflow("self-eval-test") {
         // Main content writer - provides self-evaluation in output
         agent("writer") {
             role = "Content writer who produces articles and self-evaluates. Include self-evaluation JSON with score (0-100) and recommendation if score < 80."
-            model = Models.CLAUDE_SONNET_4_5
+            model = Models.GEMINI_2_5_PRO
             temperature = 0.7
         }
 
         // Reviewer agent - evaluates content independently
         agent("reviewer") {
             role = "Content reviewer providing score and feedback"
-            model = Models.CLAUDE_SONNET_4_5
+            model = Models.GEMINI_2_5_PRO
             temperature = 0.3
         }
 
         // Editor for improvements
         agent("editor") {
             role = "Editor who improves content based on recommendations"
-            model = Models.CLAUDE_SONNET_4_5
+            model = Models.GEMINI_2_5_PRO
             temperature = 0.5
         }
     }

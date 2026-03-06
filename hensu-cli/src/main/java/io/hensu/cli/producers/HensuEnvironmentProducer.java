@@ -2,6 +2,7 @@ package io.hensu.cli.producers;
 
 import io.hensu.adapter.langchain4j.LangChain4jProvider;
 import io.hensu.cli.action.CLIActionExecutor;
+import io.hensu.cli.daemon.CredentialsLoader;
 import io.hensu.cli.review.CLIReviewManager;
 import io.hensu.core.HensuConfig;
 import io.hensu.core.HensuEnvironment;
@@ -26,9 +27,9 @@ import org.eclipse.microprofile.config.Config;
 /// review handler, and generic node handlers discovered via CDI.
 ///
 /// ### Credential Discovery
-/// Credentials are loaded from (in priority order):
-/// 1. **Application properties** under `hensu.credentials.*`
-/// 2. **Environment variables** matching patterns: `*_API_KEY`, `*_KEY`, `*_SECRET`, `*_TOKEN`
+/// Credentials are loaded from `~/.hensu/credentials` — bare `KEY=VALUE` entries read at
+/// CDI producer time, bypassing Quarkus Config entirely. This makes credentials available
+/// to both the daemon and direct CLI runs regardless of how the process was launched.
 ///
 /// ### Configuration Properties
 /// | Property | Type | Default | Description |
@@ -108,21 +109,30 @@ public class HensuEnvironmentProducer {
         return new CLIReviewManager();
     }
 
-    /// Extracts `hensu.credentials.*` and `hensu.stub.enabled` from Quarkus config.
+    /// Builds the credentials and stub-enabled properties.
+    ///
+    /// Priority order (highest wins):
+    /// 1. {@code ~/.hensu/credentials} file — bypasses Quarkus Config entirely, so the
+    ///    daemon never suffers from env-var snapshot timing issues at startup.
+    /// 2. Quarkus Config / env vars under {@code hensu.credentials.*} (blank values skipped).
     private Properties extractHensuProperties() {
         Properties properties = new Properties();
         String credentialsPrefix = "hensu.credentials.";
-        String stubEnabledKey = "hensu.stub.enabled";
 
+        // Layer 1: Quarkus Config (env vars, application.properties) — skip blank values
         for (String propertyName : config.getPropertyNames()) {
             if (propertyName.startsWith(credentialsPrefix)) {
                 config.getOptionalValue(propertyName, String.class)
+                        .filter(value -> !value.isBlank())
                         .ifPresent(value -> properties.setProperty(propertyName, value));
             }
         }
 
-        config.getOptionalValue(stubEnabledKey, String.class)
-                .ifPresent(value -> properties.setProperty(stubEnabledKey, value));
+        // Layer 2: credentials file wins over env vars
+        properties.putAll(CredentialsLoader.load());
+
+        config.getOptionalValue("hensu.stub.enabled", String.class)
+                .ifPresent(value -> properties.setProperty("hensu.stub.enabled", value));
 
         return properties;
     }

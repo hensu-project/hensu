@@ -185,8 +185,12 @@ class PlanExecutorTest {
             // PlanExecutionProcessor
             assertThat(capturedEvents).hasSize(3);
             assertThat(capturedEvents.get(0)).isInstanceOf(PlanCreated.class);
-            assertThat(capturedEvents.get(1)).isInstanceOf(StepStarted.class);
-            assertThat(capturedEvents.get(2)).isInstanceOf(StepCompleted.class);
+            StepStarted started = (StepStarted) capturedEvents.get(1);
+            assertThat(started.step().index()).isZero();
+            assertThat(started.step().toolName()).isEqualTo("tool1");
+            StepCompleted completed = (StepCompleted) capturedEvents.get(2);
+            assertThat(completed.result().stepIndex()).isZero();
+            assertThat(completed.result().toolName()).isEqualTo("tool1");
         }
 
         @Test
@@ -315,6 +319,34 @@ class PlanExecutorTest {
             PlanResult result = executor.execute(plan, Map.of("orderId", "123"));
 
             assertThat(result.isSuccess()).isTrue();
+        }
+
+        @Test
+        void shouldInjectStepOutputIntoContextForNextStep() {
+            // Step 0 produces "result-A". Step 1 explicitly fails if _step_0_output is absent —
+            // so a successful plan proves the executor injected the output before step 1 ran.
+            when(mockActionExecutor.execute(any(Action.class), any()))
+                    .thenReturn(ActionResult.success("Done", "result-A"))
+                    .thenAnswer(
+                            invocation -> {
+                                Map<String, Object> ctx = invocation.getArgument(1);
+                                if (!ctx.containsKey("_step_0_output")) {
+                                    return ActionResult.failure("_step_0_output was not injected");
+                                }
+                                return ActionResult.success("Consumed");
+                            });
+
+            Plan plan =
+                    Plan.staticPlan(
+                            "node",
+                            List.of(
+                                    PlannedStep.simple(0, "produce", "Produce output"),
+                                    PlannedStep.simple(1, "consume", "Consume output")));
+
+            PlanResult result = executor.execute(plan, Map.of());
+
+            assertThat(result.isSuccess()).isTrue();
+            assertThat(result.completedStepCount()).isEqualTo(2);
         }
     }
 }

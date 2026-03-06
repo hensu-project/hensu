@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 
 class VerboseExecutionListenerTest {
 
+    private final int termWidth = 80;
     private ByteArrayOutputStream outputStream;
     private PrintStream printStream;
 
@@ -32,15 +33,17 @@ class VerboseExecutionListenerTest {
         printStream = new PrintStream(outputStream);
     }
 
+    // — Agent start/complete ——————————————————————————————————————————————————
+
     @Test
     void shouldPrintInputBlockOnAgentStart() {
         VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
+                new VerboseExecutionListener(printStream, false, null, null, termWidth);
 
         listener.onAgentStart("test-node", "test-agent", "Test prompt content");
 
         String output = outputStream.toString();
-        assertThat(output).contains("INPUT");
+        assertThat(output).contains("input");
         assertThat(output).contains("test-node");
         assertThat(output).contains("test-agent");
         assertThat(output).contains("Test prompt content");
@@ -49,13 +52,13 @@ class VerboseExecutionListenerTest {
     @Test
     void shouldPrintOutputBlockOnAgentComplete() {
         VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
-        AgentResponse response = AgentResponse.TextResponse.of("Agent output text");
+                new VerboseExecutionListener(printStream, false, null, null, termWidth);
 
-        listener.onAgentComplete("test-node", "test-agent", response);
+        listener.onAgentComplete(
+                "test-node", "test-agent", AgentResponse.TextResponse.of("Agent output text"));
 
         String output = outputStream.toString();
-        assertThat(output).contains("OUTPUT");
+        assertThat(output).contains("output");
         assertThat(output).contains("test-node");
         assertThat(output).contains("test-agent");
         assertThat(output).contains("OK");
@@ -63,35 +66,53 @@ class VerboseExecutionListenerTest {
     }
 
     @Test
-    void shouldPrintFailureStatusOnAgentComplete() {
+    void shouldShowErrorStatusOnAgentFailure() {
         VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, true, null, null);
-        AgentResponse response = AgentResponse.Error.of("Test error");
+                new VerboseExecutionListener(printStream, true, null, null, termWidth);
 
-        listener.onAgentComplete("test-node", "test-agent", response);
+        listener.onAgentComplete("test-node", "test-agent", AgentResponse.Error.of("Test error"));
 
         String output = outputStream.toString();
-        assertThat(output).contains("OUTPUT");
-        // Failure status is rendered using error color (red)
-        assertThat(output).contains("\033[38;5;167m");
+        assertThat(output).contains("ERROR");
+        assertThat(output).contains("\033["); // error is styled when color is enabled
+    }
+
+    // — Edge cases ————————————————————————————————————————————————————————————
+
+    @Test
+    void shouldHandleNullPrompt() {
+        VerboseExecutionListener listener =
+                new VerboseExecutionListener(printStream, false, null, null, termWidth);
+
+        listener.onAgentStart("node", "agent", null);
+
+        assertThat(outputStream.toString()).contains("(empty)");
     }
 
     @Test
-    void shouldUseBoxDrawingCharacters() {
+    void shouldHandleEmptyPrompt() {
         VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
+                new VerboseExecutionListener(printStream, false, null, null, termWidth);
 
-        listener.onAgentStart("node", "agent", "prompt");
+        listener.onAgentStart("node", "agent", "");
 
-        String output = outputStream.toString();
-        assertThat(output).contains("┌─");
-        assertThat(output).contains("└─");
+        assertThat(outputStream.toString()).contains("(empty)");
     }
 
     @Test
-    void shouldPrintMultilinePromptIndented() {
+    void shouldHandleEmptyOutput() {
         VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
+                new VerboseExecutionListener(printStream, false, null, null, termWidth);
+
+        listener.onAgentComplete("node", "agent", AgentResponse.TextResponse.of(""));
+
+        assertThat(outputStream.toString()).contains("(empty)");
+    }
+
+    @Test
+    void shouldHandleMultilinePrompt() {
+        VerboseExecutionListener listener =
+                new VerboseExecutionListener(printStream, false, null, null, termWidth);
 
         listener.onAgentStart("node", "agent", "Line 1\nLine 2\nLine 3");
 
@@ -101,82 +122,36 @@ class VerboseExecutionListenerTest {
         assertThat(output).contains("Line 3");
     }
 
-    @Test
-    void shouldPrintMultilineOutputIndented() {
-        VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
-        AgentResponse response = AgentResponse.TextResponse.of("Output 1\nOutput 2\nOutput 3");
-
-        listener.onAgentComplete("node", "agent", response);
-
-        String output = outputStream.toString();
-        assertThat(output).contains("Output 1");
-        assertThat(output).contains("Output 2");
-        assertThat(output).contains("Output 3");
-    }
-
-    @Test
-    void shouldHandleEmptyPrompt() {
-        VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
-
-        listener.onAgentStart("node", "agent", "");
-
-        String output = outputStream.toString();
-        assertThat(output).contains("(empty)");
-    }
-
-    @Test
-    void shouldHandleNullPrompt() {
-        VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
-
-        listener.onAgentStart("node", "agent", null);
-
-        String output = outputStream.toString();
-        assertThat(output).contains("(empty)");
-    }
-
-    @Test
-    void shouldHandleEmptyOutput() {
-        VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
-        AgentResponse response = AgentResponse.TextResponse.of("");
-
-        listener.onAgentComplete("node", "agent", response);
-
-        String output = outputStream.toString();
-        assertThat(output).contains("(empty)");
-    }
+    // — Color feature flag ————————————————————————————————————————————————————
 
     @Test
     void shouldApplyColorsWhenEnabled() {
         VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, true, null, null);
+                new VerboseExecutionListener(printStream, true, null, null, termWidth);
 
         listener.onAgentStart("node", "agent", "prompt");
 
-        String output = outputStream.toString();
-        assertThat(output).contains("\033[");
+        assertThat(outputStream.toString()).contains("\033[");
     }
 
     @Test
     void shouldNotApplyColorsWhenDisabled() {
         VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
+                new VerboseExecutionListener(printStream, false, null, null, termWidth);
 
         listener.onAgentStart("node", "agent", "prompt");
 
-        String output = outputStream.toString();
-        assertThat(output).doesNotContain("\033[");
+        assertThat(outputStream.toString()).doesNotContain("\033[");
     }
+
+    // — Node visualization guard conditions ——————————————————————————————————
 
     @Test
     void shouldRenderNodeVisualizationWhenWorkflowProvided() {
         Workflow workflow = createWorkflow();
-        TextVisualizationFormat visualizer = new TextVisualizationFormat();
         VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, workflow, visualizer);
+                new VerboseExecutionListener(
+                        printStream, false, workflow, new TextVisualizationFormat(), termWidth);
 
         listener.onAgentStart("start", "test-agent", "prompt");
 
@@ -189,101 +164,40 @@ class VerboseExecutionListenerTest {
     void shouldSkipVisualizationWhenWorkflowNull() {
         VerboseExecutionListener listener =
                 new VerboseExecutionListener(
-                        printStream, false, null, new TextVisualizationFormat());
+                        printStream, false, null, new TextVisualizationFormat(), termWidth);
 
         listener.onAgentStart("node", "agent", "prompt");
 
-        String output = outputStream.toString();
-        assertThat(output).contains("INPUT");
-        assertThat(output).doesNotContain("STANDARD");
+        assertThat(outputStream.toString()).contains("input");
+        assertThat(outputStream.toString()).doesNotContain("STANDARD");
     }
 
     @Test
     void shouldSkipVisualizationWhenVisualizerNull() {
-        Workflow workflow = createWorkflow();
         VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, workflow, null);
+                new VerboseExecutionListener(printStream, false, createWorkflow(), null, termWidth);
 
         listener.onAgentStart("start", "test-agent", "prompt");
 
-        String output = outputStream.toString();
-        assertThat(output).contains("INPUT");
+        assertThat(outputStream.toString()).contains("input");
     }
 
     @Test
     void shouldSkipVisualizationWhenNodeNotFound() {
-        Workflow workflow = createWorkflow();
-        TextVisualizationFormat visualizer = new TextVisualizationFormat();
         VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, workflow, visualizer);
+                new VerboseExecutionListener(
+                        printStream,
+                        false,
+                        createWorkflow(),
+                        new TextVisualizationFormat(),
+                        termWidth);
 
         listener.onAgentStart("non-existent-node", "agent", "prompt");
 
-        String output = outputStream.toString();
-        assertThat(output).contains("INPUT");
+        assertThat(outputStream.toString()).contains("input");
     }
 
-    @Test
-    void shouldPrintArrowBetweenNodeAndAgent() {
-        VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
-
-        listener.onAgentStart("node", "agent", "prompt");
-
-        String output = outputStream.toString();
-        assertThat(output).contains("node");
-        assertThat(output).contains("agent");
-    }
-
-    @Test
-    void shouldPrintSeparatorLines() {
-        VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
-
-        listener.onAgentStart("node", "agent", "prompt");
-
-        String output = outputStream.toString();
-        assertThat(output).contains("─────");
-    }
-
-    @Test
-    void shouldPrintBlankLineAfterBlocks() {
-        VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
-
-        listener.onAgentStart("node", "agent", "prompt");
-        listener.onAgentComplete("node", "agent", AgentResponse.TextResponse.of("output"));
-
-        String output = outputStream.toString();
-        long blankLines = output.lines().filter(String::isBlank).count();
-        assertThat(blankLines).isGreaterThanOrEqualTo(2);
-    }
-
-    @Test
-    void shouldHandleSpecialCharactersInPrompt() {
-        VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
-
-        listener.onAgentStart("node", "agent", "Prompt with <tags> and {variables}");
-
-        String output = outputStream.toString();
-        assertThat(output).contains("<tags>");
-        assertThat(output).contains("{variables}");
-    }
-
-    @Test
-    void shouldHandleUnicodeInOutput() {
-        VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null);
-        AgentResponse response = AgentResponse.TextResponse.of("Output with unicode: ✓ ✗ →");
-
-        listener.onAgentComplete("node", "agent", response);
-
-        String output = outputStream.toString();
-        assertThat(output).contains("✓");
-        assertThat(output).contains("✗");
-        assertThat(output).contains("→");
-    }
+    // — Helpers ———————————————————————————————————————————————————————————————
 
     private Workflow createWorkflow() {
         Map<String, AgentConfig> agents = new HashMap<>();

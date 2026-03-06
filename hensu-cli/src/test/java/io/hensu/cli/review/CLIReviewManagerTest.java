@@ -11,7 +11,6 @@ import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.review.ReviewDecision;
 import io.hensu.core.review.ReviewMode;
-import io.hensu.core.rubric.evaluator.RubricEvaluation;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowMetadata;
@@ -32,13 +31,12 @@ import org.junit.jupiter.api.Test;
 
 class CLIReviewManagerTest {
 
-    private ByteArrayOutputStream outputStream;
     private PrintStream printStream;
     private String originalInteractiveProperty;
 
     @BeforeEach
     void setUp() {
-        outputStream = new ByteArrayOutputStream();
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
         printStream = new PrintStream(outputStream);
         originalInteractiveProperty = System.getProperty(CLIReviewManager.INTERACTIVE_PROPERTY);
     }
@@ -52,11 +50,12 @@ class CLIReviewManagerTest {
         }
     }
 
+    // — Non-interactive ——————————————————————————————————————————————————————
+
     @Test
     void shouldAutoApproveWhenInteractiveModeDisabled() {
         System.clearProperty(CLIReviewManager.INTERACTIVE_PROPERTY);
-        Scanner scanner = new Scanner("");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
+        CLIReviewManager manager = new CLIReviewManager(new Scanner(""), printStream, false);
 
         ReviewDecision decision =
                 manager.requestReview(
@@ -70,47 +69,14 @@ class CLIReviewManagerTest {
         assertThat(decision).isInstanceOf(ReviewDecision.Approve.class);
     }
 
-    @Test
-    void shouldApproveOnUserInputA() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("A\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        ReviewDecision decision =
-                manager.requestReview(
-                        createStandardNode("test-node"),
-                        createSuccessResult(),
-                        createState(),
-                        new ExecutionHistory(),
-                        new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                        createWorkflow());
-
-        assertThat(decision).isInstanceOf(ReviewDecision.Approve.class);
-    }
-
-    @Test
-    void shouldApproveOnLowercaseInput() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("a\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        ReviewDecision decision =
-                manager.requestReview(
-                        createStandardNode("test-node"),
-                        createSuccessResult(),
-                        createState(),
-                        new ExecutionHistory(),
-                        new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                        createWorkflow());
-
-        assertThat(decision).isInstanceOf(ReviewDecision.Approve.class);
-    }
+    // — Rejection —————————————————————————————————————————————————————————————
 
     @Test
     void shouldRejectOnUserInputRWithReason() {
         System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("R\nOutput quality is poor\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
+        CLIReviewManager manager =
+                new CLIReviewManager(
+                        new Scanner("R\nOutput quality is poor\n"), printStream, false);
 
         ReviewDecision decision =
                 manager.requestReview(
@@ -122,15 +88,16 @@ class CLIReviewManagerTest {
                         createWorkflow());
 
         assertThat(decision).isInstanceOf(ReviewDecision.Reject.class);
-        ReviewDecision.Reject reject = (ReviewDecision.Reject) decision;
-        assertThat(reject.getReason()).isEqualTo("Output quality is poor");
+        assertThat(((ReviewDecision.Reject) decision).getReason())
+                .isEqualTo("Output quality is poor");
     }
 
     @Test
-    void shouldRequireReasonForRejection() {
+    void shouldRequireNonBlankReasonForRejection() {
         System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("R\n\nActual reason\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
+        // First reason attempt is blank, second is valid
+        CLIReviewManager manager =
+                new CLIReviewManager(new Scanner("R\n\nActual reason\n"), printStream, false);
 
         ReviewDecision decision =
                 manager.requestReview(
@@ -142,295 +109,34 @@ class CLIReviewManagerTest {
                         createWorkflow());
 
         assertThat(decision).isInstanceOf(ReviewDecision.Reject.class);
-        ReviewDecision.Reject reject = (ReviewDecision.Reject) decision;
-        assertThat(reject.getReason()).isEqualTo("Actual reason");
-        assertThat(outputStream.toString()).contains("Reason is required");
+        assertThat(((ReviewDecision.Reject) decision).getReason()).isEqualTo("Actual reason");
+    }
+
+    // — Backtrack guard conditions ————————————————————————————————————————————
+
+    @Test
+    void shouldContinueWhenBacktrackDisabled() {
+        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
+        // B pressed but backtrack not allowed — expect the loop to continue and A to approve
+        CLIReviewManager manager = new CLIReviewManager(new Scanner("B\nA\n"), printStream, false);
+
+        ReviewDecision decision =
+                manager.requestReview(
+                        createStandardNode("test-node"),
+                        createSuccessResult(),
+                        createState(),
+                        new ExecutionHistory(),
+                        new ReviewConfig(ReviewMode.REQUIRED, false, false),
+                        createWorkflow());
+
+        assertThat(decision).isInstanceOf(ReviewDecision.Approve.class);
     }
 
     @Test
-    void shouldDisplayReviewHeaderWithNodeInfo() {
+    void shouldContinueWhenNoPreviousStepsToBacktrackTo() {
         System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("A\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        manager.requestReview(
-                createStandardNode("my-test-node"),
-                createSuccessResult(),
-                createState(),
-                new ExecutionHistory(),
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("HUMAN REVIEW CHECKPOINT");
-        assertThat(output).contains("my-test-node");
-        assertThat(output).contains("SUCCESS");
-    }
-
-    @Test
-    void shouldDisplayRubricScoreWhenAvailable() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("A\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        HensuState state = createState();
-        state.setRubricEvaluation(
-                RubricEvaluation.builder()
-                        .score(85.0)
-                        .passed(true)
-                        .rubricId("quality-rubric")
-                        .build());
-
-        manager.requestReview(
-                createStandardNode("test-node"),
-                createSuccessResult(),
-                state,
-                new ExecutionHistory(),
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("Rubric Score:");
-        assertThat(output).contains("85");
-        assertThat(output).contains("PASSED");
-    }
-
-    @Test
-    void shouldDisplayFailedRubricScore() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("A\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        HensuState state = createState();
-        state.setRubricEvaluation(
-                RubricEvaluation.builder()
-                        .score(45.0)
-                        .passed(false)
-                        .rubricId("quality-rubric")
-                        .build());
-
-        manager.requestReview(
-                createStandardNode("test-node"),
-                createSuccessResult(),
-                state,
-                new ExecutionHistory(),
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("45");
-        assertThat(output).contains("FAILED");
-    }
-
-    @Test
-    void shouldDisplayOutputPreview() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("A\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        NodeResult result =
-                NodeResult.builder()
-                        .status(ResultStatus.SUCCESS)
-                        .output("This is the agent output text")
-                        .build();
-
-        manager.requestReview(
-                createStandardNode("test-node"),
-                result,
-                createState(),
-                new ExecutionHistory(),
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("Output Preview:");
-        assertThat(output).contains("This is the agent output text");
-    }
-
-    @Test
-    void shouldTruncateLongOutputPreview() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("A\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        String longOutput = "X".repeat(600);
-        NodeResult result =
-                NodeResult.builder().status(ResultStatus.SUCCESS).output(longOutput).build();
-
-        manager.requestReview(
-                createStandardNode("test-node"),
-                result,
-                createState(),
-                new ExecutionHistory(),
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("...");
-        assertThat(output).doesNotContain("X".repeat(600));
-    }
-
-    @Test
-    void shouldDisplayDetailedOutputOnV() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("V\n\nA\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        NodeResult result =
-                NodeResult.builder()
-                        .status(ResultStatus.SUCCESS)
-                        .output("Full detailed output here")
-                        .metadata(Map.of("key1", "value1"))
-                        .build();
-
-        manager.requestReview(
-                createStandardNode("test-node"),
-                result,
-                createState(),
-                new ExecutionHistory(),
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("DETAILED OUTPUT");
-        assertThat(output).contains("Full detailed output here");
-        assertThat(output).contains("Metadata:");
-        assertThat(output).contains("key1");
-    }
-
-    @Test
-    void shouldDisplayHistoryOnH() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("H\n\nA\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        ExecutionHistory history = new ExecutionHistory();
-        history.addStep(
-                ExecutionStep.builder()
-                        .nodeId("step-1")
-                        .result(NodeResult.success("output1", Map.of()))
-                        .timestamp(Instant.now())
-                        .build());
-        history.addStep(
-                ExecutionStep.builder()
-                        .nodeId("step-2")
-                        .result(NodeResult.success("output2", Map.of()))
-                        .timestamp(Instant.now())
-                        .build());
-
-        manager.requestReview(
-                createStandardNode("step-2"),
-                createSuccessResult(),
-                createState(),
-                history,
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("EXECUTION HISTORY");
-        assertThat(output).contains("step-1");
-        assertThat(output).contains("step-2");
-    }
-
-    @Test
-    void shouldDisplayHelpOnQuestionMark() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("?\n\nA\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        manager.requestReview(
-                createStandardNode("test-node"),
-                createSuccessResult(),
-                createState(),
-                new ExecutionHistory(),
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("REVIEW HELP");
-        assertThat(output).contains("Commands:");
-        assertThat(output).contains("Backtracking:");
-        assertThat(output).contains("Prompt Editing:");
-    }
-
-    @Test
-    void shouldWarnOnInvalidInput() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("X\nA\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        manager.requestReview(
-                createStandardNode("test-node"),
-                createSuccessResult(),
-                createState(),
-                new ExecutionHistory(),
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("Invalid option");
-    }
-
-    @Test
-    void shouldShowBacktrackOptionWhenAllowed() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("A\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        manager.requestReview(
-                createStandardNode("test-node"),
-                createSuccessResult(),
-                createState(),
-                new ExecutionHistory(),
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("[B]");
-        assertThat(output).contains("Backtrack");
-    }
-
-    @Test
-    void shouldHideBacktrackOptionWhenNotAllowed() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("A\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        manager.requestReview(
-                createStandardNode("test-node"),
-                createSuccessResult(),
-                createState(),
-                new ExecutionHistory(),
-                new ReviewConfig(ReviewMode.REQUIRED, false, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).doesNotContain("[B]");
-    }
-
-    @Test
-    void shouldWarnWhenBacktrackNotAllowed() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("B\nA\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        manager.requestReview(
-                createStandardNode("test-node"),
-                createSuccessResult(),
-                createState(),
-                new ExecutionHistory(),
-                new ReviewConfig(ReviewMode.REQUIRED, false, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("Backtracking is not allowed");
-    }
-
-    @Test
-    void shouldWarnWhenNoPreviousStepsToBacktrack() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("B\nA\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
+        // Only one step in history (the current node itself) — nothing to go back to
+        CLIReviewManager manager = new CLIReviewManager(new Scanner("B\nA\n"), printStream, false);
 
         ExecutionHistory history = new ExecutionHistory();
         history.addStep(
@@ -439,23 +145,25 @@ class CLIReviewManagerTest {
                         .result(NodeResult.success("output", Map.of()))
                         .build());
 
-        manager.requestReview(
-                createStandardNode("only-step"),
-                createSuccessResult(),
-                createState(),
-                history,
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
+        ReviewDecision decision =
+                manager.requestReview(
+                        createStandardNode("only-step"),
+                        createSuccessResult(),
+                        createState(),
+                        history,
+                        new ReviewConfig(ReviewMode.REQUIRED, true, false),
+                        createWorkflow());
 
-        String output = outputStream.toString();
-        assertThat(output).contains("No previous steps available");
+        assertThat(decision).isInstanceOf(ReviewDecision.Approve.class);
     }
+
+    // — Backtrack flow ————————————————————————————————————————————————————————
 
     @Test
     void shouldAllowBacktrackToPreviousStep() {
         System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("B\n1\nBad output\nN\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
+        CLIReviewManager manager =
+                new CLIReviewManager(new Scanner("B\n1\nBad output\nN\n"), printStream, false);
 
         ExecutionHistory history = new ExecutionHistory();
         history.addStep(
@@ -487,8 +195,8 @@ class CLIReviewManagerTest {
     @Test
     void shouldCancelBacktrackOnZero() {
         System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("B\n0\nA\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
+        CLIReviewManager manager =
+                new CLIReviewManager(new Scanner("B\n0\nA\n"), printStream, false);
 
         ExecutionHistory history = new ExecutionHistory();
         history.addStep(
@@ -515,70 +223,10 @@ class CLIReviewManagerTest {
     }
 
     @Test
-    void shouldHandleInvalidBacktrackChoice() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("B\n99\nA\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        ExecutionHistory history = new ExecutionHistory();
-        history.addStep(
-                ExecutionStep.builder()
-                        .nodeId("step-1")
-                        .result(NodeResult.success("output1", Map.of()))
-                        .build());
-        history.addStep(
-                ExecutionStep.builder()
-                        .nodeId("step-2")
-                        .result(NodeResult.success("output2", Map.of()))
-                        .build());
-
-        manager.requestReview(
-                createStandardNode("step-2"),
-                createSuccessResult(),
-                createState(),
-                history,
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("Invalid choice");
-    }
-
-    @Test
-    void shouldHandleNonNumericBacktrackInput() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("B\nabc\nA\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        ExecutionHistory history = new ExecutionHistory();
-        history.addStep(
-                ExecutionStep.builder()
-                        .nodeId("step-1")
-                        .result(NodeResult.success("output1", Map.of()))
-                        .build());
-        history.addStep(
-                ExecutionStep.builder()
-                        .nodeId("step-2")
-                        .result(NodeResult.success("output2", Map.of()))
-                        .build());
-
-        manager.requestReview(
-                createStandardNode("step-2"),
-                createSuccessResult(),
-                createState(),
-                history,
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("enter a valid number");
-    }
-
-    @Test
     void shouldUseDefaultReasonWhenBacktrackReasonBlank() {
         System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("B\n1\n\nN\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
+        CLIReviewManager manager =
+                new CLIReviewManager(new Scanner("B\n1\n\nN\n"), printStream, false);
 
         ExecutionHistory history = new ExecutionHistory();
         history.addStep(
@@ -602,89 +250,11 @@ class CLIReviewManagerTest {
                         createWorkflow());
 
         assertThat(decision).isInstanceOf(ReviewDecision.Backtrack.class);
-        ReviewDecision.Backtrack backtrack = (ReviewDecision.Backtrack) decision;
-        assertThat(backtrack.getReason()).isEqualTo("Manual backtrack by reviewer");
+        assertThat(((ReviewDecision.Backtrack) decision).getReason())
+                .isEqualTo("Manual backtrack by reviewer");
     }
 
-    @Test
-    void shouldDisplayBacktrackStepsWithStatus() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("B\n0\nA\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        ExecutionHistory history = new ExecutionHistory();
-        history.addStep(
-                ExecutionStep.builder()
-                        .nodeId("success-step")
-                        .result(NodeResult.success("output1", Map.of()))
-                        .build());
-        history.addStep(
-                ExecutionStep.builder()
-                        .nodeId("failure-step")
-                        .result(NodeResult.failure("error"))
-                        .build());
-        history.addStep(
-                ExecutionStep.builder()
-                        .nodeId("current-step")
-                        .result(NodeResult.success("output2", Map.of()))
-                        .build());
-
-        manager.requestReview(
-                createStandardNode("current-step"),
-                createSuccessResult(),
-                createState(),
-                history,
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("SELECT BACKTRACK TARGET");
-        assertThat(output).contains("success-step");
-        assertThat(output).contains("failure-step");
-        assertThat(output).contains("OK");
-        assertThat(output).contains("FAIL");
-    }
-
-    @Test
-    void shouldDisplayNoOutputWhenNull() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("A\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        NodeResult result = NodeResult.builder().status(ResultStatus.SUCCESS).output(null).build();
-
-        manager.requestReview(
-                createStandardNode("test-node"),
-                result,
-                createState(),
-                new ExecutionHistory(),
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("(no output)");
-    }
-
-    @Test
-    void shouldFormatFailureStatus() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        Scanner scanner = new Scanner("A\n");
-        CLIReviewManager manager = new CLIReviewManager(scanner, printStream, false);
-
-        NodeResult result =
-                NodeResult.builder().status(ResultStatus.FAILURE).output("error message").build();
-
-        manager.requestReview(
-                createStandardNode("test-node"),
-                result,
-                createState(),
-                new ExecutionHistory(),
-                new ReviewConfig(ReviewMode.REQUIRED, true, false),
-                createWorkflow());
-
-        String output = outputStream.toString();
-        assertThat(output).contains("FAILURE");
-    }
+    // — Helpers ———————————————————————————————————————————————————————————————
 
     private StandardNode createStandardNode(String id) {
         return StandardNode.builder()

@@ -43,7 +43,7 @@ The main model acts as both Lead Implementer **and** Researcher. Adjust the prot
       summary.
 - **Gemini (Cynical Researcher/Indexer):**
     - **Focus:** High-context scanning (1M window), noise reduction, and "Bro-opinion" technical reviews.
-    - **Constraint:** Use `gemini-2.5-flash-lite` for indexing. Your goal is to kill noise. If a code block isn't 100%
+    - **Constraint:** Use `gemini-3.1-flash-lite-preview` for indexing. Your goal is to kill noise. If a code block isn't 100%
       relevant to the specific task, discard it.
 
 ## 2. Token-Efficient Research Protocol (The "Pre-Filter" Hack)
@@ -52,8 +52,8 @@ The main model acts as both Lead Implementer **and** Researcher. Adjust the prot
   > "Act as the Cynical Researcher. Scan the 1M context for [Task]. Strip boilerplate, identify logic 'hot spots,' and
   provide a minimalist index of only the essential snippets with a blunt one-sentence opinion on each."
 - **Model Routing:**
-    - **Discovery/Indexing:** `gemini-2.5-flash-lite`.
-    - **Complex Logic/Refactoring:** `gemini-2.5-pro` (or latest Pro model).
+    - **Discovery/Indexing:** `gemini-3.1-flash-lite-preview`.
+    - **Complex Logic/Refactoring:** `gemini-3.1-pro-preview` (or latest Pro model).
 - **Prohibited:** No `grep` or recursive `ls`. These are legacy "blind" tools. Use Gemini's semantic understanding to
   find what matters.
 

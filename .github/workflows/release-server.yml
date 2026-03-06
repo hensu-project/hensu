@@ -1,0 +1,51 @@
+name: Release Server
+
+on:
+  push:
+    tags: ['server/v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release Server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: graalvm/setup-graalvm@54b4f5a65c1a84b2fdfdc2078fe43df32819e4b1 # v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.4.3
+
+      - name: Build and test all modules
+        run: ./gradlew build
+
+      - name: Build native server binary
+        run: ./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native -x test
+
+      - name: Prepare release artifact
+        run: |
+          SERVER_BIN=$(find hensu-server/build -name '*-runner' ! -name '*.jar' -type f)
+          cp "$SERVER_BIN" hensu-server-linux-x86_64
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#server/}"
+
+          PRERELEASE_FLAG=""
+          if [[ "$VERSION" =~ -(alpha|beta|rc) ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          gh release create "$TAG" \
+            --title "Server $VERSION" \
+            --generate-notes \
+            $PRERELEASE_FLAG \
+            hensu-server-linux-x86_64

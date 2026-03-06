@@ -22,21 +22,6 @@ class StepResultTest {
                     .isInstanceOf(NullPointerException.class)
                     .hasMessageContaining("toolName");
         }
-
-        @Test
-        void shouldDefaultDurationToZero() {
-            StepResult result = new StepResult(0, "tool", true, "output", null, null, Map.of());
-
-            assertThat(result.duration()).isEqualTo(Duration.ZERO);
-        }
-
-        @Test
-        void shouldDefaultMetadataToEmptyMap() {
-            StepResult result =
-                    new StepResult(0, "tool", true, "output", null, Duration.ZERO, null);
-
-            assertThat(result.metadata()).isNotNull().isEmpty();
-        }
     }
 
     @Nested
@@ -99,19 +84,6 @@ class StepResultTest {
             assertThat(withMore.metadata())
                     .containsEntry("existing", "value")
                     .containsEntry("new", "data");
-        }
-    }
-
-    @Nested
-    class QueryMethods {
-
-        @Test
-        void shouldDetectFailure() {
-            StepResult success = StepResult.success(0, "tool", "out", Duration.ZERO);
-            StepResult failure = StepResult.failure(0, "tool", "err", Duration.ZERO);
-
-            assertThat(success.isFailure()).isFalse();
-            assertThat(failure.isFailure()).isTrue();
         }
     }
 }

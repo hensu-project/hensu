@@ -29,11 +29,6 @@ class TextVisualizationFormatTest {
     }
 
     @Test
-    void shouldReturnTextAsFormatName() {
-        assertThat(format.getName()).isEqualTo("text");
-    }
-
-    @Test
     void shouldRenderWorkflowHeader() {
         Workflow workflow = createSimpleWorkflow("test-workflow");
 
@@ -51,7 +46,6 @@ class TextVisualizationFormatTest {
 
         assertThat(result).contains("start");
         assertThat(result).contains("STANDARD");
-        assertThat(result).contains("Agent:");
         assertThat(result).contains("agent-1");
     }
 
@@ -61,7 +55,6 @@ class TextVisualizationFormatTest {
 
         String result = format.render(workflow, false);
 
-        assertThat(result).contains("Transitions:");
         assertThat(result).contains("end");
         assertThat(result).contains("on success");
     }
@@ -74,7 +67,6 @@ class TextVisualizationFormatTest {
 
         assertThat(result).contains("end");
         assertThat(result).contains("END");
-        assertThat(result).contains("Exit:");
         assertThat(result).contains("SUCCESS");
     }
 
@@ -86,7 +78,6 @@ class TextVisualizationFormatTest {
 
         assertThat(result).contains("generic-step");
         assertThat(result).contains("GENERIC");
-        assertThat(result).contains("Executor:");
         assertThat(result).contains("validator");
     }
 
@@ -117,7 +108,7 @@ class TextVisualizationFormatTest {
         String result = format.render(workflow, false);
 
         assertThat(result).contains("on failure");
-        assertThat(result).contains("retry:");
+        assertThat(result).contains("retry");
     }
 
     @Test
@@ -135,23 +126,6 @@ class TextVisualizationFormatTest {
         assertThat(result).contains("test-node");
         assertThat(result).contains("STANDARD");
         assertThat(result).contains("agent-1");
-    }
-
-    @Test
-    void shouldUseBoxDrawingCharacters() {
-        StandardNode node =
-                StandardNode.builder()
-                        .id("box-node")
-                        .agentId("agent-1")
-                        .prompt("Test")
-                        .transitionRules(List.of())
-                        .build();
-
-        String result = format.renderNode(node, "box-node", false);
-
-        assertThat(result).contains("┌─");
-        assertThat(result).contains("│");
-        assertThat(result).contains("└─");
     }
 
     private Workflow createSimpleWorkflow(String name) {

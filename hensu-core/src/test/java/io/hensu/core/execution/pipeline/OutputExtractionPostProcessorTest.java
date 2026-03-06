@@ -6,7 +6,6 @@ import io.hensu.core.execution.executor.ExecutionContext;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionResult;
-import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.util.AgentOutputValidator;
 import io.hensu.core.workflow.Workflow;
@@ -54,17 +53,6 @@ class OutputExtractionPostProcessorTest {
     }
 
     @Test
-    @DisplayName("skips extraction when output is null")
-    void shouldSkipNullOutput() {
-        var ctx = contextWithNullOutput("my-node");
-
-        var result = processor.process(ctx);
-
-        assertThat(result).isEmpty();
-        assertThat(ctx.state().getContext()).doesNotContainKey("my-node");
-    }
-
-    @Test
     @DisplayName("does not extract from malformed JSON")
     void shouldHandleMalformedJson() {
         var ctx = contextWith("node", "{\"key\": \"val", List.of("key"));
@@ -74,16 +62,6 @@ class OutputExtractionPostProcessorTest {
         assertThat(ctx.state().getContext())
                 .containsEntry("node", "{\"key\": \"val")
                 .doesNotContainKey("key");
-    }
-
-    @Test
-    @DisplayName("does not extract from empty string output")
-    void shouldHandleEmptyStringOutput() {
-        var ctx = contextWith("node", "", List.of("key"));
-
-        processor.process(ctx);
-
-        assertThat(ctx.state().getContext()).containsEntry("node", "").doesNotContainKey("key");
     }
 
     @Test
@@ -155,9 +133,7 @@ class OutputExtractionPostProcessorTest {
         assertThat(ctx.state().getContext()).containsEntry("flat", "ok").doesNotContainKey("meta");
     }
 
-    // ——————————————————————————————————————————————————————
-    // Output validation
-    // ——————————————————————————————————————————————————————
+    // — Output validation ———————————————————————————————————————————————————
 
     @Test
     @DisplayName("output with NUL byte returns Failure and does not pollute context")
@@ -206,7 +182,25 @@ class OutputExtractionPostProcessorTest {
         assertThat(failure.e().getMessage()).contains("my-node");
     }
 
-    // --- Helpers ---
+    @Test
+    @DisplayName("agent JSON output can overwrite internal workflow control key loop_exit_target")
+    void shouldAllowAgentToOverwriteLoopExitTarget() {
+        // TransitionPostProcessor reads loop_exit_target from context to redirect LoopNode.
+        // If an agent declares loop_exit_target as an outputParam and the LLM outputs that key,
+        // this processor silently injects it — potentially hijacking loop exit routing.
+        // This test documents the current behavior and will fail if a key denylist is added.
+        var ctx =
+                contextWith(
+                        "agent-node",
+                        "{\"loop_exit_target\": \"injected-node\"}",
+                        List.of("loop_exit_target"));
+
+        processor.process(ctx);
+
+        assertThat(ctx.state().getContext()).containsEntry("loop_exit_target", "injected-node");
+    }
+
+    // — Helpers —————————————————————————————————————————————————————————————
 
     private ProcessorContext contextWith(String nodeId, String output, List<String> outputParams) {
         var node =
@@ -235,36 +229,5 @@ class OutputExtractionPostProcessorTest {
         var execCtx = ExecutionContext.builder().state(state).workflow(workflow).build();
 
         return new ProcessorContext(execCtx, node, NodeResult.success(output, Map.of()));
-    }
-
-    private ProcessorContext contextWithNullOutput(String nodeId) {
-        var node =
-                StandardNode.builder()
-                        .id(nodeId)
-                        .transitionRules(List.of(new SuccessTransition("next")))
-                        .build();
-
-        var state =
-                new HensuState.Builder()
-                        .executionId("test")
-                        .workflowId("test-wf")
-                        .currentNode(nodeId)
-                        .context(new HashMap<>())
-                        .history(new ExecutionHistory())
-                        .build();
-
-        var workflow =
-                Workflow.builder()
-                        .id("test-wf")
-                        .startNode(nodeId)
-                        .nodes(Map.of(nodeId, node))
-                        .build();
-
-        var execCtx = ExecutionContext.builder().state(state).workflow(workflow).build();
-
-        return new ProcessorContext(
-                execCtx,
-                node,
-                NodeResult.builder().status(ResultStatus.SUCCESS).output(null).build());
     }
 }

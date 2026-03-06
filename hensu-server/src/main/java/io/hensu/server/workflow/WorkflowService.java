@@ -14,6 +14,7 @@ import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import io.hensu.server.tenant.TenantContext;
 import io.hensu.server.tenant.TenantContext.TenantInfo;
+import io.hensu.server.validation.LogSanitizer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.Serial;
@@ -290,7 +291,8 @@ public class WorkflowService {
         Objects.requireNonNull(executionId, "executionId must not be null");
 
         LOG.infov(
-                "Resuming workflow execution: executionId={0}, tenant={1}", executionId, tenantId);
+                "Resuming workflow execution: executionId={0}, tenant={1}",
+                LogSanitizer.sanitize(executionId), tenantId);
 
         HensuSnapshot snapshot =
                 stateRepository
@@ -345,7 +347,10 @@ public class WorkflowService {
                         return null;
                     });
         } catch (Exception e) {
-            LOG.errorv(e, "Resume execution failed: executionId={0}", executionId);
+            LOG.errorv(
+                    e,
+                    "Resume execution failed: executionId={0}",
+                    LogSanitizer.sanitize(executionId));
             throw new WorkflowExecutionException("Resume failed: " + e.getMessage(), e);
         }
     }

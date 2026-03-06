@@ -114,49 +114,48 @@ public class CLIReviewManager implements ReviewHandler {
 
     private void displayReviewHeader(Node node, NodeResult result, HensuState state) {
         println("");
-        println(styles.separatorTop());
-        println(styles.bold(styles.center("HUMAN REVIEW CHECKPOINT", 62)));
-        println(styles.separatorBottom());
+        println(styles.boxTopWithLabel(styles.dim("review · ") + styles.bold(node.getId())));
         println("");
 
-        // Node info
-        println(styles.bold("Step: ") + node.getId());
-        println(styles.bold("Status: ") + formatStatus(result.getStatus()));
+        println(String.format("  %-8s %s", "step", styles.bold(node.getId())));
+        println(String.format("  %-8s %s", "status", formatStatus(result.getStatus())));
 
-        // Rubric score if available
         RubricEvaluation rubricEval = state.getRubricEvaluation();
         if (rubricEval != null) {
-            String passStatus = rubricEval.isPassed() ? "PASSED" : "FAILED";
+            boolean passed = rubricEval.isPassed();
             println(
-                    styles.bold("Rubric Score: ")
-                            + styles.successOrError(
+                    String.format(
+                            "  %-8s %s",
+                            "rubric",
+                            styles.successOrError(
                                     String.format(
-                                            "%.0f/100 (%s)", rubricEval.getScore(), passStatus),
-                                    rubricEval.isPassed()));
+                                            "%.0f/100  %s",
+                                            rubricEval.getScore(), passed ? "PASSED" : "FAILED"),
+                                    passed)));
         }
 
         println("");
-
-        // Output preview (truncated)
-        println(styles.bold("Output Preview:"));
-        println(styles.dim("-".repeat(62)));
+        println(styles.gray("  output preview"));
+        println(styles.separatorMid());
         String output = result.getOutput() != null ? result.getOutput().toString() : "(no output)";
         String preview = output.length() > 500 ? output.substring(0, 500) + "..." : output;
-        println(preview);
-        println(styles.dim("-".repeat(62)));
+        for (String line : preview.split("\n")) {
+            println("  " + line);
+        }
+        println(styles.separatorMid());
         println("");
     }
 
     private void displayMenu(ReviewConfig config) {
-        println(styles.bold("Review Options:"));
-        println("  [A] " + styles.success("Approve") + " and continue");
+        println(styles.bold("options"));
+        println("  [a] " + styles.success("approve") + " and continue");
         if (config.isAllowBacktrack()) {
-            println("  [B] " + styles.warn("Backtrack") + " to a previous step");
+            println("  [b] " + styles.warn("backtrack") + " to a previous step");
         }
-        println("  [R] Reject and end workflow");
-        println(styles.gray("  [V] View detailed output"));
-        println(styles.gray("  [H] View execution history"));
-        println(styles.gray("  [?] Help"));
+        println("  [r] reject and end workflow");
+        println(styles.gray("  [v] view detailed output"));
+        println(styles.gray("  [h] view execution history"));
+        println(styles.gray("  [?] help"));
         print("\n> ");
     }
 
@@ -173,9 +172,7 @@ public class CLIReviewManager implements ReviewHandler {
         List<ExecutionStep> validSteps = new ArrayList<>(steps.subList(0, steps.size() - 1));
 
         println("");
-        println(styles.separatorTop());
-        println(styles.bold(styles.center("SELECT BACKTRACK TARGET", 62)));
-        println(styles.separatorBottom());
+        println(styles.boxTopWithLabel(styles.dim("backtrack target")));
         println("");
 
         // Display available steps (newest first for easier selection)
@@ -353,21 +350,22 @@ public class CLIReviewManager implements ReviewHandler {
 
     private void displayDetailedOutput(NodeResult result) {
         println("");
-        println(styles.separatorTop());
-        println(styles.bold(styles.center("DETAILED OUTPUT", 62)));
-        println(styles.separatorBottom());
+        println(styles.boxTopWithLabel(styles.dim("detailed output")));
         println("");
 
         if (result.getOutput() != null) {
-            println(result.getOutput().toString());
+            for (String line : result.getOutput().toString().split("\n")) {
+                println("  " + line);
+            }
         } else {
-            println(styles.gray("(no output)"));
+            println(styles.gray("  (no output)"));
         }
 
         if (!result.getMetadata().isEmpty()) {
             println("");
-            println(styles.bold("Metadata:"));
-            result.getMetadata().forEach((key, value) -> println("  " + key + ": " + value));
+            println(styles.gray("  metadata"));
+            result.getMetadata()
+                    .forEach((key, value) -> println(String.format("  %-14s %s", key, value)));
         }
 
         println("");
@@ -377,16 +375,14 @@ public class CLIReviewManager implements ReviewHandler {
 
     private void displayHistory(ExecutionHistory history, String currentNodeId) {
         println("");
-        println(styles.separatorTop());
-        println(styles.bold(styles.center("EXECUTION HISTORY", 62)));
-        println(styles.separatorBottom());
+        println(styles.boxTopWithLabel(styles.dim("execution history")));
         println("");
 
         List<ExecutionStep> steps = history.getSteps();
         for (int i = 0; i < steps.size(); i++) {
             ExecutionStep step = steps.get(i);
             boolean isCurrent = step.getNodeId().equals(currentNodeId);
-            String marker = isCurrent ? styles.success("->") : "  ";
+            String marker = isCurrent ? styles.arrow() : "  ";
             String status =
                     styles.successOrError(
                             step.getResult().getStatus() == ResultStatus.SUCCESS ? "OK" : "FAIL",
@@ -399,21 +395,21 @@ public class CLIReviewManager implements ReviewHandler {
                             marker, i + 1, step.getNodeId(), status, styles.gray(timestamp)));
         }
 
-        // Display backtrack events if any
         if (!history.getBacktracks().isEmpty()) {
             println("");
-            println(styles.warn("Backtrack Events:"));
+            println(styles.gray("  backtracks"));
             history.getBacktracks()
                     .forEach(
                             bt ->
                                     println(
                                             "  "
                                                     + bt.getFrom()
-                                                    + " -> "
+                                                    + " "
+                                                    + styles.arrow()
+                                                    + " "
                                                     + bt.getTo()
-                                                    + " ("
-                                                    + bt.getReason()
-                                                    + ")"));
+                                                    + "  "
+                                                    + styles.dim(bt.getReason())));
         }
 
         println("");
@@ -423,30 +419,28 @@ public class CLIReviewManager implements ReviewHandler {
 
     private void displayHelp() {
         println("");
-        println(styles.separatorTop());
-        println(styles.bold(styles.center("REVIEW HELP", 62)));
-        println(styles.separatorBottom());
+        println(styles.boxTopWithLabel(styles.dim("help")));
         println("");
-        println(styles.bold("Commands:"));
-        println("  A - Approve the current step and continue workflow execution");
-        println("  B - Backtrack to a previous step (if allowed)");
-        println("      Useful when you want to re-run a step with different inputs");
-        println("  R - Reject the workflow and terminate execution");
-        println("  V - View the complete output of the current step");
-        println("  H - View the execution history of all completed steps");
-        println("  ? - Display this help message");
+        println(styles.bold("commands"));
+        println("  a  approve the current step and continue workflow execution");
+        println("  b  backtrack to a previous step (if allowed)");
+        println("     useful when you want to re-run a step with different inputs");
+        println("  r  reject the workflow and terminate execution");
+        println("  v  view the complete output of the current step");
+        println("  h  view the execution history of all completed steps");
+        println("  ?  display this help message");
         println("");
-        println(styles.bold("Backtracking:"));
+        println(styles.bold("backtracking"));
         println("  When backtracking, workflow execution will resume from the");
         println("  selected step. The current state context is preserved, allowing");
         println("  the re-executed step to potentially produce different output.");
         println("");
-        println(styles.bold("Prompt Editing:"));
+        println(styles.bold("prompt editing"));
         println("  After selecting a backtrack target, you can optionally edit the");
         println("  prompt using your $EDITOR (defaults to vim). The editor shows:");
-        println("  - Available context variables and their current values");
-        println("  - Lines starting with # are comments and will be ignored");
-        println("  - Write your new prompt, save, and exit to apply changes");
+        println("  - available context variables and their current values");
+        println("  - lines starting with # are comments and will be ignored");
+        println("  - write your new prompt, save, and exit to apply changes");
         println("");
         print("Press Enter to continue...");
         readInput();

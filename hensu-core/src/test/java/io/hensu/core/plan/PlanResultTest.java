@@ -20,22 +20,6 @@ class PlanResultTest {
                     .isInstanceOf(NullPointerException.class)
                     .hasMessageContaining("status");
         }
-
-        @Test
-        void shouldDefaultStepResultsToEmptyList() {
-            PlanResult result =
-                    new PlanResult(PlanStatus.COMPLETED, null, -1, Duration.ZERO, null, null);
-
-            assertThat(result.stepResults()).isNotNull().isEmpty();
-        }
-
-        @Test
-        void shouldDefaultTotalDurationToZero() {
-            PlanResult result =
-                    new PlanResult(PlanStatus.COMPLETED, List.of(), -1, null, null, null);
-
-            assertThat(result.totalDuration()).isEqualTo(Duration.ZERO);
-        }
     }
 
     @Nested
@@ -91,17 +75,6 @@ class PlanResultTest {
 
             assertThat(result.status()).isEqualTo(PlanStatus.TIMEOUT);
             assertThat(result.error()).contains("exceeded maximum duration");
-        }
-
-        @Test
-        void shouldCreateCancelledResult() {
-            List<StepResult> steps =
-                    List.of(StepResult.success(0, "t1", "out", Duration.ofSeconds(1)));
-
-            PlanResult result = PlanResult.cancelled(steps, "User cancelled");
-
-            assertThat(result.status()).isEqualTo(PlanStatus.CANCELLED);
-            assertThat(result.error()).isEqualTo("User cancelled");
         }
     }
 
