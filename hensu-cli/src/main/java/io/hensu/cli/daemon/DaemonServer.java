@@ -470,9 +470,14 @@ public class DaemonServer {
     /// Failures are logged at WARNING and do not abort startup.
     private static void sdNotifyReady() {
         if (System.getenv("NOTIFY_SOCKET") == null) return;
+        String notifyBin = SystemBinaries.systemdNotify();
+        if (notifyBin == null) {
+            log.warning("sd_notify: systemd-notify binary not found in trusted locations");
+            return;
+        }
         try {
             int exit =
-                    new ProcessBuilder("systemd-notify", "--ready")
+                    new ProcessBuilder(notifyBin, "--ready")
                             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                             .redirectError(ProcessBuilder.Redirect.DISCARD)
                             .start()

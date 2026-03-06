@@ -3,6 +3,7 @@ package io.hensu.cli.commands;
 import io.hensu.cli.daemon.DaemonClient;
 import io.hensu.cli.daemon.DaemonPaths;
 import io.hensu.cli.daemon.DaemonServer;
+import io.hensu.cli.daemon.SystemBinaries;
 import io.hensu.cli.ui.AnsiStyles;
 import jakarta.inject.Inject;
 import java.io.IOException;
@@ -119,7 +120,8 @@ public class DaemonCommand extends HensuCommand {
             // With Type=notify, `systemctl start` blocks until sd_notify READY=1 is received.
             // No additional readiness poll needed.
             int exitCode =
-                    new ProcessBuilder("systemctl", "--user", "start", "hensu-daemon")
+                    new ProcessBuilder(
+                                    SystemBinaries.systemctl(), "--user", "start", "hensu-daemon")
                             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                             .redirectError(ProcessBuilder.Redirect.INHERIT)
                             .start()
@@ -135,7 +137,7 @@ public class DaemonCommand extends HensuCommand {
         private void startViaLaunchd(AnsiStyles styles) throws IOException, InterruptedException {
             // launchctl start is non-blocking — poll the socket for readiness.
             int exitCode =
-                    new ProcessBuilder("launchctl", "start", "io.hensu.daemon")
+                    new ProcessBuilder(SystemBinaries.launchctl(), "start", "io.hensu.daemon")
                             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                             .redirectError(ProcessBuilder.Redirect.INHERIT)
                             .start()
@@ -236,7 +238,7 @@ public class DaemonCommand extends HensuCommand {
                 // When called from ExecStop the service is "deactivating" →
                 // isSystemdServiceActive() returns false → reaches direct stop below.
                 try {
-                    new ProcessBuilder("systemctl", "--user", "stop", "hensu-daemon")
+                    new ProcessBuilder(SystemBinaries.systemctl(), "--user", "stop", "hensu-daemon")
                             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                             .redirectError(ProcessBuilder.Redirect.INHERIT)
                             .start()
@@ -251,7 +253,7 @@ public class DaemonCommand extends HensuCommand {
 
             if (isLaunchdAgentLoaded()) {
                 try {
-                    new ProcessBuilder("launchctl", "stop", "io.hensu.daemon")
+                    new ProcessBuilder(SystemBinaries.launchctl(), "stop", "io.hensu.daemon")
                             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                             .redirectError(ProcessBuilder.Redirect.INHERIT)
                             .start()
@@ -334,7 +336,12 @@ public class DaemonCommand extends HensuCommand {
     /// {@code failed}, or if {@code systemctl} is not available.
     static boolean isSystemdServiceActive() {
         try {
-            return new ProcessBuilder("systemctl", "--user", "is-active", "--quiet", "hensu-daemon")
+            return new ProcessBuilder(
+                                    SystemBinaries.systemctl(),
+                                    "--user",
+                                    "is-active",
+                                    "--quiet",
+                                    "hensu-daemon")
                             .start()
                             .waitFor()
                     == 0;
@@ -359,7 +366,7 @@ public class DaemonCommand extends HensuCommand {
     /// Returns {@code false} if {@code launchctl} is unavailable or the agent is not loaded.
     static boolean isLaunchdAgentLoaded() {
         try {
-            return new ProcessBuilder("launchctl", "list", "io.hensu.daemon")
+            return new ProcessBuilder(SystemBinaries.launchctl(), "list", "io.hensu.daemon")
                             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                             .redirectError(ProcessBuilder.Redirect.DISCARD)
                             .start()
