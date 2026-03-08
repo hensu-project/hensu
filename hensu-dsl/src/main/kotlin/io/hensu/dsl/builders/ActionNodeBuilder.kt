@@ -70,7 +70,7 @@ class ActionNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMar
      * Payload values support `{variable}` template syntax, resolved from workflow context
      * including:
      * - Initial context passed at workflow start
-     * - Output parameters from previous agent steps via `outputParams`
+     * - Values written by previous nodes via `writes` declarations
      * - Values stored by previous nodes
      *
      * Example:

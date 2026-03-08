@@ -13,9 +13,11 @@ package io.hensu.dsl.builders
  */
 object Models {
     // Claude models
-    const val CLAUDE_SONNET_4_5 = "claude-sonnet-4.5-20250514"
-    const val CLAUDE_OPUS_4_1 = "claude-opus-4.1-20250514"
-    const val CLAUDE_HAIKU_4_5 = "claude-haiku-4.5-20251001"
+    const val CLAUDE_OPUS_4_6 = "claude-opus-4-6"
+    const val CLAUDE_OPUS_4_5 = "claude-opus-4-5"
+    const val CLAUDE_SONNET_4_6 = "claude-sonnet-4-6"
+    const val CLAUDE_SONNET_4_5 = "claude-sonnet-4-5"
+    const val CLAUDE_HAIKU_4_5 = "claude-haiku-4-5"
 
     // OpenAI models
     const val GPT_4 = "gpt-4"

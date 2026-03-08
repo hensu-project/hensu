@@ -2,15 +2,20 @@ fun llmEvalSimpleWorkflow() = workflow("llm-eval-simple") {
     description = "Simple LLM evaluation test"
     version = "1.0.0"
 
+    state {
+        input("topic", VarType.STRING)
+        variable("article", VarType.STRING)
+    }
+
     agents {
         agent("writer") {
-            role = "Content writer"
+            role = "Content writer. Return JSON with key: article."
             model = Models.CLAUDE_SONNET_4_5
             temperature = 0.7
         }
 
         agent("evaluator") {
-            role = "Content evaluator"
+            role = "Content evaluator."
             model = Models.CLAUDE_SONNET_4_5
             temperature = 0.2
         }
@@ -22,13 +27,14 @@ fun llmEvalSimpleWorkflow() = workflow("llm-eval-simple") {
         node("write") {
             agent = "writer"
             prompt = "Write about: {topic}"
+            writes("article")
             onSuccess goto "evaluate"
         }
 
         node("evaluate") {
             agent = "evaluator"
-            prompt = "Evaluate: {write}"
-            outputParams = listOf("score")
+            prompt = "Evaluate: {article}"
+            writes("score")
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "done"

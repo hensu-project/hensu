@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentResponse;
+import io.hensu.core.execution.parallel.FailureMarker;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.workflow.Workflow;
@@ -98,6 +99,117 @@ class WorkflowExecutorForkJoinTest extends WorkflowExecutorTestBase {
                         .get("fork_results");
         assertThat(combined).isInstanceOf(String.class);
         assertThat(combined.toString()).contains("Section A").contains("Section B");
+    }
+
+    // — FailureMarker contract ————————————————————————————————————————————
+
+    @Test
+    void shouldIncludeFailureMarkerForFailedForkInCollectAll() throws Exception {
+        // taskA succeeds, taskB fails. With failOnAnyError=false the join proceeds to merge.
+        // COLLECT_ALL must include FailureMarker at taskB's key — not drop it silently.
+        var agentA = mock(Agent.class);
+        var agentB = mock(Agent.class);
+        when(agentRegistry.getAgent("agent-a")).thenReturn(Optional.of(agentA));
+        when(agentRegistry.getAgent("agent-b")).thenReturn(Optional.of(agentB));
+        when(agentA.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Result A"));
+        when(agentB.execute(any(), any())).thenReturn(AgentResponse.Error.of("Task B exploded"));
+
+        var result =
+                executor.execute(buildForkJoinWorkflowCollectAllStrategy(false), new HashMap<>());
+
+        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
+        var outputs =
+                (Map<String, Object>)
+                        ((ExecutionResult.Completed) result)
+                                .getFinalState()
+                                .getContext()
+                                .get("fork_results");
+
+        assertThat(outputs).containsKey("taskA");
+        assertThat(outputs).containsKey("taskB");
+        assertThat(outputs.get("taskA")).isEqualTo("Result A");
+        assertThat(outputs.get("taskB")).isInstanceOf(FailureMarker.class);
+        assertThat(((FailureMarker) outputs.get("taskB")).message()).isNotBlank();
+    }
+
+    // — FIRST_SUCCESSFUL ——————————————————————————————————————————————————
+
+    @Test
+    void shouldReturnFirstSuccessInDefinitionOrderForFirstSuccessful() throws Exception {
+        // taskA is listed first in fork targets. Its output must win regardless of
+        // which thread completes first. "First" is definition order, not race order.
+        var agentA = mock(Agent.class);
+        var agentB = mock(Agent.class);
+        when(agentRegistry.getAgent("agent-a")).thenReturn(Optional.of(agentA));
+        when(agentRegistry.getAgent("agent-b")).thenReturn(Optional.of(agentB));
+        when(agentA.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("First"));
+        when(agentB.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Second"));
+
+        var result =
+                executor.execute(
+                        buildForkJoinWorkflow(MergeStrategy.FIRST_SUCCESSFUL, false),
+                        new HashMap<>());
+
+        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
+        var merged =
+                ((ExecutionResult.Completed) result)
+                        .getFinalState()
+                        .getContext()
+                        .get("fork_results");
+        assertThat(merged).isEqualTo("First");
+    }
+
+    @Test
+    void shouldReturnNullWhenAllForksFailForFirstSuccessful() throws Exception {
+        // All forks fail + failOnAnyError=false → merge runs → no success → null stored.
+        // Must not throw IllegalStateException.
+        var agentA = mock(Agent.class);
+        var agentB = mock(Agent.class);
+        when(agentRegistry.getAgent("agent-a")).thenReturn(Optional.of(agentA));
+        when(agentRegistry.getAgent("agent-b")).thenReturn(Optional.of(agentB));
+        when(agentA.execute(any(), any())).thenReturn(AgentResponse.Error.of("A failed"));
+        when(agentB.execute(any(), any())).thenReturn(AgentResponse.Error.of("B failed"));
+
+        var result =
+                executor.execute(
+                        buildForkJoinWorkflow(MergeStrategy.FIRST_SUCCESSFUL, false),
+                        new HashMap<>());
+
+        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
+        var merged =
+                ((ExecutionResult.Completed) result)
+                        .getFinalState()
+                        .getContext()
+                        .get("fork_results");
+        assertThat(merged).isNull();
+    }
+
+    // — CONCATENATE ———————————————————————————————————————————————————————
+
+    @Test
+    void shouldSkipFailedForksInConcatenateWithoutEmptySegments() throws Exception {
+        // taskA succeeds, taskB fails. The concatenated result must contain only taskA's output
+        // with no stray "---" separators from empty/null segments.
+        var agentA = mock(Agent.class);
+        var agentB = mock(Agent.class);
+        when(agentRegistry.getAgent("agent-a")).thenReturn(Optional.of(agentA));
+        when(agentRegistry.getAgent("agent-b")).thenReturn(Optional.of(agentB));
+        when(agentA.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Hello"));
+        when(agentB.execute(any(), any())).thenReturn(AgentResponse.Error.of("B failed"));
+
+        var result =
+                executor.execute(
+                        buildForkJoinWorkflow(MergeStrategy.CONCATENATE, false), new HashMap<>());
+
+        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
+        var merged =
+                ((ExecutionResult.Completed) result)
+                        .getFinalState()
+                        .getContext()
+                        .get("fork_results");
+        assertThat(merged).isInstanceOf(String.class);
+        assertThat(merged.toString()).isEqualTo("Hello");
+        assertThat(merged.toString()).doesNotContain("---");
     }
 
     // — Helpers ———————————————————————————————————————————————————————————

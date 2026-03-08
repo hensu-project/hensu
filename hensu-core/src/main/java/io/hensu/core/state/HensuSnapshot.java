@@ -4,6 +4,8 @@ import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.plan.PlanSnapshot;
 import java.io.Serializable;
 import java.time.Instant;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -53,7 +55,7 @@ public record HensuSnapshot(
     public HensuSnapshot {
         Objects.requireNonNull(workflowId, "workflowId must not be null");
         Objects.requireNonNull(executionId, "executionId must not be null");
-        context = context != null ? Map.copyOf(context) : Map.of();
+        context = context != null ? Collections.unmodifiableMap(new HashMap<>(context)) : Map.of();
         history = history != null ? history.copy() : new ExecutionHistory();
         createdAt = createdAt != null ? createdAt : Instant.now();
     }

@@ -1,0 +1,48 @@
+{
+  "id" : "approval-routing",
+  "version" : "1.0.0",
+  "stateSchema" : {
+    "variables" : [ {
+      "name" : "content",
+      "type" : "STRING",
+      "isInput" : true
+    } ]
+  },
+  "startNode" : "review",
+  "agents" : {
+    "reviewer" : {
+      "id" : "reviewer",
+      "role" : "reviewer",
+      "model" : "stub",
+      "temperature" : 0.3
+    }
+  },
+  "nodes" : {
+    "review" : {
+      "id" : "review",
+      "nodeType" : "STANDARD",
+      "agentId" : "reviewer",
+      "prompt" : "Review this content: {content}",
+      "writes" : [ "approved" ],
+      "transitionRules" : [ {
+        "type" : "approval",
+        "expected" : true,
+        "targetNode" : "finalize"
+      }, {
+        "type" : "approval",
+        "expected" : false,
+        "targetNode" : "improve"
+      } ]
+    },
+    "finalize" : {
+      "id" : "finalize",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    },
+    "improve" : {
+      "id" : "improve",
+      "nodeType" : "END",
+      "status" : "FAILURE"
+    }
+  }
+}

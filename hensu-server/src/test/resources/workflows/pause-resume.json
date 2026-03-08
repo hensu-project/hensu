@@ -1,6 +1,13 @@
 {
   "id" : "pause-resume",
   "version" : "1.0.0",
+  "stateSchema" : {
+    "variables" : [ {
+      "name" : "input",
+      "type" : "STRING",
+      "isInput" : true
+    } ]
+  },
   "startNode" : "step-a",
   "agents" : {
     "worker" : {

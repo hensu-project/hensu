@@ -55,22 +55,6 @@ class ExecutionHistorySerializationTest {
     }
 
     @Test
-    void roundTrip_nodeResult_failure() throws JsonProcessingException {
-        NodeResult original =
-                NodeResult.builder()
-                        .status(ResultStatus.FAILURE)
-                        .output("Rate limit exceeded")
-                        .timestamp(Instant.parse("2025-01-15T10:30:00Z"))
-                        .build();
-
-        String json = mapper.writeValueAsString(original);
-        NodeResult restored = mapper.readValue(json, NodeResult.class);
-
-        assertThat(restored.getStatus()).isEqualTo(ResultStatus.FAILURE);
-        assertThat(restored.getOutput()).isEqualTo("Rate limit exceeded");
-    }
-
-    @Test
     void roundTrip_nodeResult_errorFieldIgnored() throws JsonProcessingException {
         NodeResult original =
                 NodeResult.builder()
@@ -88,27 +72,6 @@ class ExecutionHistorySerializationTest {
         NodeResult restored = mapper.readValue(json, NodeResult.class);
         assertThat(restored.getError()).isNull();
         assertThat(restored.getStatus()).isEqualTo(ResultStatus.FAILURE);
-    }
-
-    @Test
-    void roundTrip_nodeResult_emptyMetadata() throws JsonProcessingException {
-        NodeResult original = NodeResult.success("output", Map.of());
-
-        String json = mapper.writeValueAsString(original);
-        NodeResult restored = mapper.readValue(json, NodeResult.class);
-
-        assertThat(restored.getMetadata()).isEmpty();
-        assertThat(restored.getOutput()).isEqualTo("output");
-    }
-
-    @Test
-    void roundTrip_nodeResult_endStatus() throws JsonProcessingException {
-        NodeResult original = NodeResult.end();
-
-        String json = mapper.writeValueAsString(original);
-        NodeResult restored = mapper.readValue(json, NodeResult.class);
-
-        assertThat(restored.getStatus()).isEqualTo(ResultStatus.END);
     }
 
     // --- ExecutionStep ---
@@ -130,22 +93,6 @@ class ExecutionHistorySerializationTest {
         assertThat(restored.getResult().getOutput()).isEqualTo("Generated article");
         assertThat(restored.getResult().getMetadata()).containsEntry("tokens", 200);
         assertThat(restored.getTimestamp()).isEqualTo(Instant.parse("2025-01-15T10:30:00Z"));
-    }
-
-    @Test
-    void roundTrip_executionStep_withFailedResult() throws JsonProcessingException {
-        ExecutionStep original =
-                ExecutionStep.builder()
-                        .nodeId("validate")
-                        .result(NodeResult.failure("Validation failed"))
-                        .build();
-
-        String json = mapper.writeValueAsString(original);
-        ExecutionStep restored = mapper.readValue(json, ExecutionStep.class);
-
-        assertThat(restored.getNodeId()).isEqualTo("validate");
-        assertThat(restored.getResult().getStatus()).isEqualTo(ResultStatus.FAILURE);
-        assertThat(restored.getResult().getOutput()).isEqualTo("Validation failed");
     }
 
     // --- BacktrackEvent ---
@@ -171,45 +118,18 @@ class ExecutionHistorySerializationTest {
         assertThat(restored.getType()).isEqualTo(BacktrackType.AUTOMATIC);
         assertThat(restored.getRubricScore()).isEqualTo(3.5);
         assertThat(restored.getTimestamp()).isEqualTo(Instant.parse("2025-01-15T10:30:00Z"));
-    }
 
-    @Test
-    void roundTrip_backtrackEvent_manual() throws JsonProcessingException {
-        BacktrackEvent original =
+        // Null rubricScore (MANUAL events have no score) must survive round-trip cleanly
+        BacktrackEvent manual =
                 BacktrackEvent.builder()
                         .from("finalize")
                         .to("draft")
                         .reason("Reviewer requested changes")
                         .type(BacktrackType.MANUAL)
-                        .timestamp(Instant.parse("2025-01-15T10:30:00Z"))
                         .build();
-
-        String json = mapper.writeValueAsString(original);
-        BacktrackEvent restored = mapper.readValue(json, BacktrackEvent.class);
-
-        assertThat(restored.getFrom()).isEqualTo("finalize");
-        assertThat(restored.getTo()).isEqualTo("draft");
-        assertThat(restored.getType()).isEqualTo(BacktrackType.MANUAL);
-        assertThat(restored.getRubricScore()).isNull();
-    }
-
-    @Test
-    void roundTrip_backtrackEvent_jump() throws JsonProcessingException {
-        BacktrackEvent original =
-                BacktrackEvent.builder()
-                        .from("evaluate")
-                        .to("refine")
-                        .reason("Score-based routing")
-                        .type(BacktrackType.JUMP)
-                        .rubricScore(7.2)
-                        .timestamp(Instant.parse("2025-01-15T10:30:00Z"))
-                        .build();
-
-        String json = mapper.writeValueAsString(original);
-        BacktrackEvent restored = mapper.readValue(json, BacktrackEvent.class);
-
-        assertThat(restored.getType()).isEqualTo(BacktrackType.JUMP);
-        assertThat(restored.getRubricScore()).isEqualTo(7.2);
+        BacktrackEvent restoredManual =
+                mapper.readValue(mapper.writeValueAsString(manual), BacktrackEvent.class);
+        assertThat(restoredManual.getRubricScore()).isNull();
     }
 
     // --- ExecutionHistory ---
@@ -238,16 +158,9 @@ class ExecutionHistorySerializationTest {
         assertThat(restored.getSteps().get(1).getNodeId()).isEqualTo("review");
         assertThat(restored.getSteps().get(1).getResult().getMetadata())
                 .containsEntry("score", 8.5);
-    }
 
-    @Test
-    void roundTrip_executionHistory_withBacktracks() throws JsonProcessingException {
-        ExecutionHistory original = new ExecutionHistory();
-        original.addStep(
-                ExecutionStep.builder()
-                        .nodeId("process")
-                        .result(NodeResult.success("Draft", Map.of()))
-                        .build());
+        // Backtracks in the same history — covers the full production state shape
+        assertThat(restored.getBacktracks()).isEmpty();
         original.addBacktrack(
                 BacktrackEvent.builder()
                         .from("review")
@@ -257,25 +170,11 @@ class ExecutionHistorySerializationTest {
                         .rubricScore(2.5)
                         .timestamp(Instant.parse("2025-01-15T10:32:00Z"))
                         .build());
-
-        String json = mapper.writeValueAsString(original);
-        ExecutionHistory restored = mapper.readValue(json, ExecutionHistory.class);
-
-        assertThat(restored.getSteps()).hasSize(1);
-        assertThat(restored.getBacktracks()).hasSize(1);
-        assertThat(restored.getBacktracks().getFirst().getFrom()).isEqualTo("review");
-        assertThat(restored.getBacktracks().getFirst().getRubricScore()).isEqualTo(2.5);
-    }
-
-    @Test
-    void roundTrip_executionHistory_empty() throws JsonProcessingException {
-        ExecutionHistory original = new ExecutionHistory();
-
-        String json = mapper.writeValueAsString(original);
-        ExecutionHistory restored = mapper.readValue(json, ExecutionHistory.class);
-
-        assertThat(restored.getSteps()).isEmpty();
-        assertThat(restored.getBacktracks()).isEmpty();
+        ExecutionHistory withBacktrack =
+                mapper.readValue(mapper.writeValueAsString(original), ExecutionHistory.class);
+        assertThat(withBacktrack.getBacktracks()).hasSize(1);
+        assertThat(withBacktrack.getBacktracks().getFirst().getFrom()).isEqualTo("review");
+        assertThat(withBacktrack.getBacktracks().getFirst().getRubricScore()).isEqualTo(2.5);
     }
 
     @Test

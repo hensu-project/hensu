@@ -6,8 +6,12 @@ public enum MergeStrategy {
     /// where key is target ID, value is output.
     COLLECT_ALL,
 
-    /// Return only the first completed output (race pattern). Useful when any result is acceptable.
-    FIRST_COMPLETED,
+    /// Return the output of the first successful branch in definition order.
+    ///
+    /// @implNote All futures are awaited before merging — this is **not** a race pattern.
+    /// "First" means first in fork definition order, not chronologically first to finish.
+    /// Rename from {@code FIRST_COMPLETED} which implied racing semantics it does not have.
+    FIRST_SUCCESSFUL,
 
     /// Concatenate all string outputs with newlines. Non-string outputs are converted to string.
     CONCATENATE,

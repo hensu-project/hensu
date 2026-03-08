@@ -18,6 +18,7 @@ import io.hensu.server.validation.LogSanitizer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.Serial;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -555,10 +556,7 @@ public class WorkflowService {
     /// @param currentNodeId the node where execution is paused, may be null
     /// @param createdAt when the execution was created, never null
     public record ExecutionSummary(
-            String executionId,
-            String workflowId,
-            String currentNodeId,
-            java.time.Instant createdAt) {}
+            String executionId, String workflowId, String currentNodeId, Instant createdAt) {}
 
     // --- Exceptions ---
 

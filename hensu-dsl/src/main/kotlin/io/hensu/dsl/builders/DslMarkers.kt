@@ -36,6 +36,12 @@ object onComplete
 /** Marker for plan failure syntax: `onPlanFailure goto "nodeId"`. */
 object OnPlanFailure
 
+/** Marker for approval transition syntax: `onApproval goto "nodeId"`. */
+object onApproval
+
+/** Marker for rejection transition syntax: `onRejection goto "nodeId"`. */
+object onRejection
+
 /**
  * Mixin interface providing standard transition markers for node builders.
  *

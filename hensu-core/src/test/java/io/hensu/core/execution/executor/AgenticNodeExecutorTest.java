@@ -58,7 +58,13 @@ class AgenticNodeExecutorTest {
         planExecutor = mock(PlanExecutor.class);
         toolRegistry = mock(ToolRegistry.class);
 
-        executor = new AgenticNodeExecutor(llmPlanner, planExecutor, toolRegistry, List.of());
+        executor =
+                new AgenticNodeExecutor(
+                        new StandardNodeExecutor(),
+                        llmPlanner,
+                        planExecutor,
+                        toolRegistry,
+                        List.of());
 
         // Setup common mocks
         node = mock(StandardNode.class);
@@ -355,7 +361,11 @@ class AgenticNodeExecutorTest {
             PlanObserver observer = mock(PlanObserver.class);
             executor =
                     new AgenticNodeExecutor(
-                            llmPlanner, planExecutor, toolRegistry, List.of(observer));
+                            new StandardNodeExecutor(),
+                            llmPlanner,
+                            planExecutor,
+                            toolRegistry,
+                            List.of(observer));
 
             Plan staticPlan =
                     Plan.staticPlan(

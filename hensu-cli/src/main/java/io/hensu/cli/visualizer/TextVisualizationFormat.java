@@ -2,6 +2,7 @@ package io.hensu.cli.visualizer;
 
 import io.hensu.cli.ui.AnsiStyles;
 import io.hensu.core.execution.parallel.Branch;
+import io.hensu.core.rubric.model.ComparisonOperator;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.*;
@@ -342,6 +343,10 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                 styles.dim("on failure  retry " + failure.getRetryCount())));
             } else if (rule instanceof ScoreTransition score) {
                 for (ScoreCondition cond : score.getConditions()) {
+                    String condValue =
+                            cond.getOperator() == ComparisonOperator.RANGE && cond.range() != null
+                                    ? cond.range().start() + ".." + cond.range().end()
+                                    : String.valueOf(cond.getValue());
                     sb.append(
                             String.format(
                                     "%s%s  %s %-14s %s%n",
@@ -349,11 +354,7 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                     styles.boxMid(),
                                     styles.arrow(),
                                     styles.bold(cond.getTargetNode()),
-                                    styles.dim(
-                                            "score "
-                                                    + cond.getOperator()
-                                                    + " "
-                                                    + cond.getValue())));
+                                    styles.dim("score " + cond.getOperator() + " " + condValue)));
                 }
             }
         }

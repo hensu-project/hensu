@@ -1,6 +1,13 @@
 {
   "id" : "plan-static",
   "version" : "1.0.0",
+  "stateSchema" : {
+    "variables" : [ {
+      "name" : "task",
+      "type" : "STRING",
+      "isInput" : true
+    } ]
+  },
   "startNode" : "execute",
   "agents" : {
     "planner" : {

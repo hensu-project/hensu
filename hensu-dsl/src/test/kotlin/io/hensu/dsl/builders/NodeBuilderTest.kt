@@ -4,6 +4,7 @@ import io.hensu.core.plan.Plan.PlanSource
 import io.hensu.core.plan.PlanningMode
 import io.hensu.core.review.ReviewMode
 import io.hensu.core.rubric.model.ComparisonOperator
+import io.hensu.core.workflow.transition.ApprovalTransition
 import io.hensu.core.workflow.transition.FailureTransition
 import io.hensu.core.workflow.transition.ScoreTransition
 import io.hensu.core.workflow.transition.SuccessTransition
@@ -175,6 +176,46 @@ class NodeBuilderTest {
 
         val ltCondition = scoreTransition.conditions[3]
         assertThat(ltCondition.operator).isEqualTo(ComparisonOperator.LT)
+    }
+
+    @Test
+    fun `should preserve writes list for output extraction`() {
+        // If writes is dropped, OutputExtractionPostProcessor won't know which keys to pull from
+        // the agent's JSON response — context variables stay null silently
+        val builder = StandardNodeBuilder("extractor", workingDir)
+        builder.apply {
+            agent = "agent1"
+            writes("code", "confidence")
+            onSuccess goto "next"
+        }
+
+        val node = builder.build()
+
+        assertThat(node.writes).containsExactly("code", "confidence")
+    }
+
+    @Test
+    fun `should build approval transitions with correct polarity`() {
+        // If true/false are swapped internally, approved=true routes to "improve" and
+        // approved=false routes to "finalize" — workflow runs backwards silently
+        val builder = StandardNodeBuilder("reviewer", workingDir)
+        builder.apply {
+            agent = "agent1"
+            writes("approved")
+            onApproval goto "finalize"
+            onRejection goto "improve"
+        }
+
+        val node = builder.build()
+
+        val approvalTransitions = node.transitionRules.filterIsInstance<ApprovalTransition>()
+        assertThat(approvalTransitions).hasSize(2)
+
+        val approveRoute = approvalTransitions.first { it.expected() }
+        assertThat(approveRoute.targetNode()).isEqualTo("finalize")
+
+        val rejectRoute = approvalTransitions.first { !it.expected() }
+        assertThat(rejectRoute.targetNode()).isEqualTo("improve")
     }
 
     @Test

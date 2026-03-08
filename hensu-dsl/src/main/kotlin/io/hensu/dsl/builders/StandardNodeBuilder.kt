@@ -12,7 +12,7 @@ import io.hensu.dsl.extensions.resolveAsPrompt
  * DSL builder for standard workflow nodes.
  *
  * Standard nodes execute an agent with a prompt and transition based on the result. They support
- * rubric evaluation, human review, and output parameter extraction.
+ * rubric evaluation, human review, and typed state variable output via `writes`.
  *
  * Example:
  * ```kotlin
@@ -20,7 +20,7 @@ import io.hensu.dsl.extensions.resolveAsPrompt
  *     agent = "researcher"
  *     prompt = "research.md"
  *     rubric = "quality"
- *     outputParams = listOf("findings", "confidence")
+ *     writes("findings", "confidence")
  *     review(ReviewMode.OPTIONAL)
  *     onSuccess goto "write"
  *     onFailure retry 2 otherwise "error"
@@ -47,16 +47,7 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
     var prompt: String? = null
     var rubric: String? = null
 
-    /**
-     * Parameters to extract from the agent's JSON output. These will be stored in context and can
-     * be used in subsequent prompts as {paramName}.
-     *
-     * Example: outputParams = listOf("lake_name", "population", "capital")
-     *
-     * The agent should be prompted to output JSON with matching keys.
-     */
-    var outputParams: List<String> = emptyList()
-
+    private var writes: List<String> = emptyList()
     private val transitionBuilder = TransitionBuilder()
     private var reviewConfig: ReviewConfig? = null
 
@@ -79,13 +70,47 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
     infix fun onFailure.retry(count: Int): RetryBuilder =
         transitionBuilder.createRetryBuilder(count)
 
+    /** Access to [onApproval] marker for approval transition syntax. */
+    @Suppress("RemoveRedundantQualifierName")
+    val onApproval: onApproval
+        get() = io.hensu.dsl.builders.onApproval
+
+    /** Access to [onRejection] marker for rejection transition syntax. */
+    @Suppress("RemoveRedundantQualifierName")
+    val onRejection: onRejection
+        get() = io.hensu.dsl.builders.onRejection
+
+    /** Define transition on agent approval. Usage: onApproval goto "finalize" */
+    infix fun onApproval.goto(targetNode: String) {
+        transitionBuilder.addApprovalTransition(true, targetNode)
+    }
+
+    /** Define transition on agent rejection. Usage: onRejection goto "improve" */
+    infix fun onRejection.goto(targetNode: String) {
+        transitionBuilder.addApprovalTransition(false, targetNode)
+    }
+
+    /**
+     * Declares the semantic state variable names this node produces.
+     * - Single name: full text response stored under that variable key.
+     * - Multiple names: JSON response parsed, each key extracted to the declared variable.
+     *
+     * All names must be declared in the workflow `state {}` block or be engine variables (`score`,
+     * `approved`). Validated at workflow load time.
+     *
+     * @param names variable names this node writes to
+     */
+    fun writes(vararg names: String) {
+        writes = names.toList()
+    }
+
     /**
      * Define score-based transitions.
      *
      * Scores are resolved in priority order:
      * 1. Rubric evaluation score (if this node has [rubric] set)
      * 2. Self-reported score from context keys: "score", "final_score", "quality_score",
-     *    "evaluation_score" (useful with [outputParams])
+     *    "evaluation_score" (populated via `writes`)
      *
      * When a node has both a rubric and onScore transitions, the onScore transitions take
      * precedence over auto-backtrack for failed rubrics.
@@ -187,7 +212,7 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
             .rubricId(rubric)
             .reviewConfig(reviewConfig)
             .transitionRules(transitionBuilder.build())
-            .outputParams(outputParams)
+            .writes(writes)
             .planningConfig(planningConfig)
             .staticPlan(staticPlan)
             .planFailureTarget(planFailureTarget)
