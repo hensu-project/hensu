@@ -1,6 +1,25 @@
 {
   "id" : "standard-output-params",
   "version" : "1.0.0",
+  "stateSchema" : {
+    "variables" : [ {
+      "name" : "text",
+      "type" : "STRING",
+      "isInput" : true
+    }, {
+      "name" : "sentiment",
+      "type" : "STRING",
+      "isInput" : false
+    }, {
+      "name" : "confidence",
+      "type" : "STRING",
+      "isInput" : false
+    }, {
+      "name" : "keywords",
+      "type" : "STRING",
+      "isInput" : false
+    } ]
+  },
   "startNode" : "analyze",
   "agents" : {
     "analyzer" : {
@@ -16,7 +35,7 @@
       "nodeType" : "STANDARD",
       "agentId" : "analyzer",
       "prompt" : "Analyze the sentiment of: {text}",
-      "outputParams" : [ "sentiment", "confidence", "keywords" ],
+      "writes" : [ "sentiment", "confidence", "keywords" ],
       "transitionRules" : [ {
         "type" : "success",
         "targetNode" : "done"

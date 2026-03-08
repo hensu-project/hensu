@@ -8,6 +8,13 @@ fun paramExtractionWorkflow() = workflow("ParamExtraction") {
     description = "Demo of parameter extraction between steps"
     version = "1.0.0"
 
+    state {
+        variable("largest_lake", VarType.STRING)
+        variable("highest_peak", VarType.STRING)
+        variable("capital_population", VarType.STRING)
+        variable("oldest_wine_region", VarType.STRING)
+    }
+
     agents {
         agent("researcher") {
             role = "Research Assistant"
@@ -37,8 +44,7 @@ fun paramExtractionWorkflow() = workflow("ParamExtraction") {
                 Only output the JSON, nothing else.
             """.trimIndent()
 
-            // Define which parameters to extract from the output
-            outputParams = listOf("largest_lake", "highest_peak", "capital_population", "oldest_wine_region")
+            writes("largest_lake", "highest_peak", "capital_population", "oldest_wine_region")
 
             onSuccess goto "use_facts"
         }

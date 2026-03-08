@@ -16,7 +16,7 @@ import java.io.Serial;
 /// NodeType       Additional fields
 /// ———————————————+————————————————————————————————————————————————————————————————————————
 /// STANDARD       │ agentId, prompt, rubricId, reviewConfig, transitionRules,
-///                │ outputParams, planningConfig, staticPlan, planFailureTarget
+///                │ writes, planningConfig, staticPlan, planFailureTarget
 /// END            │ status
 /// ACTION         │ actions, transitionRules
 /// GENERIC        │ executorType, config, transitionRules, rubricId
@@ -77,8 +77,8 @@ class NodeSerializer extends StdSerializer<Node> {
             gen.writeObjectField("reviewConfig", n.getReviewConfig());
         }
         provider.defaultSerializeField("transitionRules", n.getTransitionRules(), gen);
-        if (!n.getOutputParams().isEmpty()) {
-            provider.defaultSerializeField("outputParams", n.getOutputParams(), gen);
+        if (!n.getWrites().isEmpty()) {
+            provider.defaultSerializeField("writes", n.getWrites(), gen);
         }
         if (n.getPlanningConfig().isEnabled()) {
             gen.writeObjectField("planningConfig", n.getPlanningConfig());

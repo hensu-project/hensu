@@ -82,8 +82,11 @@ See [DSL Reference](../docs/dsl-reference.md) for the complete syntax reference 
 - Workflow structure and configuration
 - Agent definitions and model constants
 - Node types (standard, parallel, fork/join, action, generic, end)
-- Transition rules (success, failure, score-based, consensus)
-- Parameter extraction (`outputParams` + `{placeholder}` syntax)
+- Transition rules (success, failure, score-based, approval, consensus)
+- State variables (`writes()` + `{placeholder}` syntax)
+- State schema (`state { }` block with typed `input`/`variable` declarations and load-time validation)
+- Approval routing (`onApproval goto` / `onRejection goto`)
+- Plan failure routing (`onPlanFailure goto`)
 - Rubric-driven quality gates
 - Human review configuration
 - Planning (static `plan { }` and dynamic `planning { }`)
@@ -107,6 +110,7 @@ hensu-dsl/src/main/kotlin/io/hensu/dsl/
 │   ├── GenericNodeBuilder.kt     # Custom node type builder
 │   ├── EndNodeBuilder.kt         # Terminal node builder
 │   ├── BaseNodeBuilder.kt        # Shared node builder base
+│   ├── StateSchemaBuilder.kt     # Typed state schema builder (`state { }` block)
 │   ├── TransitionBuilder.kt      # Transition rule builders
 │   ├── ScoreTransitionBuilder.kt # Score-based routing
 │   ├── ScoreConditionBuilder.kt  # Score condition expressions
@@ -149,6 +153,8 @@ Workflows reference external files (rubrics, resources) relative to a working di
 working-dir/
 ├── workflows/
 │   └── my-workflow.kt
+├── prompts/
+│   └── agent-prompt.md
 ├── rubrics/
 │   └── content-quality.md
 └── build/

@@ -120,19 +120,50 @@ Document observable effects in `@apiNote`:
 /// @param agent the agent instance, not null
 ```
 
-### 4.4 Performance Characteristics
+### 4.4 Layer Boundary Markers
+
+Layer rules are **package-wide** — document them once in `AGENTS.md` or `package-info.java`,
+not on every class. Per-class Javadoc repeating the package rule is noise.
+
+Use a class-level marker **only** for exceptions: a class that violates the package's expected
+layer (e.g., a server-only class in an otherwise neutral package).
 
 ```java
-/// Finds all nodes matching the predicate.
-///
-/// ### Performance
-/// - Time: O(n) where n = number of nodes
-/// - Space: O(k) where k = matching nodes (result list)
-/// - No caching; re-scans on each call
-///
-/// @param predicate filter condition, not null
-/// @return matching nodes, may be empty, never null
+/// package-info.java — documents the rule once for the entire package
+/// Core model package. No framework dependencies.
+/// Safe to reference from hensu-core, hensu-dsl, and hensu-server.
+package io.hensu.core.workflow.state;
 ```
+
+```java
+/// Produces CDI beans for the execution pipeline.
+///
+/// @implNote **Server layer only.** Depends on Quarkus ArC and CDI.
+/// Do not reference from `hensu-core` or `hensu-dsl`.
+@ApplicationScoped
+public class ServerConfiguration { ... }
+```
+
+### 4.5 Mutability and Lifecycle
+
+Document the mutability contract explicitly. Immutability after construction is the most
+important property for safe sharing across Virtual Threads.
+
+```java
+/// @implNote **Immutable after construction.** All fields are final;
+/// safe to share across Virtual Threads without synchronization.
+public final class WorkflowStateSchema { ... }
+```
+
+```java
+/// @implNote **Mutable.** Single-execution lifecycle — one instance per
+/// workflow run. Not safe for concurrent access without external locking.
+public final class HensuState { ... }
+```
+
+Required keywords (use exactly):
+- `Immutable after construction.` — all fields final, freely shareable
+- `Mutable.` — state changes after construction; document lifecycle scope
 
 ---
 
@@ -258,12 +289,8 @@ public Workflow load(Path path) { ... }
 /// - **Precondition**: describe caller requirements
 /// - **Postcondition**: describe guaranteed outcomes
 ///
-/// ### Performance
-/// - Time: O(n) for n elements
-/// - Space: O(1) auxiliary
-///
 /// @apiNote Usage guidance or recommendations
-/// @implNote Implementation details that may change
+/// @implNote **Immutable after construction. Thread-safe.** Additional implementation details.
 ///
 /// @param paramName description, nullability statement
 /// @return description, nullability statement
@@ -283,4 +310,5 @@ Before committing, verify each public API element has:
 - [ ] All thrown exceptions documented with conditions
 - [ ] Thread safety stated if stateful
 - [ ] Side effects documented if any
-- [ ] Performance noted if non-obvious (O(n²) or worse)
+- [ ] Layer boundary marker on class-level Javadoc **only** if the class is an exception to its package rule
+- [ ] Mutability marker (`Immutable after construction.` / `Mutable.`) on class-level Javadoc

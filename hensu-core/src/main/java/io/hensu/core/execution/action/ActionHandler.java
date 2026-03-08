@@ -59,7 +59,8 @@ import java.util.Map;
 /// }
 /// }
 ///
-/// @implNote Implementations should be thread-safe if workflows execute actions concurrently.
+/// @implNote **Implementations must be thread-safe.** Handlers are registered once at startup
+/// and may be invoked concurrently from multiple Virtual Threads.
 ///
 /// @see ActionExecutor#registerHandler(ActionHandler)
 /// @see Action.Send
@@ -86,12 +87,12 @@ public interface ActionHandler {
     /// ### Payload
     /// The payload contains data from the DSL with template variables already resolved.
     /// For example, `mapOf("message" to "{status}")` becomes `Map.of("message", "SUCCESS")`
-    /// where `status` was extracted from a previous agent's output via `outputParams`.
+    /// where `status` was written by a previous node via a `writes` declaration.
     ///
     /// ### Context
     /// The context contains the full workflow state including:
     /// - Initial context passed at workflow start
-    /// - Output parameters extracted from previous agent steps
+    /// - Values written by previous nodes via `writes` declarations
     /// - Any values stored by previous nodes
     ///
     /// Use context for additional data access beyond what's in the payload.

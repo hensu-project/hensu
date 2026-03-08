@@ -13,11 +13,13 @@ import io.hensu.core.plan.PlanningConfig;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
+import io.hensu.core.workflow.state.StateVariableDeclaration;
+import io.hensu.core.workflow.state.WorkflowStateSchema;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 /// GraalVM native image reflection registrations for `hensu-core` domain model classes.
 ///
-/// Three patterns require explicit registration:
+/// Four patterns require explicit registration:
 ///
 /// ### 1. Jackson `@JsonPOJOBuilder` mixin pattern
 /// {@link io.hensu.serialization.HensuJacksonModule} maps each of these types to a builder mixin.
@@ -39,7 +41,16 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 /// (`ConsensusConfig`, `Branch`, `ScoreCondition`, `DoubleRange`) are extracted manually —
 /// no registration needed.
 ///
-/// ### 3. Plain records (canonical constructor + component accessors)
+/// ### 3. Serialization of simple immutable types
+/// `WorkflowStateSchema` uses a custom deserializer (`WorkflowStateSchemaDeserializer`) that
+/// extracts fields manually — no reflection required for deserialization. However, Jackson's
+/// default **serializer** still reads `getVariables()` reflectively, so both classes must be
+/// registered.
+///
+/// - `WorkflowStateSchema` — typed schema embedded in `Workflow`; serialized via `getVariables()`
+/// - `StateVariableDeclaration` — plain record; component accessors called during serialization
+///
+/// ### 4. Plain records (canonical constructor + component accessors)
 /// Records expose state via canonical constructors and component accessors. GraalVM cannot
 /// trace these statically when Jackson uses default POJO machinery. Affected types:
 ///
@@ -72,6 +83,9 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
             PlanConstraints.class,
             Plan.class,
             PlannedStep.class,
+            // --- Serialization of simple immutable types ---
+            WorkflowStateSchema.class,
+            StateVariableDeclaration.class,
             // --- Plain records (canonical constructor + component accessors) ---
             ReviewConfig.class,
             HensuSnapshot.class,

@@ -11,6 +11,7 @@ import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.AgenticNodeExecutor;
 import io.hensu.core.execution.executor.DefaultNodeExecutorRegistry;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
+import io.hensu.core.execution.executor.StandardNodeExecutor;
 import io.hensu.core.plan.DefaultStepHandlerRegistry;
 import io.hensu.core.plan.LlmPlanner;
 import io.hensu.core.plan.PlanExecutor;
@@ -852,7 +853,11 @@ public final class HensuFactory {
                         toolRegistry != null ? toolRegistry : EMPTY_TOOL_REGISTRY;
                 nodeExecutorRegistry.register(
                         new AgenticNodeExecutor(
-                                planner, planExecutor, effectiveTools, safeObservers));
+                                new StandardNodeExecutor(),
+                                planner,
+                                planExecutor,
+                                effectiveTools,
+                                safeObservers));
                 builtStepHandlerRegistry = registry;
             }
 

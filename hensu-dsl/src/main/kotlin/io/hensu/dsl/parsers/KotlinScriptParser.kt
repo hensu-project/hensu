@@ -122,6 +122,7 @@ class KotlinScriptParser {
         val compilationConfiguration = ScriptCompilationConfiguration {
             jvm { dependenciesFromCurrentContext(wholeClasspath = true) }
             defaultImports(
+                "io.hensu.core.workflow.state.VarType",
                 "io.hensu.dsl.builders.start",
                 "io.hensu.dsl.builders.onSuccess",
                 "io.hensu.dsl.builders.onFailure",
@@ -130,6 +131,8 @@ class KotlinScriptParser {
                 "io.hensu.dsl.builders.whenScore",
                 "io.hensu.dsl.builders.onComplete",
                 "io.hensu.dsl.builders.OnPlanFailure",
+                "io.hensu.dsl.builders.onApproval",
+                "io.hensu.dsl.builders.onRejection",
                 "io.hensu.dsl.builders.Models",
                 "io.hensu.core.review.ReviewMode",
                 "io.hensu.core.execution.result.ExitStatus",

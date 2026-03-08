@@ -4,6 +4,7 @@ import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.execution.parallel.Branch;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.ParallelNode;
+import io.hensu.core.workflow.state.WorkflowStateSchema;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
@@ -26,8 +27,8 @@ import java.util.Objects;
 /// Additional validation (reachability, cycle detection) is performed
 /// by the workflow executor at runtime.
 ///
-/// @implNote Immutable and thread-safe after construction. All collections
-/// are wrapped in unmodifiable views.
+/// @implNote **Immutable after construction.** All collections are wrapped in
+/// unmodifiable views. Safe to share across Virtual Threads.
 ///
 /// @see io.hensu.core.execution.WorkflowExecutor for execution logic
 /// @see Node for node type hierarchy
@@ -42,6 +43,7 @@ public final class Workflow {
     private final String startNode;
     private final WorkflowConfig config;
     private final WorkflowMetadata metadata;
+    private final WorkflowStateSchema stateSchema;
 
     private Workflow(Builder builder) {
         this.id = Objects.requireNonNull(builder.id, "Workflow ID required");
@@ -52,6 +54,7 @@ public final class Workflow {
         this.startNode = Objects.requireNonNull(builder.startNode, "Start node required");
         this.config = builder.config;
         this.metadata = builder.metadata;
+        this.stateSchema = builder.stateSchema;
 
         validate();
     }
@@ -148,6 +151,18 @@ public final class Workflow {
         return metadata;
     }
 
+    /// Returns the typed state schema for this workflow.
+    ///
+    /// When present, the schema is used by
+    /// {@link io.hensu.core.workflow.validation.WorkflowValidator}
+    /// to verify `writes` declarations and prompt template references at load time.
+    /// When absent, the workflow operates in legacy mode (outputs keyed by node ID).
+    ///
+    /// @return state schema, or null if not declared
+    public WorkflowStateSchema getStateSchema() {
+        return stateSchema;
+    }
+
     /// Creates a new workflow builder.
     ///
     /// @return new builder instance, never null
@@ -170,6 +185,7 @@ public final class Workflow {
         private String startNode;
         private WorkflowConfig config;
         private WorkflowMetadata metadata;
+        private WorkflowStateSchema stateSchema;
 
         private Builder() {}
 
@@ -242,6 +258,18 @@ public final class Workflow {
         /// @return this builder for chaining
         public Builder metadata(WorkflowMetadata metadata) {
             this.metadata = metadata;
+            return this;
+        }
+
+        /// Sets the typed state schema.
+        ///
+        /// When set, enables load-time validation of `writes` declarations and prompt
+        /// template variable references. When null, legacy node-ID-keyed output is used.
+        ///
+        /// @param stateSchema schema declaration, may be null
+        /// @return this builder for chaining
+        public Builder stateSchema(WorkflowStateSchema stateSchema) {
+            this.stateSchema = stateSchema;
             return this;
         }
 

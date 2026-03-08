@@ -1,5 +1,6 @@
 package io.hensu.dsl.builders
 
+import io.hensu.core.workflow.transition.ApprovalTransition
 import io.hensu.core.workflow.transition.FailureTransition
 import io.hensu.core.workflow.transition.SuccessTransition
 import io.hensu.core.workflow.transition.TransitionRule
@@ -86,6 +87,16 @@ class TransitionBuilder {
      * @return builder for specifying fallback target
      */
     infix fun onFailure.retry(count: Int): RetryBuilder = createRetryBuilder(count)
+
+    /**
+     * Adds an approval transition (internal).
+     *
+     * @param expected `true` to route on approval; `false` to route on rejection
+     * @param targetNode the node to transition to
+     */
+    internal fun addApprovalTransition(expected: Boolean, targetNode: String) {
+        rules.add(ApprovalTransition(expected, targetNode))
+    }
 
     /**
      * Defines score-based conditional transitions.

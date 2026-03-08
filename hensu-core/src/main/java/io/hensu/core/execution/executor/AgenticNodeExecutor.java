@@ -74,21 +74,24 @@ public class AgenticNodeExecutor implements NodeExecutor<StandardNode> {
     /// ({@link SynthesizeEnrichmentProcessor} → {@link PlanExecutionProcessor} →
     /// {@link PostExecutionReviewGateProcessor}).
     ///
+    /// @param simpleExecutor executor for non-planning nodes, not null
     /// @param planner        planner for dynamic plan generation, not null
-    /// @param planExecutor  executor for plan steps, not null
-    /// @param toolRegistry  registry of available tools for the planner, not null
-    /// @param observers     plan event observers, may be empty but not null
+    /// @param planExecutor   executor for plan steps, not null
+    /// @param toolRegistry   registry of available tools for the planner, not null
+    /// @param observers      plan event observers, may be empty but not null
     public AgenticNodeExecutor(
+            StandardNodeExecutor simpleExecutor,
             Planner planner,
             PlanExecutor planExecutor,
             ToolRegistry toolRegistry,
             List<PlanObserver> observers) {
+        Objects.requireNonNull(simpleExecutor, "simpleExecutor must not be null");
         Objects.requireNonNull(planner, "planner must not be null");
         Objects.requireNonNull(planExecutor, "planExecutor must not be null");
         Objects.requireNonNull(toolRegistry, "toolRegistry must not be null");
         List<PlanObserver> safeObservers = observers != null ? List.copyOf(observers) : List.of();
 
-        this.simpleExecutor = new StandardNodeExecutor();
+        this.simpleExecutor = simpleExecutor;
         this.prePipeline =
                 new PlanPipeline(
                         List.of(

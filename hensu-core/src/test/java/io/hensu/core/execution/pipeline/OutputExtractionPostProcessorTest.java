@@ -29,150 +29,92 @@ class OutputExtractionPostProcessorTest {
     }
 
     @Test
-    @DisplayName("stores raw output in context keyed by node ID")
-    void shouldStoreRawOutput() {
-        var ctx = contextWith("my-node", "Hello from agent", List.of());
+    @DisplayName("single write: stores full text under declared variable name, not node ID")
+    void shouldStoreFullTextUnderSingleWriteKey() {
+        var ctx = contextWith("improve-node", "Improved article text.", List.of("article"));
 
         var result = processor.process(ctx);
 
         assertThat(result).isEmpty();
-        assertThat(ctx.state().getContext()).containsEntry("my-node", "Hello from agent");
+        assertThat(ctx.state().getContext())
+                .containsEntry("article", "Improved article text.")
+                .doesNotContainKey("improve-node");
     }
 
     @Test
-    @DisplayName("extracts JSON output params into context")
-    void shouldExtractOutputParams() {
-        String jsonOutput = "{\"summary\": \"Brief summary\", \"score\": 85}";
-        var ctx = contextWith("eval-node", jsonOutput, List.of("summary", "score"));
+    @DisplayName("multiple writes: routes each JSON key to its declared variable name")
+    void shouldExtractJsonKeysToWriteVariables() {
+        String json =
+                "{\"article\": \"The text\", \"score\": 85, \"recommendation\": \"Add more\"}";
+        var ctx = contextWith("draft-node", json, List.of("article", "score", "recommendation"));
 
         processor.process(ctx);
 
         assertThat(ctx.state().getContext())
-                .containsEntry("eval-node", jsonOutput)
-                .containsEntry("summary", "Brief summary");
+                .containsEntry("article", "The text")
+                .containsEntry("recommendation", "Add more")
+                .doesNotContainKey("draft-node");
     }
 
     @Test
-    @DisplayName("does not extract from malformed JSON")
-    void shouldHandleMalformedJson() {
-        var ctx = contextWith("node", "{\"key\": \"val", List.of("key"));
+    @DisplayName("no writes: output stored under node ID for downstream template resolution")
+    void shouldStoreOutputUnderNodeIdWhenNoWrites() {
+        var ctx = contextWith("escalate-node", "Summary of issues.", List.of());
+
+        var result = processor.process(ctx);
+
+        assertThat(result).isEmpty();
+        assertThat(ctx.state().getContext()).containsEntry("escalate-node", "Summary of issues.");
+    }
+
+    @Test
+    @DisplayName("multiple writes: malformed JSON leaves state clean")
+    void shouldLeaveStateCleanOnMalformedJson() {
+        var ctx = contextWith("node", "{\"article\": \"val", List.of("article", "score"));
 
         processor.process(ctx);
 
         assertThat(ctx.state().getContext())
-                .containsEntry("node", "{\"key\": \"val")
-                .doesNotContainKey("key");
+                .doesNotContainKey("article")
+                .doesNotContainKey("score")
+                .doesNotContainKey("node");
     }
-
-    @Test
-    @DisplayName("does not extract from JSON array output")
-    void shouldHandleJsonArrayOutput() {
-        var ctx = contextWith("node", "[1, 2, 3]", List.of("0"));
-
-        processor.process(ctx);
-
-        assertThat(ctx.state().getContext())
-                .containsEntry("node", "[1, 2, 3]")
-                .doesNotContainKey("0");
-    }
-
-    @Test
-    @DisplayName("ignores missing keys without polluting context")
-    void shouldIgnoreMissingKeys() {
-        var ctx = contextWith("node", "{\"foo\": \"bar\"}", List.of("baz"));
-
-        processor.process(ctx);
-
-        assertThat(ctx.state().getContext())
-                .containsEntry("node", "{\"foo\": \"bar\"}")
-                .doesNotContainKey("baz");
-    }
-
-    @Test
-    @DisplayName("extracts boolean values")
-    void shouldExtractBooleanValues() {
-        var ctx = contextWith("node", "{\"active\": true}", List.of("active"));
-
-        processor.process(ctx);
-
-        assertThat(ctx.state().getContext()).containsEntry("active", true);
-    }
-
-    @Test
-    @DisplayName("extracts null values")
-    void shouldExtractNullValues() {
-        var ctx = contextWith("node", "{\"name\": null}", List.of("name"));
-
-        processor.process(ctx);
-
-        assertThat(ctx.state().getContext()).containsEntry("name", null);
-    }
-
-    @Test
-    @DisplayName("extracts JSON embedded in surrounding text")
-    void shouldExtractFromEmbeddedJson() {
-        String output = "Here is the result: {\"score\": 95} done.";
-        var ctx = contextWith("node", output, List.of("score"));
-
-        processor.process(ctx);
-
-        assertThat(ctx.state().getContext()).containsEntry("score", 95.0);
-    }
-
-    @Test
-    @DisplayName("skips nested object values that regex cannot parse")
-    void shouldSkipNestedObjectValues() {
-        var ctx =
-                contextWith(
-                        "node",
-                        "{\"meta\": {\"nested\": \"val\"}, \"flat\": \"ok\"}",
-                        List.of("meta", "flat"));
-
-        processor.process(ctx);
-
-        assertThat(ctx.state().getContext()).containsEntry("flat", "ok").doesNotContainKey("meta");
-    }
-
-    // — Output validation ———————————————————————————————————————————————————
 
     @Test
     @DisplayName("output with NUL byte returns Failure and does not pollute context")
     void shouldRejectOutputWithNulByte() {
-        var ctx = contextWith("guard-node", "clean prefix\u0000injected", List.of());
+        var ctx = contextWith("guard-node", "clean prefix\u0000injected", List.of("article"));
 
         var result = processor.process(ctx);
 
         assertThat(result).isPresent().get().isInstanceOf(ExecutionResult.Failure.class);
-        assertThat(ctx.state().getContext()).doesNotContainKey("guard-node");
+        assertThat(ctx.state().getContext()).doesNotContainKey("article");
     }
 
     @Test
     @DisplayName("output with RLO override (U+202E) returns Failure and does not pollute context")
     void shouldRejectOutputWithRloOverride() {
-        var ctx = contextWith("guard-node", "visible\u202Ehidden", List.of());
+        var ctx = contextWith("guard-node", "visible\u202Ehidden", List.of("article"));
 
         var result = processor.process(ctx);
 
         assertThat(result).isPresent().get().isInstanceOf(ExecutionResult.Failure.class);
-        assertThat(ctx.state().getContext()).doesNotContainKey("guard-node");
+        assertThat(ctx.state().getContext()).doesNotContainKey("article");
     }
 
     @Test
-    @DisplayName(
-            "output exceeding MAX_LLM_OUTPUT_BYTES returns Failure and does not pollute context")
+    @DisplayName("output exceeding MAX_LLM_OUTPUT_BYTES returns Failure")
     void shouldRejectOversizedOutput() {
-        // One byte over the 4 MB limit
         String oversized = "x".repeat(AgentOutputValidator.MAX_LLM_OUTPUT_BYTES + 1);
-        var ctx = contextWith("guard-node", oversized, List.of());
+        var ctx = contextWith("guard-node", oversized, List.of("article"));
 
         var result = processor.process(ctx);
 
         assertThat(result).isPresent().get().isInstanceOf(ExecutionResult.Failure.class);
-        assertThat(ctx.state().getContext()).doesNotContainKey("guard-node");
     }
 
     @Test
-    @DisplayName("Failure result carries the node ID in the exception message")
+    @DisplayName("Failure message contains node ID for ops debugging")
     void shouldIncludeNodeIdInFailureMessage() {
         var ctx = contextWith("my-node", "bad\u0007content", List.of());
 
@@ -182,32 +124,14 @@ class OutputExtractionPostProcessorTest {
         assertThat(failure.e().getMessage()).contains("my-node");
     }
 
-    @Test
-    @DisplayName("agent JSON output can overwrite internal workflow control key loop_exit_target")
-    void shouldAllowAgentToOverwriteLoopExitTarget() {
-        // TransitionPostProcessor reads loop_exit_target from context to redirect LoopNode.
-        // If an agent declares loop_exit_target as an outputParam and the LLM outputs that key,
-        // this processor silently injects it — potentially hijacking loop exit routing.
-        // This test documents the current behavior and will fail if a key denylist is added.
-        var ctx =
-                contextWith(
-                        "agent-node",
-                        "{\"loop_exit_target\": \"injected-node\"}",
-                        List.of("loop_exit_target"));
-
-        processor.process(ctx);
-
-        assertThat(ctx.state().getContext()).containsEntry("loop_exit_target", "injected-node");
-    }
-
     // — Helpers —————————————————————————————————————————————————————————————
 
-    private ProcessorContext contextWith(String nodeId, String output, List<String> outputParams) {
+    private ProcessorContext contextWith(String nodeId, String output, List<String> writes) {
         var node =
                 StandardNode.builder()
                         .id(nodeId)
                         .transitionRules(List.of(new SuccessTransition("next")))
-                        .outputParams(outputParams)
+                        .writes(writes)
                         .build();
 
         var state =

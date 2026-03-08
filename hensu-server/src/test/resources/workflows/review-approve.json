@@ -1,6 +1,13 @@
 {
   "id" : "review-approve",
   "version" : "1.0.0",
+  "stateSchema" : {
+    "variables" : [ {
+      "name" : "topic",
+      "type" : "STRING",
+      "isInput" : true
+    } ]
+  },
   "startNode" : "draft",
   "agents" : {
     "writer" : {

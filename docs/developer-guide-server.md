@@ -12,11 +12,15 @@ This guide covers the architecture, patterns, and best practices for developing 
 - [REST API Development](#rest-api-development)
 - [SSE Streaming](#sse-streaming)
 - [MCP Integration](#mcp-integration)
+  - [Dynamic Tool Discovery](#dynamic-tool-discovery)
 - [Testing](#testing)
   - [Integration Testing](#integration-testing)
 - [Distributed Recovery (Leasing)](#distributed-recovery-leasing)
+  - [Manual Crash-Recovery Testing](#manual-crash-recovery-testing)
 - [GraalVM Native Image](#graalvm-native-image)
 - [Configuration](#configuration)
+- [Best Practices](#best-practices)
+- [See Also](#see-also)
 
 ---
 
@@ -168,7 +172,7 @@ public HensuEnvironment hensuEnvironment() {
     HensuFactory.Builder factoryBuilder = HensuFactory.builder()
             .config(HensuConfig.builder().useVirtualThreads(true).build())
             .loadCredentials(properties)
-            .actionExecutor(actionExecutor);  // ServerActionExecutor (MCP-only)
+            .actionExecutor(actionExecutor);  // ServerActionExecutor (send-action dispatcher)
 
     // Conditional persistence: JDBC when DataSource available, in-memory otherwise
     boolean dsActive = config.getOptionalValue("quarkus.datasource.active", Boolean.class)
@@ -226,7 +230,7 @@ public ObjectMapper objectMapper() {
 
 ### ServerActionExecutor
 
-Server-specific `ActionExecutor` that **only supports MCP requests** (no local execution):
+Server-specific `ActionExecutor` that routes `Action.Send` to registered handlers (such as `McpSidecar`) and rejects `Action.Execute` (local command execution):
 
 ```java
 @Override
@@ -253,7 +257,7 @@ public ActionResult execute(Action action, Map<String, Object> context) {
 ```
 io.hensu.server/
 ├── action/                # Server-specific action execution
-│   └── ServerActionExecutor     # MCP-only (rejects Action.Execute)
+│   └── ServerActionExecutor     # Send-action dispatcher (rejects Action.Execute)
 │
 ├── api/                   # HTTP endpoints (REST + SSE)
 │   ├── WorkflowResource        # Workflow definition management (push/pull/delete/list)
@@ -726,18 +730,20 @@ Upstream (HTTP POST): Client → Server
 
 ### Using MCP in Workflows
 
-Via DSL action:
+Via DSL action — send the tool name directly; `ServerActionExecutor` automatically
+falls back to MCP for any unrecognized handler:
 
 ```kotlin
 node("process") {
     action {
-        send("mcp", mapOf(
-            "tool" to "read_file",
-            "arguments" to mapOf("path" to "/data/input.json")
-        ))
+        send("read_file", mapOf("path" to "/data/input.json"))
     }
 }
 ```
+
+The manual MCP envelope (`send("mcp", mapOf("tool" to "read_file", ...))`) is also accepted
+for explicitness, but unnecessary — the fallback path in `ServerActionExecutor.executeSend()`
+wraps the call automatically when no direct handler is registered for the tool name.
 
 Via direct connection:
 
@@ -746,11 +752,18 @@ McpConnection conn = connectionPool.getForTenant(tenantId);
 Map<String, Object> result = conn.callTool("search", Map.of("query", "test"));
 ```
 
-### Adding New MCP Methods
+### Dynamic Tool Discovery
 
-1. Update `McpSidecar` to handle new action types
-2. Add method constants to `JsonRpc` if needed
-3. Update client documentation
+MCP tools are discovered at runtime — no server code changes are required to support new tools.
+
+- **Discovery & caching**: `McpToolDiscovery` fetches the tool schema from the tenant's MCP server
+  and caches it per endpoint. On the first call, schemas are fetched; subsequent calls are served
+  from cache.
+- **Precedence**: `TenantToolRegistry` merges base (built-in) tools with the tenant's MCP tools.
+  On naming collisions, the MCP tool takes precedence — tenants can override built-in tools with
+  their own MCP implementations.
+- **No server changes**: `McpSidecar.execute()` resolves tool names dynamically from the JSON-RPC
+  payload. Adding a new tool on the MCP server side is sufficient; no `McpSidecar` update is needed.
 
 ---
 
@@ -1110,6 +1123,19 @@ PostgreSQL, no Quarkus context). Key properties covered:
 - Orphaned row (stale heartbeat) is claimed by the sweeper node
 - Row with a fresh heartbeat is never claimed (live execution safety)
 - `updateHeartbeats()` only touches rows owned by the calling node (crashed-node isolation)
+
+### Manual Crash-Recovery Testing
+
+Use the `SleepHandler` (node type `"sleep"`, package `io.hensu.server.dev`) to simulate
+long-running active executions for manual recovery testing. It blocks the execution thread
+for `durationSeconds` (default 30 s), giving you a window to `kill -9` the server process.
+Upon restart, `WorkflowRecoveryJob` detects the stale lease and resumes the orphaned execution
+on the surviving node.
+
+```json
+{ "id": "long-task", "nodeType": "GENERIC", "handlerType": "sleep",
+  "config": { "durationSeconds": 60 } }
+```
 
 ---
 

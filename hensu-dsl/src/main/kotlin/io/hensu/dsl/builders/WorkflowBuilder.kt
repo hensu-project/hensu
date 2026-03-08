@@ -3,6 +3,8 @@ package io.hensu.dsl.builders
 import io.hensu.core.agent.AgentConfig
 import io.hensu.core.workflow.Workflow
 import io.hensu.core.workflow.WorkflowMetadata
+import io.hensu.core.workflow.state.WorkflowStateSchema
+import io.hensu.core.workflow.validation.WorkflowValidator
 import io.hensu.dsl.WorkingDirectory
 import java.time.Instant
 
@@ -42,6 +44,7 @@ class WorkflowBuilder(private val name: String, private val workingDirectory: Wo
     private val rubricPaths = mutableMapOf<String, String>()
     private var graphBuilder: GraphBuilder? = null
     private var configBuilder: WorkflowConfigBuilder? = null
+    private var stateSchema: WorkflowStateSchema? = null
 
     /**
      * Defines agents used by workflow nodes.
@@ -83,6 +86,21 @@ class WorkflowBuilder(private val name: String, private val workingDirectory: Wo
     }
 
     /**
+     * Declares the typed state schema for this workflow.
+     *
+     * Lists all domain-specific variables with their types and input/output roles. Engine variables
+     * (`score`, `approved`) are always implicitly valid — do not declare them here. When declared,
+     * the schema enables load-time validation of `writes` declarations and prompt template
+     * `{variable}` references.
+     *
+     * @param block schema declaration block
+     * @see StateSchemaBuilder for variable declaration syntax
+     */
+    fun state(block: StateSchemaBuilder.() -> Unit) {
+        stateSchema = StateSchemaBuilder().apply(block).build()
+    }
+
+    /**
      * Configures workflow execution settings.
      *
      * @param block configuration block
@@ -106,16 +124,21 @@ class WorkflowBuilder(private val name: String, private val workingDirectory: Wo
                 ?: throw IllegalStateException("Graph not defined in workflow '$name'")
         val config = configBuilder?.build()
 
-        return Workflow.builder()
-            .id(name.sanitizeId())
-            .version(version)
-            .agents(agentConfigs)
-            .rubrics(rubricPaths)
-            .nodes(graph.nodes)
-            .startNode(graph.startNode)
-            .config(config)
-            .metadata(WorkflowMetadata(name, description, null, Instant.now(), emptyList()))
-            .build()
+        val workflow =
+            Workflow.builder()
+                .id(name.sanitizeId())
+                .version(version)
+                .agents(agentConfigs)
+                .rubrics(rubricPaths)
+                .nodes(graph.nodes)
+                .startNode(graph.startNode)
+                .config(config)
+                .metadata(WorkflowMetadata(name, description, null, Instant.now(), emptyList()))
+                .stateSchema(stateSchema)
+                .build()
+
+        WorkflowValidator.validate(workflow)
+        return workflow
     }
 
     private fun String.sanitizeId(): String =

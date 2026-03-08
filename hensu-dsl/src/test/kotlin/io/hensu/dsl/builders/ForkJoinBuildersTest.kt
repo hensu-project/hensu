@@ -183,20 +183,20 @@ class ForkJoinBuildersTest {
         }
 
         @Test
-        fun `should set merge strategy to FIRST_COMPLETED`() {
+        fun `should set merge strategy to FIRST_SUCCESSFUL`() {
             // Given
             val builder = JoinNodeBuilder("join-1")
 
             // When
             builder.apply {
                 await("fork-1")
-                mergeStrategy = MergeStrategy.FIRST_COMPLETED
+                mergeStrategy = MergeStrategy.FIRST_SUCCESSFUL
                 onSuccess goto "next"
             }
             val node = builder.build()
 
             // Then
-            assertThat(node.mergeStrategy).isEqualTo(MergeStrategy.FIRST_COMPLETED)
+            assertThat(node.mergeStrategy).isEqualTo(MergeStrategy.FIRST_SUCCESSFUL)
         }
 
         @Test

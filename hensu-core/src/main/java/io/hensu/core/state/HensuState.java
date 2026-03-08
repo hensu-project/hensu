@@ -146,6 +146,27 @@ public final class HensuState {
         return toBuilder().history(newHistory).retryCount(retryCount + 1).build();
     }
 
+    /// Creates an isolated state copy for concurrent branch execution.
+    ///
+    /// Returns a new `HensuState` with a defensive copy of the context map, positioned
+    /// at `branchNode`. Writes to the branch state do not affect the parent or sibling
+    /// branches. All other fields (`executionId`, `workflowId`, `history`) are preserved.
+    ///
+    /// ### Contracts
+    /// - **Postcondition**: returned state shares no mutable references with this state
+    ///
+    /// @param branchNode the node ID where the branch begins, not null
+    /// @return new isolated branch state, never null
+    public HensuState branch(String branchNode) {
+        return new Builder()
+                .executionId(executionId)
+                .workflowId(workflowId)
+                .currentNode(branchNode)
+                .context(context)
+                .history(history)
+                .build();
+    }
+
     /// Creates a snapshot of current state for checkpointing.
     ///
     /// @return immutable snapshot of current state, never null
