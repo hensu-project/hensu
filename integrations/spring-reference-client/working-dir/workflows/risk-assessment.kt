@@ -34,6 +34,11 @@ fun riskAssessmentWorkflow() = workflow("risk-assessment") {
     description = "Credit limit increase evaluation with AI analysis and mandatory human review"
     version = "1.0.0"
 
+    state {
+        input("customerId", VarType.STRING)
+        input("requestType", VarType.STRING)
+    }
+
     agents {
         agent("analyst") {
             role = "Senior credit risk analyst specialising in SMB lending decisions"

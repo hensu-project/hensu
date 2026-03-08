@@ -140,7 +140,7 @@ Workflow
 
 **Node Types**:
 
-- `StandardNode` - Regular step with agent execution and transitions
+- `StandardNode` - Regular step with agent execution, typed state variable output (`writes`), and transitions
 - `LoopNode` - Iterative execution with break conditions
 - `ParallelNode` - Concurrent execution with consensus
 - `ForkNode` - Spawn parallel execution paths
@@ -154,7 +154,31 @@ Workflow
 
 - `SuccessTransition` / `FailureTransition` - Based on execution result
 - `ScoreTransition` - Conditional on rubric score (e.g., score >= 80 → approve)
+- `ApprovalTransition` - Routes on the `approved` boolean engine variable (written via `writes("approved")`); falls through if absent or non-boolean
 - `AlwaysTransition` - Unconditional
+
+### State Schema
+
+`WorkflowStateSchema` is an optional typed declaration on a `Workflow` that lists all domain-specific state variables:
+
+- `StateVariableDeclaration(name, type, isInput)` — declares one variable. Inputs are expected in the initial context; outputs are produced by nodes via `writes`.
+- `VarType` — `STRING`, `NUMBER`, `BOOLEAN`, `LIST_STRING`
+- **Engine variables** (`score`, `approved`) are always implicitly valid — never declare them in the schema.
+
+`WorkflowValidator` is called by `WorkflowBuilder.build()` and throws `IllegalStateException` listing all violations when:
+- A node's `writes` list contains a name not in the schema
+- A prompt `{variable}` reference is not in the schema
+
+Workflows without a schema operate in **legacy mode** (no load-time validation; outputs keyed by node ID).
+
+**DSL** (`state { }` block in `WorkflowBuilder`):
+```kotlin
+state {
+    input("topic", VarType.STRING)
+    variable("article", VarType.STRING)
+    variable("approved", VarType.BOOLEAN)   // NOT needed — engine variable, shown for clarity only
+}
+```
 
 ### State Model
 
@@ -347,12 +371,18 @@ CRUD operations, UPSERT semantics, FK constraints, tenant isolation, and seriali
 - `hensu-core/.../execution/executor/AgenticNodeExecutor.java` - Drives the two-pipeline plan flow for `StandardNode`
 - `hensu-core/.../workflow/WorkflowRepository.java` - Tenant-scoped workflow storage interface
 - `hensu-core/.../state/WorkflowStateRepository.java` - Tenant-scoped execution state storage interface
+- `hensu-core/.../workflow/state/WorkflowStateSchema.java` - Typed state variable schema (optional per-workflow declaration)
+- `hensu-core/.../workflow/state/StateVariableDeclaration.java` - Single variable declaration (name, type, isInput)
+- `hensu-core/.../workflow/state/VarType.java` - Variable type enum (STRING, NUMBER, BOOLEAN, LIST_STRING)
+- `hensu-core/.../workflow/transition/ApprovalTransition.java` - Boolean approval routing via `approved` engine variable
+- `hensu-core/.../workflow/validation/WorkflowValidator.java` - Load-time validator for `writes` and prompt variable references
 
 **DSL:**
 
 - `hensu-dsl/.../dsl/HensuDSL.kt` - DSL entry point (`workflow()` function)
 - `hensu-dsl/.../dsl/parsers/KotlinScriptParser.kt` - Script compilation
 - `hensu-dsl/.../dsl/builders/GraphBuilder.kt` - Graph DSL (node, action, end, etc.)
+- `hensu-dsl/.../dsl/builders/StateSchemaBuilder.kt` - `state { }` DSL block builder (input/variable declarations)
 
 **Serialization:**
 

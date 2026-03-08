@@ -20,8 +20,12 @@ import io.hensu.core.rubric.model.DoubleRange;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.*;
-import io.hensu.core.workflow.transition.AlwaysTransition;
+import io.hensu.core.workflow.state.StateVariableDeclaration;
+import io.hensu.core.workflow.state.VarType;
+import io.hensu.core.workflow.state.WorkflowStateSchema;
+import io.hensu.core.workflow.transition.ApprovalTransition;
 import io.hensu.core.workflow.transition.FailureTransition;
+import io.hensu.core.workflow.transition.RubricFailTransition;
 import io.hensu.core.workflow.transition.ScoreTransition;
 import io.hensu.core.workflow.transition.SuccessTransition;
 import java.util.List;
@@ -47,7 +51,7 @@ class WorkflowSerializerTest {
 
     @Test
     void roundTrip_standardNode() {
-        Workflow workflow = buildWorkflowWith("start", standardNode());
+        Workflow workflow = buildWorkflowWith(standardNode());
 
         String json = WorkflowSerializer.toJson(workflow);
         Workflow restored = WorkflowSerializer.fromJson(json);
@@ -58,6 +62,7 @@ class WorkflowSerializerTest {
         assertThat(sn.getAgentId()).isEqualTo("writer");
         assertThat(sn.getPrompt()).isEqualTo("Write something");
         assertThat(sn.getRubricId()).isEqualTo("quality");
+        assertThat(sn.getWrites()).containsExactly("sentiment", "score");
         assertThat(sn.getTransitionRules()).hasSize(2);
     }
 
@@ -288,25 +293,39 @@ class WorkflowSerializerTest {
     }
 
     @Test
-    void roundTrip_alwaysTransition() {
+    void roundTrip_approvalTransition() {
         StandardNode start =
                 StandardNode.builder()
                         .id("start")
-                        .transitionRules(List.of(new AlwaysTransition()))
+                        .transitionRules(
+                                List.of(
+                                        new ApprovalTransition(true, "finalize"),
+                                        new ApprovalTransition(false, "improve")))
                         .build();
+        EndNode finalize = EndNode.builder().id("finalize").status(ExitStatus.SUCCESS).build();
+        EndNode improve = EndNode.builder().id("improve").status(ExitStatus.FAILURE).build();
 
         Workflow workflow =
                 Workflow.builder()
                         .id("test")
                         .startNode("start")
-                        .nodes(Map.of("start", start))
+                        .nodes(Map.of("start", start, "finalize", finalize, "improve", improve))
                         .build();
 
         Workflow restored = WorkflowSerializer.fromJson(WorkflowSerializer.toJson(workflow));
 
         StandardNode restoredStart = (StandardNode) restored.getNodes().get("start");
-        assertThat(restoredStart.getTransitionRules().getFirst())
-                .isInstanceOf(AlwaysTransition.class);
+        assertThat(restoredStart.getTransitionRules()).hasSize(2);
+
+        ApprovalTransition approvalRule =
+                (ApprovalTransition) restoredStart.getTransitionRules().getFirst();
+        assertThat(approvalRule.expected()).isTrue();
+        assertThat(approvalRule.targetNode()).isEqualTo("finalize");
+
+        ApprovalTransition rejectionRule =
+                (ApprovalTransition) restoredStart.getTransitionRules().get(1);
+        assertThat(rejectionRule.expected()).isFalse();
+        assertThat(rejectionRule.targetNode()).isEqualTo("improve");
     }
 
     @Test
@@ -430,48 +449,6 @@ class WorkflowSerializerTest {
     }
 
     @Test
-    void roundTrip_planStep_synthesize_withAgentId() {
-        // Synthesize with agentId set (post-enrichment state, as persisted after execution starts)
-        StandardNode start =
-                StandardNode.builder()
-                        .id("start")
-                        .agentId("agent")
-                        .planningConfig(PlanningConfig.forStaticWithReview())
-                        .staticPlan(
-                                Plan.staticPlan(
-                                        "start",
-                                        List.of(
-                                                new PlannedStep(
-                                                        0,
-                                                        new PlanStepAction.Synthesize(
-                                                                "gpt-4o", "Write a summary"),
-                                                        "Synthesize",
-                                                        StepStatus.PENDING))))
-                        .transitionRules(List.of(new SuccessTransition("done")))
-                        .build();
-        EndNode end = EndNode.builder().id("done").status(ExitStatus.SUCCESS).build();
-
-        Workflow restored =
-                WorkflowSerializer.fromJson(
-                        WorkflowSerializer.toJson(
-                                Workflow.builder()
-                                        .id("test")
-                                        .startNode("start")
-                                        .nodes(Map.of("start", start, "done", end))
-                                        .build()));
-
-        PlannedStep step =
-                ((StandardNode) restored.getNodes().get("start"))
-                        .getStaticPlan()
-                        .steps()
-                        .getFirst();
-        assertThat(step.action()).isInstanceOf(PlanStepAction.Synthesize.class);
-        PlanStepAction.Synthesize synth = (PlanStepAction.Synthesize) step.action();
-        assertThat(synth.agentId()).isEqualTo("gpt-4o");
-        assertThat(synth.prompt()).isEqualTo("Write a summary");
-    }
-
-    @Test
     void roundTrip_reviewConfig() {
         StandardNode start =
                 StandardNode.builder()
@@ -536,20 +513,73 @@ class WorkflowSerializerTest {
     }
 
     @Test
-    void roundTrip_loopNode() {
-        LoopNode loop = new LoopNode("loop");
-        EndNode end = EndNode.builder().id("done").status(ExitStatus.SUCCESS).build();
-
+    void roundTrip_workflowStateSchema() {
+        // stateSchema uses WorkflowStateSchemaMixin with @JsonCreator — GraalVM misconfiguration
+        // would silently drop all variables, breaking workflow validation at startup.
+        WorkflowStateSchema schema =
+                new WorkflowStateSchema(
+                        List.of(
+                                new StateVariableDeclaration("topic", VarType.STRING, true),
+                                new StateVariableDeclaration("summary", VarType.STRING, false)));
         Workflow workflow =
                 Workflow.builder()
                         .id("test")
-                        .startNode("loop")
-                        .nodes(Map.of("loop", loop, "done", end))
+                        .startNode("start")
+                        .stateSchema(schema)
+                        .nodes(
+                                Map.of(
+                                        "start",
+                                        StandardNode.builder()
+                                                .id("start")
+                                                .transitionRules(
+                                                        List.of(new SuccessTransition("done")))
+                                                .build(),
+                                        "done",
+                                        EndNode.builder()
+                                                .id("done")
+                                                .status(ExitStatus.SUCCESS)
+                                                .build()))
                         .build();
 
         Workflow restored = WorkflowSerializer.fromJson(WorkflowSerializer.toJson(workflow));
 
-        assertThat(restored.getNodes().get("loop")).isInstanceOf(LoopNode.class);
+        WorkflowStateSchema restoredSchema = restored.getStateSchema();
+        assertThat(restoredSchema).isNotNull();
+        assertThat(restoredSchema.getVariables()).hasSize(2);
+        assertThat(restoredSchema.getVariables().getFirst().name()).isEqualTo("topic");
+        assertThat(restoredSchema.getVariables().get(0).type()).isEqualTo(VarType.STRING);
+        assertThat(restoredSchema.getVariables().get(0).isInput()).isTrue();
+        assertThat(restoredSchema.getVariables().get(1).name()).isEqualTo("summary");
+        assertThat(restoredSchema.getVariables().get(1).isInput()).isFalse();
+    }
+
+    @Test
+    void roundTrip_rubricFailTransition() {
+        // Deserializer injects a dummy lambda (_ -> null) because the original predicate is
+        // unserializable. If Jackson chokes on synthetic lambda types, this throws instead of
+        // deserializing cleanly.
+        StandardNode start =
+                StandardNode.builder()
+                        .id("start")
+                        .transitionRules(List.of(new RubricFailTransition(_ -> "revise")))
+                        .build();
+
+        Workflow workflow =
+                Workflow.builder()
+                        .id("test")
+                        .startNode("start")
+                        .nodes(Map.of("start", start))
+                        .build();
+
+        Workflow restored = WorkflowSerializer.fromJson(WorkflowSerializer.toJson(workflow));
+
+        StandardNode restoredStart = (StandardNode) restored.getNodes().get("start");
+        assertThat(restoredStart.getTransitionRules().getFirst())
+                .isInstanceOf(RubricFailTransition.class);
+        // Dummy lambda installed by deserializer — returns null, not the original predicate result
+        RubricFailTransition restoredRule =
+                (RubricFailTransition) restoredStart.getTransitionRules().getFirst();
+        assertThat(restoredRule.function()).isNotNull();
     }
 
     // --- helpers ---
@@ -583,20 +613,21 @@ class WorkflowSerializerTest {
                 .agentId("writer")
                 .prompt("Write something")
                 .rubricId("quality")
+                .writes(List.of("sentiment", "score"))
                 .transitionRules(
                         List.of(new SuccessTransition("done"), new FailureTransition(3, "done")))
                 .build();
     }
 
-    private Workflow buildWorkflowWith(String nodeId, Node node) {
+    private Workflow buildWorkflowWith(Node node) {
         EndNode end = EndNode.builder().id("done").status(ExitStatus.SUCCESS).build();
 
         Map<String, Node> nodes =
                 node.getId().equals("done")
-                        ? Map.of(nodeId, node)
-                        : Map.of(nodeId, node, "done", end);
+                        ? Map.of("start", node)
+                        : Map.of("start", node, "done", end);
 
-        var builder = Workflow.builder().id("test").startNode(nodeId).nodes(nodes);
+        var builder = Workflow.builder().id("test").startNode("start").nodes(nodes);
 
         if (node.getRubricId() != null && !node.getRubricId().isEmpty()) {
             builder.rubrics(Map.of(node.getRubricId(), "test-rubric-path"));

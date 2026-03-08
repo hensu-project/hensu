@@ -1,6 +1,13 @@
 {
   "id" : "sub-workflow-parent",
   "version" : "1.0.0",
+  "stateSchema" : {
+    "variables" : [ {
+      "name" : "topic",
+      "type" : "STRING",
+      "isInput" : true
+    } ]
+  },
   "startNode" : "prepare",
   "agents" : {
     "preparer" : {

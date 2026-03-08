@@ -1,0 +1,24 @@
+package io.hensu.core.workflow.state;
+
+import java.util.Objects;
+
+/// Declares a single typed variable in the workflow state schema.
+///
+/// Variables declared as inputs are expected to be present in the initial execution context
+/// supplied by the caller. Variables declared as outputs are produced by workflow nodes
+/// via `writes`.
+///
+/// @param name     unique variable identifier used in prompt templates as `{name}`, not null
+/// or blank
+/// @param type     declared type used for JSON schema generation and validation, not null
+/// @param isInput  `true` if supplied as workflow input; `false` if produced by a node
+///
+/// @see WorkflowStateSchema
+public record StateVariableDeclaration(String name, VarType type, boolean isInput) {
+
+    public StateVariableDeclaration {
+        Objects.requireNonNull(name, "name must not be null");
+        Objects.requireNonNull(type, "type must not be null");
+        if (name.isBlank()) throw new IllegalArgumentException("name must not be blank");
+    }
+}

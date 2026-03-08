@@ -48,20 +48,23 @@ Each serializer writes a `"type"` discriminator field. The deserializer reads it
 
 Types using the builder pattern are handled via Jackson mixins — no annotations on core classes:
 
-| Core Type          | Mixin                   | Strategy                                                    |
-|--------------------|-------------------------|-------------------------------------------------------------|
-| `Workflow`         | `WorkflowMixin`         | `@JsonDeserialize(builder = Workflow.Builder)`              |
-| `AgentConfig`      | `AgentConfigMixin`      | `@JsonDeserialize(builder = AgentConfig.Builder)`           |
-| `ExecutionStep`    | `ExecutionStepMixin`    | `@JsonDeserialize(builder = ExecutionStep.Builder)`         |
-| `NodeResult`       | `NodeResultMixin`       | `@JsonDeserialize(builder)` + `@JsonIgnore` on `getError()` |
-| `BacktrackEvent`   | `BacktrackEventMixin`   | `@JsonDeserialize(builder = BacktrackEvent.Builder)`        |
-| `ExecutionHistory` | `ExecutionHistoryMixin` | `@JsonAutoDetect(fieldVisibility = ANY)` — no builder       |
+| Core Type          | Mixin                   | Strategy                                                                                  |
+|--------------------|-------------------------|-------------------------------------------------------------------------------------------|
+| `Workflow`         | `WorkflowMixin`         | `@JsonDeserialize(builder = Workflow.Builder)`                                            |
+| `AgentConfig`      | `AgentConfigMixin`      | `@JsonDeserialize(builder = AgentConfig.Builder)`                                         |
+| `ExecutionStep`    | `ExecutionStepMixin`    | `@JsonDeserialize(builder = ExecutionStep.Builder)`                                       |
+| `NodeResult`       | `NodeResultMixin`       | `@JsonDeserialize(builder)` + `@JsonIgnore` on `getError()` and `error(Throwable)` setter |
+| `BacktrackEvent`   | `BacktrackEventMixin`   | `@JsonDeserialize(builder = BacktrackEvent.Builder)`                                      |
+| `ExecutionHistory` | `ExecutionHistoryMixin` | `@JsonAutoDetect(fieldVisibility = ANY)` — no builder                                     |
 
 Builder mixins use `@JsonPOJOBuilder(withPrefix = "", buildMethodName = "build")` to match
 the fluent builder API (e.g., `.nodeId("x")` not `.withNodeId("x")`).
 
 **`NodeResult.getError()`** is `@JsonIgnore`d because `Throwable` is not safely serializable.
-Errors are transient and not persisted in snapshots.
+Errors are transient and not persisted in snapshots. The builder mixin (`NodeResultBuilderMixin`)
+also suppresses the `error(Throwable)` setter with `@JsonIgnore` — this prevents Jackson from
+crashing when deserializing a snapshot payload that contains no `error` field. Both halves of
+the ignore pattern are required; removing either one breaks round-trip deserialization.
 
 ## Module Structure
 
@@ -77,6 +80,7 @@ hensu-serialization/src/main/java/io/hensu/serialization/
 ├── ActionDeserializer.java          # Action sealed hierarchy deserializer
 ├── PlanStepActionSerializer.java    # PlanStepAction sealed hierarchy serializer
 ├── PlanStepActionDeserializer.java  # PlanStepAction sealed hierarchy deserializer
+├── WorkflowStateSchemaDeserializer.java  # Direct-extraction deserializer (native-image perf)
 ├── plan/
 │   └── JacksonPlanResponseParser.java  # Parses LLM JSON responses into PlannedStep lists
 └── mixin/

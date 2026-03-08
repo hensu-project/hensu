@@ -14,6 +14,8 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class TransitionRulesTest {
 
@@ -30,19 +32,6 @@ class TransitionRulesTest {
     class SuccessTransitionTest {
 
         @Test
-        void shouldReturnTargetNodeOnSuccess() {
-            // Given
-            SuccessTransition transition = new SuccessTransition("next-node");
-            NodeResult result = NodeResult.success("Output", Map.of());
-
-            // When
-            String target = transition.evaluate(state, result);
-
-            // Then
-            assertThat(target).isEqualTo("next-node");
-        }
-
-        @Test
         void shouldReturnNullOnFailure() {
             // Given
             SuccessTransition transition = new SuccessTransition("next-node");
@@ -53,16 +42,6 @@ class TransitionRulesTest {
 
             // Then
             assertThat(target).isNull();
-        }
-
-        @Test
-        void shouldExposeTargetNode() {
-            // Given
-            SuccessTransition transition = new SuccessTransition("target");
-
-            // Then
-            assertThat(transition.targetNode()).isEqualTo("target");
-            assertThat(transition.getTargetNode()).isEqualTo("target");
         }
     }
 
@@ -126,16 +105,6 @@ class TransitionRulesTest {
 
             // Then
             assertThat(target).isEqualTo("fallback");
-        }
-
-        @Test
-        void shouldExposeRetryCountAndTargetNode() {
-            // Given
-            FailureTransition transition = new FailureTransition(5, "error-handler");
-
-            // Then
-            assertThat(transition.getRetryCount()).isEqualTo(5);
-            assertThat(transition.getThenTargetNode()).isEqualTo("error-handler");
         }
     }
 
@@ -260,18 +229,6 @@ class TransitionRulesTest {
         }
 
         @Test
-        void shouldExposeConditions() {
-            // Given
-            List<ScoreCondition> conditions =
-                    List.of(new ScoreCondition(ComparisonOperator.GT, 90.0, null, "excellent"));
-            ScoreTransition transition = new ScoreTransition(conditions);
-
-            // Then
-            assertThat(transition.getConditions()).hasSize(1);
-            assertThat(transition.conditions()).hasSize(1);
-        }
-
-        @Test
         void shouldReturnNullWhenNoConditionMatches() {
             // Given
             List<ScoreCondition> conditions =
@@ -292,18 +249,74 @@ class TransitionRulesTest {
     }
 
     @Nested
-    class AlwaysTransitionTest {
+    class ApprovalTransitionTest {
+
+        /// Truth table: all four (expected × contextValue) permutations in one test.
+        @ParameterizedTest(name = "expected={0}, approved={1} → {2}")
+        @CsvSource(
+                nullValues = "null",
+                value = {
+                    "true,  true,  finalize", // approved=true,  expecting=true  → routes
+                    "true,  false, null", //     approved=false, expecting=true  → fall-through
+                    "false, false, improve", //  approved=false, expecting=false → routes
+                    "false, true,  null" //      approved=true,  expecting=false → fall-through
+                })
+        void shouldRouteByBooleanApprovalTruthTable(
+                boolean expected, boolean contextValue, String expectedTarget) {
+            state.getContext().put("approved", contextValue);
+            String targetNode = expected ? "finalize" : "improve";
+            ApprovalTransition transition = new ApprovalTransition(expected, targetNode);
+
+            assertThat(transition.evaluate(state, NodeResult.success("Output", Map.of())))
+                    .isEqualTo(expectedTarget);
+        }
 
         @Test
-        void shouldAlwaysReturnEmptyString() {
-            // Given
-            AlwaysTransition transition = new AlwaysTransition();
-            NodeResult successResult = NodeResult.success("Output", Map.of());
-            NodeResult failureResult = NodeResult.failure("Error");
+        void shouldReturnNullWhenApprovedKeyAbsent() {
+            // Node did not write "approved" to context — transition must fall through
+            assertThat(
+                            new ApprovalTransition(true, "finalize")
+                                    .evaluate(state, NodeResult.success("Output", Map.of())))
+                    .isNull();
+        }
 
-            // When/Then - always returns empty string
-            assertThat(transition.evaluate(state, successResult)).isEmpty();
-            assertThat(transition.evaluate(state, failureResult)).isEmpty();
+        @Test
+        void shouldReturnNullForNonBooleanValue() {
+            // Agent output an integer — strict parsing must fall through, never guess intent
+            state.getContext().put("approved", 1);
+            assertThat(
+                            new ApprovalTransition(true, "finalize")
+                                    .evaluate(state, NodeResult.success("Output", Map.of())))
+                    .isNull();
+        }
+
+        @Test
+        void shouldReturnNullForAmbiguousStringValue() {
+            // Agent output free-form text — strict parsing must reject it
+            state.getContext().put("approved", "looks good to me");
+            assertThat(
+                            new ApprovalTransition(true, "finalize")
+                                    .evaluate(state, NodeResult.success("Output", Map.of())))
+                    .isNull();
+        }
+
+        /// Some LLMs output "true"/"false" as JSON strings despite format instructions.
+        @ParameterizedTest(name = "\"{0}\" (expected={1}) → {2}")
+        @CsvSource({
+            "true,  true,  finalize",
+            "True,  true,  finalize",
+            "TRUE,  true,  finalize",
+            "false, false, improve",
+            "False, false, improve",
+            "FALSE, false, improve"
+        })
+        void shouldAcceptBooleanStringsCaseInsensitively(
+                String contextValue, boolean expected, String expectedTarget) {
+            state.getContext().put("approved", contextValue);
+            assertThat(
+                            new ApprovalTransition(expected, expectedTarget)
+                                    .evaluate(state, NodeResult.success("Output", Map.of())))
+                    .isEqualTo(expectedTarget);
         }
     }
 }

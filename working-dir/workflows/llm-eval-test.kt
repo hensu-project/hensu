@@ -10,21 +10,29 @@ fun llmEvalTestWorkflow() = workflow("llm-eval-test") {
     description = "Workflow with LLM-based rubric evaluation"
     version = "1.0.0"
 
+    state {
+        input("topic", VarType.STRING)
+        variable("article", VarType.STRING)
+        variable("score", VarType.NUMBER)
+        variable("improvements", VarType.STRING)
+        variable("reasoning", VarType.STRING)
+    }
+
     agents {
         agent("writer") {
-            role = "Technical content writer"
+            role = "Technical content writer. Return JSON with key: article."
             model = Models.CLAUDE_SONNET_4_5
             temperature = 0.7
         }
 
         agent("evaluator") {
-            role = "Content quality evaluator"
+            role = "Content quality evaluator. Return JSON with keys: reasoning, improvements."
             model = Models.CLAUDE_SONNET_4_5
             temperature = 0.2
         }
 
         agent("editor") {
-            role = "Editor who revises content"
+            role = "Editor who revises content. Return JSON with key: article."
             model = Models.CLAUDE_SONNET_4_5
             temperature = 0.5
         }
@@ -40,15 +48,16 @@ fun llmEvalTestWorkflow() = workflow("llm-eval-test") {
         node("write") {
             agent = "writer"
             prompt = "Write a technical article about: {topic}. Include introduction, 3-4 main points, examples, and conclusion."
+            writes("article")
             onSuccess goto "evaluate"
             onFailure retry 2 otherwise "failed"
         }
 
         node("evaluate") {
             agent = "evaluator"
-            prompt = "Evaluate this article: {write}. Return JSON with score (0-100), reasoning, and improvements array."
+            prompt = "Evaluate this article: {article}. Return JSON with reasoning and improvements."
             rubric = "content-quality"
-            outputParams = listOf("score", "improvements", "reasoning")
+            writes("score", "improvements", "reasoning")
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "approve"
@@ -59,13 +68,15 @@ fun llmEvalTestWorkflow() = workflow("llm-eval-test") {
 
         node("approve") {
             agent = "editor"
-            prompt = "Article approved (score: {score}). Content: {write}. Make final polish edits."
+            prompt = "Article approved (score: {score}). Content: {article}. Make final polish edits."
+            writes("article")
             onSuccess goto "published"
         }
 
         node("revise") {
             agent = "editor"
-            prompt = "Revise article: {write}. Score: {score}. Improvements needed: {improvements}. Reasoning: {reasoning}"
+            prompt = "Revise article: {article}. Score: {score}. Improvements needed: {improvements}. Reasoning: {reasoning}"
+            writes("article")
             onSuccess goto "evaluate"
             onFailure retry 2 otherwise "escalate"
         }
@@ -73,6 +84,7 @@ fun llmEvalTestWorkflow() = workflow("llm-eval-test") {
         node("rewrite") {
             agent = "writer"
             prompt = "Article scored poorly ({score}). Rewrite about: {topic}. Issues: {improvements}"
+            writes("article")
             onSuccess goto "evaluate"
             onFailure retry 1 otherwise "failed"
         }

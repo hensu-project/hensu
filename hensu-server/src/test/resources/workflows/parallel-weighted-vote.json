@@ -1,6 +1,13 @@
 {
   "id" : "parallel-weighted-vote",
   "version" : "1.0.0",
+  "stateSchema" : {
+    "variables" : [ {
+      "name" : "content",
+      "type" : "STRING",
+      "isInput" : true
+    } ]
+  },
   "startNode" : "parallel",
   "agents" : {
     "senior-reviewer" : {

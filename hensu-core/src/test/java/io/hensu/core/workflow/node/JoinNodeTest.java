@@ -178,23 +178,23 @@ class JoinNodeTest {
             assertThat(MergeStrategy.values())
                     .containsExactlyInAnyOrder(
                             MergeStrategy.COLLECT_ALL,
-                            MergeStrategy.FIRST_COMPLETED,
+                            MergeStrategy.FIRST_SUCCESSFUL,
                             MergeStrategy.CONCATENATE,
                             MergeStrategy.MERGE_MAPS,
                             MergeStrategy.CUSTOM);
         }
 
         @Test
-        void shouldBuildWithFirstCompleted() {
+        void shouldBuildWithFirstSuccessful() {
             // When
             JoinNode node =
                     JoinNode.builder("join-1")
                             .awaitTargets("fork-1")
-                            .mergeStrategy(MergeStrategy.FIRST_COMPLETED)
+                            .mergeStrategy(MergeStrategy.FIRST_SUCCESSFUL)
                             .build();
 
             // Then
-            assertThat(node.getMergeStrategy()).isEqualTo(MergeStrategy.FIRST_COMPLETED);
+            assertThat(node.getMergeStrategy()).isEqualTo(MergeStrategy.FIRST_SUCCESSFUL);
         }
 
         @Test

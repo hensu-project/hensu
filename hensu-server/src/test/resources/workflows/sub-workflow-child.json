@@ -1,6 +1,13 @@
 {
   "id" : "sub-workflow-child",
   "version" : "1.0.0",
+  "stateSchema" : {
+    "variables" : [ {
+      "name" : "input",
+      "type" : "STRING",
+      "isInput" : true
+    } ]
+  },
   "startNode" : "child-process",
   "agents" : {
     "child-processor" : {

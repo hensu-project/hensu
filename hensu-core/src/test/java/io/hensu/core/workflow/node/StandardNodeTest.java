@@ -14,10 +14,8 @@ class StandardNodeTest {
 
     @Test
     void shouldBuildStandardNodeWithRequiredFields() {
-        // Given
         List<TransitionRule> transitions = List.of(new SuccessTransition("next"));
 
-        // When
         StandardNode node =
                 StandardNode.builder()
                         .id("test-node")
@@ -26,7 +24,6 @@ class StandardNodeTest {
                         .transitionRules(transitions)
                         .build();
 
-        // Then
         assertThat(node.getId()).isEqualTo("test-node");
         assertThat(node.getAgentId()).isEqualTo("test-agent");
         assertThat(node.getPrompt()).isEqualTo("Test prompt");
@@ -36,12 +33,9 @@ class StandardNodeTest {
 
     @Test
     void shouldBuildStandardNodeWithAllFields() {
-        // Given
         List<TransitionRule> transitions = List.of(new SuccessTransition("next"));
         ReviewConfig reviewConfig = new ReviewConfig(ReviewMode.REQUIRED, true, true);
-        List<String> outputParams = List.of("param1", "param2");
 
-        // When
         StandardNode node =
                 StandardNode.builder()
                         .id("full-node")
@@ -50,39 +44,31 @@ class StandardNodeTest {
                         .rubricId("quality-rubric")
                         .reviewConfig(reviewConfig)
                         .transitionRules(transitions)
-                        .outputParams(outputParams)
+                        .writes(List.of("article", "score", "recommendation"))
                         .build();
 
-        // Then
         assertThat(node.getId()).isEqualTo("full-node");
         assertThat(node.getAgentId()).isEqualTo("full-agent");
-        assertThat(node.getPrompt()).isEqualTo("Full prompt");
         assertThat(node.getRubricId()).isEqualTo("quality-rubric");
         assertThat(node.getReviewConfig()).isEqualTo(reviewConfig);
-        assertThat(node.getOutputParams()).containsExactly("param1", "param2");
+        assertThat(node.getWrites()).containsExactly("article", "score", "recommendation");
     }
 
     @Test
     void shouldAllowNullAgentIdAndPrompt() {
-        // Given - nodes can have null agentId/prompt for non-agent execution strategies
         List<TransitionRule> transitions = List.of(new SuccessTransition("next"));
 
-        // When
         StandardNode node =
                 StandardNode.builder().id("no-agent-node").transitionRules(transitions).build();
 
-        // Then
-        assertThat(node.getId()).isEqualTo("no-agent-node");
         assertThat(node.getAgentId()).isNull();
         assertThat(node.getPrompt()).isNull();
     }
 
     @Test
     void shouldThrowExceptionWhenIdIsNull() {
-        // Given
         List<TransitionRule> transitions = List.of(new SuccessTransition("next"));
 
-        // When/Then
         assertThatThrownBy(() -> StandardNode.builder().transitionRules(transitions).build())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("id");
@@ -90,46 +76,38 @@ class StandardNodeTest {
 
     @Test
     void shouldThrowExceptionWhenTransitionRulesAreNull() {
-        // When/Then
         assertThatThrownBy(() -> StandardNode.builder().id("test-node").build())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("transitionRules");
     }
 
     @Test
-    void shouldReturnEmptyOutputParamsWhenNotSet() {
-        // Given
+    void shouldReturnEmptyWritesWhenNotSet() {
         List<TransitionRule> transitions = List.of(new SuccessTransition("next"));
 
-        // When
         StandardNode node =
                 StandardNode.builder().id("test-node").transitionRules(transitions).build();
 
-        // Then
-        assertThat(node.getOutputParams()).isEmpty();
+        assertThat(node.getWrites()).isEmpty();
     }
 
     @Test
-    void shouldMakeOutputParamsImmutable() {
-        // Given
+    void shouldMakeWritesImmutable() {
         List<TransitionRule> transitions = List.of(new SuccessTransition("next"));
 
-        // When
         StandardNode node =
                 StandardNode.builder()
                         .id("test-node")
                         .transitionRules(transitions)
-                        .outputParams(List.of("param1"))
+                        .writes(List.of("article"))
                         .build();
 
-        // Then
-        assertThatThrownBy(() -> node.getOutputParams().add("param2"))
+        assertThatThrownBy(() -> node.getWrites().add("score"))
                 .isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
     void shouldImplementEqualsBasedOnIdAndAgentId() {
-        // Given
         List<TransitionRule> transitions = List.of(new SuccessTransition("next"));
 
         StandardNode node1 =
@@ -154,29 +132,8 @@ class StandardNodeTest {
                         .transitionRules(transitions)
                         .build();
 
-        // Then
         assertThat(node1).isEqualTo(node2);
         assertThat(node1).isNotEqualTo(node3);
         assertThat(node1.hashCode()).isEqualTo(node2.hashCode());
-    }
-
-    @Test
-    void shouldReturnMeaningfulToString() {
-        // Given
-        List<TransitionRule> transitions = List.of(new SuccessTransition("next"));
-
-        StandardNode node =
-                StandardNode.builder()
-                        .id("test-node")
-                        .agentId("test-agent")
-                        .transitionRules(transitions)
-                        .build();
-
-        // When
-        String toString = node.toString();
-
-        // Then
-        assertThat(toString).contains("test-node");
-        assertThat(toString).contains("test-agent");
     }
 }

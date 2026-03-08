@@ -3,6 +3,7 @@ package io.hensu.dsl.builders
 import io.hensu.core.execution.result.ExitStatus
 import io.hensu.core.review.ReviewMode
 import io.hensu.core.workflow.node.StandardNode
+import io.hensu.core.workflow.state.VarType
 import io.hensu.core.workflow.transition.FailureTransition
 import io.hensu.core.workflow.transition.ScoreTransition
 import io.hensu.dsl.WorkingDirectory
@@ -264,6 +265,47 @@ class WorkflowBuilderTest {
         assertThat(step1.reviewConfig!!.mode).isEqualTo(ReviewMode.REQUIRED)
         assertThat(step1.reviewConfig!!.allowBacktrack).isTrue
         assertThat(step1.reviewConfig!!.allowEdit).isTrue
+    }
+
+    @Test
+    fun `should propagate state schema to workflow`() {
+        // If the state {} block is silently swallowed, schema is null and WorkflowValidator
+        // skips writes/prompt validation — mismatched variable names go undetected until runtime
+        val workflow =
+            workflow("WithState", workingDir) {
+                agents {
+                    agent("agent1") {
+                        role = "Agent"
+                        model = "test"
+                    }
+                }
+
+                state {
+                    input("topic", VarType.STRING)
+                    variable("summary", VarType.STRING)
+                }
+
+                graph {
+                    start at "step1"
+                    node("step1") {
+                        agent = "agent1"
+                        writes("summary")
+                        onSuccess goto "end"
+                    }
+                    end("end")
+                }
+            }
+
+        assertThat(workflow.stateSchema).isNotNull
+        val vars = workflow.stateSchema!!.variables
+        assertThat(vars).hasSize(2)
+
+        val topic = vars.first { it.name() == "topic" }
+        assertThat(topic.isInput).isTrue()
+        assertThat(topic.type()).isEqualTo(VarType.STRING)
+
+        val summary = vars.first { it.name() == "summary" }
+        assertThat(summary.isInput).isFalse()
     }
 
     @Test

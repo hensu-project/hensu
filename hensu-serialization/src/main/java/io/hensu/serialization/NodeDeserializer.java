@@ -103,8 +103,8 @@ class NodeDeserializer extends StdDeserializer<Node> {
                             rc.get("allowBacktrack").asBoolean(),
                             rc.get("allowEdit").asBoolean()));
         }
-        if (root.has("outputParams")) {
-            b.outputParams(readValue(mapper, root, "outputParams", STRING_LIST));
+        if (root.has("writes")) {
+            b.writes(readValue(mapper, root, "writes", STRING_LIST));
         }
         if (root.has("planningConfig")) {
             b.planningConfig(mapper.treeToValue(root.get("planningConfig"), PlanningConfig.class));

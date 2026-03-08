@@ -21,25 +21,32 @@ fun selfEvalTestWorkflow() = workflow("self-eval-test") {
     description = "Test workflow for self-evaluation and LLM-based evaluation"
     version = "1.0.0"
 
+    state {
+        input("topic", VarType.STRING)
+        variable("article", VarType.STRING)
+        variable("recommendation", VarType.STRING)
+        // score and approved are engine variables — no declaration needed
+    }
+
     agents {
         // Main content writer - provides self-evaluation in output
         agent("writer") {
-            role = "Content writer who produces articles and self-evaluates. Include self-evaluation JSON with score (0-100) and recommendation if score < 80."
+            role = "Content writer who produces articles and self-evaluates. Return JSON with keys: article, recommendation."
             model = Models.GEMINI_2_5_PRO
             temperature = 0.7
         }
 
         // Reviewer agent - evaluates content independently
         agent("reviewer") {
-            role = "Content reviewer providing score and feedback"
-            model = Models.GEMINI_2_5_PRO
+            role = "Content reviewer. Return JSON with key: recommendation."
+            model = Models.GEMINI_3_1_PRO
             temperature = 0.3
         }
 
         // Editor for improvements
         agent("editor") {
-            role = "Editor who improves content based on recommendations"
-            model = Models.GEMINI_2_5_PRO
+            role = "Editor who improves content based on recommendations. Return JSON with keys: article, recommendation."
+            model = Models.GEMINI_3_1_FLASH_LITE
             temperature = 0.5
         }
     }
@@ -54,8 +61,8 @@ fun selfEvalTestWorkflow() = workflow("self-eval-test") {
         // Step 1: Initial draft with self-evaluation
         node("draft") {
             agent = "writer"
-            prompt = "Write about: {topic}. {recommendations}. Requirements: 1) Clear introduction, 2) At least 3 main points, 3) Concrete examples, 4) Conclusion. Include self-evaluation JSON: {\"score\": <0-100>, \"recommendation\": \"<how to improve>\"}"
-            outputParams = listOf("score", "recommendation")
+            prompt = "Write about: {topic}. {recommendation}. Requirements: 1) Clear introduction, 2) At least 3 main points, 3) Concrete examples, 4) Conclusion."
+            writes("article", "score", "recommendation")
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "review"
@@ -67,22 +74,21 @@ fun selfEvalTestWorkflow() = workflow("self-eval-test") {
         // Step 2: Review by independent agent
         node("review") {
             agent = "reviewer"
-            prompt = "Review this content: {draft}. Provide JSON: {\"score\": <0-100>, \"recommendation\": \"<feedback>\", \"approved\": <true/false>}"
-            outputParams = listOf("score", "recommendation", "approved")
+            prompt = "Review this content: {article}. Evaluate quality, accuracy, and completeness."
+            writes("score", "recommendation", "approved")
             rubric = "content-quality"
 
-            onScore {
-                whenScore greaterThanOrEqual 80.0 goto "finalize"
-                whenScore `in` 60.0..79.0 goto "improve"
-                whenScore lessThan 60.0 goto "draft"
-            }
+            // Critical failure overrides approval: score below 60 means restart draft
+            onScore { whenScore lessThan 60.0 goto "draft" }
+            onApproval goto "finalize"
+            onRejection goto "improve"
         }
 
         // Step 3: Improvement based on feedback
         node("improve") {
             agent = "editor"
-            prompt = "Improve this content: {draft}. Feedback: {recommendations}. Include self-evaluation JSON after editing."
-            outputParams = listOf("score", "recommendation")
+            prompt = "Improve this content: {article}. Feedback: {recommendation}."
+            writes("article", "score", "recommendation")
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "review"
@@ -95,8 +101,8 @@ fun selfEvalTestWorkflow() = workflow("self-eval-test") {
         // Step 4: Restart from scratch
         node("restart") {
             agent = "writer"
-            prompt = "Previous attempt failed. Starting fresh. Topic: {topic}. Issues: {recommendations}. Create a new draft with self-evaluation."
-            outputParams = listOf("score", "recommendation")
+            prompt = "Previous attempt failed. Starting fresh. Topic: {topic}. Issues: {recommendation}. Create a new draft."
+            writes("article", "score", "recommendation")
 
             onScore {
                 whenScore greaterThanOrEqual 70.0 goto "review"
@@ -107,7 +113,8 @@ fun selfEvalTestWorkflow() = workflow("self-eval-test") {
         // Step 5: Finalize
         node("finalize") {
             agent = "editor"
-            prompt = "Finalize this approved content: {review}. Make final edits and format for publication."
+            prompt = "Finalize this approved content: {article}. Apply final recommendation: {recommendation}. Format for publication."
+            writes("article")
             onSuccess goto "success"
         }
 

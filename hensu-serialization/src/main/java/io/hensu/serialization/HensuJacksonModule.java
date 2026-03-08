@@ -10,6 +10,7 @@ import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.plan.PlanStepAction;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
+import io.hensu.core.workflow.state.WorkflowStateSchema;
 import io.hensu.core.workflow.transition.TransitionRule;
 import io.hensu.serialization.mixin.AgentConfigBuilderMixin;
 import io.hensu.serialization.mixin.AgentConfigMixin;
@@ -44,6 +45,10 @@ import java.io.Serial;
 /// - `BacktrackEvent` + `BacktrackEvent.Builder`
 /// - `ExecutionHistory` (field-visibility mixin — no builder)
 ///
+/// **Custom deserializer (no builder, no mixin):**
+/// - `WorkflowStateSchema` — single-constructor immutable class; fields extracted manually
+///   to avoid reflection on the mixin class in native image
+///
 /// @implNote GraalVM-safe. All registrations are explicit — no classpath scanning.
 /// Builder classes registered here require companion entries in `NativeImageConfig`
 /// in `hensu-server` for native-image reflection.
@@ -71,6 +76,8 @@ public class HensuJacksonModule extends SimpleModule {
 
         addSerializer(PlanStepAction.class, new PlanStepActionSerializer());
         addDeserializer(PlanStepAction.class, new PlanStepActionDeserializer());
+
+        addDeserializer(WorkflowStateSchema.class, new WorkflowStateSchemaDeserializer());
     }
 
     /// Applies mixin annotations to builder-pattern domain types.
