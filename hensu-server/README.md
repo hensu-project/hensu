@@ -154,7 +154,7 @@ Runtime operations for starting and managing workflow executions (client integra
 Implements MCP (Model Context Protocol) over SSE using a "split-pipe" architecture:
 
 - **Downstream (SSE)**: Hensu pushes JSON-RPC tool call requests to connected clients
-- **Upstream (HTTP POST)**: Clients send JSON-RPC responses back
+- **Upstream (HTTP POST)**: Clients send JSON-RPC responses back (requests time out after 60 s if no response is received — see `McpSessionManager.DEFAULT_TIMEOUT`)
 
 ```
 +—————————————————+                    +—————————————————+
@@ -239,7 +239,7 @@ The server initializes core infrastructure via CDI:
 
 1. `HensuEnvironmentProducer` creates `HensuEnvironment` via `HensuFactory.builder()`
 2. `ServerConfiguration` delegates core components for CDI injection
-3. `ServerActionExecutor` provides MCP-only action execution (rejects local bash)
+3. `ServerActionExecutor` routes `Action.Send` to registered handlers (MCP and others) and rejects `Action.Execute` (local command execution)
 
 See [Server Developer Guide](../docs/developer-guide-server.md) for implementation details.
 
@@ -322,7 +322,7 @@ hensu.lease.stale-threshold=90s
 hensu-server/
 ├── src/main/java/io/hensu/server/
 │   ├── action/                            # Server-specific action execution
-│   │   └── ServerActionExecutor.java      # MCP-only (rejects local execution)
+│   │   └── ServerActionExecutor.java      # Send-action dispatcher (rejects local execution)
 │   ├── api/                               # REST and SSE endpoints
 │   │   ├── WorkflowResource.java          # Workflow definition management
 │   │   ├── ExecutionResource.java         # Execution runtime operations
@@ -421,3 +421,4 @@ hensu-server/
 - [Unified Architecture](../docs/unified-architecture.md) - Architecture decisions and vision
 - [DSL Reference](../docs/dsl-reference.md) - Workflow DSL syntax
 - [Developer Guide](../docs/developer-guide-server.md) - Server development patterns
+- [Spring Reference Client](../integrations/spring-reference-client/README.md) - Example Spring Boot integration

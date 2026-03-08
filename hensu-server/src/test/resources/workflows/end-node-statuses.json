@@ -1,6 +1,13 @@
 {
   "id" : "end-node-statuses",
   "version" : "1.0.0",
+  "stateSchema" : {
+    "variables" : [ {
+      "name" : "input",
+      "type" : "STRING",
+      "isInput" : true
+    } ]
+  },
   "startNode" : "evaluate",
   "agents" : {
     "evaluator" : {
@@ -16,7 +23,7 @@
       "nodeType" : "STANDARD",
       "agentId" : "evaluator",
       "prompt" : "Evaluate: {input}",
-      "outputParams" : [ "score" ],
+      "writes" : [ "score" ],
       "transitionRules" : [ {
         "type" : "score",
         "conditions" : [ {

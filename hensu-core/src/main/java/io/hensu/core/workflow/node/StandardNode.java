@@ -11,18 +11,18 @@ import java.util.Objects;
 ///
 /// The most common node type in Hensu workflows. A standard node executes
 /// a prompt using a configured agent and transitions based on the result.
-/// Optional features include rubric evaluation, human review, and output
-/// parameter extraction.
+/// Optional features include rubric evaluation, human review, and typed
+/// state variable output via `writes`.
 ///
 /// ### Execution Flow
 /// 1. Resolve prompt template variables from context
 /// 2. Execute prompt via the configured agent
 /// 3. Optionally evaluate output against a rubric
 /// 4. Optionally request human review
-/// 5. Extract output parameters to context (if configured)
+/// 5. Route output to declared `writes` variables in context
 /// 6. Evaluate transition rules to determine next node
 ///
-/// @implNote Immutable and thread-safe after construction. Agent and prompt
+/// @implNote **Immutable after construction.** Agent and prompt
 /// may be null for nodes using alternative execution strategies.
 ///
 /// @see Node for the base class
@@ -35,7 +35,7 @@ public final class StandardNode extends Node {
     private final String rubricId;
     private final ReviewConfig reviewConfig;
     private final List<TransitionRule> transitionRules;
-    private final List<String> outputParams; // Parameters to extract from JSON output
+    private final List<String> writes;
 
     // Planning support
     private final PlanningConfig planningConfig;
@@ -49,9 +49,8 @@ public final class StandardNode extends Node {
         this.prompt = builder.prompt;
         this.rubricId = builder.rubricId;
         this.reviewConfig = builder.reviewConfig;
-        this.transitionRules = builder.transitionRules;
-        this.outputParams =
-                builder.outputParams != null ? List.copyOf(builder.outputParams) : List.of();
+        this.transitionRules = List.copyOf(builder.transitionRules);
+        this.writes = builder.writes != null ? List.copyOf(builder.writes) : List.of();
         // Planning support
         this.planningConfig =
                 builder.planningConfig != null ? builder.planningConfig : PlanningConfig.disabled();
@@ -113,14 +112,15 @@ public final class StandardNode extends Node {
         return transitionRules;
     }
 
-    /// Returns parameter names to extract from JSON output.
+    /// Returns the semantic state variable names this node produces.
     ///
-    /// Extracted parameters are stored in context for use in
-    /// subsequent prompts as `{paramName}` placeholders.
+    /// `OutputExtractionPostProcessor` routes output to these context keys:
+    /// - Single entry: full text response stored under `writes.get(0)`
+    /// - Multiple entries: JSON response parsed, each key stored under its declared name
     ///
-    /// @return unmodifiable list of parameter names, never null
-    public List<String> getOutputParams() {
-        return outputParams;
+    /// @return unmodifiable list of variable names, never null, may be empty
+    public List<String> getWrites() {
+        return writes;
     }
 
     /// Returns the planning configuration.
@@ -165,7 +165,7 @@ public final class StandardNode extends Node {
         private String rubricId;
         private ReviewConfig reviewConfig;
         private List<TransitionRule> transitionRules;
-        private List<String> outputParams;
+        private List<String> writes;
         private PlanningConfig planningConfig;
         private Plan staticPlan;
         private String planFailureTarget;
@@ -192,7 +192,7 @@ public final class StandardNode extends Node {
 
         /// Sets the prompt template.
         ///
-        /// @param prompt template with optional `{var}` placeholders
+        /// @param prompt template with optional `{var}` placeholders, may be null
         /// @return this builder for chaining
         public Builder prompt(String prompt) {
             this.prompt = prompt;
@@ -226,12 +226,12 @@ public final class StandardNode extends Node {
             return this;
         }
 
-        /// Sets output parameter names to extract.
+        /// Sets the semantic state variable names this node produces.
         ///
-        /// @param outputParams parameter names for extraction, may be null
+        /// @param writes variable names this node writes to, may be null (treated as empty)
         /// @return this builder for chaining
-        public Builder outputParams(List<String> outputParams) {
-            this.outputParams = outputParams;
+        public Builder writes(List<String> writes) {
+            this.writes = writes;
             return this;
         }
 
@@ -255,7 +255,7 @@ public final class StandardNode extends Node {
 
         /// Sets the target node for plan failure transitions.
         ///
-        /// @param planFailureTarget node ID to transition to on plan failure
+        /// @param planFailureTarget node ID to transition to on plan failure, may be null
         /// @return this builder for chaining
         public Builder planFailureTarget(String planFailureTarget) {
             this.planFailureTarget = planFailureTarget;

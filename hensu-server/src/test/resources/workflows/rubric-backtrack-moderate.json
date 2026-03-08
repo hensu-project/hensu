@@ -1,6 +1,13 @@
 {
   "id" : "rubric-backtrack-moderate",
   "version" : "1.0.0",
+  "stateSchema" : {
+    "variables" : [ {
+      "name" : "topic",
+      "type" : "STRING",
+      "isInput" : true
+    } ]
+  },
   "startNode" : "research",
   "agents" : {
     "researcher" : {

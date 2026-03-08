@@ -17,6 +17,7 @@ The `hensu-core` module is the execution engine at the heart of Hensu. It provid
 - **State Snapshots** — Serializable execution state for persistence and time-travel debugging
 - **Generic Nodes** — Extensible node types for custom workflow operations
 - **Agentic Output Validation** — Defense-in-depth safety checks applied to all LLM-generated node outputs before they enter workflow state (ASCII control chars, Unicode manipulation chars, payload size)
+- **State Schema & Validation** — Optional typed schema declaration for domain-specific state variables, with load-time validation of `writes` declarations and prompt `{variable}` references
 
 ## Architecture
 
@@ -116,8 +117,7 @@ rubrics to determine quality scores and pass/fail status.
 | `Criterion`        | Single evaluation dimension with weight and minimum score         |
 | `RubricEvaluation` | Complete evaluation result with per-criterion scores              |
 
-Score-based routing: nodes can use `ScoreTransition` to route based on evaluation scores (e.g., score >= 80 goto "
-approve", else goto "revise").
+Score-based routing: nodes can use `ScoreTransition` to route based on evaluation scores (e.g., score >= 80 goto "approve", else goto "revise"). Nodes that write a boolean `approved` variable can use `ApprovalTransition` (`onApproval` / `onRejection` in DSL) for binary decision routing.
 
 ## Plan Engine
 
@@ -125,36 +125,39 @@ Pipeline-driven multi-step execution within a single `StandardNode`. `AgenticNod
 runs two sequential `PlanPipeline` instances sharing a `PlanContext` carrier:
 
 ```
-+——————————————————————————————————————————————————————————————+
-│  PREPARATION PIPELINE                                        │
-│                                                              │
-│  +————————————————+   +————————————————+   +——————————————+  │
-│  │PlanCreation    │   │Synthesize      │   │ReviewGate    │  │
-│  │Processor       │——>│Enrichment      │——>│Processor     │  │
-│  │(Static or LLM) │   │(inject agentId)│   │(pause if     │  │
-│  +————————————————+   +————————————————+   │ review=true) │  │
-│                                            +——————+———————+  │
-+——————————————————————————————————————————————+———————————————+
-                                               │ PlanContext
-                                               V (Plan ready)
-+——————————————————————————————————————————————————————————————+
-│  EXECUTION PIPELINE                                          │
-│                                                              │
-│  PlanExecutionProcessor                                      │
-│  +————————————————————————————————————————+                  │
-│  │  PlanExecutor                          │                  │
-│  │  S1 ——> S2 ——> S3 ——> ...              │                  │
-│  │   │   StepHandlerRegistry              │                  │
-│  │   V                                    │                  │
-│  │  +—————————————+  +—————————————+      │                  │
-│  │  │ToolCall     │  │Synthesize   │      │                  │
-│  │  │Handler      │  │Handler      │      │                  │
-│  │  │(ActionExec) │  │(Agent call) │      │                  │
-│  │  +—————————————+  +—————————————+      │                  │
-│  +————————————————————————————————————————+                  │
-│                                                              │
-│  PostExecutionReviewGateProcessor (optional pause)           │
-+——————————————————————————————————————————————————————————————+
++——————————————————————————————————————————————————————————+
+│  PREPARATION PIPELINE                                    │
+│                                                          │
+│  +————————————————+   +——————————————+                   │
+│  │PlanCreation    │   │ReviewGate    │                   │
+│  │Processor       │——>│Processor     │                   │
+│  │(Static or LLM) │   │(pause if     │                   │
+│  +————————————————+   │ review=true) │                   │
+│                       +——————+———————+                   │
++——————————————————————————————+———————————————————————————+
+                               │ PlanContext
+                               V (Plan ready)
++——————————————————————————————————————————————————————————+
+│  EXECUTION PIPELINE                                      │
+│                                                          │
+│  SynthesizeEnrichmentProcessor (inject agentId on steps) │
+│           │                                              │
+│           V                                              │
+│  PlanExecutionProcessor                                  │
+│  +————————————————————————————————————————+              │
+│  │  PlanExecutor                          │              │
+│  │  S1 ——> S2 ——> S3 ——> ...              │              │
+│  │   │   StepHandlerRegistry              │              │
+│  │   V                                    │              │
+│  │  +—————————————+  +—————————————+      │              │
+│  │  │ToolCall     │  │Synthesize   │      │              │
+│  │  │Handler      │  │Handler      │      │              │
+│  │  │(ActionExec) │  │(Agent call) │      │              │
+│  │  +—————————————+  +—————————————+      │              │
+│  +————————————————————————————————————————+              │
+│                                                          │
+│  PostExecutionReviewGateProcessor (optional pause)       │
++——————————————————————————————————————————————————————————+
 ```
 
 **Planning modes:**
@@ -230,17 +233,21 @@ hensu-core/src/main/java/io/hensu/core/
 ├── execution/
 │   ├── WorkflowExecutor.java          # Main graph traversal engine (execute + executeFrom for resume)
 │   ├── executor/
-│   │   ├── NodeExecutor.java          # Interface for node type executors
-│   │   ├── AgenticNodeExecutor.java   # Drives preparation + execution PlanPipelines for StandardNode
-│   │   ├── StandardNodeExecutor.java  # LLM prompt execution (no planning)
-│   │   ├── ParallelNodeExecutor.java  # Concurrent branch execution
-│   │   ├── ForkNodeExecutor.java      # Fork into parallel paths
-│   │   ├── JoinNodeExecutor.java      # Merge parallel results
-│   │   ├── LoopNodeExecutor.java      # Iterative execution
-│   │   ├── ActionNodeExecutor.java    # Action dispatch
-│   │   ├── GenericNodeExecutor.java   # Custom node handlers
-│   │   ├── SubWorkflowNodeExecutor.java # Nested workflow execution
-│   │   └── EndNodeExecutor.java       # Terminal nodes
+│   │   ├── NodeExecutor.java              # Interface for node type executors
+│   │   ├── NodeExecutorRegistry.java      # Registry interface for node executor lookup
+│   │   ├── DefaultNodeExecutorRegistry.java # Default implementation
+│   │   ├── NodeResult.java                # Primary return type for all node executors
+│   │   ├── ExecutionContext.java           # Per-execution context carrier (state + tenant)
+│   │   ├── AgenticNodeExecutor.java       # Drives preparation + execution PlanPipelines for StandardNode
+│   │   ├── StandardNodeExecutor.java      # LLM prompt execution (no planning)
+│   │   ├── ParallelNodeExecutor.java      # Concurrent branch execution
+│   │   ├── ForkNodeExecutor.java          # Fork into parallel paths
+│   │   ├── JoinNodeExecutor.java          # Merge parallel results
+│   │   ├── LoopNodeExecutor.java          # Iterative execution
+│   │   ├── ActionNodeExecutor.java        # Action dispatch
+│   │   ├── GenericNodeExecutor.java       # Custom node handlers
+│   │   ├── SubWorkflowNodeExecutor.java   # Nested workflow execution
+│   │   └── EndNodeExecutor.java           # Terminal nodes
 │   ├── pipeline/
 │   │   ├── NodeExecutionProcessor.java          # Base processor interface
 │   │   ├── PreNodeExecutionProcessor.java       # Pre-execution processor marker interface
@@ -265,14 +272,25 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   └── ExecutionStep.java     # Single node execution record
 │   └── parallel/
 │       ├── Branch.java            # Parallel branch definition
-│       ├── ConsensusStrategy.java # Multi-branch agreement logic
+│       ├── BranchResult.java      # Result of a single branch execution
+│       ├── ConsensusStrategy.java # Multi-branch agreement strategy enum
+│       ├── ConsensusConfig.java   # Consensus configuration (strategy, threshold)
+│       ├── ConsensusEvaluator.java # Evaluates branch results against consensus rules
+│       ├── ConsensusResult.java   # Outcome of consensus evaluation
+│       ├── FailureMarker.java     # Sentinel for failed branches in fork/join
 │       └── ForkJoinContext.java   # Shared fork/join state
 ├── workflow/
-│   ├── Workflow.java              # Workflow definition (agents + graph)
+│   ├── Workflow.java              # Workflow definition (agents + graph + optional state schema)
 │   ├── WorkflowRepository.java   # Tenant-scoped workflow storage interface
 │   ├── InMemoryWorkflowRepository.java  # Default in-memory implementation
 │   ├── node/                      # Node types: Standard, Parallel, Fork, etc.
-│   └── transition/                # Transition rules: Success, Score, Always, etc.
+│   ├── transition/                # Transition rules: Success, Failure, Score, Approval, Always, etc.
+│   ├── state/
+│   │   ├── WorkflowStateSchema.java      # Typed state variable schema (optional per-workflow)
+│   │   ├── StateVariableDeclaration.java # Variable declaration record (name, type, isInput)
+│   │   └── VarType.java                  # Type enum: STRING, NUMBER, BOOLEAN, LIST_STRING
+│   └── validation/
+│       └── WorkflowValidator.java        # Load-time validator for writes + prompt {variable} refs
 ├── rubric/                        # Quality evaluation engine
 │   ├── RubricEngine.java          # Evaluation orchestrator
 │   ├── RubricRepository.java      # Rubric storage interface
@@ -291,7 +309,8 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── PlanProcessor.java         # Single-phase processor interface
 │   ├── PlanContext.java           # Mutable state carrier for plan pipelines
 │   ├── PlanExecutor.java          # Iterates steps via StepHandlerRegistry
-│   ├── StepHandlerRegistry.java   # Dispatches PlanStepAction to StepHandler
+│   ├── StepHandlerRegistry.java   # Interface for PlanStepAction dispatch
+│   ├── DefaultStepHandlerRegistry.java # Default implementation
 │   ├── StepHandler.java           # Handler interface for one action type
 │   ├── ToolCallStepHandler.java   # Handles ToolCall via ActionExecutor
 │   ├── SynthesizeStepHandler.java # Handles Synthesize via agent invocation
@@ -317,27 +336,28 @@ hensu-core/src/main/java/io/hensu/core/
 
 ## Node Types
 
-| Node              | Description                                        |
-|-------------------|----------------------------------------------------|
-| `StandardNode`    | Executes an LLM prompt via an agent                |
-| `ParallelNode`    | Runs multiple branches concurrently                |
-| `ForkNode`        | Splits execution into parallel paths               |
-| `JoinNode`        | Merges parallel results with configurable strategy |
-| `LoopNode`        | Iterates until a condition or max iterations       |
-| `ActionNode`      | Dispatches actions (send HTTP, execute command)    |
-| `GenericNode`     | Custom handler for extensible operations           |
-| `SubWorkflowNode` | Delegates to another workflow                      |
-| `EndNode`         | Terminal node                                      |
+| Node              | Description                                                                                                        |
+|-------------------|--------------------------------------------------------------------------------------------------------------------|
+| `StandardNode`    | Executes an LLM prompt, optionally writes structured state variables via `writes`, and transitions based on result |
+| `ParallelNode`    | Runs multiple branches concurrently                                                                                |
+| `ForkNode`        | Splits execution into parallel paths                                                                               |
+| `JoinNode`        | Merges parallel results with configurable strategy                                                                 |
+| `LoopNode`        | Iterates until a condition or max iterations                                                                       |
+| `ActionNode`      | Dispatches actions (send HTTP, execute command)                                                                    |
+| `GenericNode`     | Custom handler for extensible operations                                                                           |
+| `SubWorkflowNode` | Delegates to another workflow                                                                                      |
+| `EndNode`         | Terminal node                                                                                                      |
 
 ## Transition Rules
 
-| Rule                   | Description                                |
-|------------------------|--------------------------------------------|
-| `SuccessTransition`    | Routes on successful execution             |
-| `FailureTransition`    | Routes on execution failure                |
-| `ScoreTransition`      | Routes based on rubric evaluation score    |
-| `AlwaysTransition`     | Unconditional transition                   |
-| `RubricFailTransition` | Routes when rubric evaluation itself fails |
+| Rule                   | Description                                                               |
+|------------------------|---------------------------------------------------------------------------|
+| `SuccessTransition`    | Routes on successful execution                                            |
+| `FailureTransition`    | Routes on execution failure                                               |
+| `ScoreTransition`      | Routes based on rubric evaluation score                                   |
+| `ApprovalTransition`   | Routes on the `approved` boolean engine variable (fall-through if absent) |
+| `AlwaysTransition`     | Unconditional transition                                                  |
+| `RubricFailTransition` | Routes when rubric evaluation itself fails                                |
 
 ## Agent Provider Interface
 

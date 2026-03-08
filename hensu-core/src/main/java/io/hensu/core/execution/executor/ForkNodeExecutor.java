@@ -17,14 +17,22 @@ import java.util.logging.Logger;
 ///
 /// ### This executor
 ///
-/// - Creates a ForkJoinContext to track forked executions
-/// - Spawns virtual threads for each target node
-/// - Each target executes independently with shared state access
-/// - Stores ForkJoinContext in state for JoinNode to await
+/// - Creates a `ForkJoinContext` to track forked executions
+/// - Spawns a virtual thread for each target node
+/// - Each branch receives an **isolated copy** of the parent context map — branch writes
+///   do not leak back to the parent or to sibling branches
+/// - Branch results are stored in `ForkJoinContext` only; the parent context is not mutated
+/// - Stores `ForkJoinContext` in parent state for `JoinNode` to await and merge
 ///
+/// The fork node does NOT wait for targets to complete — it transitions immediately after
+/// spawning. Use `JoinNode` to wait for completion and merge results.
 ///
-/// The fork node does NOT wait for targets to complete - it transitions immediately after
-/// spawning. Use JoinNode to wait for completion.
+/// @implNote Each branch gets an isolated `ExecutionContext` via {@link HensuState#branch}.
+/// All services (`agentRegistry`, `rubricEngine`, etc.) are shared by reference — they
+/// must be thread-safe.
+///
+/// @see JoinNodeExecutor for result merging and merge strategy semantics
+/// @see HensuState#branch for branch isolation mechanism
 public class ForkNodeExecutor implements NodeExecutor<ForkNode> {
 
     private static final Logger logger = Logger.getLogger(ForkNodeExecutor.class.getName());
@@ -61,7 +69,9 @@ public class ForkNodeExecutor implements NodeExecutor<ForkNode> {
                 continue;
             }
 
-            // Submit execution to virtual thread executor
+            // Isolated branch context — branch writes stay in the branch, not the parent
+            ExecutionContext branchContext = context.withState(state.branch(targetNodeId));
+
             Future<ForkResult> future =
                     executorService.submit(
                             () -> {
@@ -69,12 +79,10 @@ public class ForkNodeExecutor implements NodeExecutor<ForkNode> {
                                 try {
                                     logger.info("Fork executing target: " + targetNodeId);
 
-                                    // Get executor for target node type
                                     NodeExecutor<Node> executor =
                                             registry.getExecutorFor(targetNode);
 
-                                    // Execute the target node
-                                    NodeResult result = executor.execute(targetNode, context);
+                                    NodeResult result = executor.execute(targetNode, branchContext);
 
                                     long elapsed = System.currentTimeMillis() - startTime;
                                     logger.info(
@@ -83,10 +91,6 @@ public class ForkNodeExecutor implements NodeExecutor<ForkNode> {
                                                     + " in "
                                                     + elapsed
                                                     + "ms");
-
-                                    // Store result in context (thread-safe via ConcurrentHashMap in
-                                    // state)
-                                    state.getContext().put(targetNodeId, result.getOutput());
 
                                     ForkResult forkResult =
                                             ForkResult.success(targetNodeId, result, elapsed);

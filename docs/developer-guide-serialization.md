@@ -44,6 +44,9 @@ This three-layer boundary means a CLI or embedded deployment can swap in a diffe
 │    ├── addSerializer / addDeserializer (polymorphic hierarchies) │
 │    │     Node, TransitionRule, Action, PlanStepAction            │
 │    │                                                             │
+│    ├── addDeserializer (native-image performance — no mixin)     │
+│    │     WorkflowStateSchema                                     │
+│    │                                                             │
 │    └── setMixInAnnotations (builder-pattern domain objects)      │
 │          Workflow, AgentConfig, ExecutionStep,                   │
 │          NodeResult, BacktrackEvent, ExecutionHistory            │
@@ -107,7 +110,9 @@ context.setMixInAnnotations(Workflow.Builder.class, WorkflowBuilderMixin.class);
 
 ### Custom Deserializer Pattern
 
-Used for **sealed polymorphic hierarchies** where a `"type"` discriminator field determines the concrete subtype. Custom `StdDeserializer` subclasses read the JSON tree manually.
+Used in two distinct cases:
+
+**Case A — Sealed polymorphic hierarchies** where a `"type"` discriminator field determines the concrete subtype:
 
 | Type             | Serializer                  | Deserializer                  |
 |------------------|-----------------------------|-------------------------------|
@@ -116,7 +121,15 @@ Used for **sealed polymorphic hierarchies** where a `"type"` discriminator field
 | `Action`         | `ActionSerializer`          | `ActionDeserializer`          |
 | `PlanStepAction` | `PlanStepActionSerializer`  | `PlanStepActionDeserializer`  |
 
-Each deserializer follows the same skeleton:
+**Case B — Native-image performance** where the mixin/builder pattern would require registering a private constructor and builder class for reflection, but the type is a single concrete class that can be deserialized more efficiently by direct field extraction:
+
+| Type                  | Deserializer                      | Reason                                              |
+|-----------------------|-----------------------------------|-----------------------------------------------------|
+| `WorkflowStateSchema` | `WorkflowStateSchemaDeserializer` | Single concrete class; avoids mixin reflection cost |
+
+`WorkflowStateSchemaDeserializer` reads the `variables` list from the JSON tree directly into `StateVariableDeclaration` objects — no `@JsonCreator`, no private constructor registration, no native-image mixin overhead.
+
+Each polymorphic deserializer (Case A) follows the same skeleton:
 
 ```java
 @Override
@@ -180,10 +193,30 @@ Current exceptions (registered in `NativeImageConfig`):
 | `Plan`            | Contains `List<PlannedStep>` and `PlanConstraints`      |
 | `PlannedStep`     | Contains `Map<String, Object>` and `StepStatus` enum    |
 
+### The `convertValue` escape hatch
+
+`mapper.convertValue(node, new TypeReference<Map<String, Object>>() {})` is a third option for untyped maps and dynamic config payloads. Unlike `treeToValue`, it does not invoke a POJO constructor reflectively — it converts between Jackson's internal tree representation and standard JVM collection types. This is safe in native image for `Map<String, Object>`, `Map<String, String>`, and `List<T>` targets.
+
+**Used in practice:**
+
+```java
+// ActionDeserializer — untyped payload map
+Map<String, Object> payload = mapper.convertValue(root.get("payload"), new TypeReference<>() {});
+
+// NodeDeserializer — generic node config and fork targetConfigs
+Map<String, Object> config = mapper.convertValue(root.get("config"), new TypeReference<>() {});
+
+// NodeDeserializer — sub-workflow input/output mappings
+Map<String, String> inputMapping = mapper.convertValue(root.get("inputMapping"), new TypeReference<>() {});
+```
+
+Do **not** use `convertValue` to deserialize `hensu-core` domain objects — it still goes through Jackson's POJO machinery and has the same reflection requirements as `treeToValue`.
+
 ### Checklist before using `treeToValue`
 
 - [ ] Does the class contain a `Duration` or other JDK complex type? → register it
 - [ ] Are all fields primitives/strings/enums? → extract manually instead
+- [ ] Is the target an untyped `Map` or `List`? → use `convertValue` instead (no registration needed)
 - [ ] Does the class already have a custom deserializer? → use it via `mapper` (safe)
 - [ ] Added to `NativeImageConfig` if registering? → cross-check both places
 
@@ -310,6 +343,26 @@ public class NativeImageConfig {}
 
 All three steps are required. Missing step 3 causes a silent runtime failure in native image: Jackson finds the builder class but cannot invoke the private constructor or `build()` method.
 
+#### Boolean field naming trap
+
+Jackson maps JSON keys to builder setter names using `withPrefix = ""`. For `boolean` fields, Java generates an `isFoo()` accessor, not `getFoo()`. Jackson's default introspection maps `isMaintainContext()` to a JSON key of `"maintainContext"` on the *getter* side, but the builder setter is also named `maintainContext()` — which Jackson does not automatically associate with the `is`-prefixed getter.
+
+The fix is an explicit `@JsonProperty` on the builder setter:
+
+```java
+// MyConfigBuilderMixin.java
+@JsonPOJOBuilder(withPrefix = "", buildMethodName = "build")
+public abstract class MyConfigBuilderMixin {
+
+    // Required: without this, Jackson cannot match the "maintainContext" JSON key
+    // to the builder setter when the core type uses an isFoo() accessor pattern.
+    @JsonProperty("maintainContext")
+    public abstract MyConfigBuilderMixin maintainContext(boolean value);
+}
+```
+
+Any boolean field on a builder-pattern type must have a corresponding `@JsonProperty` in its `BuilderMixin`. Omitting it causes the field to be silently ignored during deserialization — no exception, just a zero/false value in native image.
+
 ---
 
 ## Native Image Implications
@@ -327,17 +380,18 @@ The root rule: **`hensu-core` owns no serialization metadata. `hensu-serializati
 
 ## Key Classes Reference
 
-| Class                                                     | Description                                                                |
-|-----------------------------------------------------------|----------------------------------------------------------------------------|
-| `WorkflowSerializer`                                      | Factory — creates the configured `ObjectMapper`                            |
-| `HensuJacksonModule`                                      | `SimpleModule` — registers all serializers, deserializers, mixins          |
-| `NodeSerializer` / `NodeDeserializer`                     | Polymorphic `Node` hierarchy (discriminator: `nodeType`)                   |
-| `TransitionRuleSerializer` / `TransitionRuleDeserializer` | Polymorphic `TransitionRule` (discriminator: `type`)                       |
-| `ActionSerializer` / `ActionDeserializer`                 | Polymorphic `Action` (discriminator: `type`)                               |
-| `PlanStepActionSerializer` / `PlanStepActionDeserializer` | Polymorphic `PlanStepAction` (discriminator: `type`)                       |
-| `plan/JacksonPlanResponseParser`                          | Parses LLM JSON responses into `PlannedStep` lists; strips markdown fences |
-| `mixin/*Mixin.java`                                       | `@JsonDeserialize` bridge for builder-pattern types                        |
-| `mixin/*BuilderMixin.java`                                | `@JsonPOJOBuilder` configuration for builder inner classes                 |
+| Class                                                     | Description                                                                                                |
+|-----------------------------------------------------------|------------------------------------------------------------------------------------------------------------|
+| `WorkflowSerializer`                                      | Factory — creates the configured `ObjectMapper`                                                            |
+| `HensuJacksonModule`                                      | `SimpleModule` — registers all serializers, deserializers, mixins                                          |
+| `NodeSerializer` / `NodeDeserializer`                     | Polymorphic `Node` hierarchy (discriminator: `nodeType`)                                                   |
+| `TransitionRuleSerializer` / `TransitionRuleDeserializer` | Polymorphic `TransitionRule` (discriminator: `type`)                                                       |
+| `ActionSerializer` / `ActionDeserializer`                 | Polymorphic `Action` (discriminator: `type`)                                                               |
+| `PlanStepActionSerializer` / `PlanStepActionDeserializer` | Polymorphic `PlanStepAction` (discriminator: `type`)                                                       |
+| `WorkflowStateSchemaDeserializer`                         | Direct-extraction deserializer for `WorkflowStateSchema`; avoids mixin reflection overhead in native image |
+| `plan/JacksonPlanResponseParser`                          | Parses LLM JSON responses into `PlannedStep` lists; strips markdown fences                                 |
+| `mixin/*Mixin.java`                                       | `@JsonDeserialize` bridge for builder-pattern types                                                        |
+| `mixin/*BuilderMixin.java`                                | `@JsonPOJOBuilder` configuration for builder inner classes                                                 |
 
 > **See also**:
 > - [hensu-core Developer Guide — GraalVM](developer-guide-core.md#graalvm-native-image-constraints) for foundational native-image rules

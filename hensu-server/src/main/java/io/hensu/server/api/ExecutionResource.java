@@ -237,8 +237,10 @@ public class ExecutionResource {
     /// ### Response (200 OK)
     /// ```json
     /// [
-    ///   {"executionId": "exec-1", "workflowId": "wf-1", "currentNodeId": "node-1"},
-    ///   {"executionId": "exec-2", "workflowId": "wf-2", "currentNodeId": "node-3"}
+    ///   {"executionId": "exec-1", "workflowId": "wf-1", "currentNodeId": "node-1", "createdAt":
+    /// "2024-03-08T12:00:00Z"},
+    ///   {"executionId": "exec-2", "workflowId": "wf-2", "currentNodeId": "node-3", "createdAt":
+    /// "2024-03-08T12:01:00Z"}
     /// ]
     /// ```
     @GET

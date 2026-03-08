@@ -1,8 +1,8 @@
 # Hensu™ Unified Architecture
 
 **Hensu** separates the **authoring** of AI workflows from their **execution**. Developers describe agent behavior in a
-type-safe Kotlin DSL. A compiler produces portable JSON definitions. A stateless, GraalVM native-image server executes
-them. No user code ever runs on the server.
+type-safe Kotlin DSL. A compiler produces portable JSON definitions. A GraalVM native-image server executes them,
+maintaining distributed lease state (`serverNodeId`, heartbeats) across the cluster. No user code ever runs on the server.
 
 **Two layers, strictly decoupled:**
 
@@ -66,7 +66,9 @@ All core components are assembled through a single builder — `HensuFactory.bui
 agent providers, action executors, repositories, and configuration are resolved once at startup.
 
 The builder is the only place where deployment-specific behavior diverges: the CLI wires a local bash executor and
-the LangChain4j provider; the server wires an MCP-only executor and delegates all components via CDI producers.
+the LangChain4j provider; the server wires an action executor that dispatches `Action.Send` to any registered
+`ActionHandler` (falling back to MCP for unrecognized handlers) while rejecting `Action.Execute` (local bash),
+and delegates all components via CDI producers.
 
 See [Core Developer Guide](developer-guide-core.md) for usage patterns.
 
@@ -88,16 +90,16 @@ Unicode manipulation, and excessive payload size before the output is written to
 
 Workflows are not limited to linear chains. The graph engine supports:
 
-| Capability                | Mechanism                                                                                                  |
-|:--------------------------|:-----------------------------------------------------------------------------------------------------------|
-| **Conditional branching** | `ScoreTransition` routes based on rubric scores; `SuccessTransition` / `FailureTransition` route on result |
-| **Loops**                 | `LoopNode` with configurable break conditions and max iterations                                           |
-| **Parallel fan-out**      | `ParallelNode` executes branches concurrently on virtual threads                                           |
-| **Fork / Join**           | `ForkNode` spawns independent parallel paths; `JoinNode` awaits and merges results                         |
-| **Consensus**             | Majority vote, unanimous, weighted vote, or judge-decides strategies                                       |
-| **Backtracking**          | Review decisions can jump to any previous node, restoring state from execution history                     |
-| **Sub-workflows**         | `SubWorkflowNode` with input/output mapping for hierarchical composition                                   |
-| **Pause / Resume**        | Any node returning `PENDING` checkpoints state; `executeFrom()` resumes from snapshot                      |
+| Capability                | Mechanism                                                                                                                                                          |
+|:--------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Conditional branching** | `ScoreTransition` routes based on rubric scores; `SuccessTransition` / `FailureTransition` route on result                                                         |
+| **Loops**                 | `LoopNode` with configurable break conditions and max iterations                                                                                                   |
+| **Parallel fan-out**      | `ParallelNode` executes branches concurrently on virtual threads                                                                                                   |
+| **Fork / Join**           | `ForkNode` spawns independent parallel paths; `JoinNode` awaits and merges results                                                                                 |
+| **Consensus**             | Majority vote, unanimous, weighted vote, or judge-decides strategies                                                                                               |
+| **Backtracking**          | Review decisions can jump to any previous node, restoring state from execution history                                                                             |
+| **Sub-workflows**         | `SubWorkflowNode` with input/output mapping for hierarchical composition                                                                                           |
+| **Pause / Resume**        | Any node returning `PENDING` checkpoints state (including `PlanSnapshot` — micro-plan step index — alongside node position); `executeFrom()` resumes from snapshot |
 
 For non-agent steps, `GenericNode` runs custom synchronous logic registered by `executorType`;
 `ActionNode` dispatches asynchronous tasks to external systems via a registered `ActionHandler`
@@ -281,7 +283,7 @@ Extends core with HTTP, MCP, and multi-tenancy:
 
 - `HensuEnvironmentProducer` — CDI producer using `HensuFactory.builder()`
 - `ServerConfiguration` — Delegates core components from `HensuEnvironment` via `@Produces @Singleton`
-- `ServerActionExecutor` — MCP-only action executor (rejects local execution)
+- `ServerActionExecutor` — Send-action dispatcher (routes to registered handlers, falls back to MCP; rejects `Action.Execute`)
 - `WorkflowService` — Service layer: start/resume executions, snapshot management
 - `WorkflowResource` — Workflow definition management (push/pull/delete/list)
 - `ExecutionResource` — Execution runtime (start/resume/status/plan)
@@ -308,6 +310,13 @@ Developer-facing CLI tool:
 - `hensu push` / `pull` / `delete` / `list` - Server workflow management
 - Local execution mode (uses full HensuEnvironment with local action executor)
 - `HensuEnvironmentProducer` (CLI variant - wires LangChain4jProvider, bash execution)
+
+#### Daemon Architecture
+
+The CLI ships a background `DaemonServer` to eliminate JVM and Kotlin compiler cold-start latency.
+`DaemonClient` communicates with it over a Unix domain socket (`~/.hensu/daemon.sock`). Workflow
+executions run in virtual threads inside the warm JVM; output is buffered in an `OutputRingBuffer`
+so clients can detach (`Ctrl+C`) and re-attach (`hensu attach`) without losing output.
 
 ---
 
@@ -394,7 +403,10 @@ processor pipeline** that wraps each node, and the **inner plan-step loop** with
 +——————————————————————————————————————————————————+
 │  POST-EXECUTION PIPELINE                         │
 │  1. OutputExtractionPostProcessor                │
-│     (AgentOutputValidator → write to context)    │
+│     (AgentOutputValidator → write to context;    │
+│      single writes: extract JSON key or fallback │
+│      to raw string; multiple writes: strict JSON │
+│      parse required)                             │
 │  2. NodeCompletePostProcessor (observability)    │
 │  3. HistoryPostProcessor      (audit trail)      │
 │  4. ReviewPostProcessor       (human-in-the-loop)│
@@ -449,6 +461,22 @@ Any processor can short-circuit by returning a terminal `ExecutionResult`.
 +——————————————————————————————————————————————————————————————————+
 ```
 
+### 4. State Schema Validation
+
+Workflows optionally declare a `WorkflowStateSchema` — a typed registry of domain variables
+(`writes` declarations) and their expected types. At load time, `WorkflowValidator` verifies
+the schema against all node `writes` declarations and prompt template bindings (e.g., `{orderId}`),
+preventing runtime binding failures before execution begins.
+
+### 5. Execution Observability (SSE)
+
+Workflow visibility is provided via Server-Sent Events separate from the MCP split-pipe transport.
+`ExecutionEventBroadcaster` receives engine events (`step.started`, `step.completed`, `plan.revised`,
+`execution.completed`, etc.) and fans them out to HTTP clients subscribed via `ExecutionEventResource`.
+
+To safely route events from background virtual threads back to the correct execution, the broadcaster
+binds the current `executionId` in a Java 25 `ScopedValue` — no `ThreadLocal`, no manual ID passing.
+
 ---
 
 ## Server Initialization
@@ -460,7 +488,7 @@ The server wires core infrastructure through CDI:
 │ HensuEnvironmentProducer (@ApplicationScoped)               │
 │                                                             │
 │  1. Extracts hensu.* properties from Quarkus config         │
-│  2. Injects ServerActionExecutor (MCP-only)                 │
+│  2. Injects ServerActionExecutor (send-action dispatcher)   │
 │  3. Builds via HensuFactory.builder()                       │
 │  4. Registers generic node handlers                         │
 │  5. Produces HensuEnvironment bean                          │
@@ -599,10 +627,10 @@ The unified architecture provides:
 1. **Pure Core** — Zero-dependency Java engine, protocol-agnostic
 2. **Build-Then-Push** — Client-side compilation (Kotlin DSL → JSON); server receives pre-compiled artifacts
 3. **Centralized Bootstrap** — `HensuFactory.builder()` as the single entry point for all core infrastructure
-4. **Zero-Trust Execution** — Server has no shell; all side effects route through MCP to tenant clients
+4. **Zero-Trust Execution** — Server has no shell; `Action.Execute` is rejected; side effects route via registered `ActionHandler`s (MCP by default) to tenant clients
 5. **Non-Linear Graphs** — Loops, conditional branches, fork/join, parallel fan-out with consensus, backtracking
 6. **Rubric Evaluation** — Quality gates that score outputs and route on thresholds for self-correcting loops
-7. **Pause / Resume** — Workflows checkpoint at any node and resume; the lease protocol protects against data races when the owning node crashes
+7. **Pause / Resume** — Workflows checkpoint at any node (including micro-plan step index via `PlanSnapshot`) and resume; the lease protocol protects against data races when the owning node crashes
 8. **Distributed Recovery** — Heartbeat/sweeper lease protocol for crashed-node detection; atomic PostgreSQL `UPDATE…RETURNING` claim
 9. **Sub-Workflows** — Hierarchical composition via `SubWorkflowNode` with input/output mapping
 10. **Flexible Planning** — Static (predefined) or Dynamic (LLM-generated) execution plans within nodes
@@ -613,3 +641,6 @@ The unified architecture provides:
 15. **API Separation** — Workflow definitions and executions are distinct REST resources
 16. **GraalVM-First Design** — No-reflection core; explicit wiring enables static analysis
 17. **Three-Layer Testing** — Unit (Mockito), Integration (inmem + stubs), Persistence (Testcontainers)
+18. **State Schema Validation** — `WorkflowStateSchema` + `WorkflowValidator` enforce typed variable declarations and prompt bindings at load time
+19. **Execution Observability** — `ExecutionEventBroadcaster` fans out engine events to SSE subscribers; `ScopedValue` routes events across virtual threads without `ThreadLocal`
+20. **CLI Daemon** — `DaemonServer` keeps the JVM and Kotlin compiler warm; `OutputRingBuffer` allows detach/re-attach without losing execution output

@@ -38,6 +38,7 @@ class TransitionRuleDeserializer extends StdDeserializer<TransitionRule> {
     /// - **`"score"`** → `ScoreTransition` with a manually extracted `ScoreCondition` list
     /// - **`"rubricFail"`** → `RubricFailTransition` with a no-op lambda; the original
     ///   predicate is not serializable and cannot be restored from JSON
+    /// - **`"approval"`** → `ApprovalTransition(expected, targetNode)`
     ///
     /// @param p the JSON parser positioned at the start of the transition rule object, not null
     /// @param ctx the deserialization context, not null
@@ -77,6 +78,9 @@ class TransitionRuleDeserializer extends StdDeserializer<TransitionRule> {
                 yield new ScoreTransition(conditions);
             }
             case "rubricFail" -> new RubricFailTransition(_ -> null);
+            case "approval" ->
+                    new ApprovalTransition(
+                            root.get("expected").asBoolean(), root.get("targetNode").asText());
             default -> throw new IOException("Unknown TransitionRule type: " + type);
         };
     }

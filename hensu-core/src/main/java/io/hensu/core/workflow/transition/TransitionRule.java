@@ -15,6 +15,7 @@ import io.hensu.core.state.HensuState;
 /// - {@link FailureTransition} - Transitions on failed execution
 /// - {@link ScoreTransition} - Conditional on rubric score thresholds
 /// - {@link RubricFailTransition} - Transitions when rubric evaluation fails
+/// - {@link ApprovalTransition} - Conditional on the `approved` boolean engine variable
 ///
 /// @implNote Implementations must be immutable and stateless. The same rule
 /// instance may be evaluated concurrently for parallel workflow branches.
@@ -23,6 +24,7 @@ import io.hensu.core.state.HensuState;
 /// @see io.hensu.core.execution.WorkflowExecutor for transition evaluation
 public sealed interface TransitionRule
         permits AlwaysTransition,
+                ApprovalTransition,
                 FailureTransition,
                 RubricFailTransition,
                 ScoreTransition,

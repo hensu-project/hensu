@@ -11,7 +11,7 @@ import java.util.Map;
 ///
 /// Supports two evaluation modes:
 /// 1. **Rubric evaluation**: Uses score from independent LLM-based rubric evaluation
-/// 2. **Self-reported score**: Extracts score from agent output via `outputParams`
+/// 2. **Self-reported score**: Reads score from context populated via node `writes`
 ///
 /// Score keys checked in context (in priority order):
 /// `score`, `final_score`, `quality_score`, `evaluation_score`
@@ -19,7 +19,13 @@ import java.util.Map;
 /// @param conditions list of score conditions to evaluate in order, not null
 /// @see ScoreCondition for condition matching logic
 /// @see TransitionRule for transition evaluation contract
+///
+/// @implNote **Immutable after construction.** The conditions list is defensively copied.
 public record ScoreTransition(List<ScoreCondition> conditions) implements TransitionRule {
+
+    public ScoreTransition {
+        conditions = List.copyOf(conditions);
+    }
 
     private static final String[] SCORE_KEYS = {
         "score", "final_score", "quality_score", "evaluation_score"
@@ -48,9 +54,9 @@ public record ScoreTransition(List<ScoreCondition> conditions) implements Transi
     /// 2. Self-reported score from context keys: "score", "final_score",
     ///    "quality_score", "evaluation_score"
     ///
-    /// The self-reported fallback enables onScore transitions on nodes without
-    /// rubrics. Use outputParams to extract a "score" key from agent JSON output,
-    /// and onScore conditions will pick it up automatically.
+    /// The self-reported path enables onScore transitions on nodes without rubrics.
+    /// Declare `writes("score")` on the node so the engine routes the agent's score
+    /// value to the `score` context key where onScore conditions read it.
     ///
     /// @param state current workflow state, not null
     /// @return extracted score, or null if no score available

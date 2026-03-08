@@ -8,6 +8,7 @@ import io.hensu.core.execution.parallel.BranchResult;
 import io.hensu.core.execution.parallel.ConsensusConfig;
 import io.hensu.core.execution.parallel.ConsensusEvaluator;
 import io.hensu.core.execution.parallel.ConsensusResult;
+import io.hensu.core.execution.parallel.FailureMarker;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.rubric.RubricEngine;
 import io.hensu.core.rubric.RubricParser;
@@ -28,23 +29,33 @@ import java.util.stream.Collectors;
 ///
 /// ### This executor
 ///
-/// - Executes branches in parallel using ExecutorService
+/// - Each branch receives an **isolated snapshot** of the parent context map — writes
+///   inside a branch agent do not race or leak into sibling branches or the parent state
+/// - Executes branches in parallel using `ExecutorService`
 /// - Evaluates branch outputs against rubrics when `Branch.rubricId` is set
 /// - Aggregates results from all branches
 /// - Evaluates consensus if configured (majority, unanimous, weighted, judge)
 ///
 /// ### Rubric Integration
-/// When a branch declares a `rubricId`, the executor evaluates the branch output
-/// against the rubric after execution completes. The rubric score and pass/fail
-/// status are stored in the branch result metadata (`rubric_score`, `rubric_passed`),
-/// where they take priority over text-parsing heuristics during consensus voting.
+/// When a branch declares a `rubricId`, the executor evaluates the branch output against
+/// the rubric **after all branch futures resolve**, sequentially on the coordinator thread.
+/// The rubric score and pass/fail status are stored in branch result metadata
+/// (`rubric_score`, `rubric_passed`), where they take priority over text-parsing heuristics
+/// during consensus voting.
 ///
-/// @implNote The ExecutorService is obtained from ExecutionContext and is NOT shut down
-/// by this executor — lifecycle is managed by the owner. Rubric evaluation runs
-/// sequentially after all branch futures resolve.
+/// ### Consensus Strategies
+/// - `MAJORITY_VOTE` — branch with the most approval votes wins
+/// - `UNANIMOUS` — all branches must agree
+/// - `WEIGHTED_VOTE` — votes are weighted by `Branch.weight`
+/// - `JUDGE_DECIDES` — a judge agent resolves disagreement; runs on coordinator thread
+///
+/// @implNote The `ExecutorService` is obtained from `ExecutionContext` and is NOT shut down
+/// by this executor — lifecycle is managed by the owner. Consensus and rubric evaluation
+/// run sequentially on the coordinator thread after all branch futures resolve.
 ///
 /// @see ConsensusEvaluator for vote extraction and strategy evaluation
 /// @see RubricEngine for rubric-based quality evaluation
+/// @see HensuState#branch for the branch isolation mechanism
 public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
 
     private static final Logger logger = Logger.getLogger(ParallelNodeExecutor.class.getName());
@@ -76,36 +87,39 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
         List<Future<BranchResult>> futures =
                 Arrays.stream(node.getBranches())
                         .map(
-                                branch ->
-                                        executorService.submit(
-                                                () -> {
-                                                    String agentId = branch.getAgentId();
-                                                    Agent agent =
-                                                            agentRegistry
-                                                                    .getAgent(agentId)
-                                                                    .orElseThrow(
-                                                                            () ->
-                                                                                    new IllegalStateException(
-                                                                                            "Agent not found: "
-                                                                                                    + agentId));
-                                                    String resolvedPrompt =
-                                                            branch.getPrompt() != null
-                                                                    ? templateResolver.resolve(
-                                                                            branch.getPrompt(),
-                                                                            state.getContext())
-                                                                    : "";
+                                branch -> {
+                                    // Isolated context snapshot per branch — branch agent
+                                    // output does not race or leak into sibling branches
+                                    Map<String, Object> branchContext =
+                                            new HashMap<>(state.getContext());
+                                    return executorService.submit(
+                                            () -> {
+                                                String agentId = branch.getAgentId();
+                                                Agent agent =
+                                                        agentRegistry
+                                                                .getAgent(agentId)
+                                                                .orElseThrow(
+                                                                        () ->
+                                                                                new IllegalStateException(
+                                                                                        "Agent not found: "
+                                                                                                + agentId));
+                                                String resolvedPrompt =
+                                                        branch.getPrompt() != null
+                                                                ? templateResolver.resolve(
+                                                                        branch.getPrompt(),
+                                                                        branchContext)
+                                                                : "";
 
-                                                    logger.info(
-                                                            "Executing branch: " + branch.getId());
+                                                logger.info("Executing branch: " + branch.getId());
 
-                                                    AgentResponse response =
-                                                            agent.execute(
-                                                                    resolvedPrompt,
-                                                                    state.getContext());
+                                                AgentResponse response =
+                                                        agent.execute(
+                                                                resolvedPrompt, branchContext);
 
-                                                    return new BranchResult(
-                                                            branch.getId(), toNodeResult(response));
-                                                }))
+                                                return new BranchResult(
+                                                        branch.getId(), toNodeResult(response));
+                                            });
+                                })
                         .toList();
 
         // Collect results with timeout and partial failure handling
@@ -175,17 +189,24 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
                     evaluateConsensus(
                             node.getConsensusConfig(), branchResults, state, agentRegistry);
         } else {
-            // No consensus, aggregate results
-            boolean allSuccess =
-                    branchResults.stream()
-                            .allMatch(br -> br.getResult().getStatus() == ResultStatus.SUCCESS);
-
-            Map<String, Object> outputs =
-                    branchResults.stream()
-                            .collect(
-                                    Collectors.toMap(
-                                            BranchResult::getBranchId,
-                                            br -> br.getResult().getOutput()));
+            // No consensus — aggregate all branch results.
+            // A SUCCESS branch with null output is a structural anomaly and is treated as
+            // failed; downstream nodes can pattern-match on FailureMarker to distinguish.
+            boolean allSuccess = true;
+            Map<String, Object> outputs = new LinkedHashMap<>();
+            for (BranchResult br : branchResults) {
+                NodeResult result = br.getResult();
+                if (result.getStatus() == ResultStatus.SUCCESS && result.getOutput() != null) {
+                    outputs.put(br.getBranchId(), result.getOutput());
+                } else {
+                    allSuccess = false;
+                    String msg =
+                            result.getOutput() != null
+                                    ? result.getOutput().toString()
+                                    : "Branch returned null output";
+                    outputs.put(br.getBranchId(), new FailureMarker(msg));
+                }
+            }
 
             Map<String, Object> metadata = new HashMap<>();
             metadata.put("branch_count", branchResults.size());

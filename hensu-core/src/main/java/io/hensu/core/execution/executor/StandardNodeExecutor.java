@@ -6,6 +6,7 @@ import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.agent.AgentResponse.Error;
 import io.hensu.core.agent.AgentResponse.TextResponse;
 import io.hensu.core.execution.ExecutionListener;
+import io.hensu.core.execution.enricher.EngineVariablePromptEnricher;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.template.TemplateResolver;
@@ -63,10 +64,18 @@ public class StandardNodeExecutor implements NodeExecutor<StandardNode> {
                             : "";
         }
 
+        resolvedPrompt =
+                EngineVariablePromptEnricher.DEFAULT.enrich(resolvedPrompt, node.getWrites());
+
         logger.info("Executing node: " + node.getId() + " with agent: " + node.getAgentId());
 
         // Propagate current node ID into context for agent awareness
         state.getContext().put("current_node", node.getId());
+
+        // Remove stale output variables so they don't shadow this node's computation.
+        // Template resolution already happened above, so this is safe.
+        // OutputExtractionPostProcessor will repopulate these with fresh values after execution.
+        node.getWrites().forEach(state.getContext().keySet()::remove);
 
         // Notify listener before agent execution
         listener.onAgentStart(node.getId(), node.getAgentId(), resolvedPrompt);

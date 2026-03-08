@@ -19,6 +19,7 @@ import java.io.Serial;
 ///   manually: `operator` (string), `value` (number|null), `range` (object|null), `targetNode`
 /// - **`RubricFailTransition`**: `{"type":"rubricFail"}` — the handler predicate is not
 ///   serializable and is reconstructed as a no-op lambda on deserialization
+/// - **`ApprovalTransition`**: `{"type":"approval","expected":true|false,"targetNode":"..."}`
 ///
 /// @implNote Package-private. Registered by {@link HensuJacksonModule}.
 /// @see TransitionRuleDeserializer for the inverse operation
@@ -78,6 +79,11 @@ class TransitionRuleSerializer extends StdSerializer<TransitionRule> {
                 gen.writeEndArray();
             }
             case RubricFailTransition _ -> gen.writeStringField("type", "rubricFail");
+            case ApprovalTransition t -> {
+                gen.writeStringField("type", "approval");
+                gen.writeBooleanField("expected", t.expected());
+                gen.writeStringField("targetNode", t.targetNode());
+            }
         }
 
         gen.writeEndObject();

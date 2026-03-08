@@ -23,6 +23,11 @@ import java.util.logging.Logger;
 ///
 /// If score is below threshold, the recommendation is stored in context and will be injected into
 /// the prompt when backtracking.
+///
+/// @implNote **Thread-safe.** Stateless; no mutable instance fields. A single instance may be
+/// shared across executions. The `context` map passed to each evaluation is per-execution and
+/// accessed sequentially by the pipeline — callers are responsible for any concurrent access to
+/// the map they supply.
 public final class DefaultRubricEvaluator implements RubricEvaluator {
 
     private static final Logger logger = Logger.getLogger(DefaultRubricEvaluator.class.getName());
@@ -95,7 +100,7 @@ public final class DefaultRubricEvaluator implements RubricEvaluator {
     /// @return The extracted value, or null if not found
     private <T> T extractFromOutput(
             String output, Map<String, Object> context, String[] keys, boolean asNumber) {
-        // Check context first (from outputParams extraction)
+        // Check context first (from writes routing)
         for (String key : keys) {
             Object value = context.get(key);
             if (asNumber) {

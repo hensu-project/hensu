@@ -1,6 +1,13 @@
 {
   "id" : "fork-join",
   "version" : "1.0.0",
+  "stateSchema" : {
+    "variables" : [ {
+      "name" : "input",
+      "type" : "STRING",
+      "isInput" : true
+    } ]
+  },
   "startNode" : "fork",
   "agents" : {
     "processor-a" : {

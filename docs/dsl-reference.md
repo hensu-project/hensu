@@ -16,13 +16,15 @@ This document provides a complete reference for the Hensu Kotlin DSL used to def
   - [Action Node](#action-node)
   - [End Node](#end-node)
 - [Transitions](#transitions)
-- [Parameter Extraction](#parameter-extraction)
+- [State Variables (`writes`)](#state-variables-writes)
+- [State Schema](#state-schema)
 - [Rubrics](#rubrics)
 - [Human Review](#human-review)
 - [Planning](#planning)
   - [Static Plans](#static-plans)
   - [Dynamic Plans](#dynamic-plans)
   - [Planning Properties](#planning-properties)
+  - [Plan Failure Routing](#plan-failure-routing)
 - [Available Models](#available-models)
 - [External Prompt Files](#external-prompt-files)
 - [Running Workflows](#running-workflows)
@@ -37,12 +39,22 @@ fun myWorkflow() = workflow("WorkflowName") {
     description = "Description of what this workflow does"
     version = "1.0.0"
 
+    state {
+        // Typed state variable declarations (optional — enables load-time validation)
+        input("topic", VarType.STRING)
+        variable("summary", VarType.STRING)
+    }
+
     agents {
         // Agent definitions
     }
 
     rubrics {
         // Rubric references (optional)
+    }
+
+    config {
+        // Execution settings (optional)
     }
 
     graph {
@@ -57,6 +69,16 @@ fun myWorkflow() = workflow("WorkflowName") {
 |---------------|---------|----------|---------|--------------------------------------------|
 | `description` | String? | No       | null    | Human-readable description of the workflow |
 | `version`     | String  | No       | "1.0.0" | Semantic version of the workflow           |
+
+### Top-Level Blocks
+
+| Block         | Description                                                                                                              |
+|---------------|--------------------------------------------------------------------------------------------------------------------------|
+| `state { }`   | Optional typed state schema. When declared, enables load-time validation of `writes` and `{variable}` prompt references. |
+| `agents { }`  | Agent definitions (models, roles, temperatures)                                                                          |
+| `rubrics { }` | Rubric file references for quality evaluation                                                                            |
+| `config { }`  | Workflow execution settings                                                                                              |
+| `graph { }`   | Node graph (required)                                                                                                    |
 
 ## Agents
 
@@ -130,24 +152,35 @@ Standard nodes execute an agent with a prompt and transition based on the result
 node("node-id") {
     agent = "agent-id"
     prompt = "Your prompt with {placeholders}"
-    rubric = "rubric-id"  // Optional
-    outputParams = listOf("param1", "param2")  // Optional
+    rubric = "rubric-id"         // Optional
+    writes("param1", "param2")   // Optional — declare state variables this node produces
 
     review(ReviewMode.OPTIONAL)  // Optional
 
     onSuccess goto "next-node"
     onFailure retry 3 otherwise "fallback-node"
+    onApproval goto "approved-node"   // Optional — routes on boolean `approved` variable
+    onRejection goto "rejected-node"  // Optional — routes when `approved` is false
 }
 ```
 
 #### Standard Node Properties
 
-| Property       | Type         | Required | Description                             |
-|----------------|--------------|----------|-----------------------------------------|
-| `agent`        | String?      | Yes      | ID of the agent to execute              |
-| `prompt`       | String?      | Yes      | Prompt template or `.md` file reference |
-| `rubric`       | String?      | No       | ID of rubric to evaluate output quality |
-| `outputParams` | List<String> | No       | Parameters to extract from JSON output  |
+| Property    | Type    | Required | Description                             |
+|-------------|---------|----------|-----------------------------------------|
+| `agent`     | String? | Yes      | ID of the agent to execute              |
+| `prompt`    | String? | Yes      | Prompt template or `.md` file reference |
+| `rubric`    | String? | No       | ID of rubric to evaluate output quality |
+
+#### Standard Node Functions
+
+| Function             | Description                                                                                                |
+|----------------------|------------------------------------------------------------------------------------------------------------|
+| `writes("a", "b")`   | Declares state variables this node produces. Single name: full text stored. Multiple: JSON keys extracted. |
+| `review(mode)`       | Configures human review checkpoint                                                                         |
+| `onApproval goto`    | Routes when the `approved` engine variable is `true`. Falls through if absent or non-boolean.              |
+| `onRejection goto`   | Routes when the `approved` engine variable is `false`. Falls through if absent or non-boolean.             |
+| `onPlanFailure goto` | Routes to a fallback node when plan execution fails (planning nodes only)                                  |
 
 ### Parallel Node
 
@@ -464,6 +497,23 @@ onScore {
 | `lessThanOrEqual`    | Score <= value                     |
 | `` `in` ``           | Score within range (use backticks) |
 
+### Approval Transitions
+
+Route based on the `approved` boolean engine variable written by a node via `writes("approved")`:
+
+```kotlin
+node("classify") {
+    agent = "classifier"
+    prompt = "Evaluate the content. Output JSON: {\"approved\": true/false}"
+    writes("approved")
+
+    onApproval goto "publish"
+    onRejection goto "revise"
+}
+```
+
+Falls through (no match) if the `approved` key is absent or not a boolean. Both transitions are optional — you can use only `onApproval`, only `onRejection`, or combine with `onScore`.
+
 ### Consensus Transitions (Parallel Nodes)
 
 ```kotlin
@@ -477,16 +527,14 @@ onNoConsensus goto "rejected"
 onComplete goto "join-node"
 ```
 
-## Parameter Extraction
+## State Variables (`writes`)
 
-The `outputParams` feature extracts specific values from JSON output for use in subsequent prompts.
+The `writes()` function on a node declares which state variables that node produces. The engine routes the agent's output into context under those variable names, making them available as `{placeholder}` in subsequent prompts.
 
 ### How It Works
 
-1. Configure `outputParams` on a node to specify which values to extract
-2. Instruct the agent to output JSON with matching keys
-3. The workflow engine extracts values and stores them in context
-4. Subsequent nodes can use these values as `{placeholder}` in prompts
+- **Single name** — `writes("summary")`: engine tries to parse the output as JSON and extract the key; falls back to storing the full raw text if the key is absent or output is not JSON.
+- **Multiple names** — `writes("fact1", "fact2", "fact3")`: engine parses output as JSON and extracts each declared key into context.
 
 ### Example
 
@@ -496,17 +544,11 @@ node("extract_facts") {
     prompt = """
         Research Georgia (the country) and provide specific facts.
 
-        IMPORTANT: Output your response as JSON with exactly these keys:
-        {
-            "largest_lake": "<name of the largest lake>",
-            "highest_peak": "<name and height of highest mountain>",
-            "capital_population": "<population of Tbilisi>"
-        }
-
-        Only output the JSON, nothing else.
+        Output JSON with exactly these keys:
+        {"largest_lake": "...", "highest_peak": "...", "capital_population": "..."}
     """.trimIndent()
 
-    outputParams = listOf("largest_lake", "highest_peak", "capital_population")
+    writes("largest_lake", "highest_peak", "capital_population")
 
     onSuccess goto "use_facts"
 }
@@ -514,12 +556,12 @@ node("extract_facts") {
 node("use_facts") {
     agent = "writer"
     prompt = """
-        Using these verified facts about Georgia:
+        Using these facts about Georgia:
         - Largest lake: {largest_lake}
         - Highest peak: {highest_peak}
         - Capital population: {capital_population}
 
-        Write a compelling travel advertisement incorporating ALL these facts.
+        Write a compelling travel advertisement.
     """.trimIndent()
 
     onSuccess goto "end"
@@ -529,18 +571,51 @@ node("use_facts") {
 ### Best Practices
 
 1. **Be explicit in prompts**: Tell the agent exactly what JSON format you expect
-2. **Use descriptive key names**: Match `outputParams` keys to your placeholder names
+2. **Use descriptive names**: Match `writes` names to `{placeholder}` names in downstream prompts
 3. **Request JSON-only output**: Ask the agent to output only JSON for reliable extraction
 4. **Lower temperature**: Use lower temperature (0.3-0.5) for more consistent JSON output
 
 ### Supported JSON Values
 
-The extraction supports:
-- String values: `"key": "value"`
-- Numeric values: `"key": 123`
-- Boolean values: `"key": true`
+- String: `"key": "value"`
+- Numeric: `"key": 123`
+- Boolean: `"key": true`
 
 Nested objects and arrays are not currently extracted.
+
+## State Schema
+
+Declare a typed schema for all domain-specific state variables at the workflow level. When declared, the schema is validated at load time — `WorkflowBuilder.build()` throws `IllegalStateException` if any `writes` name or prompt `{variable}` is not declared.
+
+Engine variables (`score`, `approved`) are always implicitly valid — never declare them in the schema.
+
+```kotlin
+workflow("ContentPipeline") {
+    state {
+        input("topic", VarType.STRING)             // required in initial context
+        variable("article", VarType.STRING)        // produced by a node via writes("article")
+        variable("confidence", VarType.NUMBER)     // produced by a node via writes("confidence")
+    }
+
+    // ...
+}
+```
+
+### State Block Functions
+
+| Function               | Description                                                         |
+|------------------------|---------------------------------------------------------------------|
+| `input(name, type)`    | Declares a variable required in the initial context from the caller |
+| `variable(name, type)` | Declares a variable produced by a node via `writes`                 |
+
+### VarType Values
+
+| Type          | JSON equivalent          |
+|---------------|--------------------------|
+| `STRING`      | `string`                 |
+| `NUMBER`      | `number`                 |
+| `BOOLEAN`     | `boolean`                |
+| `LIST_STRING` | `array` of `string`      |
 
 ## Rubrics
 
@@ -698,6 +773,27 @@ planning {
 | `maxDuration`    | Duration     | 5 minutes | Maximum total execution time                    |
 | `maxTokenBudget` | Int          | 10000     | Maximum LLM tokens for planning (0 = unlimited) |
 
+### Plan Failure Routing
+
+Route to a fallback node when plan execution exhausts all replans:
+
+```kotlin
+node("research") {
+    agent = "researcher"
+    prompt = "Research and analyze {topic}"
+
+    planning {
+        dynamic()
+        maxReplans = 3
+    }
+
+    onSuccess goto "synthesize"
+    onPlanFailure goto "fallback-summary"  // routes when all replans are exhausted
+}
+```
+
+Without `onPlanFailure`, a plan exhaustion throws `IllegalStateException`.
+
 ### Planning Modes
 
 | Mode                    | Description                                   |
@@ -796,6 +892,14 @@ fun contentPipeline() = workflow("ContentPipeline") {
     description = "Research, write, and review content with parallel review"
     version = "1.0.0"
 
+    state {
+        input("topic", VarType.STRING)
+        variable("fact1", VarType.STRING)
+        variable("fact2", VarType.STRING)
+        variable("fact3", VarType.STRING)
+        variable("article", VarType.STRING)
+    }
+
     agents {
         agent("researcher") {
             role = "Research Analyst"
@@ -831,7 +935,7 @@ fun contentPipeline() = workflow("ContentPipeline") {
                 Output as JSON: {"fact1": "...", "fact2": "...", "fact3": "..."}
             """.trimIndent()
 
-            outputParams = listOf("fact1", "fact2", "fact3")
+            writes("fact1", "fact2", "fact3")
 
             onSuccess goto "write"
             onFailure retry 2 otherwise "end_failure"
@@ -846,17 +950,19 @@ fun contentPipeline() = workflow("ContentPipeline") {
                 - {fact3}
             """.trimIndent()
 
+            writes("article")
+
             onSuccess goto "parallel-review"
         }
 
         parallel("parallel-review") {
             branch("quality-review") {
                 agent = "reviewer"
-                prompt = "Review for quality: {write}"
+                prompt = "Review for quality: {article}"
             }
             branch("accuracy-review") {
                 agent = "reviewer"
-                prompt = "Review for accuracy: {write}"
+                prompt = "Review for accuracy: {article}"
             }
 
             consensus {
