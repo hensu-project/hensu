@@ -21,7 +21,11 @@ share the same execution engine – a workflow that passes locally is production
 
 The server ships as a GraalVM native binary. No JVM to manage, no classpath to debug.
 
+<div align="center">
+
 [Get Started](#getting-started) • [Architecture](docs/unified-architecture.md) • [DSL Reference](docs/dsl-reference.md) • [Documentation](docs)
+
+</div>
 
 ---
 
