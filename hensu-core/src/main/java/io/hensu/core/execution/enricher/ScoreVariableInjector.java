@@ -1,10 +1,14 @@
 package io.hensu.core.execution.enricher;
 
+import io.hensu.core.execution.executor.ExecutionContext;
+import io.hensu.core.workflow.node.Node;
+import io.hensu.core.workflow.transition.ScoreTransition;
+
 /// Injects the `score` numeric output requirement into the node prompt.
 ///
-/// Appended when a node declares `writes("score")`. Instructs the agent to include
-/// a `"score"` field with a numeric value (0–100) in its JSON response so that
-/// {@link io.hensu.core.workflow.transition.ScoreTransition} can evaluate it reliably.
+/// Applied when the node has a {@link ScoreTransition} rule. This includes both
+/// rubric nodes (which must always pair with an {@code onScore} transition) and
+/// self-scoring nodes without a rubric.
 ///
 /// @see EngineVariableInjector
 /// @see io.hensu.core.workflow.transition.ScoreTransition
@@ -19,12 +23,9 @@ public final class ScoreVariableInjector implements EngineVariableInjector {
                      Do not use text, only a JSON number.""";
 
     @Override
-    public String variableName() {
-        return "score";
-    }
-
-    @Override
-    public String inject(String prompt) {
-        return prompt + INSTRUCTION;
+    public String inject(String prompt, Node node, ExecutionContext ctx) {
+        boolean hasScoreTransition =
+                node.getTransitionRules().stream().anyMatch(r -> r instanceof ScoreTransition);
+        return hasScoreTransition ? prompt + INSTRUCTION : prompt;
     }
 }

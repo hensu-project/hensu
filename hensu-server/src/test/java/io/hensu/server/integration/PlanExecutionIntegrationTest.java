@@ -3,6 +3,7 @@ package io.hensu.server.integration;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.hensu.core.execution.action.ActionExecutor;
+import io.hensu.core.execution.action.ActionExecutor.ActionResult;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.workflow.WorkflowService.ExecutionStartResult;
@@ -72,7 +73,7 @@ class PlanExecutionIntegrationTest extends IntegrationTestBase {
     /// and executes the resulting steps through the action handler.
     ///
     /// The `plan-dynamic.json` workflow uses `planningConfig(mode=DYNAMIC)`.
-    /// The stub for `_planning_agent` returns a JSON array with one step targeting
+    /// The stub for `_planning_agent` returns a JSON array with one-step targeting
     /// `"test-tool"`. The test confirms that at least one payload is dispatched
     /// to {@link TestActionHandler}.
     @Test
@@ -94,6 +95,55 @@ class PlanExecutionIntegrationTest extends IntegrationTestBase {
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
 
         List<Map<String, Object>> payloads = testActionHandler.getReceivedPayloads();
-        assertThat(payloads).hasSizeGreaterThanOrEqualTo(1);
+        assertThat(payloads).hasSize(1);
+        assertThat(payloads.getFirst()).containsEntry("action", "fetch");
+    }
+
+    @Test
+    void shouldSnapshotAsFailedWhenToolFails() {
+        Workflow workflow = loadWorkflow("plan-static.json");
+        testActionHandler.setNextResult(ActionResult.failure("tool exploded"));
+
+        ExecutionStartResult result = pushAndExecute(workflow, Map.of("task", "failing task"));
+
+        HensuSnapshot snapshot =
+                workflowStateRepository
+                        .findByWorkflowId(TEST_TENANT, result.workflowId())
+                        .getLast();
+        assertThat(snapshot.checkpointReason()).isEqualTo("failed");
+        assertThat(testActionHandler.getReceivedPayloads()).isNotEmpty();
+    }
+
+    @Test
+    void shouldPauseBeforeExecutionWhenPlanReviewRequired() {
+        Workflow workflow = loadWorkflow("plan-static-review.json");
+
+        ExecutionStartResult result = pushAndExecute(workflow, Map.of("task", "review task"));
+
+        HensuSnapshot snapshot =
+                workflowStateRepository
+                        .findByWorkflowId(TEST_TENANT, result.workflowId())
+                        .getLast();
+        assertThat(snapshot.checkpointReason()).isEqualTo("paused");
+        assertThat(testActionHandler.getReceivedPayloads()).isEmpty();
+    }
+
+    @Test
+    void shouldReplanAndCompleteAfterToolFailure() {
+        Workflow workflow = loadWorkflow("plan-dynamic.json");
+        registerStub(
+                "_planning_agent",
+                "[{\"tool\":\"test-tool\",\"arguments\":{\"action\":\"fetch\"},\"description\":\"Fetch"
+                        + " data\"}]");
+        testActionHandler.enqueueResult(ActionResult.failure("first attempt failed"));
+
+        ExecutionStartResult result = pushAndExecute(workflow, Map.of("task", "retry task"));
+
+        HensuSnapshot snapshot =
+                workflowStateRepository
+                        .findByWorkflowId(TEST_TENANT, result.workflowId())
+                        .getLast();
+        assertThat(snapshot.checkpointReason()).isEqualTo("completed");
+        assertThat(testActionHandler.getReceivedPayloads()).hasSize(2);
     }
 }

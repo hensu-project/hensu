@@ -1,20 +1,30 @@
 package io.hensu.core.execution.executor;
 
+import io.hensu.core.execution.enricher.EngineVariablePromptEnricher;
 import io.hensu.core.plan.Plan;
 import io.hensu.core.plan.PlanContext;
 import io.hensu.core.plan.PlanProcessor;
+import io.hensu.core.plan.PlanStepAction;
 import io.hensu.core.plan.PlannedStep;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-/// {@link PlanProcessor} that fills in the {@code agentId} on all
-/// {@link io.hensu.core.plan.PlanStepAction.Synthesize} steps.
+/// {@link PlanProcessor} that enriches all {@link io.hensu.core.plan.PlanStepAction.Synthesize}
+/// steps before plan execution begins.
 ///
-/// After {@code PlanCreationProcessor} sets the plan, this processor enriches
-/// any synthesize steps with the node's configured agent identifier so that
-/// {@link io.hensu.core.plan.SynthesizeStepHandler} can resolve the
-/// correct agent without the planner needing to know the agent's identity.
+/// Two enrichments are applied to every synthesize step:
+///
+/// - **Agent ID** — the node's configured agent identifier is injected so that
+///   {@link io.hensu.core.plan.SynthesizeStepHandler} can resolve the correct agent
+///   without the planner needing to know the agent's identity.
+///
+/// - **Engine-variable prompt enrichment** — the synthesis prompt is passed through
+///   {@link EngineVariablePromptEnricher#DEFAULT}, which appends the same JSON output
+///   schema requirements (writes fields, rubric criteria, score/approval variables, etc.)
+///   that {@link StandardNodeExecutor} injects for non-planning nodes. Without this,
+///   the synthesis LLM produces free-text that {@code OutputExtractionPostProcessor}
+///   cannot parse.
 ///
 /// If the node has no {@code agentId} or the plan contains no synthesize steps,
 /// the plan is left unchanged and the processor passes through.
@@ -42,7 +52,15 @@ public final class SynthesizeEnrichmentProcessor implements PlanProcessor {
 
         List<PlannedStep> enriched = new ArrayList<>(plan.steps().size());
         for (PlannedStep step : plan.steps()) {
-            enriched.add(step.isSynthesize() ? step.withAgentId(agentId) : step);
+            if (step.isSynthesize()) {
+                String basePrompt = ((PlanStepAction.Synthesize) step.action()).prompt();
+                String enrichedPrompt =
+                        EngineVariablePromptEnricher.DEFAULT.enrich(
+                                basePrompt, context.node(), context.executionContext());
+                enriched.add(step.withAgentId(agentId).withSynthesizePrompt(enrichedPrompt));
+            } else {
+                enriched.add(step);
+            }
         }
         context.setPlan(plan.withSteps(enriched));
         return Optional.empty();

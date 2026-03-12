@@ -41,11 +41,9 @@ public abstract class WorkflowCommand extends HensuCommand {
 
     protected abstract void execute();
 
-    @Inject
     @ConfigProperty(name = "hensu.workflow.file")
     private Optional<String> defaultWorkflowName;
 
-    @Inject
     @ConfigProperty(name = "hensu.working.dir")
     private Optional<String> defaultWorkingDir;
 

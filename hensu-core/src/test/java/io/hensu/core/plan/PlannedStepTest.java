@@ -107,4 +107,44 @@ class PlannedStepTest {
                     .isFalse();
         }
     }
+
+    @Nested
+    class SilentNoOpGuard {
+
+        @Test
+        void withAgentIdShouldReturnSameInstanceForToolCallStep() {
+            PlannedStep step = PlannedStep.simple(0, "fetch", "Fetch order data");
+
+            assertThat(step.withAgentId("some-agent")).isSameAs(step);
+        }
+
+        @Test
+        void withSynthesizePromptShouldReturnSameInstanceForToolCallStep() {
+            PlannedStep step = PlannedStep.simple(0, "fetch", "Fetch order data");
+
+            assertThat(step.withSynthesizePrompt("enriched prompt")).isSameAs(step);
+        }
+    }
+
+    @Nested
+    class TypeDispatchGuard {
+
+        @Test
+        void toolNameShouldThrowOnSynthesizeStep() {
+            PlannedStep step = PlannedStep.synthesize(0, "agent-1", "Summarise results");
+
+            assertThatThrownBy(step::toolName)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("non-ToolCall");
+        }
+
+        @Test
+        void argumentsShouldThrowOnSynthesizeStep() {
+            PlannedStep step = PlannedStep.synthesize(0, "agent-1", "Summarise results");
+
+            assertThatThrownBy(step::arguments)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("non-ToolCall");
+        }
+    }
 }

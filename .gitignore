@@ -75,3 +75,4 @@ publicKey.pem
 **/chunks/
 .anthropic/
 .mem/
+/.claude/projects/

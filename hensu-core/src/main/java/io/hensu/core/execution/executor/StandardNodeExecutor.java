@@ -16,13 +16,22 @@ import java.util.logging.Logger;
 
 /// Executes standard workflow nodes by invoking the configured agent.
 ///
-/// This executor is stateless - all dependencies are obtained from ExecutionContext.
+/// Resolves the prompt template, enriches it with engine variable format requirements
+/// (rubric criteria, score, approved) via {@link EngineVariablePromptEnricher}, then
+/// delegates to the configured agent.
+///
+/// This executor is stateless — all dependencies are obtained from
+/// {@link ExecutionContext}.
 ///
 /// ### Features
 ///
 /// - Resolves template variables in the prompt
 /// - Supports prompt override for backtracked execution
+/// - Injects rubric criteria and engine variable requirements before the agent call
 /// - Notifies listeners before/after agent execution
+///
+/// @implNote **Immutable after construction.** Stateless; safe to share across
+/// Virtual Threads.
 public class StandardNodeExecutor implements NodeExecutor<StandardNode> {
 
     private static final Logger logger = Logger.getLogger(StandardNodeExecutor.class.getName());
@@ -53,7 +62,6 @@ public class StandardNodeExecutor implements NodeExecutor<StandardNode> {
 
         String resolvedPrompt;
         if (promptOverride != null) {
-            // Use the edited prompt and clear the override
             resolvedPrompt = templateResolver.resolve(promptOverride, state.getContext());
             state.getContext().remove(overrideKey);
             logger.info("Using edited prompt for node: " + node.getId());
@@ -64,8 +72,7 @@ public class StandardNodeExecutor implements NodeExecutor<StandardNode> {
                             : "";
         }
 
-        resolvedPrompt =
-                EngineVariablePromptEnricher.DEFAULT.enrich(resolvedPrompt, node.getWrites());
+        resolvedPrompt = EngineVariablePromptEnricher.DEFAULT.enrich(resolvedPrompt, node, context);
 
         logger.info("Executing node: " + node.getId() + " with agent: " + node.getAgentId());
 

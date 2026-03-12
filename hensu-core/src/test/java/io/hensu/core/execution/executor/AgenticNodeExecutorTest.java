@@ -237,6 +237,24 @@ class AgenticNodeExecutorTest {
     class PlanFailureHandling {
 
         @Test
+        void shouldReturnPlainFailureWhenNoFailureTargetConfigured() {
+            Plan staticPlan =
+                    Plan.staticPlan(
+                            "test-node", List.of(PlannedStep.simple(0, "tool", "Do something")));
+
+            when(node.hasPlanningEnabled()).thenReturn(true);
+            when(node.getPlanningConfig()).thenReturn(PlanningConfig.forStatic());
+            when(node.getStaticPlan()).thenReturn(staticPlan);
+            when(planExecutor.execute(any(), any()))
+                    .thenReturn(PlanResult.failed(List.of(), 0, "Step failed"));
+
+            NodeResult result = executor.execute(node, context);
+
+            assertThat(result.isSuccess()).isFalse();
+            assertThat(result.getMetadata()).doesNotContainKey("_plan_failure_target");
+        }
+
+        @Test
         void shouldUseFailureTargetWhenSet() {
             Plan staticPlan =
                     Plan.staticPlan(
@@ -380,6 +398,34 @@ class AgenticNodeExecutorTest {
 
             verify(observer, atLeastOnce())
                     .onEvent(argThat(e -> e instanceof PlanEvent.PlanCompleted));
+        }
+
+        @Test
+        void shouldFirePlanCompletedFailureEventWhenPlanFails() {
+            PlanObserver observer = mock(PlanObserver.class);
+            executor =
+                    new AgenticNodeExecutor(
+                            new StandardNodeExecutor(),
+                            llmPlanner,
+                            planExecutor,
+                            toolRegistry,
+                            List.of(observer));
+
+            Plan staticPlan =
+                    Plan.staticPlan(
+                            "test-node", List.of(PlannedStep.simple(0, "tool", "Do something")));
+
+            when(node.hasPlanningEnabled()).thenReturn(true);
+            when(node.getPlanningConfig()).thenReturn(PlanningConfig.forStatic());
+            when(node.getStaticPlan()).thenReturn(staticPlan);
+            when(planExecutor.execute(any(), any()))
+                    .thenReturn(PlanResult.failed(List.of(), 0, "Step failed"));
+
+            executor.execute(node, context);
+
+            verify(observer)
+                    .onEvent(
+                            argThat(e -> e instanceof PlanEvent.PlanCompleted pc && !pc.success()));
         }
     }
 }

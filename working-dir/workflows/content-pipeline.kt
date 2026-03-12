@@ -19,9 +19,8 @@ fun contentPipeline() = workflow("content-pipeline") {
     rubrics { rubric("content-quality", "content-quality.md") }
 
     state {
-        input("topic",    VarType.STRING)
-        variable("draft",    VarType.STRING)
-        variable("approved", VarType.BOOLEAN)
+        input("topic", VarType.STRING)
+        variable("draft", VarType.STRING, "the full written article text")
     }
 
     graph {
@@ -41,7 +40,7 @@ fun contentPipeline() = workflow("content-pipeline") {
         node("review") {
             agent  = "reviewer"
             prompt = "Review this article: {draft}. Is it good enough to publish?"
-            writes("approved")
+            writes("draft")
             onApproval  goto "done"
             onRejection goto "write"
         }

@@ -141,13 +141,15 @@ Terraform/kubectl-style operations for managing workflow definitions (CLI integr
 
 Runtime operations for starting and managing workflow executions (client integration).
 
-| Method | Path                                      | Description                 |
-|--------|-------------------------------------------|-----------------------------|
-| `POST` | `/api/v1/executions`                      | Start workflow execution    |
-| `GET`  | `/api/v1/executions/{executionId}`        | Get execution status        |
-| `POST` | `/api/v1/executions/{executionId}/resume` | Resume paused execution     |
-| `GET`  | `/api/v1/executions/{executionId}/plan`   | Get pending plan for review |
-| `GET`  | `/api/v1/executions/paused`               | List paused executions      |
+| Method | Path                                        | Description                                        |
+|--------|---------------------------------------------|----------------------------------------------------|
+| `POST` | `/api/v1/executions`                        | Start workflow execution                           |
+| `GET`  | `/api/v1/executions/{executionId}`          | Get execution status                               |
+| `GET`  | `/api/v1/executions/{executionId}/events`   | Subscribe to execution events (SSE stream)         |
+| `POST` | `/api/v1/executions/{executionId}/resume`   | Resume paused execution                            |
+| `GET`  | `/api/v1/executions/{executionId}/plan`     | Get pending plan for review                        |
+| `GET`  | `/api/v1/executions/{executionId}/result`   | Get final output (public context, `_`-keys hidden) |
+| `GET`  | `/api/v1/executions/paused`                 | List paused executions                             |
 
 ### MCP Gateway (SSE Split-Pipe Transport)
 

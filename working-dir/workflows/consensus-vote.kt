@@ -1,5 +1,5 @@
 /**
- * Test workflow for consensus-based parallel execution.
+ * Example of consensus-based parallel execution.
  *
  * This workflow demonstrates:
  * - Parallel execution of multiple reviewers
@@ -7,7 +7,7 @@
  * - Score-based voting determination
  */
 fun workflow() = workflow("consensus-test") {
-    description = "Test workflow for consensus-based parallel execution"
+    description = "Example of consensus-based parallel execution"
 
     agents {
         agent("writer") {
@@ -28,6 +28,10 @@ fun workflow() = workflow("consensus-test") {
         }
     }
 
+    state {
+        variable("content", VarType.STRING, "the written paragraph to review")
+    }
+
     graph {
         start at "generate-content"
 
@@ -35,6 +39,7 @@ fun workflow() = workflow("consensus-test") {
         node("generate-content") {
             agent = "writer"
             prompt = "Write a short paragraph about the benefits of automated testing."
+            writes("content")
             onSuccess goto "review"
         }
 
@@ -45,7 +50,7 @@ fun workflow() = workflow("consensus-test") {
                 prompt = """
                     Review the following content for clarity:
 
-                    {generate-content}
+                    {content}
 
                     Provide your assessment with a score (0-100) and decision.
                 """.trimIndent()
@@ -56,7 +61,7 @@ fun workflow() = workflow("consensus-test") {
                 prompt = """
                     Review the following content for accuracy:
 
-                    {generate-content}
+                    {content}
 
                     Provide your assessment with a score (0-100) and decision.
                 """.trimIndent()
@@ -67,7 +72,7 @@ fun workflow() = workflow("consensus-test") {
                 prompt = """
                     Review the following content for completeness:
 
-                    {generate-content}
+                    {content}
 
                     Provide your assessment with a score (0-100) and decision.
                 """.trimIndent()

@@ -1,7 +1,6 @@
 package io.hensu.cli.commands;
 
 import io.hensu.dsl.WorkingDirectory;
-import jakarta.inject.Inject;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
@@ -40,7 +39,6 @@ public class WorkflowPushCommand extends ServerCommand {
             description = "Working directory containing the build/ output folder")
     private Path workingDirPath;
 
-    @Inject
     @ConfigProperty(name = "hensu.working.dir")
     private Optional<String> defaultWorkingDir;
 

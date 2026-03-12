@@ -1,5 +1,7 @@
 package io.hensu.integrations.springclient.demo;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hensu.integrations.springclient.client.HensuClient;
 import io.hensu.integrations.springclient.client.HensuEventStream;
 import io.hensu.integrations.springclient.config.HensuProperties;
@@ -46,6 +48,7 @@ public class DemoRunner implements CommandLineRunner {
     private final HensuEventStream eventStream;
     private final HensuMcpTransport mcpTransport;
     private final HensuProperties props;
+    private final ObjectMapper objectMapper;
 
     private final AtomicReference<Disposable> mcpDisposable = new AtomicReference<>();
     private final AtomicReference<Disposable> eventDisposable = new AtomicReference<>();
@@ -54,11 +57,13 @@ public class DemoRunner implements CommandLineRunner {
             HensuClient hensuClient,
             HensuEventStream eventStream,
             HensuMcpTransport mcpTransport,
-            HensuProperties props) {
+            HensuProperties props,
+            ObjectMapper objectMapper) {
         this.hensuClient = hensuClient;
         this.eventStream = eventStream;
         this.mcpTransport = mcpTransport;
         this.props = props;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -112,6 +117,14 @@ public class DemoRunner implements CommandLineRunner {
         }
     }
 
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            return String.valueOf(value);
+        }
+    }
+
     private void handleEvent(Map<String, Object> event, String executionId) {
         String type = (String) event.getOrDefault("type", "unknown");
 
@@ -161,7 +174,7 @@ public class DemoRunner implements CommandLineRunner {
 
             case "execution.completed" -> {
                 boolean success = Boolean.TRUE.equals(event.get("success"));
-                Object output = event.get("output");
+                String output = toJson(event.get("output"));
                 if (success) {
                     LOG.info("""
 

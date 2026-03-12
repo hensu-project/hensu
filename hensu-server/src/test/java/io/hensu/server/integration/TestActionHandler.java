@@ -6,6 +6,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /// Test {@link ActionHandler} for the `"test-tool"` handler ID.
@@ -34,6 +36,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class TestActionHandler implements ActionHandler {
 
     private final List<Map<String, Object>> receivedPayloads = new CopyOnWriteArrayList<>();
+    private final Queue<ActionResult> resultQueue = new ConcurrentLinkedQueue<>();
     private volatile ActionResult nextResult = ActionResult.success("OK", Map.of());
 
     @Override
@@ -48,6 +51,16 @@ public class TestActionHandler implements ActionHandler {
         this.nextResult = result;
     }
 
+    /// Enqueues a result to be returned on the next `execute()` call.
+    ///
+    /// Queued results take priority over {@link #nextResult} and are consumed
+    /// in FIFO order. When the queue is empty, falls back to {@code nextResult}.
+    ///
+    /// @param result the action result to enqueue, not null
+    public void enqueueResult(ActionResult result) {
+        resultQueue.add(result);
+    }
+
     /// Returns all payloads received since the last reset, in call order.
     ///
     /// @return unmodifiable view of received payloads, never null
@@ -60,6 +73,7 @@ public class TestActionHandler implements ActionHandler {
     /// @apiNote **Side effects**: clears all recorded payloads
     public void reset() {
         receivedPayloads.clear();
+        resultQueue.clear();
         nextResult = ActionResult.success("OK", Map.of());
     }
 
@@ -71,6 +85,7 @@ public class TestActionHandler implements ActionHandler {
     @Override
     public ActionResult execute(Map<String, Object> payload, Map<String, Object> context) {
         receivedPayloads.add(new HashMap<>(payload));
-        return nextResult;
+        ActionResult queued = resultQueue.poll();
+        return queued != null ? queued : nextResult;
     }
 }

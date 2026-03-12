@@ -19,6 +19,7 @@ This guide covers API usage, adapter development, extension points, and testing 
   - [Score-Based Routing](#score-based-routing)
   - [Approval Routing](#approval-routing)
 - [State Schema](#state-schema)
+- [Engine Variable Injection](#engine-variable-injection)
 - [Tool Registry](#tool-registry)
 - [Plan Engine](#plan-engine)
 - [Template Resolution](#template-resolution)
@@ -556,7 +557,6 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 @ApplicationScoped
 public class SlackHandler implements ActionHandler {
 
-    @Inject
     @ConfigProperty(name = "slack.webhook.url")
     String webhookUrl;
 
@@ -585,46 +585,20 @@ The rubric engine evaluates output quality against defined criteria with score-b
 
 ### Components
 
-| Component                | Description                                                                 |
-|--------------------------|-----------------------------------------------------------------------------|
-| `RubricEngine`           | Orchestrates evaluation using repository and evaluator                      |
-| `RubricRepository`       | Stores rubric definitions (in-memory by default)                            |
-| `RubricEvaluator`        | Evaluates output against criteria                                           |
-| `DefaultRubricEvaluator` | Self-evaluation: extracts scores from agent's own JSON output               |
-| `LLMRubricEvaluator`     | External evaluation: uses a separate agent to assess output                 |
-| `Rubric`                 | Immutable definition with pass threshold and weighted criteria              |
-| `Criterion`              | Single evaluation dimension with weight, minimum score, and evaluation type |
+| Component                  | Description                                                                                                                                  |
+|----------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| `RubricEngine`             | Orchestrates evaluation using repository and evaluator                                                                                       |
+| `RubricRepository`         | Stores rubric definitions (in-memory by default)                                                                                             |
+| `RubricEvaluator`          | Evaluates output against criteria                                                                                                            |
+| `ScoreExtractingEvaluator` | Reads the `score` engine variable from context; accumulates `recommendation` feedback for failing criteria into `_rubric_criterion_feedback` |
+| `Rubric`                   | Immutable definition with pass threshold and weighted criteria                                                                               |
+| `Criterion`                | Single evaluation dimension with weight and minimum score                                                                                    |
 
-### Self-Evaluation (Default)
+### How Evaluation Works
 
-`DefaultRubricEvaluator` extracts self-reported scores from the executing agent's JSON output. The agent includes a score and optional recommendations in its response:
+`ScoreExtractingEvaluator` reads the `score` engine variable directly from the execution context. The score is extracted automatically by `OutputExtractionPostProcessor` whenever the node has a `ScoreTransition` — no JSON parsing is needed in the evaluator itself.
 
-```json
-{
-  "score": 75,
-  "recommendation": "To improve, add more specific examples..."
-}
-```
-
-Score keys searched (in order): `score`, `self_score`, `quality_score`, `final_score`.
-When the score is below the criterion's minimum, recommendations are stored in context under `self_evaluation_recommendations` for injection into backtrack prompts. Falls back to simple rule-based logic evaluation if no self-reported score is found.
-
-### External LLM Evaluation
-
-Configure a separate evaluator agent for independent quality assessment:
-
-```java
-var env = HensuFactory.builder()
-    .agentProviders(List.of(new LangChain4jProvider()))
-    .evaluatorAgent("evaluator")
-    .build();
-
-// Register the evaluator agent
-env.getAgentRegistry().registerAgent("evaluator", AgentConfig.builder()
-    .model("claude-sonnet-4-5-20250929")
-    .role("Quality Evaluator")
-    .build());
-```
+If the score falls below a criterion's minimum and a `recommendation` engine variable is present in context, the text is appended to `_rubric_criterion_feedback`. `RubricPostProcessor` uses that list to assemble a combined backtrack context update for self-correcting loops.
 
 ### Score-Based Routing
 
@@ -645,7 +619,6 @@ acts as a classifier or reviewer and produces a binary decision.
 ```kotlin
 node("review") {
     agent = "reviewer"
-    writes("approved")          // tells the engine to extract "approved" from JSON output
     onApproval goto "finalize"
     onRejection goto "improve"
 }
@@ -654,7 +627,7 @@ node("review") {
 Rules:
 - Falls through (no match) if `approved` is absent or cannot be parsed as a boolean.
 - Accepts `true`/`false` as Java `Boolean` or case-insensitive strings `"true"`/`"false"`.
-- `approved` is an **engine variable** — it does not need to be declared in the state schema.
+- `approved` is an **engine variable** — injected automatically when `onApproval`/`onRejection` routing is present. Never declare it in `writes()` or the state schema.
 
 ## State Schema
 
@@ -672,21 +645,22 @@ node ID. Schema mode enables:
 
 ### Engine variables
 
-The following variables are always implicitly valid — never declare them in the schema:
+The following variables are always implicitly valid — never declare them in the schema or in `writes()`:
 
-| Variable   | Type      | Set by                                            |
-|------------|-----------|---------------------------------------------------|
-| `score`    | `NUMBER`  | Rubric evaluation or self-reported score          |
-| `approved` | `BOOLEAN` | Node output via `writes("approved")`              |
+| Variable           | Type      | Injected when                                                  |
+|--------------------|-----------|----------------------------------------------------------------|
+| `score`            | `NUMBER`  | Node has `onScore` routing (rubric-evaluated or self-scoring)  |
+| `approved`         | `BOOLEAN` | Node has `onApproval` / `onRejection` routing                  |
+| `recommendation`   | `STRING`  | Node has `onScore` or `onApproval` / `onRejection` routing     |
 
 ### DSL declaration
 
 ```kotlin
 workflow("ContentPipeline") {
     state {
-        input("topic", VarType.STRING)          // required in initial context
-        variable("article", VarType.STRING)     // produced by a node via writes("article")
-        variable("confidence", VarType.NUMBER)  // produced by a node via writes("confidence")
+        input("topic", VarType.STRING)                                              // required in initial context
+        variable("article",    VarType.STRING, "the full written article text")     // with LLM hint
+        variable("confidence", VarType.NUMBER, "reviewer confidence score 0-100")  // with LLM hint
     }
 
     agents { ... }
@@ -698,7 +672,7 @@ workflow("ContentPipeline") {
             onSuccess goto "review"
         }
         node("review") {
-            writes("confidence", "approved")
+            writes("confidence")
             prompt = "Review: {article}. Output JSON with confidence (0-100) and approved (true/false)."
             onApproval goto "end_ok"
             onRejection goto "write"
@@ -713,8 +687,8 @@ workflow("ContentPipeline") {
 ```java
 var schema = new WorkflowStateSchema(List.of(
     new StateVariableDeclaration("topic",      VarType.STRING,  true),
-    new StateVariableDeclaration("article",    VarType.STRING,  false),
-    new StateVariableDeclaration("confidence", VarType.NUMBER,  false)
+    new StateVariableDeclaration("article",    VarType.STRING,  false, "the full written article text"),
+    new StateVariableDeclaration("confidence", VarType.NUMBER,  false, "reviewer confidence score 0-100")
 ));
 
 var workflow = Workflow.builder()
@@ -734,6 +708,70 @@ WorkflowValidator.validate(workflow); // throws IllegalStateException on violati
 | Prompt `{var}` not in schema | `Node 'write' prompt references '{tone}' which is not declared in state schema` |
 
 Validation is a no-op when no schema is declared. Legacy workflows always pass through unchanged.
+
+## Engine Variable Injection
+
+Before each agent call, `StandardNodeExecutor` runs `EngineVariablePromptEnricher` to append
+format requirements to the resolved prompt. The enricher is a dumb iterator over an ordered chain
+of `EngineVariableInjector`s — each one self-contained, deciding independently whether it applies.
+
+### Injection Pipeline
+
+```
++————————————————————————+   condition: node.rubricId != null
+│  RubricPromptInjector  │   appends rubric criteria under a --- separator
++————————————+———————————+
+             │
+             V
++————————————————————————+   condition: node has ScoreTransition
+│  ScoreVariableInjector │   appends: "score" MUST be a number 0–100
++————————————+———————————+
+             │
+             V
++———————————————————————————+  condition: node has ApprovalTransition
+│  ApprovalVariableInjector │  appends: "approved" MUST be true or false
++————————————+——————————————+
+             │
+             V
++———————————————————————————————+  condition: node has ScoreTransition OR ApprovalTransition
+│  RecommendationVariableInject │  appends: "recommendation" MUST be improvement feedback
++————————————+——————————————————+
+             │
+             V
++———————————————————————+   condition: node.writes is not empty
+│  WritesVariableInject │   appends: each declared field with optional description hint
++———————————————————————+   e.g. "article" — the full written article text
+```
+
+### Description Hints in WritesVariableInjector
+
+When a variable is declared with a description in the state schema, `WritesVariableInjector` includes it in the appended instruction:
+
+```
+Engine output requirement: your JSON response MUST include:
+  "article"    — the full written article text
+  "confidence" — reviewer confidence score 0-100
+```
+
+Without a description, only the field name is emitted. The hint removes any reliance on the LLM inferring expected content from the variable name alone.
+
+### Extension
+
+Construct a custom enricher with additional injectors:
+
+```java
+EngineVariablePromptEnricher enricher = new EngineVariablePromptEnricher(
+    List.of(
+        new RubricPromptInjector(),
+        new ScoreVariableInjector(),
+        new ApprovalVariableInjector(),
+        new RecommendationVariableInjector(),
+        new WritesVariableInjector(),
+        new MyCustomInjector()   // appended after built-ins
+    ));
+```
+
+Inject it via `HensuFactory` or override the server CDI producer.
 
 ## Tool Registry
 

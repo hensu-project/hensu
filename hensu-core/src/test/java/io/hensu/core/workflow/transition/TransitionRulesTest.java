@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
-import io.hensu.core.rubric.evaluator.RubricEvaluation;
 import io.hensu.core.rubric.model.ComparisonOperator;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.state.HensuState;
@@ -120,11 +119,7 @@ class TransitionRulesTest {
                             new ScoreCondition(ComparisonOperator.LT, 80.0, null, "needs-review"));
             ScoreTransition transition = new ScoreTransition(conditions);
 
-            // Set up rubric evaluation with high score
-            RubricEvaluation evaluation =
-                    RubricEvaluation.builder().rubricId("test").score(85.0).passed(true).build();
-            state.setRubricEvaluation(evaluation);
-
+            state.getContext().put("score", 85.0);
             NodeResult result = NodeResult.success("Output", Map.of());
 
             // When
@@ -143,11 +138,7 @@ class TransitionRulesTest {
                             new ScoreCondition(ComparisonOperator.LT, 80.0, null, "needs-review"));
             ScoreTransition transition = new ScoreTransition(conditions);
 
-            // Set up rubric evaluation with low score
-            RubricEvaluation evaluation =
-                    RubricEvaluation.builder().rubricId("test").score(65.0).passed(false).build();
-            state.setRubricEvaluation(evaluation);
-
+            state.getContext().put("score", 65.0);
             NodeResult result = NodeResult.success("Output", Map.of());
 
             // When
@@ -211,39 +202,17 @@ class TransitionRulesTest {
         }
 
         @Test
-        void shouldTryAlternativeScoreKeys() {
-            // Given
-            List<ScoreCondition> conditions =
-                    List.of(new ScoreCondition(ComparisonOperator.GTE, 80.0, null, "approved"));
-            ScoreTransition transition = new ScoreTransition(conditions);
-
-            // Set score using alternative key
-            state.getContext().put("quality_score", 90);
-            NodeResult result = NodeResult.success("Output", Map.of());
-
-            // When
-            String target = transition.evaluate(state, result);
-
-            // Then
-            assertThat(target).isEqualTo("approved");
-        }
-
-        @Test
         void shouldReturnNullWhenNoConditionMatches() {
-            // Given
+            // score 85 with a GT 90 condition — no match → null
             List<ScoreCondition> conditions =
                     List.of(new ScoreCondition(ComparisonOperator.GT, 90.0, null, "excellent"));
             ScoreTransition transition = new ScoreTransition(conditions);
 
-            RubricEvaluation evaluation =
-                    RubricEvaluation.builder().rubricId("test").score(85.0).passed(true).build();
-            state.setRubricEvaluation(evaluation);
+            state.getContext().put("score", 85.0);
             NodeResult result = NodeResult.success("Output", Map.of());
 
-            // When - score is 85, condition requires > 90
             String target = transition.evaluate(state, result);
 
-            // Then
             assertThat(target).isNull();
         }
     }

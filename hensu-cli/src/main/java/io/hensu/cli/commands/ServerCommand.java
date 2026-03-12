@@ -1,6 +1,5 @@
 package io.hensu.cli.commands;
 
-import jakarta.inject.Inject;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -31,11 +30,9 @@ public abstract class ServerCommand extends HensuCommand {
             description = "JWT bearer token for server authentication")
     private String token;
 
-    @Inject
     @ConfigProperty(name = "hensu.server.url", defaultValue = "http://localhost:8080")
     private Optional<String> defaultServerUrl;
 
-    @Inject
     @ConfigProperty(name = "hensu.server.token", defaultValue = "")
     private Optional<String> defaultToken;
 

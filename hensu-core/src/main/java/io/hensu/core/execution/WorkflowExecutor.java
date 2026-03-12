@@ -255,8 +255,7 @@ public class WorkflowExecutor {
                 throw new IllegalStateException("Node not found: " + currentNodeId);
             }
 
-            // Clear rubric evaluation from previous node to prevent stale data leaking
-            state.setRubricEvaluation(null);
+            resetPerNodeState(state);
 
             if (node instanceof EndNode endNode) {
                 NodeExecutor<EndNode> executor =
@@ -296,6 +295,20 @@ public class WorkflowExecutor {
                 .workflowRepository(workflowRepository)
                 .rubricEngine(rubricEngine)
                 .build();
+    }
+
+    /// Resets per-node transient state at the start of each loop iteration.
+    ///
+    /// Clears state that is scoped to a single node execution and must not
+    /// carry over to the next node. Called once per iteration before the
+    /// pre-pipeline runs.
+    ///
+    /// @implNote If additional reset concerns are added here, extract this
+    /// method and its callers into a dedicated
+    /// {@link io.hensu.core.execution.pipeline.ProcessorPipeline}
+    /// pre-processor instead of accumulating logic inline.
+    private void resetPerNodeState(HensuState state) {
+        state.setRubricEvaluation(null);
     }
 
     /// Executes a node using the type-safe executor registry.

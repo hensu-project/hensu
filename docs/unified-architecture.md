@@ -108,8 +108,12 @@ For non-agent steps, `GenericNode` runs custom synchronous logic registered by `
 ### 5. Quality Gates (Rubric Evaluation)
 
 Node outputs can be evaluated against markdown rubric definitions before the workflow transitions. The
-`RubricEngine` scores outputs on configurable dimensions, and `ScoreTransition` rules route based on
-thresholds — enabling self-correcting loops where low-scoring outputs are sent back for revision.
+`RubricEngine` coordinates evaluation through `ScoreExtractingEvaluator`, which reads the `score`
+engine variable written directly to context by the agent's synthesis step — no JSON parsing required.
+`ScoreTransition` rules route based on thresholds, enabling self-correcting loops where low-scoring
+outputs are sent back for revision. The evaluator also accumulates feedback into the `recommendation`
+engine variable, which `RecommendationVariableInjector` injects into the next agent's prompt
+automatically when a `ScoreTransition` or `ApprovalTransition` is present on the node.
 
 ### 6. Storage Architecture
 
@@ -261,7 +265,11 @@ Zero-dependency Java library. Contains:
 - `StaticPlanner` / `LlmPlanner` — Planner implementations: `StaticPlanner` resolves predefined
   DSL steps; `LlmPlanner` generates and revises plans dynamically via an LLM agent
 - `ToolRegistry` / `ToolDefinition` — Protocol-agnostic tool descriptors for MCP integration
-- `RubricEngine` — Quality evaluation (rubrics embedded in workflow JSON)
+- `RubricEngine` / `ScoreExtractingEvaluator` — Quality evaluation: reads `score` engine variable
+  from context; accumulates feedback into `recommendation`; no JSON parsing
+- `EngineVariablePromptEnricher` — Composite enricher running 5 injectors before each agent call:
+  `RubricPromptInjector` → `ScoreVariableInjector` → `ApprovalVariableInjector` →
+  `RecommendationVariableInjector` → `WritesVariableInjector`
 - `WorkflowRepository` / `WorkflowStateRepository` — Tenant-scoped storage interfaces with in-memory defaults
 - `HensuState` / `HensuSnapshot` / `ExecutionHistory` — Mutable runtime state, immutable checkpoints, execution trace
 - Workflow model, Node types (including `SubWorkflowNode`), Transition rules
@@ -424,15 +432,25 @@ Any processor can short-circuit by returning a terminal `ExecutionResult`.
 │  AgenticNodeExecutor                                             │
 │                                                                  │
 │  PREPARATION PIPELINE                                            │
-│  +——————————————————+   +————————————————+   +————————————————+  │
-│  │PlanCreation      │   │Synthesize      │   │ReviewGate      │  │
-│  │Processor         │   │Enrichment      │   │Processor       │  │
-│  │(Static/LlmPlanner│——>│Processor       │——>│(pause if       │  │
-│  │ creates Plan)    │   │(inject agentId)│   │ review=true)   │  │
-│  +——————————————————+   +————————————————+   +———————+————————+  │
-│                                                      │           │
-│                                 PlanContext (Plan)   V           │
-│  EXECUTION PIPELINE             ——————————————————>              │
+│  +——————————————————+   +—————————————————————————————————————+  │
+│  │PlanCreation      │   │SynthesizeEnrichmentProcessor        │  │
+│  │Processor         │   │  inject agentId                     │  │
+│  │(Static/LlmPlanner│——>│  EngineVariablePromptEnricher:      │  │
+│  │ creates Plan)    │   │    1. RubricPromptInjector          │  │
+│  +——————————————————+   │    2. ScoreVariableInjector         │  │
+│                         │    3. ApprovalVariableInjector      │  │
+│                         │    4. RecommendationVariableInject  │  │
+│                         │    5. WritesVariableInjector        │  │
+│                         +———————————+—————————————————————————+  │
+│                                     │                            │
+│                         +———————————+————————+                   │
+│                         │ReviewGate Processor│                   │
+│                         │(pause if           │                   │
+│                         │ review=true)       │                   │
+│                         +———————+————————————+                   │
+│                                 │                                │
+│                     PlanContext (Plan)                           │
+│  EXECUTION PIPELINE ——————————————————>                          │
 │  +————————————————————————————————————————————————————————————+  │
 │  │  PlanExecutionProcessor                                    │  │
 │  │                                                            │  │
@@ -467,6 +485,23 @@ Workflows optionally declare a `WorkflowStateSchema` — a typed registry of dom
 (`writes` declarations) and their expected types. At load time, `WorkflowValidator` verifies
 the schema against all node `writes` declarations and prompt template bindings (e.g., `{orderId}`),
 preventing runtime binding failures before execution begins.
+
+Three **engine variables** (`score`, `approved`, `recommendation`) are predefined in
+`WorkflowStateSchema.ENGINE_VARIABLES` — they must never appear in user `state { }` declarations
+or `writes()` calls. They are injected into and extracted from context automatically by the
+`EngineVariablePromptEnricher` pipeline and `OutputExtractionPostProcessor`.
+
+Each domain variable can carry an optional `description` — a plain-English hint for the LLM:
+
+```kotlin
+state {
+    input("topic",   VarType.STRING)
+    variable("article", VarType.STRING, "the full written article text")
+}
+```
+
+`WritesVariableInjector` reads these descriptions from the schema and appends structured output
+requirements to the agent prompt, so the LLM knows exactly what format each written field expects.
 
 ### 5. Execution Observability (SSE)
 

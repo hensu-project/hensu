@@ -29,6 +29,15 @@ fun workflow() = workflow("fork-join-demo") {
         }
     }
 
+    state {
+        variable("analysis",           VarType.STRING, "identified research areas from task analysis")
+        variable("research_technical", VarType.STRING, "findings on technical aspects of AI workflow automation")
+        variable("research_use_cases", VarType.STRING, "findings on practical use cases for AI workflow automation")
+        variable("research_trends",    VarType.STRING, "findings on future trends in AI workflow automation")
+        variable("research_results",   VarType.STRING, "merged research results from all branches")
+        variable("report",             VarType.STRING, "final synthesized report")
+    }
+
     graph {
         start at "analyze-task"
 
@@ -36,6 +45,7 @@ fun workflow() = workflow("fork-join-demo") {
         node("analyze-task") {
             agent = "analyzer"
             prompt = "Analyze the following topic and identify 3 key research areas: AI workflow automation"
+            writes("analysis")
             onSuccess goto "parallel-research"
         }
 
@@ -51,8 +61,9 @@ fun workflow() = workflow("fork-join-demo") {
             prompt = """
                 Research technical aspects of AI workflow automation.
                 Focus on: architecture patterns, execution engines, state management.
-                Previous analysis: {analyze-task}
+                Previous analysis: {analysis}
             """.trimIndent()
+            writes("research_technical")
         }
 
         // Research branch 2: Use cases
@@ -61,8 +72,9 @@ fun workflow() = workflow("fork-join-demo") {
             prompt = """
                 Research practical use cases for AI workflow automation.
                 Focus on: enterprise applications, developer tools, automation scenarios.
-                Previous analysis: {analyze-task}
+                Previous analysis: {analysis}
             """.trimIndent()
+            writes("research_use_cases")
         }
 
         // Research branch 3: Future trends
@@ -71,8 +83,9 @@ fun workflow() = workflow("fork-join-demo") {
             prompt = """
                 Research future trends in AI workflow automation.
                 Focus on: emerging patterns, potential innovations, market direction.
-                Previous analysis: {analyze-task}
+                Previous analysis: {analysis}
             """.trimIndent()
+            writes("research_trends")
         }
 
         // Join: await all research branches and merge results
@@ -99,6 +112,7 @@ fun workflow() = workflow("fork-join-demo") {
                 2. Practical applications
                 3. Future outlook
             """.trimIndent()
+            writes("report")
             onSuccess goto "success"
         }
 

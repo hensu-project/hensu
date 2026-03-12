@@ -91,13 +91,13 @@ rubrics to determine quality scores and pass/fail status.
 │  +————————————————————+   +——————————————————————————+   │
 │  │  RubricRepository  │   │   RubricEvaluator        │   │
 │  │  (rubric storage)  │   │  +————————————————————+  │   │
-│  │  +——————————————+  │   │  │DefaultRubricEval.  │  │   │
-│  │  │InMemoryRubric│  │   │  │(self-evaluation)   │  │   │
-│  │  │Repository    │  │   │  +————————————————————+  │   │
-│  │  +——————————————+  │   │  │LLMRubricEvaluator  │  │   │
-│  +————————————————————+   │  │(external agent)    │  │   │
-│                           │  +————————————————————+  │   │
-│  +————————————————————+   +——————————————————————————+   │
+│  │  +——————————————+  │   │  │ScoreExtracting     │  │   │
+│  │  │InMemoryRubric│  │   │  │Evaluator           │  │   │
+│  │  │Repository    │  │   │  │(reads score engine │  │   │
+│  │  +——————————————+  │   │  │variable from ctx)  │  │   │
+│  +————————————————————+   │  +————————————————————+  │   │
+│                           +——————————————————————————+   │
+│  +————————————————————+                                  │
 │  │  Rubric Model      │                                  │
 │  │  +— Rubric         │   Scores normalized to 0-100     │
 │  │  +— Criterion      │   Weighted criteria evaluation   │
@@ -248,6 +248,14 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── GenericNodeExecutor.java       # Custom node handlers
 │   │   ├── SubWorkflowNodeExecutor.java   # Nested workflow execution
 │   │   └── EndNodeExecutor.java           # Terminal nodes
+│   ├── enricher/
+│   │   ├── EngineVariableInjector.java        # Single-injector interface
+│   │   ├── EngineVariablePromptEnricher.java  # Composite enricher — runs injector chain before each agent call
+│   │   ├── RubricPromptInjector.java          # Injects rubric criteria when node.rubricId is set
+│   │   ├── ScoreVariableInjector.java         # Injects `score` requirement on ScoreTransition nodes
+│   │   ├── ApprovalVariableInjector.java      # Injects `approved` requirement on ApprovalTransition nodes
+│   │   ├── RecommendationVariableInjector.java # Injects `recommendation` on score/approval nodes
+│   │   └── WritesVariableInjector.java        # Injects field requirements for writes() variables with optional description hints
 │   ├── pipeline/
 │   │   ├── NodeExecutionProcessor.java          # Base processor interface
 │   │   ├── PreNodeExecutionProcessor.java       # Pre-execution processor marker interface
@@ -296,7 +304,9 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── RubricRepository.java      # Rubric storage interface
 │   ├── RubricParser.java          # Markdown rubric file parser
 │   ├── model/                     # Rubric, Criterion, ScoreCondition, etc.
-│   └── evaluator/                 # DefaultRubricEvaluator, LLMRubricEvaluator
+│   └── evaluator/
+│       ├── RubricEvaluator.java          # Evaluator interface
+│       └── ScoreExtractingEvaluator.java # Reads score engine variable from context; accumulates recommendation feedback
 ├── tool/                          # Protocol-agnostic tool descriptors
 │   ├── ToolDefinition.java        # Tool shape (name, params, return type)
 │   ├── ToolRegistry.java          # Tool registration/lookup interface

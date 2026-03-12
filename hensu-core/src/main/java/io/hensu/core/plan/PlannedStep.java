@@ -7,7 +7,7 @@ import java.util.Objects;
 ///
 /// Each step pairs a zero-based index with a {@link PlanStepAction} that
 /// describes what should happen: invoke a tool ({@link PlanStepAction.ToolCall})
-/// or synthesise collected results ({@link PlanStepAction.Synthesize}).
+/// or synthesize collected results ({@link PlanStepAction.Synthesize}).
 ///
 /// ### Contracts
 /// - **Precondition**: `index >= 0`; `action` must not be null
@@ -99,7 +99,7 @@ public record PlannedStep(int index, PlanStepAction action, String description, 
     }
 
     // -----------------------------------------------------------------------
-    // Convenience accessors (backward-compat for ToolCall steps)
+    // Convenience accessors (backward-compatible for ToolCall steps)
     // -----------------------------------------------------------------------
 
     /// Returns the tool name for a {@link PlanStepAction.ToolCall} step.
@@ -176,6 +176,21 @@ public record PlannedStep(int index, PlanStepAction action, String description, 
     public PlannedStep withAgentId(String agentId) {
         if (action instanceof PlanStepAction.Synthesize s) {
             return new PlannedStep(index, s.withAgentId(agentId), description, status);
+        }
+        return this;
+    }
+
+    /// Returns a copy of this step with the synthesis prompt replaced.
+    ///
+    /// Used by {@link io.hensu.core.execution.executor.SynthesizeEnrichmentProcessor}
+    /// to inject engine-variable requirements into the prompt before execution.
+    /// No-op for {@link PlanStepAction.ToolCall} steps.
+    ///
+    /// @param enrichedPrompt the replacement prompt, not null
+    /// @return updated step for Synthesize actions; this step unchanged for ToolCall, never null
+    public PlannedStep withSynthesizePrompt(String enrichedPrompt) {
+        if (action instanceof PlanStepAction.Synthesize s) {
+            return new PlannedStep(index, s.withPrompt(enrichedPrompt), description, status);
         }
         return this;
     }

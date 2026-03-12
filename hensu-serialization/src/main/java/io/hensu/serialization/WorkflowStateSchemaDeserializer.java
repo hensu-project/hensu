@@ -49,11 +49,15 @@ class WorkflowStateSchemaDeserializer extends StdDeserializer<WorkflowStateSchem
         JsonNode variablesNode = root.get("variables");
         if (variablesNode != null && variablesNode.isArray()) {
             for (JsonNode v : variablesNode) {
+                JsonNode descNode = v.get("description");
+                String description =
+                        (descNode != null && !descNode.isNull()) ? descNode.asText() : null;
                 variables.add(
                         new StateVariableDeclaration(
                                 v.get("name").asText(),
                                 VarType.valueOf(v.get("type").asText()),
-                                v.get("isInput").asBoolean()));
+                                v.get("isInput").asBoolean(),
+                                description));
             }
         }
         return new WorkflowStateSchema(variables);

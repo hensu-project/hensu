@@ -1,13 +1,13 @@
 /**
- * Test Workflow: Self-Evaluation and LLM Evaluation
+ * Example: Self-Evaluation and Rubric-Based Scoring
  *
- * Tests the rubric evaluation system including:
+ * Demonstrates the rubric evaluation system including:
  * - Self-evaluation: Agent returns its own score and recommendations
  * - Auto-backtracking: Automatic retry when scores are low
  * - Score-based transitions: Different paths based on evaluation scores
  *
  * Usage:
- *   ./hensu run -d working-dir self-eval-test.kt --context '{"topic": "AI Safety", "stub_scenario": "low_score"}'
+ *   ./hensu run -d working-dir self-evaluation.kt --context '{"topic": "AI Safety", "stub_scenario": "low_score"}'
  *
  * Scenarios (set via stub_scenario in context):
  *   - "default"     : Normal flow, scores pass (85+)
@@ -17,15 +17,14 @@
  *   - "backtrack"   : Critical failure, backtrack to start
  */
 
-fun selfEvalTestWorkflow() = workflow("self-eval-test") {
-    description = "Test workflow for self-evaluation and LLM-based evaluation"
+fun selfEvaluationWorkflow() = workflow("self-evaluation") {
+    description = "Example of self-evaluation and rubric-based scoring loops"
     version = "1.0.0"
 
     state {
         input("topic", VarType.STRING)
-        variable("article", VarType.STRING)
-        variable("recommendation", VarType.STRING)
-        // score and approved are engine variables — no declaration needed
+        variable("article",  VarType.STRING, "the full written article text")
+        variable("summary",  VarType.STRING, "summary of issues when escalation is required")
     }
 
     agents {
@@ -62,7 +61,7 @@ fun selfEvalTestWorkflow() = workflow("self-eval-test") {
         node("draft") {
             agent = "writer"
             prompt = "Write about: {topic}. {recommendation}. Requirements: 1) Clear introduction, 2) At least 3 main points, 3) Concrete examples, 4) Conclusion."
-            writes("article", "score", "recommendation")
+            writes("article")
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "review"
@@ -75,7 +74,6 @@ fun selfEvalTestWorkflow() = workflow("self-eval-test") {
         node("review") {
             agent = "reviewer"
             prompt = "Review this content: {article}. Evaluate quality, accuracy, and completeness."
-            writes("score", "recommendation", "approved")
             rubric = "content-quality"
 
             // Critical failure overrides approval: score below 60 means restart draft
@@ -88,7 +86,7 @@ fun selfEvalTestWorkflow() = workflow("self-eval-test") {
         node("improve") {
             agent = "editor"
             prompt = "Improve this content: {article}. Feedback: {recommendation}."
-            writes("article", "score", "recommendation")
+            writes("article")
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "review"
@@ -102,7 +100,7 @@ fun selfEvalTestWorkflow() = workflow("self-eval-test") {
         node("restart") {
             agent = "writer"
             prompt = "Previous attempt failed. Starting fresh. Topic: {topic}. Issues: {recommendation}. Create a new draft."
-            writes("article", "score", "recommendation")
+            writes("article")
 
             onScore {
                 whenScore greaterThanOrEqual 70.0 goto "review"
@@ -122,6 +120,7 @@ fun selfEvalTestWorkflow() = workflow("self-eval-test") {
         node("escalate") {
             agent = "writer"
             prompt = "Summarize issues and suggest next steps."
+            writes("summary")
             onSuccess goto "needs_review"
         }
 

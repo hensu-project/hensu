@@ -1,4 +1,4 @@
-# [Shkhara]
+# {mountain_name}
 
 ## Geographic Details
 

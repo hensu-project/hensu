@@ -1,21 +1,20 @@
 /**
- * Test workflow demonstrating LLM-based evaluation.
+ * Example demonstrating multi-tier LLM-based rubric evaluation.
  *
- * Test scenarios (via stub_scenario in context):
+ * Scenarios (via stub_scenario in context):
  *   default    - Normal evaluation (score ~78)
  *   strict     - Strict evaluator (score ~45, triggers revision)
  *   lenient    - Lenient evaluator (score ~95, quick approval)
  */
 fun llmEvalTestWorkflow() = workflow("llm-eval-test") {
-    description = "Workflow with LLM-based rubric evaluation"
+    description = "Example of multi-tier rubric evaluation with score-based routing"
     version = "1.0.0"
 
     state {
         input("topic", VarType.STRING)
-        variable("article", VarType.STRING)
-        variable("score", VarType.NUMBER)
-        variable("improvements", VarType.STRING)
-        variable("reasoning", VarType.STRING)
+        variable("article",      VarType.STRING, "the full written article text")
+        variable("improvements", VarType.STRING, "specific improvements recommended by the evaluator")
+        variable("reasoning",    VarType.STRING, "evaluator's reasoning for the assigned score")
     }
 
     agents {
@@ -57,7 +56,7 @@ fun llmEvalTestWorkflow() = workflow("llm-eval-test") {
             agent = "evaluator"
             prompt = "Evaluate this article: {article}. Return JSON with reasoning and improvements."
             rubric = "content-quality"
-            writes("score", "improvements", "reasoning")
+            writes("improvements", "reasoning")
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "approve"

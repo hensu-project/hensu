@@ -12,7 +12,9 @@ import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.rubric.RubricNotFoundException;
 import io.hensu.core.rubric.evaluator.RubricEvaluation;
 import io.hensu.core.rubric.model.ComparisonOperator;
+import io.hensu.core.rubric.model.Criterion;
 import io.hensu.core.rubric.model.DoubleRange;
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.workflow.WorkflowTest;
 import io.hensu.core.workflow.node.StandardNode;
@@ -33,7 +35,7 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
     @MethodSource("scoreRoutingCases")
     void shouldRouteBySimpleScoreThreshold(double score, boolean passed, ExitStatus expected)
             throws Exception {
-        when(rubricEngine.exists("quality")).thenReturn(true);
+        when(rubricEngine.getRubric("quality")).thenReturn(Optional.of(qualityRubric()));
         when(rubricEngine.evaluate(eq("quality"), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()
@@ -74,7 +76,7 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
 
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("Work output"));
+                .thenReturn(AgentResponse.TextResponse.of(String.format("{\"score\": %s}", score)));
 
         var result = executor.execute(workflow, new HashMap<>());
 
@@ -93,7 +95,7 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
     void shouldRouteByScoreRange() throws Exception {
         // Score 75 matches RANGE 70..89 → routes to "good".
         // Tests the RANGE operator — not covered by the simple threshold cases above.
-        when(rubricEngine.exists("quality")).thenReturn(true);
+        when(rubricEngine.getRubric("quality")).thenReturn(Optional.of(qualityRubric()));
         when(rubricEngine.evaluate(eq("quality"), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()
@@ -140,7 +142,7 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
 
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("Good work"));
+                .thenReturn(AgentResponse.TextResponse.of("{\"score\": 75}"));
 
         var result = executor.execute(workflow, new HashMap<>());
 
@@ -152,7 +154,7 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
     @Test
     void shouldAutoApproveWhenRubricPasses() throws Exception {
         // rubric.passed=true with a single GTE-80 condition that is satisfied → SUCCESS.
-        when(rubricEngine.exists("quality")).thenReturn(true);
+        when(rubricEngine.getRubric("quality")).thenReturn(Optional.of(qualityRubric()));
         when(rubricEngine.evaluate(eq("quality"), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()
@@ -187,7 +189,8 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
                         .build();
 
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-        when(mockAgent.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("OK work"));
+        when(mockAgent.execute(any(), any()))
+                .thenReturn(AgentResponse.TextResponse.of("{\"score\": 90}"));
 
         var result = executor.execute(workflow, new HashMap<>());
 
@@ -200,7 +203,7 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
     void shouldThrowWhenNoScoreConditionMatches() throws RubricNotFoundException {
         // Score 85 with a single GTE-90 condition → no match → IllegalStateException.
         // rubric.passed=true prevents auto-backtrack from kicking in.
-        when(rubricEngine.exists("quality")).thenReturn(true);
+        when(rubricEngine.getRubric("quality")).thenReturn(Optional.of(qualityRubric()));
         when(rubricEngine.evaluate(eq("quality"), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()
@@ -235,10 +238,27 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
 
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("Good work"));
+                .thenReturn(AgentResponse.TextResponse.of("{\"score\": 85}"));
 
         assertThatThrownBy(() -> executor.execute(workflow, new HashMap<>()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("No valid transition");
+    }
+
+    // — Helpers ——————————————————————————————————————————————————————————————
+
+    private static Rubric qualityRubric() {
+        return Rubric.builder()
+                .id("quality")
+                .name("Quality")
+                .criteria(
+                        List.of(
+                                Criterion.builder()
+                                        .id("overall")
+                                        .name("Overall Quality")
+                                        .weight(1.0)
+                                        .minScore(70.0)
+                                        .build()))
+                .build();
     }
 }
