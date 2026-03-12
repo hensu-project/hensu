@@ -102,3 +102,7 @@ hensu-serialization/src/main/java/io/hensu/serialization/
 - `hensu-core` (API dependency)
 - Jackson BOM 2.20.1 (`jackson-databind`, `jackson-datatype-jsr310`)
 - Test: JUnit 5, AssertJ
+
+## See Also
+
+- [Serialization Developer Guide](../docs/developer-guide-serialization.md) — `treeToValue` rule, GraalVM registration, round-trip testing patterns

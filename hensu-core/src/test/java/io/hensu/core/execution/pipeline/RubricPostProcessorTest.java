@@ -1,10 +1,9 @@
 package io.hensu.core.execution.pipeline;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.hensu.core.execution.executor.ExecutionContext;
@@ -14,11 +13,10 @@ import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.rubric.RubricEngine;
 import io.hensu.core.rubric.RubricNotFoundException;
-import io.hensu.core.rubric.RubricParser;
 import io.hensu.core.rubric.evaluator.RubricEvaluation;
+import io.hensu.core.rubric.evaluator.ScoreExtractingEvaluator;
 import io.hensu.core.rubric.model.ComparisonOperator;
 import io.hensu.core.rubric.model.DoubleRange;
-import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
@@ -36,8 +34,6 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.MockedStatic;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @DisplayName("RubricProcessor")
@@ -251,6 +247,7 @@ class RubricPostProcessorTest {
                             .build();
 
             var ctx = contextWithNode(node);
+            ctx.state().getContext().put("score", 45.0);
             mockRubricEvaluation(45.0, false);
 
             var result = processor.process(ctx);
@@ -291,34 +288,6 @@ class RubricPostProcessorTest {
     }
 
     @Nested
-    @DisplayName("rubric registration")
-    class RubricRegistration {
-
-        @Test
-        @DisplayName("registers rubric in engine when not already present")
-        void shouldRegisterRubricIfMissingFromEngine() throws RubricNotFoundException {
-            var ctx = contextWithRubric("quality");
-            when(rubricEngine.exists("quality")).thenReturn(false);
-
-            var mockRubric = Mockito.mock(Rubric.class);
-            try (MockedStatic<RubricParser> parserMock = Mockito.mockStatic(RubricParser.class)) {
-                parserMock.when(() -> RubricParser.parse(any())).thenReturn(mockRubric);
-                when(rubricEngine.evaluate(eq("quality"), any(), any()))
-                        .thenReturn(
-                                RubricEvaluation.builder()
-                                        .rubricId("quality")
-                                        .score(90.0)
-                                        .passed(true)
-                                        .build());
-
-                processor.process(ctx);
-
-                verify(rubricEngine).registerRubric(mockRubric);
-            }
-        }
-    }
-
-    @Nested
     @DisplayName("error handling")
     class ErrorHandling {
 
@@ -326,7 +295,6 @@ class RubricPostProcessorTest {
         @DisplayName("returns Failure on RubricNotFoundException")
         void shouldTerminateOnMissingRubric() throws RubricNotFoundException {
             var ctx = contextWithRubric("missing-rubric");
-            when(rubricEngine.exists("missing-rubric")).thenReturn(true);
             when(rubricEngine.evaluate(eq("missing-rubric"), any(), any()))
                     .thenThrow(new RubricNotFoundException("Rubric not found: missing-rubric"));
 
@@ -337,25 +305,25 @@ class RubricPostProcessorTest {
         }
 
         @Test
-        @DisplayName(
-                "throws ClassCastException when self_evaluation_recommendations holds a String")
-        void shouldThrowWhenRecommendationsContextKeyIsString() throws RubricNotFoundException {
-            // RubricPostProcessor blindly casts context.get("self_evaluation_recommendations")
-            // to List<String>. If OutputExtractionPostProcessor ran first and an agent wrote
-            // that key as a plain String, the cast throws ClassCastException and crashes
-            // the pipeline before any backtrack logic can execute.
+        @DisplayName("handles plain String in _rubric_criterion_feedback without throwing")
+        void shouldHandleStringRecommendationsGracefully() throws RubricNotFoundException {
+            // Regression: OutputExtractionPostProcessor may store a plain String under this key
+            // when an agent produces a single-value JSON. The safe instanceof List<?> cast must
+            // silently skip it — backtrack logic must still execute normally.
             var ctx = contextWithRubric("quality");
-            ctx.state().getContext().put("self_evaluation_recommendations", "just a plain string");
+            ctx.state()
+                    .getContext()
+                    .put(ScoreExtractingEvaluator.RECOMMENDATIONS_KEY, "just a plain string");
             mockRubricEvaluation(15.0, false);
 
-            assertThatThrownBy(() -> processor.process(ctx)).isInstanceOf(ClassCastException.class);
+            assertThatCode(() -> processor.process(ctx)).doesNotThrowAnyException();
+            assertThat(ctx.state().getHistory().getBacktracks()).isNotEmpty();
         }
     }
 
     // — Helpers —————————————————————————————————————————————————————————————
 
     private void mockRubricEvaluation(double score, boolean passed) throws RubricNotFoundException {
-        when(rubricEngine.exists("quality")).thenReturn(true);
         when(rubricEngine.evaluate(eq("quality"), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()

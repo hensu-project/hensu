@@ -1,5 +1,5 @@
 /**
- * Test workflow for human review mode with manual backtracking.
+ * Example of human review mode with manual backtracking.
  *
  * This workflow demonstrates:
  * - Human review checkpoints at key steps
@@ -7,21 +7,28 @@
  * - Approve/Reject decisions
  */
 fun workflow() = workflow("human-review-test") {
-    description = "Test workflow for human review with manual backtracking"
+    description = "Example of human review with manual backtracking"
 
     agents {
         agent("researcher") {
-            model = "claude-sonnet-4-5-20250514"
+            model = Models.CLAUDE_SONNET_4_6
             role = "Research analyst gathering information"
         }
         agent("writer") {
-            model = "claude-sonnet-4-5-20250514"
+            model = Models.CLAUDE_SONNET_4_6
             role = "Content writer creating drafts"
         }
         agent("editor") {
-            model = "claude-sonnet-4-5-20250514"
+            model = Models.CLAUDE_SONNET_4_6
             role = "Editor reviewing and improving content"
         }
+    }
+
+    state {
+        input("topic",    VarType.STRING)
+        variable("research", VarType.STRING, "research findings on the topic")
+        variable("draft",    VarType.STRING, "the written article draft")
+        variable("article",  VarType.STRING, "the final edited article")
     }
 
     graph {
@@ -31,6 +38,7 @@ fun workflow() = workflow("human-review-test") {
         node("research") {
             agent = "researcher"
             prompt = "Research the topic: {topic}"
+            writes("research")
 
             // Human review checkpoint - can backtrack to restart research
             review {
@@ -51,6 +59,7 @@ fun workflow() = workflow("human-review-test") {
 
                 Write a comprehensive article about {topic}.
             """.trimIndent()
+            writes("draft")
 
             // Human review - can backtrack to research if draft needs more info
             review {
@@ -70,6 +79,7 @@ fun workflow() = workflow("human-review-test") {
 
                 Focus on clarity, structure, and completeness.
             """.trimIndent()
+            writes("article")
 
             // Human review - final approval before completion
             review {

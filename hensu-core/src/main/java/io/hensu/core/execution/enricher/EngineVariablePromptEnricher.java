@@ -1,63 +1,69 @@
 package io.hensu.core.execution.enricher;
 
+import io.hensu.core.execution.executor.ExecutionContext;
+import io.hensu.core.workflow.node.Node;
 import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
-/// Composite enricher that appends engine variable output instructions to a resolved prompt.
+/// Composite enricher that runs all registered {@link EngineVariableInjector}s in order.
 ///
-/// Iterates the node's `writes` list and, for each name that matches a registered
-/// {@link EngineVariableInjector}, appends the corresponding format instruction. Instructions
-/// are appended in the order the variable names appear in `writes`.
+/// Each injector is self-contained: it inspects the node and execution context to decide
+/// whether it applies, then appends its format instruction. The enricher is a dumb iterator —
+/// all conditional logic lives inside the injectors.
 ///
-/// ### Default instance
-/// {@link #DEFAULT} covers all built-in engine variables (`score`, `approved`). Use it
-/// directly in {@link io.hensu.core.execution.executor.StandardNodeExecutor}; no wiring
-/// through {@link io.hensu.core.execution.executor.ExecutionContext} is required because
-/// the set of engine variables is fixed at compile time.
+/// ### Default pipeline
+/// {@link #DEFAULT} runs in this order:
+/// 1. {@link RubricPromptInjector} — injects rubric criteria when `node.getRubricId()` is set
+/// 2. {@link ScoreVariableInjector} — injects `score` requirement when a
+///    {@link io.hensu.core.workflow.transition.ScoreTransition} exists
+/// 3. {@link ApprovalVariableInjector} — injects `approved` requirement when an
+///    {@link io.hensu.core.workflow.transition.ApprovalTransition} exists
+/// 4. {@link RecommendationVariableInjector} — injects `recommendation` requirement when a
+///    {@link io.hensu.core.workflow.transition.ScoreTransition} or
+///    {@link io.hensu.core.workflow.transition.ApprovalTransition} exists
+/// 5. {@link WritesVariableInjector} — injects field requirements for all user-declared
+///    {@code writes()} variables so the LLM produces extractable JSON keys
 ///
 /// ### Extension
-/// To register a new engine variable, add an {@link EngineVariableInjector} implementation
-/// and include it in a custom enricher instance.
+/// Construct a custom enricher with additional {@link EngineVariableInjector} implementations.
+///
+/// @implNote **Immutable after construction.** All fields are final; safe to share across
+/// Virtual Threads.
 ///
 /// @see EngineVariableInjector
-/// @see io.hensu.core.workflow.state.WorkflowStateSchema#ENGINE_VARIABLES
 public final class EngineVariablePromptEnricher {
 
-    /// Default enricher covering all built-in engine variables.
+    /// Default enricher covering all built-in engine output requirements.
     public static final EngineVariablePromptEnricher DEFAULT =
             new EngineVariablePromptEnricher(
-                    List.of(new ScoreVariableInjector(), new ApprovalVariableInjector()));
+                    List.of(
+                            new RubricPromptInjector(),
+                            new ScoreVariableInjector(),
+                            new ApprovalVariableInjector(),
+                            new RecommendationVariableInjector(),
+                            new WritesVariableInjector()));
 
-    private final Map<String, EngineVariableInjector> injectors;
+    private final List<EngineVariableInjector> injectors;
 
-    /// Constructs an enricher from a list of injectors.
+    /// Constructs an enricher with the given injectors.
     ///
-    /// @param injectors list of injectors indexed by {@link EngineVariableInjector#variableName()},
-    ///                  not null, no duplicates
+    /// @param injectors ordered list of injectors to apply, not null
     public EngineVariablePromptEnricher(List<EngineVariableInjector> injectors) {
-        this.injectors =
-                injectors.stream()
-                        .collect(
-                                Collectors.toMap(
-                                        EngineVariableInjector::variableName, Function.identity()));
+        this.injectors = List.copyOf(injectors);
     }
 
-    /// Enriches the prompt by appending instructions for each engine variable in `writes`.
+    /// Enriches the prompt by running all registered injectors in order.
     ///
-    /// Variables not matched by any registered injector are silently skipped.
+    /// Each injector receives the current prompt and decides independently whether to append
+    /// its instruction. Instructions accumulate in registration order.
     ///
     /// @param prompt the fully resolved prompt, not null
-    /// @param writes the list of variable names the node writes, not null
-    /// @return enriched prompt, or the original prompt if no engine variables match
-    public String enrich(String prompt, List<String> writes) {
+    /// @param node   the node being executed, not null
+    /// @param ctx    execution context providing rubric engine, workflow, and state, not null
+    /// @return enriched prompt with all applicable format instructions appended, never null
+    public String enrich(String prompt, Node node, ExecutionContext ctx) {
         String result = prompt;
-        for (String name : writes) {
-            EngineVariableInjector injector = injectors.get(name);
-            if (injector != null) {
-                result = injector.inject(result);
-            }
+        for (EngineVariableInjector injector : injectors) {
+            result = injector.inject(result, node, ctx);
         }
         return result;
     }

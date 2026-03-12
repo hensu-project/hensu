@@ -15,9 +15,11 @@ import java.util.Set;
 /// Absent a schema, the engine operates in legacy mode (outputs keyed by node ID).
 ///
 /// ### Engine variables
-/// The following variables are always implicitly valid — no declaration required:
-/// - `score` — rubric or self-evaluation score, drives `onScore` transitions
-/// - `approved` — reviewer approval flag
+/// The following variables are always implicitly valid — no declaration required and must
+/// not appear in `writes()` declarations:
+/// - `score`          — rubric or self-evaluation score (0-100), drives `onScore` transitions
+/// - `approved`       — boolean approval flag, drives `onApproval` / `onRejection` transitions
+/// - `recommendation` — improvement feedback string, auto-injected on scoring/approval nodes
 ///
 /// ### Validation
 /// {@link io.hensu.core.workflow.validation.WorkflowValidator} uses this schema to verify
@@ -32,7 +34,16 @@ public final class WorkflowStateSchema {
 
     /// Engine-semantic variables always implicitly declared.
     /// Nodes may write to these and prompts may reference them without a schema entry.
-    public static final Set<String> ENGINE_VARIABLES = Set.of("score", "approved");
+    /// These must never be declared in the workflow state schema or in node {@code writes()}.
+    ///
+    /// - `score`          — numeric quality score (0-100), driven by rubric evaluation or
+    ///                      self-scoring; drives `onScore` transitions
+    /// - `approved`       — boolean approval flag written by classification/review nodes;
+    ///                      drives `onApproval` / `onRejection` transitions
+    /// - `recommendation` — plain-string improvement feedback or review reasoning, injected
+    ///                      automatically on any node with `onScore` or `onApproval` routing
+    public static final Set<String> ENGINE_VARIABLES =
+            Set.of("score", "approved", "recommendation");
 
     private final List<StateVariableDeclaration> variables;
     private final Map<String, StateVariableDeclaration> index;
@@ -71,6 +82,17 @@ public final class WorkflowStateSchema {
     /// @return declared type, or empty if not declared (or is an engine variable)
     public Optional<VarType> typeOf(String name) {
         return Optional.ofNullable(index.get(name)).map(StateVariableDeclaration::type);
+    }
+
+    /// Returns the description for a custom variable, if declared.
+    ///
+    /// Used by {@link io.hensu.core.execution.enricher.WritesVariableInjector} to generate
+    /// rich LLM output requirements that name each field and its expected content.
+    ///
+    /// @param name variable name, not null
+    /// @return description string, or empty if not declared or no description was provided
+    public Optional<String> descriptionOf(String name) {
+        return Optional.ofNullable(index.get(name)).map(StateVariableDeclaration::description);
     }
 
     /// Returns all declared variables in declaration order.

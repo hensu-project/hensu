@@ -17,6 +17,11 @@ The `hensu-dsl` module provides:
 
 ```kotlin
 fun myWorkflow() = workflow("ContentPipeline") {
+    state {
+        input("topic", VarType.STRING)
+        variable("article", VarType.STRING, "the full written article text")
+    }
+
     agents {
         agent("writer") {
             role = "Content Writer"
@@ -34,13 +39,15 @@ fun myWorkflow() = workflow("ContentPipeline") {
         node("write") {
             agent = "writer"
             prompt = "Write a short article about {topic}"
+            writes("article")
             onSuccess goto "review"
         }
 
         node("review") {
             agent = "reviewer"
-            prompt = "Review this article: {write}"
+            prompt = "Review this article: {article}"
             rubric = "content-quality"
+            writes("article")
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "end_success"
@@ -165,14 +172,22 @@ working-dir/
 
 The `Models` object provides constants for supported AI models:
 
-| Constant                   | Model                        |
-|----------------------------|------------------------------|
-| `Models.CLAUDE_SONNET_4_5` | `claude-sonnet-4-5-20250929` |
-| `Models.CLAUDE_SONNET_4`   | `claude-sonnet-4-20250514`   |
-| `Models.GPT_4O`            | `gpt-4o`                     |
-| `Models.GPT_4O_MINI`       | `gpt-4o-mini`                |
-| `Models.GEMINI_2_5_FLASH`  | `gemini-2.5-flash`           |
-| `Models.DEEPSEEK_CHAT`     | `deepseek-chat`              |
+| Constant                       | Model ID                          |
+|--------------------------------|-----------------------------------|
+| `Models.CLAUDE_OPUS_4_6`       | `claude-opus-4-6`                 |
+| `Models.CLAUDE_OPUS_4_5`       | `claude-opus-4-5`                 |
+| `Models.CLAUDE_SONNET_4_6`     | `claude-sonnet-4-6`               |
+| `Models.CLAUDE_SONNET_4_5`     | `claude-sonnet-4-5`               |
+| `Models.CLAUDE_HAIKU_4_5`      | `claude-haiku-4-5`                |
+| `Models.GPT_4`                 | `gpt-4`                           |
+| `Models.GPT_4_TURBO`           | `gpt-4-turbo`                     |
+| `Models.GPT_4O`                | `gpt-4o`                          |
+| `Models.GEMINI_3_1_FLASH_LITE` | `gemini-3.1-flash-lite-preview`   |
+| `Models.GEMINI_3_1_PRO`        | `gemini-3.1-pro-preview`          |
+| `Models.GEMINI_2_5_FLASH`      | `gemini-2.5-flash`                |
+| `Models.GEMINI_2_5_PRO`        | `gemini-2.5-pro`                  |
+| `Models.DEEPSEEK_CHAT`         | `deepseek-chat`                   |
+| `Models.DEEPSEEK_CODER`        | `deepseek-coder`                  |
 
 ## Documentation
 
@@ -184,5 +199,5 @@ The `Models` object provides constants for supported AI models:
 
 - **hensu-core** - Core workflow data model and execution engine
 - **Kotlin Stdlib + Reflect** - Kotlin standard library
-- **Kotlin Scripting** - Runtime `.kt` file compilation (2.3.10)
+- **Kotlin Scripting** - Runtime `.kt` file compilation (2.3.0)
 - **Kotlin Compiler Embeddable** - Embedded Kotlin compiler
