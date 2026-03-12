@@ -9,10 +9,11 @@ fun paramExtractionWorkflow() = workflow("ParamExtraction") {
     version = "1.0.0"
 
     state {
-        variable("largest_lake", VarType.STRING)
-        variable("highest_peak", VarType.STRING)
-        variable("capital_population", VarType.STRING)
-        variable("oldest_wine_region", VarType.STRING)
+        variable("largest_lake",       VarType.STRING, "name of the largest lake in Georgia")
+        variable("highest_peak",       VarType.STRING, "name and height of the highest mountain in Georgia")
+        variable("capital_population", VarType.STRING, "population of Tbilisi")
+        variable("oldest_wine_region", VarType.STRING, "name of the oldest wine-producing region")
+        variable("advertisement",      VarType.STRING, "travel advertisement incorporating the extracted facts")
     }
 
     agents {
@@ -62,7 +63,7 @@ fun paramExtractionWorkflow() = workflow("ParamExtraction") {
                 Write a compelling 2-paragraph travel advertisement that incorporates
                 ALL of these specific facts. Make it sound exciting and accurate.
             """.trimIndent()
-
+            writes("advertisement")
             onSuccess goto "end"
         }
 

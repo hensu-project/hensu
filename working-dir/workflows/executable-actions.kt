@@ -1,5 +1,5 @@
 /**
- * Test workflow demonstrating executable actions.
+ * Example demonstrating executable actions.
  *
  * Actions:
  * - send: Send data to a registered action handler (HTTP, messaging, events)
@@ -20,6 +20,10 @@ fun actionsTestWorkflow() = workflow("executable-actions-test") {
         }
     }
 
+    state {
+        variable("message", VarType.STRING, "the generated weather message")
+    }
+
     graph {
         start at "generate"
 
@@ -29,6 +33,7 @@ fun actionsTestWorkflow() = workflow("executable-actions-test") {
                 Generate a short message about the weather today.
                 Keep it to one sentence.
             """.trimIndent()
+            writes("message")
             onSuccess goto "notify"
         }
 

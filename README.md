@@ -44,9 +44,8 @@ fun contentPipeline() = workflow("content-pipeline") {
     rubrics { rubric("content-quality", "content-quality.md") }
 
     state {
-        input("topic",    VarType.STRING)
-        variable("draft",    VarType.STRING)
-        variable("approved", VarType.BOOLEAN)
+        input("topic", VarType.STRING)
+        variable("draft", VarType.STRING, "the full written article text")
     }
 
     graph {
@@ -54,7 +53,7 @@ fun contentPipeline() = workflow("content-pipeline") {
 
         node("write") {
             agent  = "writer"
-            prompt = "Write a short article about {topic}."
+            prompt = "Write a short article about {topic}. {recommendation}"
             writes("draft")
             rubric = "content-quality"
             onScore {
@@ -66,7 +65,7 @@ fun contentPipeline() = workflow("content-pipeline") {
         node("review") {
             agent  = "reviewer"
             prompt = "Review this article: {draft}. Is it good enough to publish?"
-            writes("approved")
+            writes("draft")
             onApproval  goto "done"
             onRejection goto "write"                  // rejected – loop back
         }
@@ -231,8 +230,6 @@ hensu credentials set ANTHROPIC_API_KEY   # or OPENAI_API_KEY / GEMINI_API_KEY
 ```bash
 hensu run content-pipeline -d working-dir -v -c '{"topic": "The Fermi Paradox"}'
 ```
-
-`-v` prints node inputs and outputs to the console.
 
 ### Deploy to the Server
 

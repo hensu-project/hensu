@@ -12,6 +12,8 @@ import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.rubric.RubricNotFoundException;
 import io.hensu.core.rubric.evaluator.RubricEvaluation;
 import io.hensu.core.rubric.model.ComparisonOperator;
+import io.hensu.core.rubric.model.Criterion;
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.workflow.WorkflowTest;
 import io.hensu.core.workflow.node.StandardNode;
@@ -30,7 +32,7 @@ class WorkflowExecutorRubricTest extends WorkflowExecutorTestBase {
     void shouldAutoBacktrackOnMinorFailure() throws Exception {
         // score 75 (< 80 threshold) on first attempt → auto-backtrack → retry → score 90 →
         // SUCCESS.
-        when(rubricEngine.exists("quality")).thenReturn(true);
+        when(rubricEngine.getRubric("quality")).thenReturn(Optional.of(qualityRubric()));
         when(rubricEngine.evaluate(eq("quality"), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()
@@ -77,7 +79,7 @@ class WorkflowExecutorRubricTest extends WorkflowExecutorTestBase {
     void shouldStopBacktrackAfterMaxRetries() throws Exception {
         // rubric always returns score 75 (minor failure); after 3 backtracks
         // the auto-retry limit is reached and normal SuccessTransition fires.
-        when(rubricEngine.exists("quality")).thenReturn(true);
+        when(rubricEngine.getRubric("quality")).thenReturn(Optional.of(qualityRubric()));
         when(rubricEngine.evaluate(eq("quality"), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()
@@ -119,7 +121,7 @@ class WorkflowExecutorRubricTest extends WorkflowExecutorTestBase {
     void shouldPreferOnScoreOverAutoBacktrack() throws Exception {
         // score 60 would trigger auto-backtrack, but ScoreTransition LT 70 → "revise"
         // takes precedence, routing to a FAILURE end node.
-        when(rubricEngine.exists("quality")).thenReturn(true);
+        when(rubricEngine.getRubric("quality")).thenReturn(Optional.of(qualityRubric()));
         when(rubricEngine.evaluate(eq("quality"), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()
@@ -156,7 +158,7 @@ class WorkflowExecutorRubricTest extends WorkflowExecutorTestBase {
 
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
         when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("Mediocre output"));
+                .thenReturn(AgentResponse.TextResponse.of("{\"score\": 60}"));
 
         var result = executor.execute(workflow, new HashMap<>());
 
@@ -172,7 +174,7 @@ class WorkflowExecutorRubricTest extends WorkflowExecutorTestBase {
         // node1 evaluates rubric (score 85); node2 has no rubricId but uses ScoreTransition.
         // If the score leaked, node2 would route "good". It must NOT — the score must be
         // cleared between nodes and throw instead.
-        when(rubricEngine.exists("quality")).thenReturn(true);
+        when(rubricEngine.getRubric("quality")).thenReturn(Optional.of(qualityRubric()));
         when(rubricEngine.evaluate(eq("quality"), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()
@@ -220,5 +222,22 @@ class WorkflowExecutorRubricTest extends WorkflowExecutorTestBase {
         assertThatThrownBy(() -> executor.execute(workflow, new HashMap<>()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("No valid transition");
+    }
+
+    // — Helpers ——————————————————————————————————————————————————————————————
+
+    private static Rubric qualityRubric() {
+        return Rubric.builder()
+                .id("quality")
+                .name("Quality")
+                .criteria(
+                        List.of(
+                                Criterion.builder()
+                                        .id("overall")
+                                        .name("Overall Quality")
+                                        .weight(1.0)
+                                        .minScore(70.0)
+                                        .build()))
+                .build();
     }
 }

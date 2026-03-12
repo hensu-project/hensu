@@ -1,6 +1,8 @@
 package io.hensu.dsl.parsers
 
+import io.hensu.core.workflow.node.StandardNode
 import io.hensu.dsl.WorkingDirectory
+import io.hensu.dsl.builders.Models
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.writeText
@@ -25,7 +27,7 @@ class KotlinScriptParserTest {
             """
             fun example() {
                 val workflow = workflow("ExampleWorkflow") {
-                    description = "Test workflow"
+                    description = "Example workflow"
                     version = "1.0.0"
 
                     agents {
@@ -42,38 +44,34 @@ class KotlinScriptParserTest {
                         }
                     }
 
+                    state {
+                        input("code",    VarType.STRING)
+                        variable("review",  VarType.STRING, "code review findings and suggestions")
+                        variable("verdict", VarType.STRING, "final verdict after quality check")
+                    }
+
                     graph {
                         start at "review"
 
-                        // Node with simple success transition
                         node("review") {
                             agent = "reviewer"
                             prompt = "Review this code: {code}"
-
-                            // Simple success transition
-                            onSuccess goto "approve"
-
-                            // Failure with retry
+                            writes("review")
+                            onSuccess goto "quality-check"
                             onFailure retry 2 otherwise "reject"
-
-                            // Optional review
                             review(ReviewMode.OPTIONAL)
                         }
 
-                        // Node with score-based transitions
                         node("quality-check") {
                             agent = "reviewer"
-                            prompt = "Check quality"
-
-                            // Score-based routing
+                            prompt = "Check quality of the review: {review}"
+                            writes("verdict")
                             onScore {
                                 whenScore greaterThanOrEqual 90.0 goto "excellent"
                                 whenScore `in` 70.0..89.0 goto "good"
                                 whenScore `in` 50.0..69.0 goto "needs-work"
                                 whenScore lessThan 50.0 goto "reject"
                             }
-
-                            // Required review with backtracking
                             review {
                                 mode = ReviewMode.REQUIRED
                                 allowBacktrack = true
@@ -81,13 +79,11 @@ class KotlinScriptParserTest {
                             }
                         }
 
-                        // Node with detailed review
                         node("final-check") {
                             agent = "reviewer"
-                            prompt = "Final check"
-
+                            prompt = "Final check: {verdict}"
+                            writes("verdict")
                             onSuccess goto "approve"
-
                             review {
                                 mode = ReviewMode.REQUIRED
                                 allowBacktrack = true
@@ -95,7 +91,6 @@ class KotlinScriptParserTest {
                             }
                         }
 
-                        // End nodes
                         end("approve", ExitStatus.SUCCESS)
                         end("excellent", ExitStatus.SUCCESS)
                         end("good", ExitStatus.SUCCESS)
@@ -114,6 +109,30 @@ class KotlinScriptParserTest {
         val graph = kotlinParser.parse(workingDir, "example")
 
         assertThat(graph.metadata.name).isEqualTo("ExampleWorkflow")
-        assertThat(graph.nodes.containsKey("review")).isTrue
+        assertThat(graph.metadata.description).isEqualTo("Example workflow")
+        assertThat(graph.startNode).isEqualTo("review")
+
+        assertThat(graph.agents).hasSize(2)
+        assertThat(graph.agents).containsKeys("reviewer", "fixer")
+        assertThat(graph.agents["reviewer"]?.model).isEqualTo(Models.CLAUDE_SONNET_4_5)
+
+        assertThat(graph.nodes)
+            .containsKeys(
+                "review",
+                "quality-check",
+                "final-check",
+                "approve",
+                "excellent",
+                "good",
+                "needs-work",
+                "reject",
+            )
+
+        val reviewNode = graph.nodes["review"] as StandardNode
+        assertThat(reviewNode.writes).containsExactly("review")
+
+        val schema = graph.stateSchema
+        assertThat(schema).isNotNull()
+        assertThat(schema.variables.map { it.name() }).containsExactly("code", "review", "verdict")
     }
 }

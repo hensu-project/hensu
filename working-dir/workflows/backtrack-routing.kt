@@ -16,14 +16,13 @@
  *                                                V
  *                                            [reject]
  */
-fun backtrackRoutingWorkflow() = workflow("BacktrackRouting") {
+fun backtrackRoutingWorkflow() = workflow("backtrack-routing") {
     description = "Auto-backtracking workflow driven by rubric score thresholds"
     version = "1.0.0"
 
     state {
         input("topic", VarType.STRING)
-        variable("article", VarType.STRING)
-        variable("recommendation", VarType.STRING)
+        variable("article", VarType.STRING, "the full written article text")
     }
 
     agents {
@@ -56,7 +55,6 @@ fun backtrackRoutingWorkflow() = workflow("BacktrackRouting") {
             agent = "critic"
             prompt = "Review the following draft and evaluate its quality.\n\n{article}"
             rubric = "content-quality"
-            writes("score", "recommendation")
 
             onScore {
                 whenScore greaterThanOrEqual 70.0 goto "refine"
@@ -77,7 +75,6 @@ fun backtrackRoutingWorkflow() = workflow("BacktrackRouting") {
             agent = "critic"
             prompt = "Final quality check on the refined content.\n\n{article}"
             rubric = "content-quality"
-            writes("score", "recommendation")
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "approve"

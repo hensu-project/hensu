@@ -26,9 +26,7 @@ import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.rubric.*;
 import io.hensu.core.rubric.InMemoryRubricRepository;
 import io.hensu.core.rubric.RubricRepository;
-import io.hensu.core.rubric.evaluator.DefaultRubricEvaluator;
-import io.hensu.core.rubric.evaluator.LLMRubricEvaluator;
-import io.hensu.core.rubric.evaluator.RubricEvaluator;
+import io.hensu.core.rubric.evaluator.ScoreExtractingEvaluator;
 import io.hensu.core.state.InMemoryWorkflowStateRepository;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.template.SimpleTemplateResolver;
@@ -182,45 +180,16 @@ public final class HensuFactory {
                 agentRegistry,
                 null,
                 null,
-                null,
                 executorService,
                 new InMemoryWorkflowRepository(),
                 new InMemoryWorkflowStateRepository());
     }
 
-    /// Creates a Hensu environment with pre-configured registries and optional LLM evaluator.
+    /// Creates a Hensu environment with pre-configured registries and review support.
     ///
     /// @param config configuration options, not null
     /// @param nodeExecutorRegistry registry for node type executors, not null
     /// @param agentRegistry registry for AI agents, not null
-    /// @param evaluatorAgentId agent ID for LLM-based rubric evaluation, may be null
-    /// @param executorService thread pool for parallel execution, not null
-    /// @return a fully-configured environment, never null
-    public static HensuEnvironment createEnvironment(
-            HensuConfig config,
-            NodeExecutorRegistry nodeExecutorRegistry,
-            AgentRegistry agentRegistry,
-            String evaluatorAgentId,
-            ExecutorService executorService) {
-        return createEnvironment(
-                config,
-                nodeExecutorRegistry,
-                agentRegistry,
-                evaluatorAgentId,
-                null,
-                null,
-                executorService,
-                new InMemoryWorkflowRepository(),
-                new InMemoryWorkflowStateRepository());
-    }
-
-    /// Creates a Hensu environment with LLM evaluator and human review support.
-    ///
-    /// @param config configuration options, not null
-    /// @param nodeExecutorRegistry registry for node type executors, not null
-    /// @param agentRegistry registry for AI agents, not null
-    /// @param evaluatorAgentId agent ID for LLM-based rubric evaluation, may be null for heuristic
-    /// evaluation
     /// @param reviewHandler handler for human review checkpoints, may be null for auto-approve
     /// @param executorService thread pool for parallel execution, not null
     /// @return a fully-configured environment, never null
@@ -228,14 +197,12 @@ public final class HensuFactory {
             HensuConfig config,
             NodeExecutorRegistry nodeExecutorRegistry,
             AgentRegistry agentRegistry,
-            String evaluatorAgentId,
             ReviewHandler reviewHandler,
             ExecutorService executorService) {
         return createEnvironment(
                 config,
                 nodeExecutorRegistry,
                 agentRegistry,
-                evaluatorAgentId,
                 reviewHandler,
                 null,
                 executorService,
@@ -246,14 +213,11 @@ public final class HensuFactory {
     /// Creates a Hensu environment with all configuration options.
     ///
     /// This is the most complete factory method, allowing full control over
-    /// all components including evaluator, review handler, action executor,
-    /// and workflow repository.
+    /// all components including review handler, action executor, and repositories.
     ///
     /// @param config configuration options, not null
     /// @param nodeExecutorRegistry registry for node type executors, not null
     /// @param agentRegistry registry for AI agents, not null
-    /// @param evaluatorAgentId agent ID for LLM-based rubric evaluation, may be null for heuristic
-    /// evaluation
     /// @param reviewHandler handler for human review checkpoints, may be null for auto-approve
     /// @param actionExecutor executor for executable actions, may be null for logging-only mode
     /// @param executorService thread pool for parallel execution, not null
@@ -264,7 +228,6 @@ public final class HensuFactory {
             HensuConfig config,
             NodeExecutorRegistry nodeExecutorRegistry,
             AgentRegistry agentRegistry,
-            String evaluatorAgentId,
             ReviewHandler reviewHandler,
             ActionExecutor actionExecutor,
             ExecutorService executorService,
@@ -274,7 +237,6 @@ public final class HensuFactory {
                 config,
                 nodeExecutorRegistry,
                 agentRegistry,
-                evaluatorAgentId,
                 reviewHandler,
                 actionExecutor,
                 executorService,
@@ -294,7 +256,6 @@ public final class HensuFactory {
             HensuConfig config,
             NodeExecutorRegistry nodeExecutorRegistry,
             AgentRegistry agentRegistry,
-            String evaluatorAgentId,
             ReviewHandler reviewHandler,
             ActionExecutor actionExecutor,
             ExecutorService executorService,
@@ -303,15 +264,8 @@ public final class HensuFactory {
             Planner planner,
             StepHandlerRegistry stepHandlerRegistry) {
         RubricRepository rubricRepository = createRubricRepository(config);
-
-        RubricEvaluator rubricEvaluator;
-        if (evaluatorAgentId != null && !evaluatorAgentId.isBlank()) {
-            rubricEvaluator = new LLMRubricEvaluator(agentRegistry, evaluatorAgentId);
-        } else {
-            rubricEvaluator = new DefaultRubricEvaluator();
-        }
-
-        RubricEngine rubricEngine = new RubricEngine(rubricRepository, rubricEvaluator);
+        RubricEngine rubricEngine =
+                new RubricEngine(rubricRepository, new ScoreExtractingEvaluator());
         TemplateResolver templateResolver = createTemplateResolver();
 
         WorkflowExecutor workflowExecutor =
@@ -466,7 +420,6 @@ public final class HensuFactory {
         private List<AgentProvider> agentProviders = new ArrayList<>();
         private NodeExecutorRegistry nodeExecutorRegistry;
         private AgentRegistry agentRegistry;
-        private String evaluatorAgentId = null;
         private ReviewHandler reviewHandler = null;
         private ActionExecutor actionExecutor = null;
         private WorkflowRepository workflowRepository;
@@ -574,18 +527,6 @@ public final class HensuFactory {
         /// @return this builder for chaining, never null
         public Builder stubMode(boolean enabled) {
             this.credentials.put("hensu.stub.enabled", String.valueOf(enabled));
-            return this;
-        }
-
-        /// Configures an agent for LLM-based rubric evaluation.
-        ///
-        /// When set, rubric criteria are evaluated by the specified agent
-        /// instead of using heuristic-based evaluation.
-        ///
-        /// @param agentId the agent ID (e.g., `"evaluator"`), may be null to disable LLM evaluation
-        /// @return this builder for chaining, never null
-        public Builder evaluatorAgent(String agentId) {
-            this.evaluatorAgentId = agentId;
             return this;
         }
 
@@ -865,7 +806,6 @@ public final class HensuFactory {
                     config,
                     nodeExecutorRegistry,
                     agentRegistry,
-                    evaluatorAgentId,
                     reviewHandler,
                     actionExecutor,
                     executorService,

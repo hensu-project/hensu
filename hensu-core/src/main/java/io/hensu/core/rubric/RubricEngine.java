@@ -9,6 +9,7 @@ import io.hensu.core.rubric.model.Rubric;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /// Quality evaluation engine for rubric-based output assessment.
 ///
@@ -58,15 +59,19 @@ public final class RubricEngine {
         return repository.exists(rubricId);
     }
 
+    /// Returns the rubric registered under the given ID.
+    ///
+    /// @param rubricId the rubric identifier to look up, not null
+    /// @return the registered rubric, or empty if not found
+    public Optional<Rubric> getRubric(String rubricId) {
+        return repository.findById(rubricId);
+    }
+
     /// Evaluates a node result against a registered rubric.
     ///
     /// Calculates weighted scores for each criterion and produces an overall
     /// score normalized to 0-100. The evaluation passes if the score meets
     /// the rubric's pass threshold.
-    ///
-    /// ### Performance
-    /// - Time: O(n) where n = number of criteria in rubric
-    /// - Space: O(n) for criterion evaluation results
     ///
     /// @param rubricId identifier of the registered rubric, not null
     /// @param result node execution result to evaluate, not null
@@ -110,7 +115,7 @@ public final class RubricEngine {
             maxScore += criterion.getWeight();
         }
 
-        double finalScore = maxScore > 0 ? (totalScore / maxScore) * 100.0 : 0.0;
+        double finalScore = maxScore > 0 ? totalScore / maxScore : 0.0;
         boolean passed = finalScore >= rubric.getPassThreshold();
 
         return RubricEvaluation.builder()

@@ -4,6 +4,7 @@ import io.quarkus.runtime.LaunchMode;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.ForbiddenException;
+import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.jwt.JsonWebToken;
 
@@ -30,8 +31,8 @@ public class RequestTenantResolver {
 
     @Inject LaunchMode launchMode;
 
-    @ConfigProperty(name = "hensu.tenant.default", defaultValue = "")
-    String defaultTenant;
+    @ConfigProperty(name = "hensu.tenant.default")
+    Optional<String> defaultTenant;
 
     /// Returns the tenant ID for the current request.
     ///
@@ -48,9 +49,9 @@ public class RequestTenantResolver {
 
         // 2. Default tenant (dev/test only — LaunchMode guard prevents production use)
         if ((launchMode == LaunchMode.DEVELOPMENT || launchMode == LaunchMode.TEST)
-                && defaultTenant != null
-                && !defaultTenant.isBlank()) {
-            return defaultTenant;
+                && defaultTenant.isPresent()
+                && !defaultTenant.get().isBlank()) {
+            return defaultTenant.get();
         }
 
         throw new ForbiddenException("No tenant context available");

@@ -18,6 +18,7 @@ This document provides a complete reference for the Hensu Kotlin DSL used to def
 - [Transitions](#transitions)
 - [State Variables (`writes`)](#state-variables-writes)
 - [State Schema](#state-schema)
+- [Engine Variables](#engine-variables)
 - [Rubrics](#rubrics)
 - [Human Review](#human-review)
 - [Planning](#planning)
@@ -439,16 +440,14 @@ end("exit")
 // End with explicit status
 end("success", ExitStatus.SUCCESS)
 end("failure", ExitStatus.FAILURE)
-end("cancelled", ExitStatus.CANCELLED)
 ```
 
 #### Exit Status Types
 
-| Type                   | Description                     |
-|------------------------|---------------------------------|
-| `ExitStatus.SUCCESS`   | Successful completion (default) |
-| `ExitStatus.FAILURE`   | Failed completion               |
-| `ExitStatus.CANCELLED` | Cancelled execution             |
+| Type                 | Description                     |
+|----------------------|---------------------------------|
+| `ExitStatus.SUCCESS` | Successful completion (default) |
+| `ExitStatus.FAILURE` | Failed completion               |
 
 ## Transitions
 
@@ -499,13 +498,12 @@ onScore {
 
 ### Approval Transitions
 
-Route based on the `approved` boolean engine variable written by a node via `writes("approved")`:
+Route based on the `approved` boolean engine variable. The engine injects it automatically when `onApproval` or `onRejection` routing is present — do not declare it in `writes()`:
 
 ```kotlin
 node("classify") {
     agent = "classifier"
     prompt = "Evaluate the content. Output JSON: {\"approved\": true/false}"
-    writes("approved")
 
     onApproval goto "publish"
     onRejection goto "revise"
@@ -574,6 +572,7 @@ node("use_facts") {
 2. **Use descriptive names**: Match `writes` names to `{placeholder}` names in downstream prompts
 3. **Request JSON-only output**: Ask the agent to output only JSON for reliable extraction
 4. **Lower temperature**: Use lower temperature (0.3-0.5) for more consistent JSON output
+5. **Never `writes` engine variables**: `score`, `approved`, and `recommendation` are managed by the engine — declaring them in `writes()` produces duplicate instructions in the prompt.
 
 ### Supported JSON Values
 
@@ -587,7 +586,7 @@ Nested objects and arrays are not currently extracted.
 
 Declare a typed schema for all domain-specific state variables at the workflow level. When declared, the schema is validated at load time — `WorkflowBuilder.build()` throws `IllegalStateException` if any `writes` name or prompt `{variable}` is not declared.
 
-Engine variables (`score`, `approved`) are always implicitly valid — never declare them in the schema.
+Engine variables (`score`, `approved`, `recommendation`) are always implicitly valid — never declare them in the schema or in `writes()`. See [Engine Variables](#engine-variables) for the full contract.
 
 ```kotlin
 workflow("ContentPipeline") {
@@ -603,10 +602,11 @@ workflow("ContentPipeline") {
 
 ### State Block Functions
 
-| Function               | Description                                                         |
-|------------------------|---------------------------------------------------------------------|
-| `input(name, type)`    | Declares a variable required in the initial context from the caller |
-| `variable(name, type)` | Declares a variable produced by a node via `writes`                 |
+| Function                            | Description                                                                                                                        |
+|-------------------------------------|------------------------------------------------------------------------------------------------------------------------------------|
+| `input(name, type)`                 | Declares a variable required in the initial context from the caller                                                                |
+| `variable(name, type)`              | Declares a variable produced by a node via `writes`                                                                                |
+| `variable(name, type, description)` | Declares a node-produced variable with a description surfaced as an LLM output hint. Prefer this when the name alone is ambiguous. |
 
 ### VarType Values
 
@@ -616,6 +616,70 @@ workflow("ContentPipeline") {
 | `NUMBER`      | `number`                 |
 | `BOOLEAN`     | `boolean`                |
 | `LIST_STRING` | `array` of `string`      |
+
+## Engine Variables
+
+Engine variables are managed entirely by the Hensu engine — they are injected automatically into the LLM prompt and extracted from the JSON response. They are **always implicitly valid** in `{placeholder}` references. Do **not** declare them in `state { }` or `writes()`.
+
+| Variable         | Type    | When present                                                      | Description                                                                                      |
+|------------------|---------|-------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
+| `score`          | Number  | Node has `onScore { }` routing (rubric-evaluated or self-scoring) | Quality score 0–100. Drives `onScore` transitions.                                               |
+| `approved`       | Boolean | Node has `onApproval` / `onRejection` routing                     | `true` = approved, `false` = rejected. Falls through if absent.                                  |
+| `recommendation` | String  | Node has `onScore { }` or `onApproval` / `onRejection` routing    | Improvement feedback or review reasoning. Available as `{recommendation}` in downstream prompts. |
+
+### How engine variables flow
+
+```
++—————————————————————————+      +———————————————————————————+
+│  ScoreVariableInjector  │      │  ApprovalVariableInjector │
+│  (onScore nodes)        │      │  (onApproval nodes)       │
++—————————————————————————+      +———————————————————————————+
+           │                                │
+           V                                V
++——————————————————————————————————————————————+
+│         RecommendationVariableInjector       │
+│   (auto-injected on score OR approval nodes) │
++——————————————————————————————————————————————+
+           │
+           V
+    LLM JSON response
+    { "score": 87, "recommendation": "...", "approved": true }
+           │
+           V
++——————————————————————————+
+│  OutputExtractionPost-   │
+│  Processor extracts all  │
+│  engine vars + writes()  │
++——————————————————————————+
+```
+
+### Using `{recommendation}` in downstream prompts
+
+Because `recommendation` is an engine variable, you reference it as a `{placeholder}` without declaring it anywhere:
+
+```kotlin
+node("score-content") {
+    agent = "reviewer"
+    prompt = "Review the article: {article}\nOutput a score and feedback."
+    rubric = "content-quality"
+
+    onScore {
+        whenScore greaterThanOrEqual 80.0 goto "publish"
+        whenScore lessThan 80.0 goto "revise"
+    }
+}
+
+node("revise") {
+    agent = "writer"
+    prompt = """
+        Revise the article based on this feedback: {recommendation}
+        Original article: {article}
+    """.trimIndent()
+
+    writes("article")
+    onSuccess goto "score-content"
+}
+```
 
 ## Rubrics
 
@@ -808,23 +872,26 @@ Use the `Models` object for type-safe model references:
 
 ```kotlin
 // Anthropic Claude
-Models.CLAUDE_SONNET_4_5    // claude-sonnet-4.5-20250514
-Models.CLAUDE_OPUS_4_1      // claude-opus-4.1-20250514
-Models.CLAUDE_HAIKU_4_5     // claude-haiku-4.5-20251001
+Models.CLAUDE_OPUS_4_6          // claude-opus-4-6
+Models.CLAUDE_OPUS_4_5          // claude-opus-4-5
+Models.CLAUDE_SONNET_4_6        // claude-sonnet-4-6
+Models.CLAUDE_SONNET_4_5        // claude-sonnet-4-5
+Models.CLAUDE_HAIKU_4_5         // claude-haiku-4-5
 
 // OpenAI
-Models.GPT_4                // gpt-4
-Models.GPT_4_TURBO          // gpt-4-turbo
-Models.GPT_4O               // gpt-4o
+Models.GPT_4                    // gpt-4
+Models.GPT_4_TURBO              // gpt-4-turbo
+Models.GPT_4O                   // gpt-4o
 
 // Google Gemini
-Models.GEMINI_3_FLASH       // gemini-3-flash
-Models.GEMINI_2_5_FLASH     // gemini-2.5-flash
-Models.GEMINI_2_5_PRO       // gemini-2.5-pro
+Models.GEMINI_3_1_FLASH_LITE    // gemini-3.1-flash-lite-preview
+Models.GEMINI_3_1_PRO           // gemini-3.1-pro-preview
+Models.GEMINI_2_5_FLASH         // gemini-2.5-flash
+Models.GEMINI_2_5_PRO           // gemini-2.5-pro
 
 // DeepSeek
-Models.DEEPSEEK_CHAT        // deepseek-chat
-Models.DEEPSEEK_CODER       // deepseek-coder
+Models.DEEPSEEK_CHAT            // deepseek-chat
+Models.DEEPSEEK_CODER           // deepseek-coder
 ```
 
 ## External Prompt Files

@@ -23,7 +23,7 @@ public sealed interface PlanStepAction permits PlanStepAction.ToolCall, PlanStep
     /// Invokes a registered tool with the supplied arguments.
     ///
     /// @param toolName  the registered tool identifier, not null or blank
-    /// @param arguments key-value parameters forwarded to the tool; normalised to
+    /// @param arguments key-value parameters forwarded to the tool; normalized to
     ///                  an immutable copy on construction, never null
     record ToolCall(String toolName, Map<String, Object> arguments) implements PlanStepAction {
 
@@ -54,6 +54,19 @@ public sealed interface PlanStepAction permits PlanStepAction.ToolCall, PlanStep
         public Synthesize withAgentId(String resolvedAgentId) {
             Objects.requireNonNull(resolvedAgentId, "resolvedAgentId must not be null");
             return new Synthesize(resolvedAgentId, prompt);
+        }
+
+        /// Returns a copy with the prompt replaced.
+        ///
+        /// Used by {@link io.hensu.core.execution.executor.SynthesizeEnrichmentProcessor}
+        /// to inject engine-variable requirements (writes schema, rubric criteria, etc.)
+        /// before plan execution begins.
+        ///
+        /// @param enrichedPrompt the replacement prompt, not null
+        /// @return new {@code Synthesize} with the prompt replaced, never null
+        public Synthesize withPrompt(String enrichedPrompt) {
+            Objects.requireNonNull(enrichedPrompt, "enrichedPrompt must not be null");
+            return new Synthesize(agentId, enrichedPrompt);
         }
     }
 }

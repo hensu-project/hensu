@@ -5,27 +5,27 @@ import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.rubric.RubricEngine;
 import io.hensu.core.rubric.RubricNotFoundException;
-import io.hensu.core.rubric.RubricParser;
-import io.hensu.core.rubric.evaluator.DefaultRubricEvaluator;
 import io.hensu.core.rubric.evaluator.RubricEvaluation;
-import io.hensu.core.rubric.model.Rubric;
+import io.hensu.core.rubric.evaluator.ScoreExtractingEvaluator;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.transition.ScoreTransition;
 import io.hensu.core.workflow.transition.TransitionRule;
-import java.nio.file.Path;
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.logging.Logger;
 
 /// Evaluates rubric quality criteria and triggers auto-backtracking on failure.
 ///
 /// When a node has a `rubricId`, this processor:
-/// 1. Registers the rubric in the engine if not already present
-/// 2. Evaluates the node output against the rubric
-/// 3. Stores the evaluation in state for {@link ScoreTransition} rules
-/// 4. If evaluation fails and no user-defined score transition matches,
+/// 1. Evaluates the node output against the rubric (registered by
+///    {@link io.hensu.core.execution.enricher.RubricPromptInjector} during prompt enrichment)
+/// 2. Stores the evaluation in state for {@link ScoreTransition} rules
+/// 3. If evaluation fails and no user-defined score transition matches,
 ///    determines an auto-backtrack target based on score severity
 ///
 /// ### Backtracking Thresholds
@@ -35,12 +35,12 @@ import java.util.logging.Logger;
 ///
 /// ### Contracts
 /// - **Precondition**: `context.result()` is non-null (post-execution pipeline)
+/// - **Precondition**: Rubric is already registered in the engine (done during prompt enrichment)
 /// - **Postcondition**: Returns empty or terminal result
 /// - **Side effects**: Mutates `state.rubricEvaluation`, may mutate context map
 ///   and history on auto-backtrack
 ///
-/// @implNote Receives {@link RubricEngine} via constructor injection. Stateless
-/// beyond the injected engine reference.
+/// @implNote **Immutable after construction.** Stateless beyond the injected engine reference.
 ///
 /// @see RubricEngine for evaluation logic
 /// @see RubricEvaluation for evaluation result format
@@ -69,8 +69,6 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
         if (node.getRubricId() == null) {
             return Optional.empty();
         }
-
-        registerRubricIfAbsent(node.getRubricId(), context.workflow());
 
         RubricEvaluation evaluation;
         try {
@@ -126,8 +124,7 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
     private AutoBacktrack determineAutoBacktrack(
             RubricEvaluation evaluation, Node currentNode, Workflow workflow, HensuState state) {
 
-        List<String> selfRecommendations =
-                (List<String>) state.getContext().get(DefaultRubricEvaluator.RECOMMENDATIONS_KEY);
+        List<String> selfRecommendations = safeGetRecommendations(state.getContext());
 
         if (evaluation.getScore() < CRITICAL_FAILURE_THRESHOLD) {
             String startNode = findEarliestLogicalStep(state, workflow);
@@ -175,6 +172,14 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
         return null;
     }
 
+    private List<String> safeGetRecommendations(Map<String, Object> context) {
+        Object raw = context.get(ScoreExtractingEvaluator.RECOMMENDATIONS_KEY);
+        if (raw instanceof List<?> list) {
+            return list.stream().map(Object::toString).toList();
+        }
+        return List.of();
+    }
+
     private void addRecommendationsToContext(
             Map<String, Object> updates,
             List<String> selfRecommendations,
@@ -182,7 +187,7 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
 
         StringBuilder recommendations = new StringBuilder();
 
-        if (selfRecommendations != null && !selfRecommendations.isEmpty()) {
+        if (!selfRecommendations.isEmpty()) {
             recommendations.append("Self-evaluation recommendations:\n");
             for (String rec : selfRecommendations) {
                 recommendations.append("- ").append(rec).append("\n");
@@ -202,7 +207,6 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
 
         if (!recommendations.isEmpty()) {
             updates.put("recommendations", recommendations.toString().trim());
-            logger.info("Injecting recommendations into backtrack context:\n" + recommendations);
         }
     }
 
@@ -248,20 +252,5 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
             }
         }
         return false;
-    }
-
-    private void registerRubricIfAbsent(String rubricId, Workflow workflow) {
-        if (!rubricEngine.exists(rubricId)) {
-            Rubric rubric = loadRubric(rubricId, workflow.getRubrics());
-            rubricEngine.registerRubric(rubric);
-        }
-    }
-
-    private Rubric loadRubric(String rubricId, Map<String, String> rubrics) {
-        String rubricPath = rubrics.get(rubricId);
-        if (rubricPath == null) {
-            throw new IllegalStateException("Rubric not found: " + rubricId);
-        }
-        return RubricParser.parse(Path.of(rubricPath));
     }
 }

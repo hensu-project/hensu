@@ -1,5 +1,6 @@
 package io.hensu.dsl.parsers
 
+import io.hensu.core.workflow.node.StandardNode
 import io.hensu.dsl.WorkingDirectory
 import java.nio.file.Path
 import org.assertj.core.api.Assertions.*
@@ -35,10 +36,17 @@ class GeorgiaWorkflowTest {
         // Verify start node
         assertThat(workflow.startNode).isEqualTo("introduction")
 
-        // Print workflow info for debugging
-        println("Workflow: ${workflow.metadata.name}")
-        println("Agents: ${workflow.agents.keys}")
-        println("Nodes: ${workflow.nodes.keys}")
-        println("Start: ${workflow.startNode}")
+        // Verify state schema
+        val schema = workflow.stateSchema
+        assertThat(schema).isNotNull()
+        val varNames = schema.variables.map { it.name() }
+        assertThat(varNames).containsExactly("overview", "mountain_name", "mountain_guide")
+
+        // Verify writes declarations
+        val introduction = workflow.nodes["introduction"] as StandardNode
+        assertThat(introduction.writes).containsExactlyInAnyOrder("overview", "mountain_name")
+
+        val mountain = workflow.nodes["mountain"] as StandardNode
+        assertThat(mountain.writes).containsExactly("mountain_guide")
     }
 }
