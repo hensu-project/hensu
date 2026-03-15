@@ -29,7 +29,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-class CLIReviewManagerTest {
+class CLIReviewHandlerTest {
 
     private PrintStream printStream;
     private String originalInteractiveProperty;
@@ -38,15 +38,15 @@ class CLIReviewManagerTest {
     void setUp() {
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
         printStream = new PrintStream(outputStream);
-        originalInteractiveProperty = System.getProperty(CLIReviewManager.INTERACTIVE_PROPERTY);
+        originalInteractiveProperty = System.getProperty(CLIReviewHandler.INTERACTIVE_PROPERTY);
     }
 
     @AfterEach
     void tearDown() {
         if (originalInteractiveProperty != null) {
-            System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, originalInteractiveProperty);
+            System.setProperty(CLIReviewHandler.INTERACTIVE_PROPERTY, originalInteractiveProperty);
         } else {
-            System.clearProperty(CLIReviewManager.INTERACTIVE_PROPERTY);
+            System.clearProperty(CLIReviewHandler.INTERACTIVE_PROPERTY);
         }
     }
 
@@ -54,8 +54,8 @@ class CLIReviewManagerTest {
 
     @Test
     void shouldAutoApproveWhenInteractiveModeDisabled() {
-        System.clearProperty(CLIReviewManager.INTERACTIVE_PROPERTY);
-        CLIReviewManager manager = new CLIReviewManager(new Scanner(""), printStream, false);
+        System.clearProperty(CLIReviewHandler.INTERACTIVE_PROPERTY);
+        CLIReviewHandler manager = new CLIReviewHandler(new Scanner(""), printStream, false);
 
         ReviewDecision decision =
                 manager.requestReview(
@@ -73,9 +73,9 @@ class CLIReviewManagerTest {
 
     @Test
     void shouldRejectOnUserInputRWithReason() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        CLIReviewManager manager =
-                new CLIReviewManager(
+        System.setProperty(CLIReviewHandler.INTERACTIVE_PROPERTY, "true");
+        CLIReviewHandler manager =
+                new CLIReviewHandler(
                         new Scanner("R\nOutput quality is poor\n"), printStream, false);
 
         ReviewDecision decision =
@@ -94,10 +94,10 @@ class CLIReviewManagerTest {
 
     @Test
     void shouldRequireNonBlankReasonForRejection() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
+        System.setProperty(CLIReviewHandler.INTERACTIVE_PROPERTY, "true");
         // First reason attempt is blank, second is valid
-        CLIReviewManager manager =
-                new CLIReviewManager(new Scanner("R\n\nActual reason\n"), printStream, false);
+        CLIReviewHandler manager =
+                new CLIReviewHandler(new Scanner("R\n\nActual reason\n"), printStream, false);
 
         ReviewDecision decision =
                 manager.requestReview(
@@ -116,9 +116,9 @@ class CLIReviewManagerTest {
 
     @Test
     void shouldContinueWhenBacktrackDisabled() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
+        System.setProperty(CLIReviewHandler.INTERACTIVE_PROPERTY, "true");
         // B pressed but backtrack not allowed — expect the loop to continue and A to approve
-        CLIReviewManager manager = new CLIReviewManager(new Scanner("B\nA\n"), printStream, false);
+        CLIReviewHandler manager = new CLIReviewHandler(new Scanner("B\nA\n"), printStream, false);
 
         ReviewDecision decision =
                 manager.requestReview(
@@ -134,9 +134,9 @@ class CLIReviewManagerTest {
 
     @Test
     void shouldContinueWhenNoPreviousStepsToBacktrackTo() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
+        System.setProperty(CLIReviewHandler.INTERACTIVE_PROPERTY, "true");
         // Only one step in history (the current node itself) — nothing to go back to
-        CLIReviewManager manager = new CLIReviewManager(new Scanner("B\nA\n"), printStream, false);
+        CLIReviewHandler manager = new CLIReviewHandler(new Scanner("B\nA\n"), printStream, false);
 
         ExecutionHistory history = new ExecutionHistory();
         history.addStep(
@@ -161,9 +161,9 @@ class CLIReviewManagerTest {
 
     @Test
     void shouldAllowBacktrackToPreviousStep() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        CLIReviewManager manager =
-                new CLIReviewManager(new Scanner("B\n1\nBad output\nN\n"), printStream, false);
+        System.setProperty(CLIReviewHandler.INTERACTIVE_PROPERTY, "true");
+        CLIReviewHandler manager =
+                new CLIReviewHandler(new Scanner("B\n1\nBad output\nN\n"), printStream, false);
 
         ExecutionHistory history = new ExecutionHistory();
         history.addStep(
@@ -194,9 +194,9 @@ class CLIReviewManagerTest {
 
     @Test
     void shouldCancelBacktrackOnZero() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        CLIReviewManager manager =
-                new CLIReviewManager(new Scanner("B\n0\nA\n"), printStream, false);
+        System.setProperty(CLIReviewHandler.INTERACTIVE_PROPERTY, "true");
+        CLIReviewHandler manager =
+                new CLIReviewHandler(new Scanner("B\n0\nA\n"), printStream, false);
 
         ExecutionHistory history = new ExecutionHistory();
         history.addStep(
@@ -224,9 +224,9 @@ class CLIReviewManagerTest {
 
     @Test
     void shouldUseDefaultReasonWhenBacktrackReasonBlank() {
-        System.setProperty(CLIReviewManager.INTERACTIVE_PROPERTY, "true");
-        CLIReviewManager manager =
-                new CLIReviewManager(new Scanner("B\n1\n\nN\n"), printStream, false);
+        System.setProperty(CLIReviewHandler.INTERACTIVE_PROPERTY, "true");
+        CLIReviewHandler manager =
+                new CLIReviewHandler(new Scanner("B\n1\n\nN\n"), printStream, false);
 
         ExecutionHistory history = new ExecutionHistory();
         history.addStep(

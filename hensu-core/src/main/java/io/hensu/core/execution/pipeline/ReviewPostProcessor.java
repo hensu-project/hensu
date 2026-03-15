@@ -9,6 +9,7 @@ import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.review.ReviewMode;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.node.StandardNode;
+import java.util.Map;
 import java.util.Optional;
 import java.util.logging.Logger;
 
@@ -16,14 +17,14 @@ import java.util.logging.Logger;
 ///
 /// Invokes the {@link ReviewHandler} when a {@link StandardNode} has a non-null
 /// {@link ReviewConfig}, then maps the {@link ReviewDecision} to a pipeline outcome:
-/// - {@link ReviewDecision.Approve} — returns empty (continue)
-/// - {@link ReviewDecision.Backtrack} — mutates state and returns empty
+/// - {@link ReviewDecision.Approve} — merges context edits, returns empty (continue)
+/// - {@link ReviewDecision.Backtrack} — merges context edits, resets position, returns empty
 /// - {@link ReviewDecision.Reject} — returns terminal {@link ExecutionResult.Rejected}
 ///
 /// ### Contracts
 /// - **Precondition**: `context.result()` is non-null (post-execution pipeline)
 /// - **Postcondition**: Returns empty or terminal result
-/// - **Side effects**: May mutate state (edited state from reviewer), appends
+/// - **Side effects**: May merge context edits from reviewer, appends
 ///   backtrack events to history on Backtrack decisions
 ///
 /// @implNote Receives {@link ReviewHandler} via constructor injection. Stateless
@@ -71,12 +72,12 @@ public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
         ReviewConfig config = node.getReviewConfig();
 
         if (config.getMode() == ReviewMode.DISABLED) {
-            return new ReviewDecision.Approve(null);
+            return new ReviewDecision.Approve();
         }
 
         if (config.getMode() == ReviewMode.OPTIONAL
                 && context.result().getStatus() == ResultStatus.SUCCESS) {
-            return new ReviewDecision.Approve(null);
+            return new ReviewDecision.Approve();
         }
 
         logger.info("Requesting human review for node: " + node.getId());
@@ -91,8 +92,8 @@ public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
 
     private Optional<ExecutionResult> handleApprove(
             ReviewDecision.Approve approve, ProcessorContext context) {
-        if (approve.getEditedState() != null) {
-            copyStateFields(approve.getEditedState(), context);
+        if (approve.hasContextEdits()) {
+            mergeContextEdits(approve.contextEdits(), context.state());
         }
         return Optional.empty();
     }
@@ -102,19 +103,12 @@ public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
 
         HensuState state = context.state();
 
-        if (backtrack.getEditedState() != null) {
-            copyStateFields(backtrack.getEditedState(), context);
-            state = context.state();
+        if (backtrack.hasContextEdits()) {
+            mergeContextEdits(backtrack.contextEdits(), state);
         }
 
         String targetStep = backtrack.getTargetStep();
         state.setCurrentNode(targetStep);
-
-        if (backtrack.hasEditedPrompt()) {
-            String overrideKey = "_prompt_override_" + targetStep;
-            state.getContext().put(overrideKey, backtrack.getEditedPrompt());
-            logger.info("Stored edited prompt for node: " + targetStep);
-        }
 
         state.getHistory()
                 .addBacktrack(
@@ -127,16 +121,12 @@ public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
         return Optional.empty();
     }
 
-    /// Applies edited state fields from a review decision to the current context state.
+    /// Merges reviewer-provided context edits into the current execution state.
     ///
-    /// @apiNote The review handler may return modified state. Since `ProcessorContext`
-    /// holds a reference to the `ExecutionContext` (which holds the `HensuState`),
-    /// we copy the relevant mutable fields from the edited state into the current one.
-    private void copyStateFields(HensuState editedState, ProcessorContext context) {
-        HensuState current = context.state();
-        current.getContext().clear();
-        current.getContext().putAll(editedState.getContext());
-        current.setCurrentNode(editedState.getCurrentNode());
-        current.setRubricEvaluation(editedState.getRubricEvaluation());
+    /// @param edits context variable overrides from the reviewer, not null
+    /// @param state current execution state to merge into, not null
+    private void mergeContextEdits(Map<String, Object> edits, HensuState state) {
+        state.getContext().putAll(edits);
+        logger.info("Merged " + edits.size() + " context edits from reviewer");
     }
 }

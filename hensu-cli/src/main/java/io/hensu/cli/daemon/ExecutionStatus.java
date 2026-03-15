@@ -4,6 +4,7 @@ package io.hensu.cli.daemon;
 ///
 /// ```
 /// QUEUED ————> RUNNING ————> COMPLETED
+///                  │————————> AWAITING_REVIEW ————> RUNNING (loop)
 ///                  │————————> FAILED
 ///                  │————————> CANCELLED
 ///                  │————————> TIMED_OUT
@@ -15,6 +16,12 @@ public enum ExecutionStatus {
 
     /// Currently executing in a virtual thread.
     RUNNING,
+
+    /// Execution is paused at a human-review checkpoint.
+    ///
+    /// The execution virtual thread is blocked waiting for a {@code review_response}
+    /// frame. Use {@code hensu attach <id>} to reconnect and complete the review.
+    AWAITING_REVIEW,
 
     /// Finished successfully — result available in {@link StoredExecution}.
     COMPLETED,
@@ -31,8 +38,8 @@ public enum ExecutionStatus {
     /// Returns {@code true} if no further state transitions are possible.
     ///
     /// @return {@code true} for COMPLETED, FAILED, CANCELLED, TIMED_OUT; {@code false}
-    /// for QUEUED and RUNNING
+    /// for QUEUED, RUNNING, and AWAITING_REVIEW
     public boolean isTerminal() {
-        return this != QUEUED && this != RUNNING;
+        return this != QUEUED && this != RUNNING && this != AWAITING_REVIEW;
     }
 }

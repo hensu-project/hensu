@@ -2,8 +2,11 @@ package io.hensu.cli.commands;
 
 import io.hensu.cli.daemon.DaemonClient;
 import io.hensu.cli.daemon.DaemonFrame;
+import io.hensu.cli.review.DaemonClientReviewer;
 import io.hensu.cli.ui.AnsiStyles;
+import io.hensu.core.review.ReviewDecision;
 import java.io.IOException;
+import java.util.Map;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 
@@ -59,13 +62,57 @@ public class AttachCommand extends HensuCommand {
 
         try {
             boolean[] replaying = {false};
+            DaemonClientReviewer reviewer = new DaemonClientReviewer();
 
             new DaemonClient()
-                    .attach(execId, frame -> handleFrame(frame, styles, replaying, completed));
+                    .attachInteractive(
+                            execId,
+                            (frame, reply) -> {
+                                if ("review_request".equals(frame.type)) {
+                                    handleReviewRequest(frame, reply, reviewer);
+                                } else {
+                                    handleFrame(frame, styles, replaying, completed);
+                                }
+                            });
 
         } catch (IOException e) {
             System.err.println(styles.error("Connection error: " + e.getMessage()));
         }
+    }
+
+    private void handleReviewRequest(
+            DaemonFrame frame,
+            java.util.function.Consumer<DaemonFrame> reply,
+            DaemonClientReviewer reviewer) {
+        ReviewDecision decision = reviewer.review(frame.reviewPayload);
+
+        String decisionStr;
+        String backtrackNode = null;
+        String reason = null;
+        Map<String, Object> editedContext = null;
+
+        switch (decision) {
+            case ReviewDecision.Approve _ -> decisionStr = "approve";
+            case ReviewDecision.Reject r -> {
+                decisionStr = "reject";
+                reason = r.reason();
+            }
+            case ReviewDecision.Backtrack b -> {
+                decisionStr = "backtrack";
+                backtrackNode = b.targetStep();
+                reason = b.reason();
+                editedContext = b.contextEdits();
+            }
+        }
+
+        reply.accept(
+                DaemonFrame.reviewResponse(
+                        frame.execId,
+                        frame.reviewId,
+                        decisionStr,
+                        backtrackNode,
+                        reason,
+                        editedContext));
     }
 
     private void handleFrame(
@@ -89,7 +136,7 @@ public class AttachCommand extends HensuCommand {
                 completed[0] = true;
                 System.out.println();
                 boolean ok =
-                        "SUCCESS".equals(frame.status)
+                        "COMPLETED".equals(frame.status)
                                 || (frame.status != null && frame.status.startsWith("SUCCESS"));
                 if (ok) {
                     System.out.printf(

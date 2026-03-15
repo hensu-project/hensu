@@ -56,15 +56,10 @@ public class StandardNodeExecutor implements NodeExecutor<StandardNode> {
                                         new IllegalStateException(
                                                 "Agent not found: " + node.getAgentId()));
 
-        // Check for prompt override (from manual backtrack with edited prompt)
-        String overrideKey = "_prompt_override_" + node.getId();
-        String promptOverride = (String) state.getContext().get(overrideKey);
-
+        Object promptOverride = state.getContext().remove("_prompt_override");
         String resolvedPrompt;
         if (promptOverride != null) {
-            resolvedPrompt = templateResolver.resolve(promptOverride, state.getContext());
-            state.getContext().remove(overrideKey);
-            logger.info("Using edited prompt for node: " + node.getId());
+            resolvedPrompt = promptOverride.toString();
         } else {
             resolvedPrompt =
                     node.getPrompt() != null

@@ -15,28 +15,30 @@ import java.util.Map;
 ///
 /// **Client → Daemon:**
 /// ```
-/// run      — Start a new workflow execution
-/// attach   — Re-attach to a running or completed execution
-/// detach   — Disconnect without cancelling (Ctrl+C)
-/// cancel   — Cancel a running execution
-/// ps       — List all tracked executions
-/// ping     — Health check
-/// stop     — Graceful daemon shutdown
+/// run              — Start a new workflow execution
+/// attach           — Re-attach to a running or completed execution
+/// detach           — Disconnect without cancelling (Ctrl+C)
+/// cancel           — Cancel a running execution
+/// ps               — List all tracked executions
+/// ping             — Health check
+/// stop             — Graceful daemon shutdown
+/// review_response  — User's decision for a pending human-review checkpoint
 /// ```
 ///
 /// **Daemon → Client:**
 /// ```
-/// pong          — Response to ping
-/// exec_start    — Execution has begun
-/// node_start    — A workflow node has started
-/// node_end      — A workflow node has completed
-/// out           — Raw execution output bytes (base64 in {@code b})
-/// replay_start  — Start of buffered output replay on re-attach
-/// replay_end    — End of buffered replay; live stream follows
-/// exec_end      — Execution reached a terminal state
-/// error         — Error; fatal=true means connection will close
-/// daemon_full   — Daemon at max-concurrent capacity; request rejected
-/// ps_response   — Response to list request
+/// pong             — Response to ping
+/// exec_start       — Execution has begun
+/// node_start       — A workflow node has started
+/// node_end         — A workflow node has completed
+/// out              — Raw execution output bytes (base64 in {@code b})
+/// replay_start     — Start of buffered output replay on re-attach
+/// replay_end       — End of buffered replay; live stream follows
+/// exec_end         — Execution reached a terminal state
+/// error            — Error; fatal=true means connection will close
+/// daemon_full      — Daemon at max-concurrent capacity; request rejected
+/// ps_response      — Response to list request
+/// review_request   — Daemon requests human review; client must respond with review_response
 /// ```
 ///
 /// ### Contracts
@@ -146,6 +148,40 @@ public final class DaemonFrame {
     /// Client terminal width in columns for separator sizing (run / attach frames).
     @JsonProperty("term_width")
     public Integer termWidth;
+
+    /// Whether to enable interactive human-review prompts (run frames).
+    /// When {@code true}, the daemon sends {@code review_request} frames at checkpoints
+    /// and waits for {@code review_response} frames from the client.
+    @JsonProperty("interactive")
+    public Boolean interactive;
+
+    // — Review ——————————————————————————————————————————————————————————————
+
+    /// Correlation ID linking a {@code review_request} to its {@code review_response}.
+    @JsonProperty("review_id")
+    public String reviewId;
+
+    /// Structured review data for {@code review_request} frames.
+    @JsonProperty("review_payload")
+    public ReviewPayload reviewPayload;
+
+    /// Decision string for {@code review_response} frames: {@code "approve"}, {@code "reject"},
+    /// or {@code "backtrack"}.
+    @JsonProperty("decision")
+    public String decision;
+
+    /// Target node ID for {@code review_response} frames with {@code decision="backtrack"}.
+    @JsonProperty("backtrack_node")
+    public String backtrackNodeId;
+
+    /// Reason string for {@code decision="backtrack"} or {@code decision="reject"} responses.
+    @JsonProperty("backtrack_reason")
+    public String backtrackReason;
+
+    /// Edited context variables for {@code decision="backtrack"} responses; {@code null} if
+    // unchanged.
+    @JsonProperty("edited_context")
+    public Map<String, Object> editedContext;
 
     // — List response ———————————————————————————————————————————————————————
 
@@ -300,6 +336,48 @@ public final class DaemonFrame {
         return f;
     }
 
+    /// Creates a {@code review_request} frame asking the client to present a human-review UI.
+    ///
+    /// @param execId    execution identifier, not null
+    /// @param reviewId  unique correlation ID for this review checkpoint, not null
+    /// @param payload   structured review data for the client to render, not null
+    /// @return frame, never null
+    public static DaemonFrame reviewRequest(String execId, String reviewId, ReviewPayload payload) {
+        var f = new DaemonFrame();
+        f.type = "review_request";
+        f.execId = execId;
+        f.reviewId = reviewId;
+        f.reviewPayload = payload;
+        return f;
+    }
+
+    /// Creates a {@code review_response} frame carrying the user's decision.
+    ///
+    /// @param execId          execution identifier, not null
+    /// @param reviewId        correlation ID from the matching {@code review_request}, not null
+    /// @param decision        {@code "approve"}, {@code "reject"}, or {@code "backtrack"}
+    /// @param backtrackNodeId target node for backtrack; {@code null} for non-backtrack decisions
+    /// @param backtrackReason reason string; used for both backtrack and reject decisions
+    /// @param editedContext   edited context variables; {@code null} if unchanged
+    /// @return frame, never null
+    public static DaemonFrame reviewResponse(
+            String execId,
+            String reviewId,
+            String decision,
+            String backtrackNodeId,
+            String backtrackReason,
+            Map<String, Object> editedContext) {
+        var f = new DaemonFrame();
+        f.type = "review_response";
+        f.execId = execId;
+        f.reviewId = reviewId;
+        f.decision = decision;
+        f.backtrackNodeId = backtrackNodeId;
+        f.backtrackReason = backtrackReason;
+        f.editedContext = editedContext;
+        return f;
+    }
+
     // — Nested types ————————————————————————————————————————————————————————
 
     /// Summary of a single execution for {@code ps_response} frames.
@@ -316,4 +394,42 @@ public final class DaemonFrame {
             @JsonProperty("status") String status,
             @JsonProperty("node") String currentNode,
             @JsonProperty("elapsed_ms") long elapsedMs) {}
+
+    /// Structured payload for {@code review_request} frames.
+    ///
+    /// Carries all data the client needs to render the human-review UI — node info,
+    /// output preview, rubric result, backtrack options, and enough workflow/context
+    /// data for prompt editing during backtrack.
+    ///
+    /// @param nodeId        ID of the node awaiting review, not null
+    /// @param output        node output text for preview display, may be null
+    /// @param status        node result status string (e.g. {@code "SUCCESS"}), not null
+    /// @param rubricScore   rubric score if evaluated; {@code null} if no rubric ran
+    /// @param rubricPassed  whether the rubric passed; {@code null} if no rubric ran
+    /// @param allowBacktrack whether the reviewer may backtrack to a previous step
+    /// @param historySteps  ordered list of completed steps for backtrack selection, not null
+    /// @param workflowJson  serialized workflow JSON for prompt editing; may be null
+    /// @param context       current state context for variable display in prompt editor; may be
+    // null
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record ReviewPayload(
+            @JsonProperty("node_id") String nodeId,
+            @JsonProperty("output") String output,
+            @JsonProperty("status") String status,
+            @JsonProperty("rubric_score") Double rubricScore,
+            @JsonProperty("rubric_passed") Boolean rubricPassed,
+            @JsonProperty("allow_backtrack") boolean allowBacktrack,
+            @JsonProperty("history") List<HistoryStep> historySteps,
+            @JsonProperty("workflow_json") String workflowJson,
+            @JsonProperty("context") Map<String, Object> context) {}
+
+    /// Compact step summary for the backtrack selection list in {@link ReviewPayload}.
+    ///
+    /// @param nodeId         node identifier, not null
+    /// @param status         result status string (e.g. {@code "SUCCESS"}), not null
+    /// @param promptTemplate prompt template for this node, may be null
+    public record HistoryStep(
+            @JsonProperty("node_id") String nodeId,
+            @JsonProperty("status") String status,
+            @JsonProperty("prompt_template") String promptTemplate) {}
 }

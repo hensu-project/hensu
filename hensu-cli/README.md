@@ -127,6 +127,19 @@ options:
 **Ctrl+C behavior:** pressing Ctrl+C *detaches* the client — execution keeps running in the daemon.
 The terminal prints the execution ID and re-attach instructions.
 
+**Interactive review (`-i`):** When a workflow node has `review = true`, the daemon pauses
+execution and sends a `review_request` frame to the attached client. The terminal displays the
+node output and prompts for a decision:
+
+- **Approve** — accept the output and continue to the next node.
+- **Reject** — reject the output and fail the execution.
+- **Backtrack** — jump back to a previous node. You can optionally edit the prompt context in
+  `$EDITOR` (via `ContextEditor`) before the node re-executes.
+
+If no client is attached when a review is requested, the execution enters `AWAITING_REVIEW` and
+blocks (cheaply, on a virtual thread) until a client runs `hensu attach <exec-id>` and submits
+the decision. A 30-minute fallback timeout applies.
+
 ### `hensu validate`
 
 Parse the workflow and perform static analysis: syntax errors, missing node references, and
@@ -187,14 +200,19 @@ Example output:
 ```
          ID                                    WORKFLOW                  STATUS        NODE              ELAPSED
   ——————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  ●  3f2a1c9e-…-4b1a                          my-workflow               RUNNING       summarize         12s
-  ●  7b9d4efa-…-22cc                          other-workflow            COMPLETED     —                 1m 5s
+  ●  3f2a1c9e-…-4b1a                          my-workflow               RUNNING           summarize         12s
+  ●  8c3f2b1a-…-99dd                          review-workflow           AWAITING_REVIEW   human-gate        2m 10s
+  ●  7b9d4efa-…-22cc                          other-workflow            COMPLETED         —                 1m 5s
 ```
 
 ### `hensu attach`
 
 Replay buffered output from the ring buffer, then stream live output until the execution
 completes or you press Ctrl+C (which detaches without stopping the execution).
+
+If the execution is in `AWAITING_REVIEW`, attaching immediately prompts you with the
+pending review decision (Approve / Reject / Backtrack). The execution resumes once you
+respond — no separate `resume` command is needed.
 
 ```
 hensu attach <exec-id>

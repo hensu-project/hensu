@@ -16,7 +16,6 @@ import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.review.ReviewDecision;
 import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.review.ReviewMode;
-import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.WorkflowTest;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.transition.SuccessTransition;
@@ -109,11 +108,7 @@ class WorkflowExecutorHumanReviewTest extends WorkflowExecutorTestBase {
         // First review backtracks to step1; second approves. step1 executes twice → 4+ history
         // entries.
         when(mockReviewHandler.requestReview(any(), any(), any(), any(), any(), any()))
-                .thenAnswer(
-                        invocation -> {
-                            HensuState state = invocation.getArgument(2);
-                            return new ReviewDecision.Backtrack("step1", state, "Redo step 1");
-                        })
+                .thenReturn(new ReviewDecision.Backtrack("step1", "Redo step 1"))
                 .thenReturn(new ReviewDecision.Approve(null));
 
         var workflow =
@@ -156,11 +151,7 @@ class WorkflowExecutorHumanReviewTest extends WorkflowExecutorTestBase {
         // workflow.getNodes().get("ghost-node") == null → IllegalStateException.
         // If someone adds silent null-handling instead of throwing, this test fails.
         when(mockReviewHandler.requestReview(any(), any(), any(), any(), any(), any()))
-                .thenAnswer(
-                        invocation -> {
-                            HensuState state = invocation.getArgument(2);
-                            return new ReviewDecision.Backtrack("ghost-node", state, "go back");
-                        });
+                .thenReturn(new ReviewDecision.Backtrack("ghost-node", "go back"));
 
         var workflow =
                 WorkflowTest.TestWorkflowBuilder.create("backtrack-invalid")

@@ -92,6 +92,45 @@ public final class StoredExecution {
         broadcastAndPoison(cancelFrame);
     }
 
+    /// Transitions status to {@link ExecutionStatus#AWAITING_REVIEW}.
+    ///
+    /// Called when the execution virtual thread blocks at a human-review checkpoint.
+    /// The node identifier is retained so {@code hensu ps} can show which node is
+    /// waiting for review.
+    ///
+    /// @param nodeId the node awaiting review, not null
+    public synchronized void markAwaitingReview(String nodeId) {
+        if (!status.isTerminal()) {
+            this.status = ExecutionStatus.AWAITING_REVIEW;
+            this.currentNode = nodeId;
+        }
+    }
+
+    /// Transitions status back to {@link ExecutionStatus#RUNNING} after a review completes.
+    ///
+    /// @param nodeId the node now executing, not null
+    public synchronized void markResumedAfterReview(String nodeId) {
+        if (status == ExecutionStatus.AWAITING_REVIEW) {
+            this.status = ExecutionStatus.RUNNING;
+            this.currentNode = nodeId;
+        }
+    }
+
+    /// Updates the execution status from a review lifecycle callback.
+    ///
+    /// Routes {@link ExecutionStatus#AWAITING_REVIEW} to {@link #markAwaitingReview} and
+    /// {@link ExecutionStatus#RUNNING} to {@link #markResumedAfterReview} using the current
+    /// node. Ignores terminal statuses — those have dedicated transition methods.
+    ///
+    /// @param newStatus the new status signaled by the review manager, not null
+    public void updateStatus(ExecutionStatus newStatus) {
+        switch (newStatus) {
+            case AWAITING_REVIEW -> markAwaitingReview(currentNode);
+            case RUNNING -> markResumedAfterReview(currentNode);
+            default -> {}
+        }
+    }
+
     /// Updates the currently-executing node identifier.
     ///
     /// @param nodeId current node id, not null

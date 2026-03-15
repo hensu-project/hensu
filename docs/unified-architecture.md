@@ -166,6 +166,12 @@ The lease is **automatically cleared** (set to `NULL`) when an execution reaches
 `"completed"`, `"paused"` (human review), `"failed"`, or `"rejected"`. The `%inmem` test profile
 disables the scheduler entirely (`%inmem.quarkus.scheduler.enabled=false`).
 
+**Server vs CLI daemon review semantics:** The server's `"paused"` state is stateless — it drops
+the lease and relies on an external `POST /resume` call. The CLI daemon's `AWAITING_REVIEW` state
+is **not terminal** (`isTerminal() == false`): the execution's virtual thread remains alive and
+blocked, holding no lease but retaining in-process state. A client `hensu attach` resumes the
+review inline without replaying from a checkpoint.
+
 ### 8. REST API Separation
 
 All path/query identifiers are validated by `@ValidId`; workflow request bodies by `@ValidWorkflow`
@@ -318,13 +324,26 @@ Developer-facing CLI tool:
 - `hensu push` / `pull` / `delete` / `list` - Server workflow management
 - Local execution mode (uses full HensuEnvironment with local action executor)
 - `HensuEnvironmentProducer` (CLI variant - wires LangChain4jProvider, bash execution)
+- `DaemonReviewHandler` / `CLIReviewHandler` / `ReviewTerminal` — Human-in-the-loop review over the daemon socket or inline
 
 #### Daemon Architecture
 
 The CLI ships a background `DaemonServer` to eliminate JVM and Kotlin compiler cold-start latency.
-`DaemonClient` communicates with it over a Unix domain socket (`~/.hensu/daemon.sock`). Workflow
-executions run in virtual threads inside the warm JVM; output is buffered in an `OutputRingBuffer`
-so clients can detach (`Ctrl+C`) and re-attach (`hensu attach`) without losing output.
+`DaemonClient` communicates with it over a **bidirectional** Unix domain socket
+(`~/.hensu/daemon.sock`). Workflow executions run in virtual threads inside the warm JVM; output is
+buffered in an `OutputRingBuffer` so clients can detach (`Ctrl+C`) and re-attach (`hensu attach`)
+without losing output.
+
+**Interactive review over the socket:** When a node has `review = true`, the daemon sends a
+`review_request` frame to the attached client and blocks the execution's virtual thread until a
+`review_response` frame arrives. `DaemonReviewHandler` coordinates this lifecycle:
+
+- If a client is attached, it renders the review prompt via `ReviewTerminal` and collects
+  Approve / Reject / Backtrack decisions.
+- If the client detaches (`Ctrl+C`) mid-review, the execution remains in `AWAITING_REVIEW` —
+  the virtual thread stays blocked until a new client attaches and submits a response, or the
+  30-minute fallback timeout triggers.
+- `CLIReviewHandler` provides the inline (non-daemon) fallback for `--no-daemon` runs.
 
 ---
 
