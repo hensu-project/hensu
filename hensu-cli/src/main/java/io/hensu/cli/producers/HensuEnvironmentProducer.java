@@ -3,7 +3,8 @@ package io.hensu.cli.producers;
 import io.hensu.adapter.langchain4j.LangChain4jProvider;
 import io.hensu.cli.action.CLIActionExecutor;
 import io.hensu.cli.daemon.CredentialsLoader;
-import io.hensu.cli.review.CLIReviewManager;
+import io.hensu.cli.review.CLIReviewHandler;
+import io.hensu.cli.review.DaemonReviewHandler;
 import io.hensu.core.HensuConfig;
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.HensuFactory;
@@ -46,7 +47,7 @@ import org.eclipse.microprofile.config.Config;
 /// {@link LangChain4jProvider}, not via `@RegisterAiService`.
 ///
 /// @see io.hensu.core.HensuEnvironment
-/// @see CLIReviewManager
+/// @see DaemonReviewHandler
 @ApplicationScoped
 public class HensuEnvironmentProducer {
 
@@ -59,6 +60,8 @@ public class HensuEnvironmentProducer {
     @Inject Instance<GenericNodeHandler> genericNodeHandlers;
 
     @Inject CLIActionExecutor actionExecutor;
+
+    @Inject DaemonReviewHandler daemonReviewHandler;
 
     /// Produces the Hensu runtime environment for CDI injection.
     ///
@@ -102,11 +105,13 @@ public class HensuEnvironmentProducer {
         }
     }
 
-    /// Create review handler. Always returns CLIReviewManager which checks the
-    /// hensu.review.interactive system property at runtime to decide whether to prompt or
-    /// auto-approve.
+    /// Returns the review handler.
+    ///
+    /// {@link DaemonReviewHandler} handles both modes: daemon executions receive
+    /// interactive review frames over the socket; inline executions fall back to
+    /// {@link CLIReviewHandler} via {@code System.in}.
     private ReviewHandler createReviewHandler() {
-        return new CLIReviewManager();
+        return daemonReviewHandler;
     }
 
     /// Builds the credentials and stub-enabled properties.

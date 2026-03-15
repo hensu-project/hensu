@@ -73,6 +73,84 @@ class StoredExecutionTest {
         assertThat(full).containsExactly("pre-existing"); // unchanged — evicted, not modified
     }
 
+    // — AWAITING_REVIEW lifecycle ———————————————————————————————————————————
+
+    @Test
+    void reviewLifecycle_running_toAwaitingReview_toResumed() {
+        var exec = new StoredExecution("e4", "wf");
+        exec.markRunning("node-1");
+
+        exec.markAwaitingReview("node-1");
+        assertThat(exec.getStatus()).isEqualTo(ExecutionStatus.AWAITING_REVIEW);
+        assertThat(exec.getCurrentNode()).isEqualTo("node-1");
+        assertThat(ExecutionStatus.AWAITING_REVIEW.isTerminal()).isFalse();
+
+        exec.markResumedAfterReview("node-2");
+        assertThat(exec.getStatus()).isEqualTo(ExecutionStatus.RUNNING);
+        assertThat(exec.getCurrentNode()).isEqualTo("node-2");
+    }
+
+    // — AWAITING_REVIEW guard conditions ——————————————————————————————————————
+
+    @Test
+    void markAwaitingReview_ignoredFromTerminalState() {
+        var exec = new StoredExecution("e5", "wf");
+        exec.markRunning("node-1");
+        exec.markCancelled("{\"t\":\"exec_end\"}");
+
+        exec.markAwaitingReview("node-1");
+
+        assertThat(exec.getStatus()).isEqualTo(ExecutionStatus.CANCELLED);
+    }
+
+    @Test
+    void markResumedAfterReview_ignoredWhenNotAwaitingReview() {
+        var exec = new StoredExecution("e6", "wf");
+        exec.markRunning("node-1");
+
+        exec.markResumedAfterReview("node-2");
+
+        assertThat(exec.getStatus()).isEqualTo(ExecutionStatus.RUNNING);
+        assertThat(exec.getCurrentNode()).isEqualTo("node-1");
+    }
+
+    @Test
+    void terminalTransition_fromAwaitingReview() {
+        var exec = new StoredExecution("e7", "wf");
+        exec.markRunning("node-1");
+        exec.markAwaitingReview("node-1");
+
+        exec.markCancelled("{\"t\":\"exec_end\"}");
+
+        assertThat(exec.getStatus()).isEqualTo(ExecutionStatus.CANCELLED);
+        assertThat(exec.getCompletedAt()).isNotNull();
+    }
+
+    // — updateStatus routing ——————————————————————————————————————————————————
+
+    @Test
+    void updateStatus_routesAwaitingReviewAndRunning() {
+        var exec = new StoredExecution("e8", "wf");
+        exec.markRunning("node-1");
+        exec.setCurrentNode("node-2");
+
+        exec.updateStatus(ExecutionStatus.AWAITING_REVIEW);
+        assertThat(exec.getStatus()).isEqualTo(ExecutionStatus.AWAITING_REVIEW);
+
+        exec.updateStatus(ExecutionStatus.RUNNING);
+        assertThat(exec.getStatus()).isEqualTo(ExecutionStatus.RUNNING);
+    }
+
+    @Test
+    void updateStatus_ignoresTerminalStatuses() {
+        var exec = new StoredExecution("e9", "wf");
+        exec.markRunning("node-1");
+
+        exec.updateStatus(ExecutionStatus.COMPLETED);
+
+        assertThat(exec.getStatus()).isEqualTo(ExecutionStatus.RUNNING);
+    }
+
     // — Helpers ———————————————————————————————————————————————————————————————
 
     private static ExecutionResult.Completed completedResult() {

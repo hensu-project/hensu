@@ -5,6 +5,8 @@ import io.hensu.cli.daemon.DaemonFrame;
 import io.hensu.cli.execution.ExecutionSink;
 import io.hensu.cli.execution.LocalExecutionSink;
 import io.hensu.cli.execution.VerboseExecutionListenerFactory;
+import io.hensu.cli.review.CLIReviewHandler;
+import io.hensu.cli.review.DaemonClientReviewer;
 import io.hensu.cli.ui.AnsiStyles;
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.agent.stub.StubResponseRegistry;
@@ -21,6 +23,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import picocli.CommandLine.Command;
@@ -53,7 +56,7 @@ import picocli.CommandLine.Parameters;
 /// ```
 ///
 /// @see io.hensu.core.execution.WorkflowExecutor
-/// @see io.hensu.cli.review.CLIReviewManager
+/// @see CLIReviewHandler
 /// @see io.hensu.cli.daemon.DaemonServer
 @Command(name = "run", description = "Run a workflow")
 class WorkflowRunCommand extends WorkflowCommand {
@@ -150,6 +153,7 @@ class WorkflowRunCommand extends WorkflowCommand {
         req.context = context;
         req.verbose = verbose;
         req.color = color;
+        req.interactive = interactive;
         req.termWidth = terminalWidth();
 
         // Detach on Ctrl+C instead of killing the execution
@@ -170,15 +174,55 @@ class WorkflowRunCommand extends WorkflowCommand {
         System.out.println(styles.gray("  Delegating to daemon"));
         System.out.printf("  exec     %s%n", styles.accent(execId));
         if (verbose) System.out.println(styles.gray("  verbose mode enabled"));
+        if (interactive) System.out.println(styles.gray("  interactive review mode enabled"));
         System.out.println();
+
+        DaemonClientReviewer reviewer = interactive ? new DaemonClientReviewer() : null;
 
         new DaemonClient()
                 .run(
                         req,
-                        frame -> {
+                        (frame, reply) -> {
                             if ("exec_end".equals(frame.type)) completed[0] = true;
+                            if ("review_request".equals(frame.type) && reviewer != null) {
+                                handleReviewRequest(frame, reply, reviewer);
+                                return;
+                            }
                             handleDaemonFrame(frame, styles);
                         });
+    }
+
+    private void handleReviewRequest(
+            DaemonFrame frame, Consumer<DaemonFrame> reply, DaemonClientReviewer reviewer) {
+        var decision = reviewer.review(frame.reviewPayload);
+
+        String decisionStr;
+        String backtrackNode = null;
+        String reason = null;
+        Map<String, Object> editedContext = null;
+
+        switch (decision) {
+            case io.hensu.core.review.ReviewDecision.Approve _ -> decisionStr = "approve";
+            case io.hensu.core.review.ReviewDecision.Reject r -> {
+                decisionStr = "reject";
+                reason = r.reason();
+            }
+            case io.hensu.core.review.ReviewDecision.Backtrack b -> {
+                decisionStr = "backtrack";
+                backtrackNode = b.targetStep();
+                reason = b.reason();
+                editedContext = b.contextEdits();
+            }
+        }
+
+        reply.accept(
+                DaemonFrame.reviewResponse(
+                        frame.execId,
+                        frame.reviewId,
+                        decisionStr,
+                        backtrackNode,
+                        reason,
+                        editedContext));
     }
 
     private void handleDaemonFrame(DaemonFrame frame, AnsiStyles styles) {

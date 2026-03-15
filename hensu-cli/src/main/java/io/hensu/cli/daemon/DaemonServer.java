@@ -4,9 +4,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import io.hensu.cli.execution.DaemonExecutionSink;
 import io.hensu.cli.execution.VerboseExecutionListenerFactory;
+import io.hensu.cli.review.DaemonReviewHandler;
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.result.ExecutionResult;
+import io.hensu.core.review.ReviewDecision;
 import io.hensu.serialization.WorkflowSerializer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -29,6 +31,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.logging.Logger;
 import sun.misc.Signal;
 
@@ -79,6 +82,7 @@ public class DaemonServer {
 
     @Inject HensuEnvironment environment;
     @Inject VerboseExecutionListenerFactory listenerFactory;
+    @Inject DaemonReviewHandler daemonReviewHandler;
 
     private final ExecutionStore store = new ExecutionStore();
     private final ObjectMapper mapper =
@@ -186,7 +190,7 @@ public class DaemonServer {
             DaemonFrame req = mapper.readValue(line, DaemonFrame.class);
             switch (req.type) {
                 case "run" -> handleRun(req, reader, writer);
-                case "attach" -> handleAttach(req, writer);
+                case "attach" -> handleAttach(req, reader, writer);
                 case "cancel" -> handleCancel(req, writer);
                 case "list" -> handleList(writer);
                 case "ping" -> write(writer, DaemonFrame.pong());
@@ -221,28 +225,54 @@ public class DaemonServer {
         var outputQueue = new LinkedBlockingQueue<String>(SUBSCRIBER_QUEUE_CAPACITY);
         execution.addSubscriber(outputQueue);
 
-        // Kick off the workflow on a virtual thread
         int termWidth = req.termWidth != null ? req.termWidth : 80;
         boolean useColor = req.color == null || req.color;
         boolean verbose = Boolean.TRUE.equals(req.verbose);
+        boolean interactive = Boolean.TRUE.equals(req.interactive);
+
+        if (interactive) {
+            // Register the execution so review checkpoints route back through this socket.
+            // The frame sender enqueues serialized JSON directly into the output queue so
+            // review_request frames are delivered in the same ordered stream as other output.
+            Consumer<DaemonFrame> frameSender = frame -> outputQueue.offer(safeSerialize(frame));
+            daemonReviewHandler.registerExecution(execId, frameSender, execution::updateStatus);
+
+            // Reader virtual thread: handles review_response, cancel, and detach frames
+            // that arrive from the client while the drain loop is writing. This runs
+            // concurrently with drainQueueToWriter — no shared state except clientReader.
+            Thread.ofVirtual()
+                    .name("hensu-review-reader-" + execId.substring(0, 8))
+                    .start(() -> readClientFrames(clientReader, execId));
+        }
 
         Thread.ofVirtual()
                 .name("hensu-exec-" + execId.substring(0, 8))
-                .start(() -> runExecution(execution, req, useColor, verbose, termWidth));
+                .start(
+                        () -> {
+                            try {
+                                runExecution(execution, req, useColor, verbose, termWidth);
+                            } finally {
+                                if (interactive) {
+                                    daemonReviewHandler.unregisterExecution(execId);
+                                }
+                            }
+                        });
 
         write(writer, DaemonFrame.execStart(execId, execution.getWorkflowId()));
 
         // Drain output queue → write to client socket
         drainQueueToWriter(outputQueue, writer, execId);
 
-        // After drain: read any remaining client command (detach/cancel)
-        // These arrive after the socket write side is done — best-effort
-        consumeClientCommands(clientReader, execId);
+        // Non-interactive: read any remaining client command (detach/cancel) after drain.
+        // Interactive: the reader thread above handles these concurrently during execution.
+        if (!interactive) {
+            consumeClientCommands(clientReader, execId);
+        }
     }
 
     // — Attach ——————————————————————————————————————————————————————————————
 
-    private void handleAttach(DaemonFrame req, PrintWriter writer) {
+    private void handleAttach(DaemonFrame req, BufferedReader clientReader, PrintWriter writer) {
         if (req.execId == null) {
             write(writer, DaemonFrame.error(null, "Missing id", true));
             return;
@@ -283,6 +313,18 @@ public class DaemonServer {
         // Still running — subscribe for live output
         var outputQueue = new LinkedBlockingQueue<String>(SUBSCRIBER_QUEUE_CAPACITY);
         execution.addSubscriber(outputQueue);
+
+        // If the execution is interactive, re-register the new queue as the frame sender
+        // so pending review_request frames are re-delivered to this client, and start a
+        // reader thread so the client can send review_response / detach frames back.
+        if (daemonReviewHandler.isInteractive(req.execId)) {
+            Consumer<DaemonFrame> frameSender = frame -> outputQueue.offer(safeSerialize(frame));
+            daemonReviewHandler.resumeExecution(req.execId, frameSender);
+            Thread.ofVirtual()
+                    .name("hensu-review-reader-" + req.execId.substring(0, 8))
+                    .start(() -> readClientFrames(clientReader, req.execId));
+        }
+
         drainQueueToWriter(outputQueue, writer, req.execId);
     }
 
@@ -345,6 +387,10 @@ public class DaemonServer {
                     req.context != null
                             ? new HashMap<>(req.context)
                             : new HashMap<String, Object>();
+            // Align the engine's internal executionId with the daemon's tracking ID.
+            // Without this, WorkflowExecutor generates its own UUID and
+            // DaemonReviewManager cannot correlate the review to this execution.
+            context.put("_execution_id", execId);
 
             var sink = new DaemonExecutionSink(execution, mapper);
             ExecutionListener listener =
@@ -396,6 +442,78 @@ public class DaemonServer {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    // — Interactive client frame reader ————————————————————————————————————
+
+    /// Reads incoming frames from the client during an interactive execution.
+    ///
+    /// Runs on its own virtual thread alongside {@link #drainQueueToWriter}.
+    /// Routes {@code review_response} frames to {@link DaemonReviewHandler} and
+    /// handles {@code cancel} / {@code detach} frames. Exits when the socket closes
+    /// (which happens naturally when the connection handler's try-with-resources closes
+    /// the channel after {@link #drainQueueToWriter} returns).
+    ///
+    /// @param reader  client input stream, not null
+    /// @param execId  execution identifier for cancel/review routing, not null
+    private void readClientFrames(BufferedReader reader, String execId) {
+        try {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                DaemonFrame frame = mapper.readValue(line, DaemonFrame.class);
+                switch (frame.type) {
+                    case "review_response" -> {
+                        if (frame.reviewId != null) {
+                            daemonReviewHandler.completeReview(
+                                    frame.reviewId, parseReviewDecision(frame));
+                        }
+                    }
+                    case "cancel" -> {
+                        StoredExecution exec = store.get(execId);
+                        if (exec != null && !exec.getStatus().isTerminal()) {
+                            exec.markCancelled(
+                                    safeSerialize(DaemonFrame.execEnd(execId, "CANCELLED")));
+                        }
+                        return;
+                    }
+                    case "detach" -> {
+                        return;
+                    }
+                    default -> {
+                        /* ignore unknown frames */
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // Socket closed — normal shutdown
+        } finally {
+            // Client disconnected — suspend rather than cancel so the execution stays
+            // paused at the review checkpoint. A reattaching client can resume the review.
+            daemonReviewHandler.suspendExecution(execId);
+        }
+    }
+
+    /// Converts a {@code review_response} frame into a {@link ReviewDecision}.
+    ///
+    /// @param frame a frame with {@code type="review_response"}, not null
+    /// @return the corresponding decision; defaults to {@link ReviewDecision.Approve} for
+    ///         unknown decision strings
+    private ReviewDecision parseReviewDecision(DaemonFrame frame) {
+        return switch (frame.decision != null ? frame.decision : "approve") {
+            case "reject" ->
+                    new ReviewDecision.Reject(
+                            frame.backtrackReason != null
+                                    ? frame.backtrackReason
+                                    : "Rejected by reviewer");
+            case "backtrack" ->
+                    new ReviewDecision.Backtrack(
+                            frame.backtrackNodeId,
+                            frame.editedContext,
+                            frame.backtrackReason != null
+                                    ? frame.backtrackReason
+                                    : "Manual backtrack");
+            default -> new ReviewDecision.Approve(null);
+        };
     }
 
     // — Client command reader ——————————————————————————————————————————————

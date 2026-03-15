@@ -14,6 +14,7 @@ import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /// Thin client for communicating with a running {@link DaemonServer}.
@@ -26,8 +27,9 @@ import java.util.function.Consumer;
 /// {@snippet :
 /// if (DaemonClient.isAlive()) {
 ///     var client = new DaemonClient();
-///     client.run(frame, f -> {
+///     client.run(frame, (f, reply) -> {
 ///         if ("out".equals(f.type)) System.out.write(Base64.getDecoder().decode(f.bytes));
+///         if ("review_request".equals(f.type)) reply.accept(reviewResponse);
 ///     });
 /// }
 /// }
@@ -70,14 +72,19 @@ public final class DaemonClient {
     /// Sends a {@code run} frame and streams response frames to {@code consumer} until
     /// the execution terminates or the connection closes.
     ///
-    /// The consumer is called on the calling thread for each received frame. Typical
-    /// callers print {@code out} frame bytes to the terminal and exit on {@code exec_end}.
+    /// The consumer receives each frame and a reply function that can send additional
+    /// frames back to the daemon on the same connection. This enables bidirectional
+    /// communication for interactive review: when the daemon sends a
+    /// {@code review_request} frame, the consumer displays the review UI and sends
+    /// a {@code review_response} frame back via the reply function.
     ///
     /// @param runFrame request frame with {@code type="run"}, not null
-    /// @param consumer receives every response frame; called synchronously, not null
+    /// @param consumer receives every response frame and a reply function; called
+    ///                 synchronously on the calling thread, not null
     /// @throws IOException if the socket connection fails
-    public void run(DaemonFrame runFrame, Consumer<DaemonFrame> consumer) throws IOException {
-        stream(runFrame, consumer);
+    public void run(DaemonFrame runFrame, BiConsumer<DaemonFrame, Consumer<DaemonFrame>> consumer)
+            throws IOException {
+        streamBidirectional(runFrame, consumer);
     }
 
     /// Attaches to a running or completed execution and streams output to {@code consumer}.
@@ -94,6 +101,26 @@ public final class DaemonClient {
         req.type = "attach";
         req.execId = execId;
         stream(req, consumer);
+    }
+
+    /// Attaches to a running execution with bidirectional support for interactive review.
+    ///
+    /// Equivalent to {@link #attach} but exposes a reply function so the consumer can
+    /// send {@code review_response} frames back to the daemon when a {@code review_request}
+    /// frame arrives. Use this variant when reattaching to an execution that was started
+    /// with {@code interactive=true}.
+    ///
+    /// @param execId   execution identifier to attach to, not null
+    /// @param consumer receives every response frame and a reply function; called
+    ///                 synchronously, not null
+    /// @throws IOException if the socket connection fails
+    public void attachInteractive(
+            String execId, BiConsumer<DaemonFrame, Consumer<DaemonFrame>> consumer)
+            throws IOException {
+        var req = new DaemonFrame();
+        req.type = "attach";
+        req.execId = execId;
+        streamBidirectional(req, consumer);
     }
 
     /// Sends a detach signal for the given execution.
@@ -158,6 +185,15 @@ public final class DaemonClient {
     /// Sends one frame and reads response frames until the connection closes or
     /// the stream ends.
     private void stream(DaemonFrame request, Consumer<DaemonFrame> consumer) throws IOException {
+        streamBidirectional(request, (frame, _) -> consumer.accept(frame));
+    }
+
+    /// Sends one frame, reads response frames, and allows sending additional frames
+    /// back to the daemon via the {@code reply} consumer. The reply consumer captures
+    /// the socket writer — calling it serializes and sends a frame immediately.
+    private void streamBidirectional(
+            DaemonFrame request, BiConsumer<DaemonFrame, Consumer<DaemonFrame>> consumer)
+            throws IOException {
         try (SocketChannel channel = SocketChannel.open(StandardProtocolFamily.UNIX)) {
             channel.connect(UnixDomainSocketAddress.of(DaemonPaths.socket()));
 
@@ -169,6 +205,16 @@ public final class DaemonClient {
                             new InputStreamReader(
                                     Channels.newInputStream(channel), StandardCharsets.UTF_8));
 
+            Consumer<DaemonFrame> reply =
+                    frame -> {
+                        try {
+                            writer.println(MAPPER.writeValueAsString(frame));
+                        } catch (Exception e) {
+                            System.err.println(
+                                    "[hensu] Failed to send reply frame: " + e.getMessage());
+                        }
+                    };
+
             writer.println(MAPPER.writeValueAsString(request));
 
             String line;
@@ -176,7 +222,7 @@ public final class DaemonClient {
                 if (line.isBlank()) continue;
                 try {
                     DaemonFrame frame = MAPPER.readValue(line, DaemonFrame.class);
-                    consumer.accept(frame);
+                    consumer.accept(frame, reply);
                     // Stop reading after terminal frames
                     if ("exec_end".equals(frame.type)
                             || ("error".equals(frame.type) && Boolean.TRUE.equals(frame.fatal))
