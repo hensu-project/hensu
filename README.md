@@ -233,10 +233,14 @@ hensu run content-pipeline -d working-dir -v -c '{"topic": "The Fermi Paradox"}'
 
 ### Deploy to the Server
 
-Start the pre-built native binary (no JVM, no DB, no JWT in `inmem` mode):
+Start the pre-built native binary (no JVM, no DB, no JWT in `inmem` mode).
+
+> **Note:** Pre-built binaries are currently available for Linux x86_64 only. On macOS or Windows, build from source with `./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native`.
+
+Download the latest binary from [Releases](https://github.com/hensu-project/hensu/releases):
 
 ```bash
-curl -L https://github.com/hensu-project/hensu/releases/latest/download/hensu-server-linux-x86_64 \
+curl -L https://github.com/hensu-project/hensu/releases/download/server/<VERSION>/hensu-server-linux-x86_64 \
   -o hensu-server && chmod +x hensu-server
 QUARKUS_PROFILE=inmem ./hensu-server
 

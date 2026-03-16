@@ -85,27 +85,41 @@ ok "Java ${JAVA_VERSION}"
 # ——— Step 2: Resolve release version —————————————————————————————————————————
 
 if [[ -z "$VERSION" ]]; then
-    info "Fetching latest release..."
+    info "Fetching latest CLI release..."
+    # /releases/latest ignores pre-releases, so query all releases and pick the
+    # newest tag matching cli/v* (includes alpha/beta/rc pre-releases).
+    RELEASES_URL="https://api.github.com/repos/${GITHUB_REPO}/releases"
     if command -v curl &>/dev/null; then
-        VERSION=$(curl -sSf "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
-                  | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+        VERSION=$(curl -sSf "$RELEASES_URL" \
+                  | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' \
+                  | grep '^cli/v' | head -1)
     elif command -v wget &>/dev/null; then
-        VERSION=$(wget -qO- "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
-                  | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+        VERSION=$(wget -qO- "$RELEASES_URL" \
+                  | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' \
+                  | grep '^cli/v' | head -1)
     else
         die "curl or wget is required to download releases."
     fi
 fi
 
 [[ -z "$VERSION" ]] && die "Could not determine release version. Use --version to specify one."
-ok "Version: ${VERSION}"
+
+# VERSION may be a full tag (cli/v0.1.0-beta.1) or bare semver (v0.1.0-beta.1)
+if [[ "$VERSION" == cli/* ]]; then
+    RELEASE_TAG="${VERSION}"
+    SEMVER="${VERSION#cli/}"
+else
+    RELEASE_TAG="cli/${VERSION}"
+    SEMVER="${VERSION}"
+fi
+ok "Version: ${SEMVER}"
 
 # ——— Step 3: Download JAR ————————————————————————————————————————————————————
 
-JAR_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/hensu-cli-${VERSION}-runner.jar"
+JAR_URL="https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_TAG}/hensu-cli-${SEMVER}-runner.jar"
 
 info "Downloading from GitHub Releases..."
-info "${GRAY}${JAR_URL}${RESET}"
+info "${JAR_URL}"
 
 mkdir -p "${LIB_DIR}"
 
@@ -119,7 +133,7 @@ else
 fi
 
 mv "$TMP_JAR" "$JAR"
-echo "${VERSION}" > "${LIB_DIR}/version"
+echo "${SEMVER}" > "${LIB_DIR}/version"
 ok "Downloaded hensu.jar"
 
 # ——— Step 4: Write wrapper script ————————————————————————————————————————————
@@ -303,7 +317,7 @@ fi
 
 # ——— Done ——————————————————————————————————————————————————————————————————
 
-printf "\n  ${GREEN}✓ Hensu ${VERSION} installed successfully!${RESET}\n\n"
+printf "\n  ${GREEN}✓ Hensu ${SEMVER} installed successfully!${RESET}\n\n"
 printf "  Quick start:\n"
 printf "    ${GRAY}hensu daemon start${RESET}\n"
 printf "    ${GRAY}hensu run my-workflow${RESET}\n"
