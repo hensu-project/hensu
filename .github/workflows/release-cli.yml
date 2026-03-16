@@ -32,7 +32,7 @@ jobs:
           TAG="${{ github.ref_name }}"
           VERSION="${TAG#cli/}"
 
-          CLI_JAR=$(find hensu-cli/build -name '*-runner.jar' -type f)
+          CLI_JAR=$(find hensu-cli/build -maxdepth 1 -name '*-runner.jar' -type f)
           cp "$CLI_JAR" "hensu-cli-${VERSION}-runner.jar"
 
           cp hensu-cli/scripts/install.sh install.sh
