@@ -3,6 +3,12 @@ name: Release CLI
 on:
   push:
     tags: ['cli/v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., cli/v1.0.0). Leave empty when triggered by tag push.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -13,6 +19,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve version
+        run: |
+          RAW_TAG="${{ github.event.inputs.version }}"
+          if [ -z "$RAW_TAG" ]; then
+            RAW_TAG="${{ github.ref_name }}"
+          fi
+          VERSION="${RAW_TAG#cli/}"
+          echo "TAG=$RAW_TAG" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - uses: graalvm/setup-graalvm@54b4f5a65c1a84b2fdfdc2078fe43df32819e4b1 # v1
         with:
@@ -29,10 +45,7 @@ jobs:
 
       - name: Prepare release artifacts
         run: |
-          TAG="${{ github.ref_name }}"
-          VERSION="${TAG#cli/}"
-
-          CLI_JAR=$(find hensu-cli/build -name '*-runner.jar' -type f)
+          CLI_JAR=$(find hensu-cli/build -maxdepth 1 -name '*-runner.jar' -type f)
           cp "$CLI_JAR" "hensu-cli-${VERSION}-runner.jar"
 
           cp hensu-cli/scripts/install.sh install.sh
@@ -43,9 +56,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ github.ref_name }}"
-          VERSION="${TAG#cli/}"
-
           PRERELEASE_FLAG=""
           if [[ "$VERSION" =~ -(alpha|beta|rc) ]]; then
             PRERELEASE_FLAG="--prerelease"
