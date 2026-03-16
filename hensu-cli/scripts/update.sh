@@ -84,29 +84,41 @@ fi
 # ——— Step 2: Resolve target version ——————————————————————————————————————————
 
 if [[ -z "$VERSION" ]]; then
-    info "Fetching latest release..."
+    info "Fetching latest CLI release..."
+    RELEASES_URL="https://api.github.com/repos/${GITHUB_REPO}/releases"
     if command -v curl &>/dev/null; then
-        VERSION=$(curl -sSf "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
-                  | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+        VERSION=$(curl -sSf "$RELEASES_URL" \
+                  | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' \
+                  | grep '^cli/v' | head -1)
     elif command -v wget &>/dev/null; then
-        VERSION=$(wget -qO- "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
-                  | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+        VERSION=$(wget -qO- "$RELEASES_URL" \
+                  | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' \
+                  | grep '^cli/v' | head -1)
     else
         die "curl or wget is required to check for updates."
     fi
 fi
 
 [[ -z "$VERSION" ]] && die "Could not determine latest version. Use --version to specify one."
-info "Latest version:    ${VERSION}"
+
+# VERSION may be a full tag (cli/v0.1.0-beta.1) or bare semver (v0.1.0-beta.1)
+if [[ "$VERSION" == cli/* ]]; then
+    RELEASE_TAG="${VERSION}"
+    SEMVER="${VERSION#cli/}"
+else
+    RELEASE_TAG="cli/${VERSION}"
+    SEMVER="${VERSION}"
+fi
+info "Latest version:    ${SEMVER}"
 
 # ——— Step 3: Compare versions ————————————————————————————————————————————————
 
-if [[ "$CURRENT_VERSION" == "$VERSION" ]]; then
-    printf "\n  ${GREEN}✓ Already up to date (${VERSION}).${RESET}\n\n"
+if [[ "$CURRENT_VERSION" == "$SEMVER" ]]; then
+    printf "\n  ${GREEN}✓ Already up to date (${SEMVER}).${RESET}\n\n"
     exit 0
 fi
 
-printf "\n  Updating ${CURRENT_VERSION:-unknown} → ${VERSION}\n\n"
+printf "\n  Updating ${CURRENT_VERSION:-unknown} → ${SEMVER}\n\n"
 
 # ——— Step 4: Stop daemon if running ——————————————————————————————————————————
 
@@ -137,7 +149,7 @@ fi
 
 # ——— Step 5: Download new JAR ————————————————————————————————————————————————
 
-JAR_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/hensu-cli-${VERSION}-runner.jar"
+JAR_URL="https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_TAG}/hensu-cli-${SEMVER}-runner.jar"
 
 info "Downloading from GitHub Releases..."
 info "${JAR_URL}"
@@ -152,8 +164,8 @@ else
 fi
 
 mv "$TMP_JAR" "$JAR"
-echo "${VERSION}" > "${VERSION_FILE}"
-ok "Updated hensu.jar → ${VERSION}"
+echo "${SEMVER}" > "${VERSION_FILE}"
+ok "Updated hensu.jar → ${SEMVER}"
 
 # ——— Step 6: Restart daemon if it was running ————————————————————————————————
 
@@ -181,4 +193,4 @@ fi
 
 # ——— Done ———————————————————————————————————————————————————————————————————
 
-printf "\n  ${GREEN}✓ Hensu updated to ${VERSION}!${RESET}\n\n"
+printf "\n  ${GREEN}✓ Hensu updated to ${SEMVER}!${RESET}\n\n"

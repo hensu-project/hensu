@@ -199,6 +199,12 @@ No database. No Docker. No JWT required for local development.
 curl -sSL https://raw.githubusercontent.com/hensu-project/hensu/main/hensu-cli/scripts/install.sh | bash
 ```
 
+| Platform               | Notes                                                                                                                |
+|------------------------|----------------------------------------------------------------------------------------------------------------------|
+| **Linux / macOS**      | Works as-is. Daemon auto-start via systemd (Linux) or launchd (macOS).                                               |
+| **Windows (WSL2)**     | Full support including daemon auto-start (requires `systemd=true` in `/etc/wsl.conf`).                               |
+| **Windows (Git Bash)** | Install and run `hensu` from Git Bash. Daemon auto-start is not available; start manually with `hensu daemon start`. |
+
 ### 2. Get the example workflows
 
 Clone the repo to get the `working-dir/` examples:
@@ -233,10 +239,14 @@ hensu run content-pipeline -d working-dir -v -c '{"topic": "The Fermi Paradox"}'
 
 ### Deploy to the Server
 
-Start the pre-built native binary (no JVM, no DB, no JWT in `inmem` mode):
+Start the pre-built native binary (no JVM, no DB, no JWT in `inmem` mode).
+
+> **Note:** Pre-built binaries are currently available for Linux x86_64 only. On macOS or Windows, build from source with `./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native`.
+
+Download the latest binary from [Releases](https://github.com/hensu-project/hensu/releases):
 
 ```bash
-curl -L https://github.com/hensu-project/hensu/releases/latest/download/hensu-server-linux-x86_64 \
+curl -L https://github.com/hensu-project/hensu/releases/download/server/<VERSION>/hensu-server-linux-x86_64 \
   -o hensu-server && chmod +x hensu-server
 QUARKUS_PROFILE=inmem ./hensu-server
 
