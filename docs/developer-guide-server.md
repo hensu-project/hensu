@@ -1143,6 +1143,26 @@ on the surviving node.
 
 The server is deployed as a GraalVM native image via Quarkus. All server code — and any dependency it pulls in — must be native-image safe. See the [hensu-core Developer Guide](developer-guide-core.md#graalvm-native-image-constraints) for the foundational rules (no reflection, no classpath scanning, no dynamic proxies, no runtime bytecode generation). This section covers **server-specific** concerns.
 
+### Building the Native Image
+
+```bash
+./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native
+```
+
+The output binary is at `hensu-server/build/hensu-server-*-runner`:
+
+```bash
+QUARKUS_PROFILE=inmem ./hensu-server/build/hensu-server-*-runner
+```
+
+**Prerequisites:**
+- GraalVM JDK 25+ with `native-image` installed
+- Linux: `glibc-devel`, `zlib-devel`, `gcc` (or equivalent)
+- macOS: Xcode Command Line Tools
+
+The build takes several minutes. For day-to-day development, use JVM mode
+(`./gradlew hensu-server:quarkusDev`) and reserve native builds for release verification.
+
 ### How Quarkus Changes the Picture
 
 Quarkus performs heavy build-time processing that relaxes some raw GraalVM constraints:
