@@ -199,6 +199,12 @@ No database. No Docker. No JWT required for local development.
 curl -sSL https://raw.githubusercontent.com/hensu-project/hensu/main/hensu-cli/scripts/install.sh | bash
 ```
 
+| Platform               | Notes                                                                                                                |
+|------------------------|----------------------------------------------------------------------------------------------------------------------|
+| **Linux / macOS**      | Works as-is. Daemon auto-start via systemd (Linux) or launchd (macOS).                                               |
+| **Windows (WSL2)**     | Full support including daemon auto-start (requires `systemd=true` in `/etc/wsl.conf`).                               |
+| **Windows (Git Bash)** | Install and run `hensu` from Git Bash. Daemon auto-start is not available; start manually with `hensu daemon start`. |
+
 ### 2. Get the example workflows
 
 Clone the repo to get the `working-dir/` examples:
