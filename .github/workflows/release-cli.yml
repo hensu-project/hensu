@@ -26,6 +26,10 @@ jobs:
           if [ -z "$RAW_TAG" ]; then
             RAW_TAG="${{ github.ref_name }}"
           fi
+          if [[ ! "$RAW_TAG" =~ ^cli/v ]]; then
+            echo "::error::Invalid tag format '$RAW_TAG'. Expected 'cli/v*' (e.g., cli/v0.1.0-beta.1)."
+            exit 1
+          fi
           VERSION="${RAW_TAG#cli/}"
           echo "TAG=$RAW_TAG" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
