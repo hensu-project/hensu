@@ -10,18 +10,20 @@ import org.eclipse.microprofile.jwt.JsonWebToken;
 
 /// Resolves the tenant ID for the current request.
 ///
-/// Resolution strategy depends on the Quarkus launch mode:
+/// Resolution strategy:
 ///
 /// - **Production** (`LaunchMode.NORMAL`): Tenant is extracted exclusively
 ///   from the JWT `tenant_id` claim. The Quarkus HTTP auth permission policy
 ///   rejects unauthenticated requests before this bean is ever called.
 /// - **Dev/Test** (`LaunchMode.DEVELOPMENT` or `TEST`): Falls back to
 ///   `hensu.tenant.default` when no JWT is present (auth policy set to permit).
+/// - **In-memory profile** (`quarkus.profile=inmem`): Falls back to
+///   `hensu.tenant.default` regardless of launch mode — enables zero-config
+///   native image start via `QUARKUS_PROFILE=inmem`.
 ///
 /// ### Defense in Depth
-/// The default tenant fallback is guarded by `LaunchMode` — even if
-/// `hensu.tenant.default` is accidentally set in production config,
-/// the code refuses to use it.
+/// The default tenant fallback requires a non-production launch mode or the
+/// explicit `inmem` profile — production binaries without either are unaffected.
 ///
 /// @see io.hensu.server.tenant.TenantContext for ScopedValue-based propagation
 @RequestScoped
@@ -33,6 +35,9 @@ public class RequestTenantResolver {
 
     @ConfigProperty(name = "hensu.tenant.default")
     Optional<String> defaultTenant;
+
+    @ConfigProperty(name = "quarkus.profile")
+    Optional<String> activeProfile;
 
     /// Returns the tenant ID for the current request.
     ///
@@ -47,10 +52,12 @@ public class RequestTenantResolver {
             }
         }
 
-        // 2. Default tenant (dev/test only — LaunchMode guard prevents production use)
-        if ((launchMode == LaunchMode.DEVELOPMENT || launchMode == LaunchMode.TEST)
-                && defaultTenant.isPresent()
-                && !defaultTenant.get().isBlank()) {
+        // 2. Default tenant (dev/test/inmem — guarded against accidental production use)
+        boolean allowDefault =
+                launchMode == LaunchMode.DEVELOPMENT
+                        || launchMode == LaunchMode.TEST
+                        || "inmem".equals(activeProfile.orElse(""));
+        if (allowDefault && defaultTenant.isPresent() && !defaultTenant.get().isBlank()) {
             return defaultTenant.get();
         }
 
