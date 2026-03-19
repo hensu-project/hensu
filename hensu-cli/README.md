@@ -44,23 +44,23 @@ and re-attach at any time without interrupting execution.
 
 ```bash
 # Install latest release (recommended)
-curl -sSL https://github.com/hensu-project/hensu/releases/latest/download/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/hensu-project/hensu/main/hensu-cli/scripts/install.sh | bash
 
 # Custom prefix
-curl -sSL https://github.com/hensu-project/hensu/releases/latest/download/install.sh | bash -s -- --prefix /usr/local
+curl -sSL https://raw.githubusercontent.com/hensu-project/hensu/main/hensu-cli/scripts/install.sh | bash -s -- --prefix /usr/local
 
 # Skip service installation (systemd on Linux, launchd on macOS)
-curl -sSL https://github.com/hensu-project/hensu/releases/latest/download/install.sh | bash -s -- --no-service
+curl -sSL https://raw.githubusercontent.com/hensu-project/hensu/main/hensu-cli/scripts/install.sh | bash -s -- --no-service
 
 # Update to latest release
-curl -sSL https://github.com/hensu-project/hensu/releases/latest/download/update.sh | bash
+curl -sSL https://raw.githubusercontent.com/hensu-project/hensu/main/hensu-cli/scripts/update.sh | bash
 
 # Pin to a specific version
-curl -sSL https://github.com/hensu-project/hensu/releases/latest/download/update.sh | bash -s -- --version cli/v0.9.0-beta.1
+curl -sSL https://raw.githubusercontent.com/hensu-project/hensu/main/hensu-cli/scripts/update.sh | bash -s -- --version cli/v0.9.0-beta.1
 
 # Uninstall
-bash <(curl -sSL https://github.com/hensu-project/hensu/releases/latest/download/remove.sh)
-bash <(curl -sSL https://github.com/hensu-project/hensu/releases/latest/download/remove.sh) --purge   # also removes ~/.hensu/ data
+bash <(curl -sSL https://raw.githubusercontent.com/hensu-project/hensu/main/hensu-cli/scripts/remove.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/hensu-project/hensu/main/hensu-cli/scripts/remove.sh) --purge   # also removes ~/.hensu/ data
 ```
 
 All releases and assets: [github.com/hensu-project/hensu/releases](https://github.com/hensu-project/hensu/releases)

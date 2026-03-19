@@ -76,10 +76,10 @@ Pre-built binaries are available for **Linux x86_64**. On macOS or Windows,
 ```bash
 # Download the server binary
 curl -L https://github.com/hensu-project/hensu/releases/download/server/v0.1.0-beta.1/hensu-server-linux-x86_64 \
-  -o hensu-server && chmod +x hensu-server
+  -o hensu-server-v0.1.0-beta.1 && chmod +x hensu-server-v0.1.0-beta.1
 
 # Start in in-memory mode (no database, no JWT)
-QUARKUS_PROFILE=inmem ./hensu-server
+QUARKUS_PROFILE=inmem ./hensu-server-v0.1.0-beta.1
 
 # In a second terminal — build, push, execute:
 hensu build content-pipeline -d working-dir
