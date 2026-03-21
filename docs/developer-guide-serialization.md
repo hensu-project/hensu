@@ -1,4 +1,4 @@
-# Hensu™ Serialization Developer Guide
+# Hensu Serialization Developer Guide
 
 This guide covers the design, rules, and extension patterns for the `hensu-serialization` module.
 
@@ -32,39 +32,41 @@ This three-layer boundary means a CLI or embedded deployment can swap in a diffe
 
 ## Module Architecture
 
-```
-+——————————————————————————————————————————————————————————————————+
-│                       hensu-serialization                        │
-│                                                                  │
-│  WorkflowSerializer                                              │
-│    └── creates ObjectMapper + registers HensuJacksonModule       │
-│                                                                  │
-│  HensuJacksonModule (SimpleModule)                               │
-│    │                                                             │
-│    ├── addSerializer / addDeserializer (polymorphic hierarchies) │
-│    │     Node, TransitionRule, Action, PlanStepAction            │
-│    │                                                             │
-│    ├── addDeserializer (native-image performance — no mixin)     │
-│    │     WorkflowStateSchema                                     │
-│    │                                                             │
-│    └── setMixInAnnotations (builder-pattern domain objects)      │
-│          Workflow, AgentConfig, ExecutionStep,                   │
-│          NodeResult, BacktrackEvent, ExecutionHistory            │
-│                                                                  │
-│  mixin/                                                          │
-│    *Mixin.java       — carries @JsonDeserialize on the type      │
-│    *BuilderMixin.java — carries @JsonPOJOBuilder on the builder  │
-+——————————————————————————————————————————————————————————————————+
-          │ depends on                        │ reflection info
-          V                                   V
-+——————————————+              +——————————————————————————————+
-│  hensu-core  │              │         hensu-server         │
-│  (zero       │              │  NativeImageConfig           │
-│   Jackson)   │              │  @RegisterForReflection(     │
-+——————————————+              │    Workflow.Builder.class,   │
-                              │    AgentConfig.Builder.class,│
-                              │    ...)                      │
-                              +——————————————————————————————+
+```mermaid
+flowchart TD
+    subgraph ser["hensu-serialization"]
+        direction TB
+        ws(["WorkflowSerializer\n(creates ObjectMapper)"])
+        subgraph module["HensuJacksonModule"]
+            direction LR
+            poly(["addSerializer/Deserializer\n(Node, TransitionRule,\nAction, PlanStepAction)"]) ~~~ schema(["addDeserializer\n(WorkflowStateSchema\n– no mixin)"]) ~~~ mixins(["setMixInAnnotations\n(Workflow, AgentConfig,\nExecutionStep, …)"])
+        end
+        subgraph mixin["mixin/"]
+            direction LR
+            tm(["*Mixin.java\n(@JsonDeserialize)"]) ~~~ bm(["*BuilderMixin.java\n(@JsonPOJOBuilder)"])
+        end
+        ws --> module
+    end
+
+    core(["hensu-core\n(zero Jackson)"])
+    server(["hensu-server\nNativeImageConfig\n(@RegisterForReflection)"])
+
+    ser -->|"depends on"| core
+    ser -->|"reflection info"| server
+
+    style ser fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style module fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style mixin fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ws fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style poly fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style schema fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style mixins fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tm fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style bm fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style core fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style server fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 ---
@@ -79,15 +81,17 @@ Used for **immutable domain objects** that are constructed via an inner `Builder
 
 **How it works:**
 
-```
-WorkflowMixin              WorkflowBuilderMixin
-@JsonDeserialize           @JsonPOJOBuilder(
-  (builder =                 withPrefix = "",
-   Workflow.Builder.class)    buildMethodName = "build")
+```mermaid
+flowchart TD
+    wm(["WorkflowMixin\n@JsonDeserialize\n(builder = Builder.class)"]) -->|"applied to"| wc(["Workflow.class"])
+    bm(["WorkflowBuilderMixin\n@JsonPOJOBuilder\n(withPrefix, buildMethodName)"]) -->|"applied to"| bc(["Workflow.Builder.class"])
 
-     │ applied to                   │ applied to
-     V                              V
-Workflow.class             Workflow.Builder.class
+    style wm fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style bm fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style wc fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style bc fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 At deserialization time Jackson:

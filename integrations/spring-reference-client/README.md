@@ -8,17 +8,30 @@ MCP split-pipe tool execution, SSE event streaming, and a human-in-the-loop revi
 A credit risk analyst agent evaluates a fictional credit limit increase request for customer `C-42`.
 The agent uses two MCP tools hosted in this client to gather data, then pauses for mandatory human approval before completing.
 
-```
-+————————————————————+     tools/list / tools/call (SSE)     +——————————————————+
-│   hensu-server     │ ————————————————————————————————————> │  this client     │
-│  (workflow engine) │                                       │  (MCP transport) │
-+————————————————————+                                       +——————————————————+
-         │                                                            │
-         │ execution.paused                                   fetch_customer_data
-         V                                                    calculate_risk_score
-+————————————————————+
-│  human reviewer    │  POST /demo/review/{id}  { "approved": true }
-+————————————————————+
+```mermaid
+flowchart LR
+    subgraph server["hensu-server"]
+        direction TB
+        engine(["Workflow Engine"])
+    end
+
+    subgraph client["This Client (MCP Transport)"]
+        direction TB
+        tools(["fetch_customer_data\ncalculate_risk_score"])
+    end
+
+    reviewer(["Human Reviewer\nPOST /demo/review/{id}"])
+
+    engine -->|"tools/list · tools/call (SSE)"| tools
+    engine -.->|"execution.paused"| reviewer
+
+    style server fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style client fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style engine fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tools fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style reviewer fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 ## Prerequisites

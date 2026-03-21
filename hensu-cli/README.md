@@ -1,4 +1,4 @@
-# Hensu™ CLI
+# Hensu CLI
 
 Local workflow engine for Hensu — executes, validates, and manages AI workflows on your machine,
 then pushes them to a remote `hensu-server` when ready.

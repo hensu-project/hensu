@@ -5,12 +5,12 @@
 
 ### Terraform for AI Agents.
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Java](https://img.shields.io/badge/Java-25-ED8B00?logo=openjdk&logoColor=white)](https://jdk.java.net/)
-[![CI](https://github.com/hensu-project/hensu/actions/workflows/ci.yml/badge.svg)](https://github.com/hensu-project/hensu/actions/workflows/ci.yml)
-[![Native Image](https://github.com/hensu-project/hensu/actions/workflows/native.yml/badge.svg)](https://github.com/hensu-project/hensu/actions/workflows/native.yml)
-[![Protocol](https://img.shields.io/badge/Protocol-MCP-green)](https://modelcontextprotocol.io/)
-[![Status](https://img.shields.io/badge/Status-Pre--Beta-orange)]()
+[![License](https://img.shields.io/badge/License-Apache%202.0-636366?style=flat-square&labelColor=21262d)](https://opensource.org/licenses/Apache-2.0)
+[![Java](https://img.shields.io/badge/Java-25-636366?style=flat-square&logo=openjdk&logoColor=white&labelColor=21262d)](https://jdk.java.net/)
+[![CI](https://img.shields.io/github/actions/workflow/status/hensu-project/hensu/ci.yml?style=flat-square&label=CI&labelColor=21262d&logo=github&logoColor=white)](https://github.com/hensu-project/hensu/actions/workflows/ci.yml)
+[![Native Image](https://img.shields.io/github/actions/workflow/status/hensu-project/hensu/native.yml?style=flat-square&label=Native%20Image&labelColor=21262d&logo=github&logoColor=white)](https://github.com/hensu-project/hensu/actions/workflows/native.yml)
+[![Protocol](https://img.shields.io/badge/Protocol-MCP-636366?style=flat-square&labelColor=21262d)](https://modelcontextprotocol.io/)
+[![Status](https://img.shields.io/badge/Status-Pre--Beta-FF9F0A?style=flat-square&labelColor=21262d)]()
 
 </div>
 
@@ -196,23 +196,56 @@ Hensu separates **authoring** (developer machine) from **execution** (server). T
 runs client-side only — the server receives pre-compiled JSON and has no ability to execute
 arbitrary code.
 
-```
- Developer (local)                                              Hensu Runtime               External
+```mermaid
+flowchart LR
+    subgraph bg["‍"]
+        direction LR
+        subgraph dev["Developer"]
+            dsl(["Kotlin DSL"])
+            run(["hensu run"])
+            build(["hensu build"])
+            json(["JSON Def."])
+            push(["hensu push"])
+        end
 
- Author:    +––––––––––+    +––––––––––+
-            │ Kotlin   │–––>│  hensu   │
-            │ DSL      │    │  run     │
-            +––––––––––+    +––––––––––+
+        subgraph srv["Server · GraalVM Native"]
+            subgraph engine["Core Engine"]
+                sm(["State Manager"])
+                re(["Rubric Evaluator"])
+                ce(["Consensus Engine"])
+            end
+        end
 
- Deploy:    +––––––––––+    +––––––––––+    +––––––––––+    +––––––––––––––––––––––+    +––––––––––––––+
-            │  hensu   │    │   JSON   │    │  hensu   │    │  Hensu Server        │    │ LLMs (Claude │
-            │  build   │–––>│   Def.   │–––>│  push    │–––>│  (GraalVM Native)    │<––>│ GPT, Gemini) │
-            +––––––––––+    +––––––––––+    +––––––––––+    │                      │    +––––––––––––––+
-                                                            │  Core Engine         │    +––––––––––––––+
-                                                            │  +– State Manager    │<––>│ MCP Tool     │
-                                                            │  +– Rubric Evaluator │    │ Servers      │
-                                                            │  +– Consensus Engine │    +––––––––––––––+
-                                                            +––––––––––––––––––––––+
+        subgraph ext["External"]
+            llms(["LLMs"])
+            mcp(["MCP Tools"])
+        end
+
+        dsl -->|"Author"| run
+        dsl -->|"Build"| build
+        build --> json --> push -->|"Deploy"| srv
+        srv <--> llms
+        srv <--> mcp
+    end
+
+    style bg     fill:#1c1c1e, stroke:none
+    style dev    fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style srv    fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style engine fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ext    fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style json   fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+
+    style dsl    fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style run    fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style build  fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style push   fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style sm     fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style re     fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ce     fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style llms   fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style mcp    fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 1. **Author.** Workflows are written in the Kotlin DSL and tested locally with `hensu run`.
@@ -261,7 +294,7 @@ human-in-the-loop review gate.
 customer `C-42`.
 
 ```bash
-QUARKUS_PROFILE=inmem ./hensu-server
+QUARKUS_PROFILE=inmem ./hensu-server-v0.1.0-beta.1
 hensu build risk-assessment -d integrations/spring-reference-client/working-dir && \
 hensu push risk-assessment -d integrations/spring-reference-client/working-dir --server http://localhost:8080
 cd integrations/spring-reference-client && ./gradlew bootRun
@@ -283,20 +316,13 @@ Hensu is in **pre-beta**, working toward beta stability.
 
 ---
 
-## Legal
-
-- [LICENSE](LICENSE) (Apache 2.0)
-- [NOTICE](NOTICE)
-- [TRADEMARK](https://github.com/hensu-project/.github/blob/main/TRADEMARK.md)
-- [CONTRIBUTING](https://github.com/hensu-project/.github/blob/main/CONTRIBUTING.md)
-
-Hensu™ and the axolotl logo are trademarks of Aleksandr Suvorov.
-Copyright 2025-2026 Aleksandr Suvorov. All rights reserved.
-
----
-
 <div align="center">
 
-Java 25 • Kotlin DSL • Quarkus • GraalVM Native Image • MCP
+[License](LICENSE) · [Notice](NOTICE) · [Trademark](https://github.com/hensu-project/.github/blob/main/TRADEMARK.md) · [Contributing](https://github.com/hensu-project/.github/blob/main/CONTRIBUTING.md)
+
+Java 25 · Kotlin DSL · Quarkus · GraalVM Native Image · MCP
+
+Hensu™ and the axolotl logo are trademarks of Aleksandr Suvorov.<br>
+Copyright 2025–2026 Aleksandr Suvorov. All rights reserved.
 
 </div>

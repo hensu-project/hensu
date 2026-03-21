@@ -1,4 +1,4 @@
-# Hensu™ Server
+# Hensu Server
 
 Quarkus-based HTTP server for multi-tenant AI workflow execution with MCP (Model Context Protocol) integration.
 
@@ -19,29 +19,43 @@ The server is a **GraalVM native image** that receives pre-compiled workflow JSO
 It initializes core infrastructure via `HensuFactory.builder()` and delegates all tool execution
 to external MCP servers.
 
-```
-+—————————————————————————————————————————————————————————————————+
-│                         hensu-server                            │
-│  +——————————————————+  +—————————————+  +———————————————————+   │
-│  │  REST API        │  │ MCP Gateway │  │  Agentic Executor │   │
-│  │  (Workflows +    │  │ (JSON-RPC)  │  │  (Plan + Execute) │   │
-│  │   Executions)    │  │             │  │                   │   │
-│  +————————+—————————+  +——————+——————+  +————————+——————————+   │
-│           │                   │                  │              │
-│  +————————+———————————————————+——————————————————+———————————+  │
-│  │  Server Runtime                                           │  │
-│  │  +————————————————+  +——————————————+                     │  │
-│  │  │ ServerAction   │  │ TenantContext│                     │  │
-│  │  │ Executor (MCP) │  │ (ScopedValue)│                     │  │
-│  │  +————————————————+  +——————————————+                     │  │
-│  +———————————————————————————+———————————————————————————————+  │
-│                              │                                  │
-│  +———————————————————————————+———————————————————————————————+  │
-│  │  hensu-core (HensuEnvironment via HensuFactory)           │  │
-│  │  WorkflowExecutor │ AgentRegistry │ PlanExecutor          │  │
-│  │  RubricEngine │ WorkflowRepository │ StateRepository      │  │
-│  +———————————————————————————————————————————————————————————+  │
-+—————————————————————————————————————————————————————————————————+
+```mermaid
+flowchart TD
+    subgraph server["hensu-server"]
+        direction TB
+        subgraph api["Interface Layer"]
+            direction LR
+            rest(["REST API\n(Workflows + Executions)"]) ~~~ mcpgw(["MCP Gateway\n(JSON-RPC)"]) ~~~ agex(["Agentic Executor\n(Plan + Execute)"])
+        end
+        subgraph runtime["Server Runtime"]
+            direction LR
+            sae(["ServerAction\nExecutor (MCP)"]) ~~~ tc(["TenantContext\n(ScopedValue)"])
+        end
+        subgraph core["hensu-core (HensuEnvironment)"]
+            direction LR
+            we(["WorkflowExecutor"]) ~~~ ar(["AgentRegistry"]) ~~~ pe(["PlanExecutor"])
+            re(["RubricEngine"]) ~~~ wr(["WorkflowRepository"]) ~~~ sr(["StateRepository"])
+        end
+        api --> runtime --> core
+    end
+
+    style server fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style api fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style runtime fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style core fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style rest fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style mcpgw fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style agex fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style sae fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tc fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style we fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ar fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style pe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style re fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style wr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style sr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 ## Local Development
@@ -158,16 +172,31 @@ Implements MCP (Model Context Protocol) over SSE using a "split-pipe" architectu
 - **Downstream (SSE)**: Hensu pushes JSON-RPC tool call requests to connected clients
 - **Upstream (HTTP POST)**: Clients send JSON-RPC responses back (requests time out after 60 s if no response is received — see `McpSessionManager.DEFAULT_TIMEOUT`)
 
-```
-+—————————————————+                    +—————————————————+
-│  Hensu Engine   │                    │  Tenant Client  │
-│                 │                    │  (MCP Server)   │
-│  sendRequest()  │———— SSE ——————————>│  EventSource    │
-│                 │  (tools/call)      │                 │
-│                 │                    │                 │
-│  handleResponse │<——— POST ——————————│  POST /message  │
-│  (Future.done)  │  (result/error)    │                 │
-+—————————————————+                    +—————————————————+
+```mermaid
+flowchart LR
+    subgraph engine["Hensu Engine"]
+        direction TB
+        send(["sendRequest()"])
+        handle(["handleResponse\n(Future.done)"])
+    end
+
+    subgraph client["Tenant Client (MCP Server)"]
+        direction TB
+        es(["EventSource"])
+        post(["POST /message"])
+    end
+
+    send -->|"SSE (tools/call)"| es
+    post -->|"POST (result/error)"| handle
+
+    style engine fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style client fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style send fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style handle fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style es fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style post fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 | Method | Path                        | Description                                          |

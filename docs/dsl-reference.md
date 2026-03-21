@@ -1,4 +1,4 @@
-# Hensu™ Kotlin DSL Reference
+# Hensu Kotlin DSL Reference
 
 This document provides a complete reference for the Hensu Kotlin DSL used to define AI agent workflows.
 
@@ -629,28 +629,20 @@ Engine variables are managed entirely by the Hensu engine — they are injected 
 
 ### How engine variables flow
 
-```
-+—————————————————————————+      +———————————————————————————+
-│  ScoreVariableInjector  │      │  ApprovalVariableInjector │
-│  (onScore nodes)        │      │  (onApproval nodes)       │
-+—————————————————————————+      +———————————————————————————+
-           │                                │
-           V                                V
-+——————————————————————————————————————————————+
-│         RecommendationVariableInjector       │
-│   (auto-injected on score OR approval nodes) │
-+——————————————————————————————————————————————+
-           │
-           V
-    LLM JSON response
-    { "score": 87, "recommendation": "...", "approved": true }
-           │
-           V
-+——————————————————————————+
-│  OutputExtractionPost-   │
-│  Processor extracts all  │
-│  engine vars + writes()  │
-+——————————————————————————+
+```mermaid
+flowchart TD
+    si(["ScoreVariableInjector\n(onScore nodes)"]) --> ri(["RecommendationVariableInjector\n(score OR approval nodes)"])
+    ai(["ApprovalVariableInjector\n(onApproval nodes)"]) --> ri
+    ri --> llm(["LLM JSON response\n{score, recommendation, approved}"])
+    llm --> oe(["OutputExtractionPostProcessor\n(extracts engine vars + writes)"])
+
+    style si fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ai fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ri fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style llm fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style oe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 ### Using `{recommendation}` in downstream prompts
