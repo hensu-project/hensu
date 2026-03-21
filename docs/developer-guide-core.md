@@ -1,4 +1,4 @@
-# Hensu™ Core Developer Guide
+# Hensu Core Developer Guide
 
 This guide covers API usage, adapter development, extension points, and testing strategies for developers working with or extending `hensu-core`.
 
@@ -133,19 +133,19 @@ The lifecycle for every node is:
 If any processor in a pipeline returns a terminal result (e.g., `Rejected`, `Failure`), the entire workflow execution
 halts immediately (short-circuit).
 
-```
-+——————————————————————————————————————————————————————————————————————+
-│                    WorkflowExecutor.executeLoop()                    │
-│                                                                      │
-│  +———————————————+     +———————————————+     +————————————————————+  │
-│  │ Pre-Execution │————>│ Node Executor │————>│ Post-Execution     │  │
-│  │ Pipeline      │     │               │     │ Pipeline           │  │
-│  │ (placeholder) │     │ (agent call)  │     │ (6 processors)     │  │
-│  +———————————————+     +———————————————+     +————————————————————+  │
-│                                                                      │
-│  Short-circuit: any processor returning a terminal result            │
-│  stops the entire pipeline and returns immediately.                  │
-+——————————————————————————————————————————————————————————————————————+
+```mermaid
+flowchart LR
+    subgraph loop["WorkflowExecutor.executeLoop()"]
+        direction LR
+        pre(["Pre-Execution\n(placeholder)"]) --> node(["Node Executor\n(agent call)"]) --> post(["Post-Execution\n(6 processors)"])
+    end
+
+    style loop fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style pre fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style node fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style post fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 ### Pre-Execution Pipeline
@@ -717,30 +717,20 @@ of `EngineVariableInjector`s — each one self-contained, deciding independently
 
 ### Injection Pipeline
 
-```
-+————————————————————————+   condition: node.rubricId != null
-│  RubricPromptInjector  │   appends rubric criteria under a --- separator
-+————————————+———————————+
-             │
-             V
-+————————————————————————+   condition: node has ScoreTransition
-│  ScoreVariableInjector │   appends: "score" MUST be a number 0–100
-+————————————+———————————+
-             │
-             V
-+———————————————————————————+  condition: node has ApprovalTransition
-│  ApprovalVariableInjector │  appends: "approved" MUST be true or false
-+————————————+——————————————+
-             │
-             V
-+———————————————————————————————+  condition: node has ScoreTransition OR ApprovalTransition
-│  RecommendationVariableInject │  appends: "recommendation" MUST be improvement feedback
-+————————————+——————————————————+
-             │
-             V
-+———————————————————————+   condition: node.writes is not empty
-│  WritesVariableInject │   appends: each declared field with optional description hint
-+———————————————————————+   e.g. "article" — the full written article text
+```mermaid
+flowchart LR
+    r(["RubricPromptInjector"]) -->|"rubricId != null"| s(["ScoreVariableInjector"])
+    s -->|"has ScoreTransition"| a(["ApprovalVariableInjector"])
+    a -->|"has ApprovalTransition"| rec(["RecommendationVariable\nInjector"])
+    rec -->|"has Score/Approval\nTransition"| w(["WritesVariableInjector"])
+
+    style r fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style s fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style a fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style rec fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style w fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 ### Description Hints in WritesVariableInjector
@@ -821,27 +811,32 @@ single-responsibility stages.
 `AgenticNodeExecutor` drives two sequential `PlanPipeline` instances per node execution — one
 for **plan preparation** and one for **plan execution**:
 
-```
-+—————————————————————————————————————————————————————————————————+
-│  PREPARATION PIPELINE                                           │
-│                                                                 │
-│  1. PlanCreationProcessor        — resolves static plan or      │
-│       calls LlmPlanner for DYNAMIC mode                         │
-│  2. ReviewGateProcessor          — pauses for human plan review │
-│       when planning.review = true (returns PENDING)             │
-+——————————————————————————————+——————————————————————————————————+
-                               V  (PlanContext carries active Plan)
-+—————————————————————————————————————————————————————————————————+
-│  EXECUTION PIPELINE                                             │
-│                                                                 │
-│  1. SynthesizeEnrichmentProcessor — injects agent ID into       │
-│       Synthesize steps                                          │
-│  2. PlanExecutionProcessor       — iterates plan steps via      │
-│       PlanExecutor + StepHandlerRegistry; triggers replanning   │
-│       on step failure (up to maxReplans)                        │
-│  3. PostExecutionReviewGateProcessor — pauses for human review  │
-│       of execution results when configured                      │
-+—————————————————————————————————————————————————————————————————+
+```mermaid
+flowchart LR
+    subgraph prep["Preparation Pipeline"]
+        direction TB
+        pc(["PlanCreationProcessor\n(Static/LlmPlanner)"]) --> rg(["ReviewGateProcessor\n(pause if review=true)"])
+    end
+
+    ctx(["PlanContext"])
+
+    subgraph exec["Execution Pipeline"]
+        direction TB
+        se(["SynthesizeEnrichment\n(inject agent ID)"]) --> pe(["PlanExecutionProcessor\n(steps + replan)"]) --> prg(["PostExecutionReviewGate\n(pause if configured)"])
+    end
+
+    prep --> ctx --> exec
+
+    style prep fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style exec fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style pc fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style rg fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ctx fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style se fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style pe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style prg fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 Each `PlanProcessor` receives the same `PlanContext` instance and may short-circuit the pipeline

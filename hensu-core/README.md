@@ -1,4 +1,4 @@
-# Hensu™ Core
+# Hensu Core
 
 Pure Java workflow execution runtime with zero external dependencies.
 
@@ -21,35 +21,59 @@ The `hensu-core` module is the execution engine at the heart of Hensu. It provid
 
 ## Architecture
 
-```
-+——————————————————————————————————————————————————————————————————————+
-│  HensuFactory.builder()                                              │
-│                                                                      │
-│  +————————————————+  +————————————————+  +——————————————————————+    │
-│  │WorkflowExecutor│  │ AgentRegistry  │  │ RubricEngine         │    │
-│  │(graph engine)  │  │ (agent lookup) │  │ (quality gates)      │    │
-│  +———————+————————+  +———————+————————+  +——————————+———————————+    │
-│          │                   │                      │                │
-│  +———————+———————————————————+——————————————————————+—————————————+  │
-│  │  Node Executors                                                │  │
-│  │  Standard │ Parallel │ Fork/Join │ Loop │ Action │ Generic     │  │
-│  +————————————————————————————————————————————————————————————————+  │
-│                                                                      │
-│  +——————————————+  +——————————————+  +———————————————+               │
-│  │ AgentFactory │  │ PlanExecutor │  │ ActionExecutor│               │
-│  │ (providers)  │  │ (step exec)  │  │ (send/execute)│               │
-│  +——————————————+  +——————————————+  +———————————————+               │
-│                                                                      │
-│  +——————————————+  +——————————————+  +———————————————————————————+   │
-│  │ ToolRegistry │  │ TemplateRes. │  │ ReviewHandler             │   │
-│  │ (tool defs)  │  │ ({var} subst)│  │ (human-in-the-loop)       │   │
-│  +——————————————+  +——————————————+  +———————————————————————————+   │
-│                                                                      │
-│  +————————————————————+  +———————————————————————————————————————+   │
-│  │ WorkflowRepository │  │ WorkflowStateRepository               │   │
-│  │ (workflow storage) │  │ (snapshots, pause/resume)             │   │
-│  +————————————————————+  +———————————————————————————————————————+   │
-+——————————————————————————————————————————————————————————————————————+
+```mermaid
+flowchart TD
+    subgraph factory["HensuFactory.builder()"]
+        direction TB
+        subgraph top["Core"]
+            direction LR
+            we(["WorkflowExecutor\n(graph engine)"]) ~~~ ar(["AgentRegistry\n(agent lookup)"]) ~~~ re(["RubricEngine\n(quality gates)"])
+        end
+        subgraph nodes["Node Executors"]
+            direction LR
+            std(["Standard"]) ~~~ par(["Parallel"]) ~~~ fj(["Fork/Join"]) ~~~ loop(["Loop"]) ~~~ act(["Action"]) ~~~ gen(["Generic"])
+        end
+        subgraph mid["Infrastructure"]
+            direction LR
+            af(["AgentFactory\n(providers)"]) ~~~ pe(["PlanExecutor\n(step exec)"]) ~~~ ae(["ActionExecutor\n(send/execute)"])
+        end
+        subgraph support["Support"]
+            direction LR
+            tr(["ToolRegistry"]) ~~~ tmpl(["TemplateResolver\n({var} subst)"]) ~~~ rh(["ReviewHandler\n(human-in-the-loop)"])
+        end
+        subgraph storage["Storage"]
+            direction LR
+            wr(["WorkflowRepository"]) ~~~ wsr(["WorkflowStateRepository\n(snapshots, pause/resume)"])
+        end
+        top --> nodes --> mid --> support --> storage
+    end
+
+    style factory fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style top fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style nodes fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style mid fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style support fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style storage fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    style we fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ar fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style re fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style std fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style par fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style fj fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style loop fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style act fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style gen fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style af fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style pe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ae fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tmpl fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style rh fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style wr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style wsr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 ## Key Design Principles
@@ -84,26 +108,35 @@ ExecutionResult result = env.getWorkflowExecutor().execute(workflow, initialCont
 Quality evaluation engine for rubric-based output assessment. Evaluates workflow node outputs against configurable
 rubrics to determine quality scores and pass/fail status.
 
-```
-+——————————————————————————————————————————————————————————+
-│  RubricEngine                                            │
-│                                                          │
-│  +————————————————————+   +——————————————————————————+   │
-│  │  RubricRepository  │   │   RubricEvaluator        │   │
-│  │  (rubric storage)  │   │  +————————————————————+  │   │
-│  │  +——————————————+  │   │  │ScoreExtracting     │  │   │
-│  │  │InMemoryRubric│  │   │  │Evaluator           │  │   │
-│  │  │Repository    │  │   │  │(reads score engine │  │   │
-│  │  +——————————————+  │   │  │variable from ctx)  │  │   │
-│  +————————————————————+   │  +————————————————————+  │   │
-│                           +——————————————————————————+   │
-│  +————————————————————+                                  │
-│  │  Rubric Model      │                                  │
-│  │  +— Rubric         │   Scores normalized to 0-100     │
-│  │  +— Criterion      │   Weighted criteria evaluation   │
-│  │  +— CriterionEval  │   Per-criterion feedback         │
-│  +————————————————————+                                  │
-+——————————————————————————————————————————————————————————+
+```mermaid
+flowchart LR
+    subgraph engine["RubricEngine"]
+        direction LR
+        subgraph repo["RubricRepository"]
+            direction TB
+            inmem(["InMemoryRubricRepository"])
+        end
+        subgraph eval["RubricEvaluator"]
+            direction TB
+            score(["ScoreExtractingEvaluator\n(reads score from ctx)"])
+        end
+        subgraph model["Rubric Model"]
+            direction LR
+            rubric(["Rubric"]) ~~~ criterion(["Criterion"]) ~~~ criterionEval(["CriterionEval"])
+        end
+    end
+
+    style engine fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style repo fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style eval fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style model fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style inmem fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style score fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style rubric fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style criterion fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style criterionEval fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 **Key types:**
@@ -124,40 +157,48 @@ Score-based routing: nodes can use `ScoreTransition` to route based on evaluatio
 Pipeline-driven multi-step execution within a single `StandardNode`. `AgenticNodeExecutor`
 runs two sequential `PlanPipeline` instances sharing a `PlanContext` carrier:
 
-```
-+——————————————————————————————————————————————————————————+
-│  PREPARATION PIPELINE                                    │
-│                                                          │
-│  +————————————————+   +——————————————+                   │
-│  │PlanCreation    │   │ReviewGate    │                   │
-│  │Processor       │——>│Processor     │                   │
-│  │(Static or LLM) │   │(pause if     │                   │
-│  +————————————————+   │ review=true) │                   │
-│                       +——————+———————+                   │
-+——————————————————————————————+———————————————————————————+
-                               │ PlanContext
-                               V (Plan ready)
-+——————————————————————————————————————————————————————————+
-│  EXECUTION PIPELINE                                      │
-│                                                          │
-│  SynthesizeEnrichmentProcessor (inject agentId on steps) │
-│           │                                              │
-│           V                                              │
-│  PlanExecutionProcessor                                  │
-│  +————————————————————————————————————————+              │
-│  │  PlanExecutor                          │              │
-│  │  S1 ——> S2 ——> S3 ——> ...              │              │
-│  │   │   StepHandlerRegistry              │              │
-│  │   V                                    │              │
-│  │  +—————————————+  +—————————————+      │              │
-│  │  │ToolCall     │  │Synthesize   │      │              │
-│  │  │Handler      │  │Handler      │      │              │
-│  │  │(ActionExec) │  │(Agent call) │      │              │
-│  │  +—————————————+  +—————————————+      │              │
-│  +————————————————————————————————————————+              │
-│                                                          │
-│  PostExecutionReviewGateProcessor (optional pause)       │
-+——————————————————————————————————————————————————————————+
+```mermaid
+flowchart LR
+    subgraph prep["Preparation"]
+        direction TB
+        pc(["PlanCreation\n(Static/LLM)"]) --> rg(["ReviewGate\n(pause if review)"])
+    end
+
+    ctx(["PlanContext"])
+
+    subgraph exec["Execution"]
+        direction TB
+        se(["SynthesizeEnrichment\n(inject agentId)"]) --> pe(["PlanExecutionProcessor"])
+        subgraph plan["PlanExecutor"]
+            direction LR
+            steps(["S1 → S2 → S3 …"])
+            subgraph handlers["StepHandlers"]
+                direction LR
+                tch(["ToolCall\n(ActionExec)"]) ~~~ sh(["Synthesize\n(Agent call)"])
+            end
+            steps --> handlers
+        end
+        pe --> plan
+        plan --> prg(["PostReviewGate\n(optional pause)"])
+    end
+
+    prep --> ctx --> exec
+
+    style prep fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style exec fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style plan fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style handlers fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style pc fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style rg fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ctx fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style se fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style pe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style steps fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tch fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style sh fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style prg fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 **Planning modes:**

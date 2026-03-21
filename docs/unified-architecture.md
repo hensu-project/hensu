@@ -1,4 +1,4 @@
-# Hensu™ Unified Architecture
+# Hensu Unified Architecture
 
 **Hensu** separates the **authoring** of AI workflows from their **execution**. Developers describe agent behavior in a
 type-safe Kotlin DSL. A compiler produces portable JSON definitions. A GraalVM native-image server executes them,
@@ -31,32 +31,40 @@ explicitly via `HensuFactory.builder()`.
 The server is deployed as a **GraalVM native image** - it cannot include the Kotlin DSL compiler.
 Workflow compilation happens on the developer machine:
 
-```
-Developer Machine                         Server (Native Image)
-—————————————————                         ————————————————————
-workflow.kt
-    │
-    V
-hensu build workflow.kt
-    │ (compile to JSON)
-    V
-working-dir/build/{id}.json
-    │
-    V
-hensu push <workflow-id> ——————————————> POST /api/v1/workflows
-    │ (reads compiled JSON)                     │
-    │                                           V
-    │                                    +—————————————+
-    │                                    │  Database   │
-    │                                    │ (workflows) │
-    │                                    +——————+——————+
-    │                                           │
-hensu pull <workflow-id> <—————————————— GET /api/v1/workflows/{id}
-hensu delete <workflow-id> ————————————> DELETE /api/v1/workflows/{id}
-hensu list <———————————————————————————— GET /api/v1/workflows
-    │
-    │  (clients execute via)
-    +——————————————————————————————————> POST /api/v1/executions
+```mermaid
+flowchart LR
+    subgraph dev["Developer Machine"]
+        direction TB
+        wf(["workflow.kt"]) --> build(["hensu build"])
+        build -->|"compile"| json(["build/{id}.json"])
+        json --> push(["hensu push"])
+    end
+
+    subgraph srv["Server (Native Image)"]
+        direction TB
+        api(["REST API"]) --> db(["Database"])
+    end
+
+    push -->|"POST /workflows"| api
+    pull(["hensu pull"]) -.->|"GET /workflows/{id}"| api
+    del(["hensu delete"]) -.->|"DELETE /workflows/{id}"| api
+    list(["hensu list"]) -.->|"GET /workflows"| api
+    client(["client"]) -.->|"POST /executions"| api
+
+    style dev fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style srv fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style wf fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style build fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style json fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style push fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style api fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style db fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style pull fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style del fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style list fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style client fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 ### 2. Centralized Bootstrap (`HensuFactory`)
@@ -142,19 +150,22 @@ Three components implement the lease lifecycle:
 | `ExecutionHeartbeatJob` | Runs every `hensu.lease.heartbeat-interval` (default `30s`) — bumps `last_heartbeat_at` for all active leases on this node                                                   |
 | `WorkflowRecoveryJob`   | Runs every `hensu.lease.recovery-interval` (default `60s`) — claims any execution whose heartbeat is older than `hensu.lease.stale-threshold` (default `90s`) and resumes it |
 
-```
-+——————————————————————————————————————————————————————————————————————+
-│  save("checkpoint") ————————————————> server_node_id set             │
-│       │                                                              │
-│       V             every 30 s                                       │
-│  updateHeartbeats() ————————————————> last_heartbeat_at = NOW()      │
-│       │                                                              │
-│  node crashes                  after stale threshold                 │
-│       V                                                              │
-│  claimStaleExecutions() ———————————> new node claims orphaned row    │
-│       V                                                              │
-│  resumeExecution() → save("completed") ——> server_node_id = NULL     │
-+——————————————————————————————————————————————————————————————————————+
+```mermaid
+flowchart LR
+    save(["save(checkpoint)"]) -->|"node_id set"| hb(["updateHeartbeats()"])
+    hb -->|"every 30s"| crash(["node crashes"])
+    crash -->|"stale threshold"| claim(["claimStaleExecutions()"])
+    claim -->|"new node claims"| resume(["resumeExecution()"])
+    resume -->|"node_id = NULL"| done(["lease cleared"])
+
+    style save fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style hb fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style crash fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style claim fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style resume fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style done fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 **Concurrency safety**: `claimStaleExecutions` uses a single `UPDATE … WHERE last_heartbeat_at < threshold
@@ -200,51 +211,62 @@ Violations return `400 Bad Request`. See [Server Developer Guide — Input Valid
 
 ## Architecture Overview
 
-```
-+—————————————————————————————————————————————————————————————————————————————+
-│                              hensu-server                                   │
-│  +————————————————+  +————————————————+  +————————————————+                 │
-│  │  Quarkus API   │  │  MCP Gateway   │  │  LLM Planner   │                 │
-│  │  (REST/SSE)    │  │  (JSON-RPC)    │  │  (Plan Gen)    │                 │
-│  +———————+————————+  +———————+————————+  +———————+————————+                 │
-│          │                   │                   │                          │
-│  +———————+———————————————————+———————————————————+———————————————————————+  │
-│  │                        Server Runtime                                 │  │
-│  │  +——————————————+  +——————————————+  +——————————————+                 │  │
-│  │  │ ServerAction │  │ AgenticNode  │  │ TenantContext│                 │  │
-│  │  │ Executor     │  │ Executor     │  │ (ScopedValue)│                 │  │
-│  │  +——————————————+  +——————————————+  +——————————————+                 │  │
-│  +———————————————————————————————————————————————————————————————————————+  │
-│                                    │                                        │
-│  +—————————————————————————————————+—————————————————————————————————————+  │
-│  │                     hensu-core (HensuEnvironment)                     │  │
-│  │                                                                       │  │
-│  │  +—————————————+  +—————————————+  +—————————————+  +—————————————+   │  │
-│  │  │  Workflow   │  │    Node     │  │    Plan     │  │   Action    │   │  │
-│  │  │  Executor   │  │  Executors  │  │   Engine    │  │  Executor   │   │  │
-│  │  +—————————————+  +—————————————+  +—————————————+  +—————————————+   │  │
-│  │                                                                       │  │
-│  │  +—————————————+  +—————————————+  +—————————————+  +—————————————+   │  │
-│  │  │   Rubric    │  │    Tool     │  │   Agent     │  │   Event     │   │  │
-│  │  │   Engine    │  │  Registry   │  │  Registry   │  │    Bus      │   │  │
-│  │  +—————————————+  +—————————————+  +—————————————+  +—————————————+   │  │
-│  │                                                                       │  │
-│  │  +—————————————+  +——————————————————————————————+                    │  │
-│  │  │  Workflow   │  │  WorkflowState               │                    │  │
-│  │  │  Repository │  │  Repository                  │                    │  │
-│  │  +—————————————+  +——————————————————————————————+                    │  │
-│  +———————————————————————————————————————————————————————————————————————+  │
-+—————————————————————————————————————————————————————————————————————————————+
-                                     │
-                          MCP Protocol (JSON-RPC)
-                                     │
-                +————————————————————+————————————————————+
-                │                    │                    │
-                V                    V                    V
-        +—————————————————+  +—————————————————+  +—————————————————+
-        │  Customer MCP   │  │  Customer MCP   │  │  Customer MCP   │
-        │  Server (Tools) │  │  Server (Data)  │  │  Server (Auth)  │
-        +—————————————————+  +—————————————————+  +—————————————————+
+```mermaid
+flowchart TD
+    subgraph server["hensu-server"]
+        direction TB
+        subgraph iface["Interface Layer"]
+            direction LR
+            qapi(["Quarkus API\n(REST/SSE)"]) ~~~ mcpgw(["MCP Gateway\n(JSON-RPC)"]) ~~~ planner(["LLM Planner"])
+        end
+
+        subgraph runtime["Server Runtime"]
+            direction LR
+            sae(["ServerAction\nExecutor"]) ~~~ ane(["AgenticNode\nExecutor"]) ~~~ tc(["TenantContext\n(ScopedValue)"])
+        end
+
+        subgraph core["hensu-core (HensuEnvironment)"]
+            direction LR
+            we(["Workflow\nExecutor"]) ~~~ ne(["Node\nExecutors"]) ~~~ pe(["Plan\nEngine"]) ~~~ ae(["Action\nExecutor"]) ~~~ re(["Rubric\nEngine"])
+            tr(["Tool\nRegistry"]) ~~~ ar(["Agent\nRegistry"]) ~~~ eb(["Event\nBus"]) ~~~ wr(["Workflow\nRepository"]) ~~~ wsr(["WorkflowState\nRepository"])
+        end
+    end
+
+    subgraph ext["Customer MCP Servers"]
+        direction LR
+        tools(["Tools"]) ~~~ data(["Data"]) ~~~ auth(["Auth"])
+    end
+
+    iface --> runtime --> core
+    core <-->|"MCP Protocol (JSON-RPC)"| ext
+
+    style server fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style iface fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style runtime fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style core fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ext fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+
+    style qapi fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style mcpgw fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style planner fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style sae fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ane fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tc fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style we fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ne fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style pe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ae fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style re fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ar fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style eb fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style wr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style wsr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tools fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style data fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style auth fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 ---
@@ -418,84 +440,90 @@ processor pipeline** that wraps each node, and the **inner plan-step loop** with
 
 **Outer Pipeline** (`ProcessorPipeline`) — every node traversal:
 
-```
-+——————————————————————————————————————————————————+
-│  PRE-EXECUTION PIPELINE                          │
-│  1. CheckpointPreProcessor  (persist state)      │
-│  2. NodeStartPreProcessor   (observability hook) │
-+—————————————————————+————————————————————————————+
-                      V
-            node.execute() ————> Inner Loop (see below)
-                      V
-+——————————————————————————————————————————————————+
-│  POST-EXECUTION PIPELINE                         │
-│  1. OutputExtractionPostProcessor                │
-│     (AgentOutputValidator → write to context;    │
-│      single writes: extract JSON key or fallback │
-│      to raw string; multiple writes: strict JSON │
-│      parse required)                             │
-│  2. NodeCompletePostProcessor (observability)    │
-│  3. HistoryPostProcessor      (audit trail)      │
-│  4. ReviewPostProcessor       (human-in-the-loop)│
-│  5. RubricPostProcessor       (quality gate)     │
-│  6. TransitionPostProcessor   (next node)        │
-+——————————————————————————————————————————————————+
+```mermaid
+flowchart LR
+    subgraph pre["Pre-Execution"]
+        direction TB
+        cp(["Checkpoint\n(persist state)"]) --> ns(["NodeStart\n(observability)"])
+    end
+
+    exec(["node.execute()\n→ Inner Loop"])
+
+    subgraph post["Post-Execution"]
+        direction TB
+        oe(["OutputExtraction\n(validate + write)"]) --> nc(["NodeComplete\n(observability)"])
+        nc --> hp(["History\n(audit trail)"])
+        hp --> rp(["Review\n(human-in-the-loop)"])
+        rp --> rbp(["Rubric\n(quality gate)"])
+        rbp --> tp(["Transition\n(next node)"])
+    end
+
+    pre --> exec --> post
+
+    style pre fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style post fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style cp fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ns fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style exec fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style oe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style nc fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style hp fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style rp fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style rbp fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tp fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 Any processor can short-circuit by returning a terminal `ExecutionResult`.
 
 **Inner Plan Loop** — what `node.execute()` runs for `StandardNode` via `AgenticNodeExecutor`:
 
-```
-+——————————————————————————————————————————————————————————————————+
-│  AgenticNodeExecutor                                             │
-│                                                                  │
-│  PREPARATION PIPELINE                                            │
-│  +——————————————————+   +—————————————————————————————————————+  │
-│  │PlanCreation      │   │SynthesizeEnrichmentProcessor        │  │
-│  │Processor         │   │  inject agentId                     │  │
-│  │(Static/LlmPlanner│——>│  EngineVariablePromptEnricher:      │  │
-│  │ creates Plan)    │   │    1. RubricPromptInjector          │  │
-│  +——————————————————+   │    2. ScoreVariableInjector         │  │
-│                         │    3. ApprovalVariableInjector      │  │
-│                         │    4. RecommendationVariableInject  │  │
-│                         │    5. WritesVariableInjector        │  │
-│                         +———————————+—————————————————————————+  │
-│                                     │                            │
-│                         +———————————+————————+                   │
-│                         │ReviewGate Processor│                   │
-│                         │(pause if           │                   │
-│                         │ review=true)       │                   │
-│                         +———————+————————————+                   │
-│                                 │                                │
-│                     PlanContext (Plan)                           │
-│  EXECUTION PIPELINE ——————————————————>                          │
-│  +————————————————————————————————————————————————————————————+  │
-│  │  PlanExecutionProcessor                                    │  │
-│  │                                                            │  │
-│  │  PlanExecutor                                              │  │
-│  │  +—————+   +—————+   +—————+                               │  │
-│  │  │ S1  │——>│ S2  │——>│ S3  │——> ... (replan on failure)    │  │
-│  │  +——+——+   +—————+   +—————+                               │  │
-│  │     │  StepHandlerRegistry lookup                          │  │
-│  │     V                                                      │  │
-│  │  +—————————————+  +—————————————+                          │  │
-│  │  │ToolCall     │  │Synthesize   │                          │  │
-│  │  │Handler      │  │Handler      │                          │  │
-│  │  │(ActionExec) │  │(Agent call) │                          │  │
-│  │  +—————————————+  +—————————————+                          │  │
-│  +————————————————————————————+———————————————————————————————+  │
-│                               │                                  │
-│                               V                                  │
-│  +——————————————————————————————————+                            │
-│  │ PostExecutionReviewGateProcessor │ (pause if configured)      │
-│  +——————————————————+———————————————+                            │
-│                     │                                            │
-│                     V                                            │
-│           +—————————————————+                                    │
-│           │ ExecutionResult │                                    │
-│           +—————————————————+                                    │
-+——————————————————————————————————————————————————————————————————+
+```mermaid
+flowchart LR
+    subgraph ane["AgenticNodeExecutor"]
+        direction LR
+        subgraph prep["Preparation"]
+            direction TB
+            pcp(["PlanCreation\n(Static/LlmPlanner)"]) --> sep(["SynthesizeEnrichment\n(PromptEnricher)"])
+            sep --> rg(["ReviewGate\n(pause if review)"])
+        end
+
+        ctx(["PlanContext"])
+
+        subgraph execp["Execution"]
+            direction TB
+            steps(["S1 → S2 → S3 …\n(replan on failure)"])
+            subgraph handlers["StepHandlers"]
+                direction LR
+                tch(["ToolCall\n(ActionExec)"])
+                sh(["Synthesize\n(Agent call)"])
+            end
+            steps --> handlers
+        end
+
+        postrg(["PostReviewGate"])
+        result(["Result"])
+
+        prep --> ctx --> execp --> postrg --> result
+    end
+
+    style ane fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style prep fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style execp fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style handlers fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    style pcp fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style sep fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style rg fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ctx fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style steps fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tch fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style sh fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style postrg fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style result fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 ### 4. State Schema Validation
@@ -537,32 +565,55 @@ binds the current `executionId` in a Java 25 `ScopedValue` — no `ThreadLocal`,
 
 The server wires core infrastructure through CDI:
 
-```
-+—————————————————————————————————————————————————————————————+
-│ HensuEnvironmentProducer (@ApplicationScoped)               │
-│                                                             │
-│  1. Extracts hensu.* properties from Quarkus config         │
-│  2. Injects ServerActionExecutor (send-action dispatcher)   │
-│  3. Builds via HensuFactory.builder()                       │
-│  4. Registers generic node handlers                         │
-│  5. Produces HensuEnvironment bean                          │
-+——————————————————————+——————————————————————————————————————+
-                       │
-                       V
-+—————————————————————————————————————————————————————————————+
-│ ServerConfiguration (@Singleton producers)                  │
-│                                                             │
-│  Delegates ALL core components from HensuEnvironment:       │
-│  - WorkflowExecutor (from env)                              │
-│  - AgentRegistry (from env)                                 │
-│  - NodeExecutorRegistry (from env)                          │
-│  - PlanExecutor (from env)                                  │
-│  - WorkflowRepository (from env, defaults to InMemory)      │
-│  - WorkflowStateRepository (from env, defaults to InMemory) │
-│                                                             │
-│  Produces server-specific beans:                            │
-│  - ObjectMapper, LlmPlanner, McpConnectionFactory           │
-+—————————————————————————————————————————————————————————————+
+```mermaid
+flowchart LR
+    subgraph producer["HensuEnvironmentProducer"]
+        direction LR
+        p1(["Extract config"]) --> p2(["Inject ActionExecutor"]) --> p3(["HensuFactory.builder()"]) --> p4(["Register handlers"]) --> p5(["Produce bean"])
+    end
+
+    subgraph config["ServerConfiguration"]
+        direction TB
+        subgraph delegates["Delegates from HensuEnvironment"]
+            direction LR
+            d1(["WorkflowExecutor"])
+            d2(["AgentRegistry"])
+            d3(["NodeExecutorRegistry"])
+            d4(["PlanExecutor"])
+            d5(["WorkflowRepository"])
+            d6(["WorkflowStateRepository"])
+        end
+        subgraph server_beans["Server-specific beans"]
+            direction LR
+            s1(["ObjectMapper"])
+            s2(["LlmPlanner"])
+            s3(["McpConnectionFactory"])
+        end
+    end
+
+    producer --> config
+
+    style producer fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style config fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style delegates fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style server_beans fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    style p1 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style p2 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style p3 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style p4 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style p5 fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style d1 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style d2 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style d3 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style d4 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style d5 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style d6 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style s1 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style s2 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style s3 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 ---

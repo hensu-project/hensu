@@ -1,4 +1,4 @@
-# Hensu™ Serialization
+# Hensu Serialization
 
 Jackson-based JSON serialization for the Hensu workflow type hierarchy.
 

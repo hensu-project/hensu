@@ -1,4 +1,4 @@
-# Hensu™ Server Developer Guide
+# Hensu Server Developer Guide
 
 This guide covers the architecture, patterns, and best practices for developing the `hensu-server` module.
 
@@ -29,43 +29,63 @@ This guide covers the architecture, patterns, and best practices for developing 
 The server module extends `hensu-core` with HTTP capabilities. Core infrastructure is initialized
 via `HensuFactory.builder()` - **never** by constructing components directly.
 
-```
-+——————————————————————————————————————————————————————————————————————+
-│                            hensu-server                              │
-│                                                                      │
-│  +———————————————————————————————————————————————————————————————+   │
-│  │                       api/ (REST + SSE)                       │   │
-│  │  WorkflowResource │ ExecutionResource │ ExecutionEventResource│   │
-│  +—————————————————————————————+—————————————————————————————————+   │
-│                                │                                     │
-│  +—————————————————————————————+—————————————————————————————————+   │
-│  │                      service/                                 │   │
-│  │                       WorkflowService                         │   │
-│  +—————————————————————————————+—————————————————————————————————+   │
-│                                │                                     │
-│  +—————————————————————————————+—————————————————————————————————+   │
-│  │  streaming/                 │        mcp/                     │   │
-│  │  (SSE Events)               │  (MCP Split-Pipe)               │   │
-│  +—————————————————————————————+—————————————————————————————————+   │
-│                                │                                     │
-│  +————————————+————————————————+————————————————+————————————————+   │
-│  │ action/    │          config/                │   tenant/      │   │
-│  │ Server     │  HensuEnvironmentProducer       │  TenantContext │   │
-│  │ Action     │  ServerConfiguration            │  (ScopedValue) │   │
-│  │ Executor   │  ServerBootstrap                │                │   │
-│  +————————————+—————————————————————————————————+————————————————+   │
-│                                │                                     │
-+————————————————————————————————+—————————————————————————————————————+
-                                 │
-                      +——————————+——————————+
-                      │     hensu-core      │
-                      │  (HensuEnvironment) │
-                      │  WorkflowExecutor   │
-                      │  AgentRegistry      │
-                      │  PlanPipeline       │
-                      │  StepHandlerRegistry│
-                      │  ToolRegistry       │
-                      +—————————————————————+
+```mermaid
+flowchart TD
+    subgraph server["hensu-server"]
+        direction TB
+        subgraph api["api/ (REST + SSE)"]
+            direction LR
+            wr(["WorkflowResource"]) ~~~ er(["ExecutionResource"]) ~~~ eer(["ExecutionEventResource"])
+        end
+
+        subgraph svc["service/"]
+            direction LR
+            ws(["WorkflowService"])
+        end
+
+        subgraph mid["‍"]
+            direction LR
+            streaming(["streaming/\n(SSE Events)"]) ~~~ mcp(["mcp/\n(MCP Split-Pipe)"])
+        end
+
+        subgraph infra["‍"]
+            direction LR
+            action(["action/\nServerActionExecutor"]) ~~~ config(["config/\nEnvironmentProducer\nServerConfiguration"]) ~~~ tenant(["tenant/\nTenantContext\n(ScopedValue)"])
+        end
+
+        api --> svc --> mid --> infra
+    end
+
+    subgraph core["hensu-core"]
+        direction LR
+        we(["WorkflowExecutor"]) ~~~ ar(["AgentRegistry"]) ~~~ pp(["PlanPipeline"]) ~~~ shr(["StepHandlerRegistry"]) ~~~ tr(["ToolRegistry"])
+    end
+
+    server --> core
+
+    style server fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style api fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style svc fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style mid fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style infra fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style core fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+
+    style wr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style er fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style eer fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ws fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style streaming fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style mcp fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style action fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style config fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tenant fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style we fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ar fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style pp fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style shr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
 ### Request Flow

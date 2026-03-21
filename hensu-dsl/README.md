@@ -1,4 +1,4 @@
-# Hensu™ DSL
+# Hensu DSL
 
 Kotlin DSL for defining AI agent workflows with type-safe builders.
 
