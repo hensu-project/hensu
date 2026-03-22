@@ -13,7 +13,7 @@ fun contentPipeline() = workflow("content-pipeline") {
 
     agents {
         agent("writer")   { role = "Content Writer";   model = Models.GEMINI_3_1_FLASH_LITE }
-        agent("reviewer") { role = "Content Reviewer"; model = Models.CLAUDE_SONNET_4_6 }
+        agent("reviewer") { role = "Content Reviewer"; model = Models.GEMINI_3_1_PRO }
     }
 
     rubrics { rubric("content-quality", "content-quality.md") }

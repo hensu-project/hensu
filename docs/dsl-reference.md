@@ -991,7 +991,6 @@ fun contentPipeline() = workflow("ContentPipeline") {
             agent = "researcher"
             prompt = """
                 Research {topic} and provide key facts.
-                Output as JSON: {"fact1": "...", "fact2": "...", "fact3": "..."}
             """.trimIndent()
 
             writes("fact1", "fact2", "fact3")
