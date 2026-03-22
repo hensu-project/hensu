@@ -327,9 +327,11 @@ Hensu is in **pre-beta**, working toward beta stability.
 
 [License](LICENSE) · [Notice](NOTICE) · [Trademark](https://github.com/hensu-project/.github/blob/main/TRADEMARK.md) · [Contributing](https://github.com/hensu-project/.github/blob/main/CONTRIBUTING.md)
 
+---
+
 Java 25 · Kotlin DSL · Quarkus · GraalVM Native Image · MCP
 
-Hensu™ and the axolotl logo are trademarks of Aleksandr Suvorov.<br>
-Copyright 2025–2026 Aleksandr Suvorov. All rights reserved.
+<sub>Hensu™ and the axolotl logo are trademarks of Aleksandr Suvorov.<br>
+Copyright 2025–2026 Aleksandr Suvorov. All rights reserved.</sub>
 
 </div>
