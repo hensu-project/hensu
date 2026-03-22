@@ -29,7 +29,7 @@ fun myWorkflow() = workflow("ContentPipeline") {
         }
         agent("reviewer") {
             role = "Quality Reviewer"
-            model = Models.GPT_4O
+            model = Models.GEMINI_3_1_PRO
         }
     }
 

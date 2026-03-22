@@ -44,7 +44,10 @@ flowchart LR
 
 ### 1 — Start hensu-server in inmem profile
 
+The workflow uses Gemini models — export your API key before starting the server:
+
 ```bash
+export GOOGLE_API_KEY=<your-key>
 ./gradlew hensu-server:quarkusDev -Dquarkus.profile=inmem
 ```
 

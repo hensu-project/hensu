@@ -1218,8 +1218,6 @@ HensuFactory.builder()
 | `OPENAI_API_KEY`     | OpenAI GPT       |
 | `GOOGLE_API_KEY`     | Google Gemini    |
 | `DEEPSEEK_API_KEY`   | DeepSeek         |
-| `OPENROUTER_API_KEY` | OpenRouter       |
-| `AZURE_OPENAI_KEY`   | Azure OpenAI     |
 
 Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` patterns are auto-discovered.
 

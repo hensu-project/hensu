@@ -58,8 +58,11 @@ working-dir/
 
 ### 3. Set an API key
 
+The bundled example workflows use Google Gemini models. You can obtain a free
+`GOOGLE_API_KEY` from [Google AI Studio](https://aistudio.google.com/app/apikey).
+
 ```bash
-hensu credentials set ANTHROPIC_API_KEY   # or OPENAI_API_KEY / GEMINI_API_KEY
+hensu credentials set GOOGLE_API_KEY
 ```
 
 ### 4. Run a workflow
@@ -77,6 +80,9 @@ Pre-built binaries are available for **Linux x86_64**. On macOS or Windows,
 # Download the server binary
 curl -L https://github.com/hensu-project/hensu/releases/download/server/v0.1.0-beta.1/hensu-server-linux-x86_64 \
   -o hensu-server-v0.1.0-beta.1 && chmod +x hensu-server-v0.1.0-beta.1
+
+# The server needs provider API keys as environment variables
+export GOOGLE_API_KEY=<your-key>
 
 # Start in in-memory mode (no database, no JWT)
 QUARKUS_PROFILE=inmem ./hensu-server-v0.1.0-beta.1
@@ -102,8 +108,8 @@ approves or sends it back for revision.
 ```kotlin
 fun contentPipeline() = workflow("content-pipeline") {
     agents {
-        agent("writer")   { role = "Content Writer";   model = Models.CLAUDE_SONNET_4_5 }
-        agent("reviewer") { role = "Content Reviewer"; model = Models.GPT_4O }
+        agent("writer")   { role = "Content Writer";   model = Models.GEMINI_3_1_FLASH_LITE }
+        agent("reviewer") { role = "Content Reviewer"; model = Models.GEMINI_3_1_PRO }
     }
 
     rubrics { rubric("content-quality", "content-quality.md") }
@@ -291,7 +297,7 @@ MCP split-pipe connectivity, stub tool implementations, SSE event streaming, and
 human-in-the-loop review gate.
 
 **Scenario:** a credit risk analyst agent evaluates a fictional credit-limit increase for
-customer `C-42`.
+customer `C-42`. Complete the [Getting Started](#getting-started) steps before running this example.
 
 ```bash
 QUARKUS_PROFILE=inmem ./hensu-server-v0.1.0-beta.1
@@ -312,6 +318,7 @@ Hensu is in **pre-beta**, working toward beta stability.
 - Pre-built server binaries are Linux x86_64 only. macOS and ARM targets are planned.
 - No observability integration yet (OpenTelemetry, metrics export).
 - No native image integration tests yet. The native build is verified by CI, but test coverage runs in JVM mode only.
+- OpenAI and DeepSeek models are defined in the DSL but have not been tested end-to-end. Only Anthropic and Google Gemini models are verified.
 - APIs and DSL surface may change before beta.
 
 ---
