@@ -29,7 +29,8 @@ class AgentOutputValidatorTest {
 
     @ParameterizedTest(name = "rejected control char: U+{0}")
     @MethodSource("dangerousControlChars")
-    // label is consumed by JUnit 5 @ParameterizedTest(name=) for test display names, not by method body
+    // label is consumed by JUnit 5 @ParameterizedTest(name=) for test display names, not by method
+    // body
     void shouldRejectDangerousControlChars(@SuppressWarnings("unused") String label, String input) {
         assertThat(AgentOutputValidator.containsDangerousChars(input)).isTrue();
     }
@@ -56,20 +57,21 @@ class AgentOutputValidatorTest {
 
     @ParameterizedTest(name = "rejected Unicode trick: U+{0}")
     @MethodSource("dangerousUnicodeTricks")
-    // label is consumed by JUnit 5 @ParameterizedTest(name=) for test display names, not by method body
+    // label is consumed by JUnit 5 @ParameterizedTest(name=) for test display names, not by method
+    // body
     void shouldRejectUnicodeTricks(@SuppressWarnings("unused") String label, String input) {
         assertThat(AgentOutputValidator.containsUnicodeTricks(input)).isTrue();
     }
 
-    static Stream<org.junit.jupiter.params.provider.Arguments> dangerousUnicodeTricks() {
+    static Stream<Arguments> dangerousUnicodeTricks() {
         return Stream.of(
-                org.junit.jupiter.params.provider.Arguments.of("202A LRE", "text\u202Amore"),
-                org.junit.jupiter.params.provider.Arguments.of("202E RLO", "benign\u202Evil"),
-                org.junit.jupiter.params.provider.Arguments.of("2066 LRI", "text\u2066isolated"),
-                org.junit.jupiter.params.provider.Arguments.of("2069 PDI", "text\u2069end"),
-                org.junit.jupiter.params.provider.Arguments.of("200B ZWSP", "zero\u200Bwidth"),
-                org.junit.jupiter.params.provider.Arguments.of("200D ZWJ", "zero\u200Djoiner"),
-                org.junit.jupiter.params.provider.Arguments.of("FEFF BOM", "\uFEFFprefixed"));
+                Arguments.of("202A LRE", "text\u202Amore"),
+                Arguments.of("202E RLO", "benign\u202Evil"),
+                Arguments.of("2066 LRI", "text\u2066isolated"),
+                Arguments.of("2069 PDI", "text\u2069end"),
+                Arguments.of("200B ZWSP", "zero\u200Bwidth"),
+                Arguments.of("200D ZWJ", "zero\u200Djoiner"),
+                Arguments.of("FEFF BOM", "\uFEFFprefixed"));
     }
 
     @Test
