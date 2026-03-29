@@ -90,7 +90,7 @@ See [DSL Reference](../docs/dsl-reference.md) for the complete syntax reference 
 - Agent definitions and model constants
 - Node types (standard, parallel, fork/join, action, generic, end)
 - Transition rules (success, failure, score-based, approval, consensus)
-- State variables (`writes()` + `{placeholder}` syntax)
+- State variables (`writes()` + `{placeholder}` syntax), branch outputs (`yields()`)
 - State schema (`state { }` block with typed `input`/`variable` declarations and load-time validation)
 - Approval routing (`onApproval goto` / `onRejection goto`)
 - Plan failure routing (`onPlanFailure goto`)

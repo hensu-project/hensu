@@ -1,5 +1,6 @@
 package io.hensu.core.workflow.transition;
 
+import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.state.HensuState;
 import java.util.Map;
@@ -41,7 +42,7 @@ public record ApprovalTransition(boolean expected, String targetNode) implements
             return null;
         }
 
-        Boolean parsed = parseBoolean(context.get("approved"));
+        Boolean parsed = parseBoolean(context.get(EngineVariables.APPROVED));
         if (parsed == null) {
             return null;
         }

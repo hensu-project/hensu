@@ -61,6 +61,29 @@ Builder mixins use `@JsonPOJOBuilder(withPrefix = "", buildMethodName = "build")
 the fluent builder API (e.g., `.nodeId("x")` not `.withNodeId("x")`).
 
 **`NodeResult.getError()`** is `@JsonIgnore`d because `Throwable` is not safely serializable.
+
+### Plain Records (Default Jackson Serialization)
+
+Java records with public component accessors are serialized by Jackson's default `BeanSerializer`
+without requiring custom serializers or mixins. However, in GraalVM native image, Jackson cannot
+discover record accessors unless they are registered for reflection.
+
+These types are deserialized manually in `NodeDeserializer` (direct `JsonNode` extraction), but
+serialized via default Jackson machinery in `WorkflowSerializer.toJson()`. Both paths must work:
+
+| Type                       | Context                                                            |
+|----------------------------|--------------------------------------------------------------------|
+| `Branch`                   | Embedded in `ParallelNode` – includes `yields` (List of String)    |
+| `ConsensusConfig`          | Embedded in `ParallelNode` – strategy, threshold, judge agent ID   |
+| `ConsensusStrategy`        | Enum inside `ConsensusConfig`                                      |
+| `ConsensusResult`          | Stored in state context during checkpoint serialization            |
+| `ConsensusResult.Vote`     | Inner record inside `ConsensusResult`                              |
+| `ConsensusResult.VoteType` | Enum inside `ConsensusResult.Vote`                                 |
+| `ScoreCondition`           | Embedded in `ScoreTransition` via `NodeDeserializer`               |
+| `DoubleRange`              | Embedded in `ScoreCondition`                                       |
+
+All are registered in `NativeImageConfig` in `hensu-server`. Do **not** create mixins for these –
+reflection registration is sufficient since they have public constructors and accessors.
 Errors are transient and not persisted in snapshots. The builder mixin (`NodeResultBuilderMixin`)
 also suppresses the `error(Throwable)` setter with `@JsonIgnore` — this prevents Jackson from
 crashing when deserializing a snapshot payload that contains no `error` field. Both halves of

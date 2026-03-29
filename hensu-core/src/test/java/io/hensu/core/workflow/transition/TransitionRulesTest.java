@@ -2,6 +2,7 @@ package io.hensu.core.workflow.transition;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.rubric.model.ComparisonOperator;
@@ -119,7 +120,7 @@ class TransitionRulesTest {
                             new ScoreCondition(ComparisonOperator.LT, 80.0, null, "needs-review"));
             ScoreTransition transition = new ScoreTransition(conditions);
 
-            state.getContext().put("score", 85.0);
+            state.getContext().put(EngineVariables.SCORE, 85.0);
             NodeResult result = NodeResult.success("Output", Map.of());
 
             // When
@@ -138,7 +139,7 @@ class TransitionRulesTest {
                             new ScoreCondition(ComparisonOperator.LT, 80.0, null, "needs-review"));
             ScoreTransition transition = new ScoreTransition(conditions);
 
-            state.getContext().put("score", 65.0);
+            state.getContext().put(EngineVariables.SCORE, 65.0);
             NodeResult result = NodeResult.success("Output", Map.of());
 
             // When
@@ -173,7 +174,7 @@ class TransitionRulesTest {
             ScoreTransition transition = new ScoreTransition(conditions);
 
             // Set score in context (self-reported)
-            state.getContext().put("score", 90.0);
+            state.getContext().put(EngineVariables.SCORE, 90.0);
             NodeResult result = NodeResult.success("Output", Map.of());
 
             // When
@@ -191,7 +192,7 @@ class TransitionRulesTest {
             ScoreTransition transition = new ScoreTransition(conditions);
 
             // Set score as string
-            state.getContext().put("score", "85.5");
+            state.getContext().put(EngineVariables.SCORE, "85.5");
             NodeResult result = NodeResult.success("Output", Map.of());
 
             // When
@@ -208,7 +209,7 @@ class TransitionRulesTest {
                     List.of(new ScoreCondition(ComparisonOperator.GT, 90.0, null, "excellent"));
             ScoreTransition transition = new ScoreTransition(conditions);
 
-            state.getContext().put("score", 85.0);
+            state.getContext().put(EngineVariables.SCORE, 85.0);
             NodeResult result = NodeResult.success("Output", Map.of());
 
             String target = transition.evaluate(state, result);
@@ -232,7 +233,7 @@ class TransitionRulesTest {
                 })
         void shouldRouteByBooleanApprovalTruthTable(
                 boolean expected, boolean contextValue, String expectedTarget) {
-            state.getContext().put("approved", contextValue);
+            state.getContext().put(EngineVariables.APPROVED, contextValue);
             String targetNode = expected ? "finalize" : "improve";
             ApprovalTransition transition = new ApprovalTransition(expected, targetNode);
 
@@ -252,7 +253,7 @@ class TransitionRulesTest {
         @Test
         void shouldReturnNullForNonBooleanValue() {
             // Agent output an integer — strict parsing must fall through, never guess intent
-            state.getContext().put("approved", 1);
+            state.getContext().put(EngineVariables.APPROVED, 1);
             assertThat(
                             new ApprovalTransition(true, "finalize")
                                     .evaluate(state, NodeResult.success("Output", Map.of())))
@@ -262,7 +263,7 @@ class TransitionRulesTest {
         @Test
         void shouldReturnNullForAmbiguousStringValue() {
             // Agent output free-form text — strict parsing must reject it
-            state.getContext().put("approved", "looks good to me");
+            state.getContext().put(EngineVariables.APPROVED, "looks good to me");
             assertThat(
                             new ApprovalTransition(true, "finalize")
                                     .evaluate(state, NodeResult.success("Output", Map.of())))
@@ -281,7 +282,7 @@ class TransitionRulesTest {
         })
         void shouldAcceptBooleanStringsCaseInsensitively(
                 String contextValue, boolean expected, String expectedTarget) {
-            state.getContext().put("approved", contextValue);
+            state.getContext().put(EngineVariables.APPROVED, contextValue);
             assertThat(
                             new ApprovalTransition(expected, expectedTarget)
                                     .evaluate(state, NodeResult.success("Output", Map.of())))

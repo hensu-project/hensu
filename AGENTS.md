@@ -100,6 +100,9 @@ hensu-langchain4j-adapter     # LangChain4j integration (Claude, GPT, Gemini, De
 - `WorkflowStateRepository` - Tenant-scoped storage for execution state snapshots (defaults to in-memory; JDBC impl in server)
 - `ExecutionListener` - Lifecycle callbacks including `onCheckpoint(HensuState)` for inter-node persistence
 - `ProcessorPipeline` - Orchestrates pre/post node execution processor chains
+- `EngineVariables` - SSOT for engine-managed variable names (`score`, `approved`, `recommendation`)
+- `AgentLifecycleRunner` - Stateless agent call lifecycle (resolve → enrich → lookup → listener → execute → convert); shared by `StandardNodeExecutor` and `ParallelNodeExecutor`
+- `SynchronizedListenerDecorator` - Thread-safe `ExecutionListener` wrapper for parallel branch execution
 
 **Execution Lifecycle**: The `WorkflowExecutor` processes each node through a strict PRE-EXECUTE-POST pipeline.
 Pre-execution processors run in order: checkpoint → node start. Post-execution processors run in order: output
@@ -142,7 +145,7 @@ Workflow
 
 - `StandardNode` - Regular step with agent execution, typed state variable output (`writes`), and transitions
 - `LoopNode` - Iterative execution with break conditions
-- `ParallelNode` - Concurrent execution with consensus
+- `ParallelNode` - Concurrent execution with consensus; branches declare domain output via `yields()`
 - `ForkNode` - Spawn parallel execution paths
 - `JoinNode` - Await and merge forked paths
 - `GenericNode` - Custom execution logic via registered handlers
@@ -154,7 +157,7 @@ Workflow
 
 - `SuccessTransition` / `FailureTransition` - Based on execution result
 - `ScoreTransition` - Conditional on rubric score (e.g., score >= 80 → approve)
-- `ApprovalTransition` - Routes on the `approved` boolean engine variable (written via `writes("approved")`); falls through if absent or non-boolean
+- `ApprovalTransition` - Routes on the `approved` boolean engine variable (injected by `ApprovalVariableInjector`); falls through if absent or non-boolean
 - `AlwaysTransition` - Unconditional
 
 ### State Schema
@@ -374,6 +377,11 @@ CRUD operations, UPSERT semantics, FK constraints, tenant isolation, and seriali
 - `hensu-core/.../workflow/state/WorkflowStateSchema.java` - Typed state variable schema (optional per-workflow declaration)
 - `hensu-core/.../workflow/state/StateVariableDeclaration.java` - Single variable declaration (name, type, isInput)
 - `hensu-core/.../workflow/state/VarType.java` - Variable type enum (STRING, NUMBER, BOOLEAN, LIST_STRING)
+- `hensu-core/.../execution/EngineVariables.java` - SSOT for engine-managed variable names (score, approved, recommendation)
+- `hensu-core/.../execution/SynchronizedListenerDecorator.java` - Thread-safe listener wrapper for parallel branches
+- `hensu-core/.../execution/executor/AgentLifecycleRunner.java` - Shared agent call lifecycle (resolve → enrich → execute)
+- `hensu-core/.../execution/parallel/BranchExecutionConfig.java` - Per-branch config carried on ExecutionContext
+- `hensu-core/.../execution/enricher/YieldsVariableInjector.java` - Injects yield format instructions for branch prompts
 - `hensu-core/.../workflow/transition/ApprovalTransition.java` - Boolean approval routing via `approved` engine variable
 - `hensu-core/.../workflow/validation/WorkflowValidator.java` - Load-time validator for `writes` and prompt variable references
 

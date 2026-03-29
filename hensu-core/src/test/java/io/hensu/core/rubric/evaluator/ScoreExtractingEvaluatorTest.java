@@ -2,6 +2,7 @@ package io.hensu.core.rubric.evaluator;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.rubric.model.Criterion;
 import java.util.HashMap;
@@ -24,7 +25,7 @@ class ScoreExtractingEvaluatorTest {
     @Test
     void shouldReturnZeroForFailedNodeResult() {
         Map<String, Object> context = new HashMap<>();
-        context.put("score", 95.0);
+        context.put(EngineVariables.SCORE, 95.0);
 
         double score = evaluator.evaluate(criterion, NodeResult.failure("agent error"), context);
 
@@ -41,7 +42,7 @@ class ScoreExtractingEvaluatorTest {
     @Test
     void shouldReturnNumericScoreDirectly() {
         Map<String, Object> context = new HashMap<>();
-        context.put("score", 85.0);
+        context.put(EngineVariables.SCORE, 85.0);
 
         double score = evaluator.evaluate(criterion, NodeResult.empty(), context);
 
@@ -51,7 +52,7 @@ class ScoreExtractingEvaluatorTest {
     @Test
     void shouldParseScoreFromString() {
         Map<String, Object> context = new HashMap<>();
-        context.put("score", "85.0");
+        context.put(EngineVariables.SCORE, "85.0");
 
         double score = evaluator.evaluate(criterion, NodeResult.empty(), context);
 
@@ -61,7 +62,7 @@ class ScoreExtractingEvaluatorTest {
     @Test
     void shouldReturnZeroForUnparsableScoreString() {
         Map<String, Object> context = new HashMap<>();
-        context.put("score", "N/A");
+        context.put(EngineVariables.SCORE, "N/A");
 
         double score = evaluator.evaluate(criterion, NodeResult.empty(), context);
 
@@ -71,8 +72,8 @@ class ScoreExtractingEvaluatorTest {
     @Test
     void shouldAccumulateRecommendationWhenScoreBelowThreshold() {
         Map<String, Object> context = new HashMap<>();
-        context.put("score", 50.0);
-        context.put("recommendation", "Add more detail to the answer.");
+        context.put(EngineVariables.SCORE, 50.0);
+        context.put(EngineVariables.RECOMMENDATION, "Add more detail to the answer.");
 
         evaluator.evaluate(criterion, NodeResult.empty(), context);
 
@@ -90,8 +91,8 @@ class ScoreExtractingEvaluatorTest {
     @Test
     void shouldNotAccumulateRecommendationWhenScoreMeetsThreshold() {
         Map<String, Object> context = new HashMap<>();
-        context.put("score", 70.0);
-        context.put("recommendation", "This looks fine.");
+        context.put(EngineVariables.SCORE, 70.0);
+        context.put(EngineVariables.RECOMMENDATION, "This looks fine.");
 
         evaluator.evaluate(criterion, NodeResult.empty(), context);
 
@@ -101,8 +102,8 @@ class ScoreExtractingEvaluatorTest {
     @Test
     void shouldIgnoreBlankRecommendation() {
         Map<String, Object> context = new HashMap<>();
-        context.put("score", 50.0);
-        context.put("recommendation", "   ");
+        context.put(EngineVariables.SCORE, 50.0);
+        context.put(EngineVariables.RECOMMENDATION, "   ");
 
         evaluator.evaluate(criterion, NodeResult.empty(), context);
 
@@ -114,11 +115,11 @@ class ScoreExtractingEvaluatorTest {
         Criterion second = Criterion.builder().id("clarity").name("Clarity").minScore(70.0).build();
 
         Map<String, Object> context = new HashMap<>();
-        context.put("score", 50.0);
-        context.put("recommendation", "First fix.");
+        context.put(EngineVariables.SCORE, 50.0);
+        context.put(EngineVariables.RECOMMENDATION, "First fix.");
         evaluator.evaluate(criterion, NodeResult.empty(), context);
 
-        context.put("recommendation", "Second fix.");
+        context.put(EngineVariables.RECOMMENDATION, "Second fix.");
         evaluator.evaluate(second, NodeResult.empty(), context);
 
         List<String> recs =
@@ -129,8 +130,8 @@ class ScoreExtractingEvaluatorTest {
     @Test
     void shouldNotCrashWhenRecommendationsKeyHoldsWrongType() {
         Map<String, Object> context = new HashMap<>();
-        context.put("score", 50.0);
-        context.put("recommendation", "Some fix.");
+        context.put(EngineVariables.SCORE, 50.0);
+        context.put(EngineVariables.RECOMMENDATION, "Some fix.");
         context.put(ScoreExtractingEvaluator.RECOMMENDATIONS_KEY, "not-a-list");
 
         double score = evaluator.evaluate(criterion, NodeResult.empty(), context);

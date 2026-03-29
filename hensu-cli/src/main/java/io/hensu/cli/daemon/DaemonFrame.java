@@ -409,8 +409,8 @@ public final class DaemonFrame {
     /// @param allowBacktrack whether the reviewer may backtrack to a previous step
     /// @param historySteps  ordered list of completed steps for backtrack selection, not null
     /// @param workflowJson  serialized workflow JSON for prompt editing; may be null
-    /// @param context       current state context for variable display in prompt editor; may be
-    // null
+    /// @param context       current state context for variable display in prompt editor;
+    ///                      may be null
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record ReviewPayload(
             @JsonProperty("node_id") String nodeId,

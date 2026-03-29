@@ -1,5 +1,6 @@
 package io.hensu.core.rubric.evaluator;
 
+import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.rubric.model.Criterion;
 import java.util.ArrayList;
@@ -48,7 +49,7 @@ public final class ScoreExtractingEvaluator implements RubricEvaluator {
             return 0.0;
         }
 
-        Object raw = context.get("score");
+        Object raw = context.get(EngineVariables.SCORE);
         Double score = parseNumber(raw);
 
         if (score == null) {
@@ -61,7 +62,7 @@ public final class ScoreExtractingEvaluator implements RubricEvaluator {
         }
 
         if (score < criterion.getMinScore()) {
-            Object recommendation = context.get("recommendation");
+            Object recommendation = context.get(EngineVariables.RECOMMENDATION);
             if (recommendation instanceof String text && !text.isBlank()) {
                 addRecommendation(context, criterion.getId(), text);
             }

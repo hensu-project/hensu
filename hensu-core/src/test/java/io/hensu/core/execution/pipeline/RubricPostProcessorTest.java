@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
+import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.executor.ExecutionContext;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
@@ -247,7 +248,7 @@ class RubricPostProcessorTest {
                             .build();
 
             var ctx = contextWithNode(node);
-            ctx.state().getContext().put("score", 45.0);
+            ctx.state().getContext().put(EngineVariables.SCORE, 45.0);
             mockRubricEvaluation(45.0, false);
 
             var result = processor.process(ctx);

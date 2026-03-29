@@ -201,7 +201,6 @@ class NodeBuilderTest {
         val builder = StandardNodeBuilder("reviewer", workingDir)
         builder.apply {
             agent = "agent1"
-            writes("approved")
             onApproval goto "finalize"
             onRejection goto "improve"
         }
@@ -234,6 +233,20 @@ class NodeBuilderTest {
         // Then
         assertThat(node.agentId).isNull()
         assertThat(node.prompt).isEqualTo("Manual step")
+    }
+
+    @Test
+    fun `should reject writes that collide with engine variables`() {
+        val builder = StandardNodeBuilder("node1", workingDir)
+
+        assertThatThrownBy {
+                builder.apply {
+                    agent = "agent1"
+                    writes("score")
+                }
+            }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("reserved engine variable")
     }
 
     @Nested

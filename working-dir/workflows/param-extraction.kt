@@ -19,7 +19,7 @@ fun paramExtractionWorkflow() = workflow("ParamExtraction") {
     agents {
         agent("researcher") {
             role = "Research Assistant"
-            model = Models.GEMINI_2_5_FLASH
+            model = Models.GEMINI_3_1_FLASH_LITE
             temperature = 0.3  // Lower temperature for more precise outputs
         }
     }

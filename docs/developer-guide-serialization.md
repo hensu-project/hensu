@@ -236,12 +236,35 @@ Java records have no inner `Builder` class — Jackson deserializes them via the
 
 ### Current registrations
 
+**Snapshot hierarchy** (embedded in `ExecutionStep`):
+
 | Class                              | Embedded in                      | Reason                                      |
 |------------------------------------|----------------------------------|---------------------------------------------|
 | `HensuSnapshot`                    | `ExecutionStep.Builder.snapshot` | Canonical constructor + component accessors |
 | `PlanSnapshot`                     | `HensuSnapshot.planSnapshot`     | Nested record inside `HensuSnapshot`        |
 | `PlanSnapshot.PlannedStepSnapshot` | `PlanSnapshot.steps()`           | Nested record inside `PlanSnapshot`         |
 | `PlanSnapshot.StepResultSnapshot`  | `PlanSnapshot.results()`         | Nested record inside `PlanSnapshot`         |
+
+**Parallel execution types** (manually deserialized in `NodeDeserializer`, but serialized via default Jackson `BeanSerializer` in `WorkflowSerializer.toJson()`):
+
+| Class                       | Embedded in / Context                           | Reason                                                      |
+|-----------------------------|-------------------------------------------------|-------------------------------------------------------------|
+| `Branch`                    | `ParallelNode` branch list                      | Record with `yields` (`List<String>`) component             |
+| `ConsensusConfig`           | `ParallelNode` consensus configuration          | Record with strategy enum + nullable threshold              |
+| `ConsensusStrategy`         | `ConsensusConfig.strategy()`                    | Enum – Jackson needs reflection to serialize enum constants |
+| `ConsensusResult`           | State context map (checkpoint serialization)    | Stored under `consensus_votes` key during execution         |
+| `ConsensusResult.Vote`      | `ConsensusResult.votes()` map values            | Inner record with vote type, score, weight                  |
+| `ConsensusResult.VoteType`  | `ConsensusResult.Vote.voteType()`               | Enum (APPROVE / REJECT)                                     |
+| `ScoreCondition`            | `ScoreTransition` condition list                | Nested record inside transition rules                       |
+| `DoubleRange`               | `ScoreCondition.range()`                        | Nested record inside `ScoreCondition`                       |
+
+> **Why not `treeToValue`?** These types are simple records with primitive/string/enum fields.
+> Manual `JsonNode` extraction in `NodeDeserializer` avoids reflection during deserialization.
+> Registration is needed only for the **serialization** path (`WorkflowSerializer.toJson()`),
+> where Jackson's default `BeanSerializer` reads component accessors reflectively.
+
+> **`Branch.yields`** is a `List<String>`. `NodeDeserializer` extracts it by iterating the JSON
+> array node manually — no `treeToValue` or `convertValue` needed for `List<String>`.
 
 Unlike the `treeToValue` pattern, these records do **not** need a custom deserializer or mixin. Registration alone is sufficient because Jackson's built-in record support handles the canonical constructor mapping.
 

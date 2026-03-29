@@ -98,16 +98,16 @@ Unicode manipulation, and excessive payload size before the output is written to
 
 Workflows are not limited to linear chains. The graph engine supports:
 
-| Capability                | Mechanism                                                                                                                                                          |
-|:--------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Conditional branching** | `ScoreTransition` routes based on rubric scores; `SuccessTransition` / `FailureTransition` route on result                                                         |
-| **Loops**                 | `LoopNode` with configurable break conditions and max iterations                                                                                                   |
-| **Parallel fan-out**      | `ParallelNode` executes branches concurrently on virtual threads                                                                                                   |
-| **Fork / Join**           | `ForkNode` spawns independent parallel paths; `JoinNode` awaits and merges results                                                                                 |
-| **Consensus**             | Majority vote, unanimous, weighted vote, or judge-decides strategies                                                                                               |
-| **Backtracking**          | Review decisions can jump to any previous node, restoring state from execution history                                                                             |
-| **Sub-workflows**         | `SubWorkflowNode` with input/output mapping for hierarchical composition                                                                                           |
-| **Pause / Resume**        | Any node returning `PENDING` checkpoints state (including `PlanSnapshot` — micro-plan step index — alongside node position); `executeFrom()` resumes from snapshot |
+| Capability                | Mechanism                                                                                                                                                                                                           |
+|:--------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Conditional branching** | `ScoreTransition` routes based on rubric scores; `SuccessTransition` / `FailureTransition` route on result                                                                                                          |
+| **Loops**                 | `LoopNode` with configurable break conditions and max iterations                                                                                                                                                    |
+| **Parallel fan-out**      | `ParallelNode` executes branches concurrently on virtual threads                                                                                                                                                    |
+| **Fork / Join**           | `ForkNode` spawns independent parallel paths; `JoinNode` awaits and merges results                                                                                                                                  |
+| **Consensus**             | Majority vote, unanimous, weighted vote, or judge-decides strategies. Branches declare domain output via `yields()`. Vote strategies merge all branch yields; JUDGE_DECIDES merges only the winning branch's yields |
+| **Backtracking**          | Review decisions can jump to any previous node, restoring state from execution history                                                                                                                              |
+| **Sub-workflows**         | `SubWorkflowNode` with input/output mapping for hierarchical composition                                                                                                                                            |
+| **Pause / Resume**        | Any node returning `PENDING` checkpoints state (including `PlanSnapshot` — micro-plan step index — alongside node position); `executeFrom()` resumes from snapshot                                                  |
 
 For non-agent steps, `GenericNode` runs custom synchronous logic registered by `executorType`;
 `ActionNode` dispatches asynchronous tasks to external systems via a registered `ActionHandler`
@@ -295,9 +295,13 @@ Zero-dependency Java library. Contains:
 - `ToolRegistry` / `ToolDefinition` — Protocol-agnostic tool descriptors for MCP integration
 - `RubricEngine` / `ScoreExtractingEvaluator` — Quality evaluation: reads `score` engine variable
   from context; accumulates feedback into `recommendation`; no JSON parsing
-- `EngineVariablePromptEnricher` — Composite enricher running 5 injectors before each agent call:
+- `EngineVariables` — SSOT for engine variable names (`score`, `approved`, `recommendation`)
+- `AgentLifecycleRunner` — Composition-based agent call: prompt enrichment → execution → output extraction
+- `EngineVariablePromptEnricher` — Composite enricher running 6 injectors before each agent call:
   `RubricPromptInjector` → `ScoreVariableInjector` → `ApprovalVariableInjector` →
-  `RecommendationVariableInjector` → `WritesVariableInjector`
+  `RecommendationVariableInjector` → `WritesVariableInjector` → `YieldsVariableInjector`.
+  Score/Approval/Recommendation injectors fire for both transition-based nodes and consensus branches
+  (via `BranchExecutionConfig.needsSelfScoring()`)
 - `WorkflowRepository` / `WorkflowStateRepository` — Tenant-scoped storage interfaces with in-memory defaults
 - `HensuState` / `HensuSnapshot` / `ExecutionHistory` — Mutable runtime state, immutable checkpoints, execution trace
 - Workflow model, Node types (including `SubWorkflowNode`), Transition rules

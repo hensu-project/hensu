@@ -2,18 +2,16 @@ package io.hensu.core.execution;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentResponse;
+import io.hensu.core.execution.parallel.Branch;
 import io.hensu.core.execution.parallel.ConsensusStrategy;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExitStatus;
-import io.hensu.core.rubric.RubricNotFoundException;
-import io.hensu.core.rubric.evaluator.RubricEvaluation;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.ParallelNode;
@@ -31,7 +29,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 class WorkflowExecutorParallelTest extends WorkflowExecutorTestBase {
 
-    // — Majority vote ————————————————————————————————————————————————————
+    // — Structured consensus pipeline ————————————————————————————————————
 
     @ParameterizedTest
     @MethodSource("majorityConsensusCases")
@@ -55,60 +53,66 @@ class WorkflowExecutorParallelTest extends WorkflowExecutorTestBase {
 
     static Stream<Arguments> majorityConsensusCases() {
         return Stream.of(
-                // 2 approve / 1 reject → majority approves → SUCCESS
+                // 2 approve / 1 reject → majority (2 > 1.5) → SUCCESS
                 Arguments.of(
-                        "I approve this work. Score: 90",
-                        "I approve. Score: 85",
-                        "I reject this. Score: 30",
+                        """
+                        {"score": 90, "approved": true, "recommendation": "Good"}""",
+                        """
+                        {"score": 85, "approved": true, "recommendation": "Solid"}""",
+                        """
+                        {"score": 30, "approved": false, "recommendation": "Needs work"}""",
                         ExitStatus.SUCCESS),
                 // 1 approve / 2 reject → majority rejects → FAILURE
                 Arguments.of(
-                        "I approve. Score: 90",
-                        "I reject this. Score: 20",
-                        "I reject this. Score: 15",
+                        """
+                        {"score": 90, "approved": true, "recommendation": "Good"}""",
+                        """
+                        {"score": 20, "approved": false, "recommendation": "Bad"}""",
+                        """
+                        {"score": 15, "approved": false, "recommendation": "Bad"}""",
                         ExitStatus.FAILURE));
     }
 
-    // — No-consensus collection ——————————————————————————————————————————
+    // — Yields merge: the core new feature ———————————————————————————————
 
     @Test
-    void shouldCollectBranchOutputsWithoutConsensus() throws Exception {
-        // No consensus config → all branch outputs collected → always SUCCESS.
+    void shouldMergeWinnerYieldsIntoContext() throws Exception {
+        // Both branches approve (unanimous) and yield "api_schema".
+        // After consensus, the winning branch's extracted api_schema must be in context.
         var agent1 = mock(Agent.class);
         var agent2 = mock(Agent.class);
-        when(agentRegistry.getAgent("writer1")).thenReturn(Optional.of(agent1));
-        when(agentRegistry.getAgent("writer2")).thenReturn(Optional.of(agent2));
+        when(agentRegistry.getAgent("a1")).thenReturn(Optional.of(agent1));
+        when(agentRegistry.getAgent("a2")).thenReturn(Optional.of(agent2));
         when(agent1.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("Draft from writer 1"));
+                .thenReturn(
+                        AgentResponse.TextResponse.of(
+                                """
+                {"score": 90, "approved": true, "recommendation": "Good",\
+                 "api_schema": "openapi: 3.0"}"""));
         when(agent2.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("Draft from writer 2"));
+                .thenReturn(
+                        AgentResponse.TextResponse.of(
+                                """
+                {"score": 85, "approved": true, "recommendation": "Solid",\
+                 "api_schema": "openapi: 3.1"}"""));
 
         var agents =
                 Map.of(
-                        "writer1",
-                                AgentConfig.builder()
-                                        .id("writer1")
-                                        .role("Writer")
-                                        .model("test")
-                                        .build(),
-                        "writer2",
-                                AgentConfig.builder()
-                                        .id("writer2")
-                                        .role("Writer")
-                                        .model("test")
-                                        .build());
+                        "a1", AgentConfig.builder().id("a1").role("Agent").model("test").build(),
+                        "a2", AgentConfig.builder().id("a2").role("Agent").model("test").build());
         var nodes = new HashMap<String, Node>();
         nodes.put(
                 "parallel",
                 ParallelNode.builder("parallel")
-                        .branch("b1", "writer1", "Write draft")
-                        .branch("b2", "writer2", "Write draft")
+                        .branch(new Branch("b1", "a1", "Analyze", null, 1.0, List.of("api_schema")))
+                        .branch(new Branch("b2", "a2", "Review", null, 1.0, List.of("api_schema")))
+                        .consensus(null, ConsensusStrategy.UNANIMOUS)
                         .transitionRules(List.of(new SuccessTransition("end")))
                         .build());
         nodes.put("end", end("end"));
         var workflow =
                 Workflow.builder()
-                        .id("no-consensus")
+                        .id("yields-merge")
                         .agents(agents)
                         .nodes(nodes)
                         .startNode("parallel")
@@ -116,242 +120,152 @@ class WorkflowExecutorParallelTest extends WorkflowExecutorTestBase {
 
         var result = executor.execute(workflow, new HashMap<>());
 
-        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-        assertThat(((ExecutionResult.Completed) result).getExitStatus())
-                .isEqualTo(ExitStatus.SUCCESS);
+        var completed = (ExecutionResult.Completed) result;
+        assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+        assertThat(completed.getFinalState().getContext()).containsKey("api_schema");
+        assertThat(completed.getFinalState().getContext().get("api_schema").toString())
+                .startsWith("openapi:");
     }
 
-    // — Rubric-based branch evaluation ———————————————————————————————————
-
     @Test
-    void shouldEvaluateBranchRubricInConsensus() throws Exception {
-        // 3 branches with rubricId; r1/r2 pass (90/85), r3 fails (40).
-        // 2/3 pass → MAJORITY_VOTE → consensus reached → SUCCESS.
+    void shouldMergeAllBranchYieldsForVoteStrategies() throws Exception {
+        // b1+b3 approve → consensus reached, b2 rejects.
+        // Vote strategies merge ALL yields – the vote gates the transition,
+        // not the data. Every branch's domain output flows to downstream nodes.
+        // 3 branches needed: majority requires >50% (strict), so 2/3 > 1.5 passes.
         var agent1 = mock(Agent.class);
         var agent2 = mock(Agent.class);
         var agent3 = mock(Agent.class);
-        when(agentRegistry.getAgent("r1")).thenReturn(Optional.of(agent1));
-        when(agentRegistry.getAgent("r2")).thenReturn(Optional.of(agent2));
-        when(agentRegistry.getAgent("r3")).thenReturn(Optional.of(agent3));
-        when(agent1.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Good output"));
+        when(agentRegistry.getAgent("a1")).thenReturn(Optional.of(agent1));
+        when(agentRegistry.getAgent("a2")).thenReturn(Optional.of(agent2));
+        when(agentRegistry.getAgent("a3")).thenReturn(Optional.of(agent3));
+        when(agent1.execute(any(), any()))
+                .thenReturn(
+                        AgentResponse.TextResponse.of(
+                                """
+                {"score": 90, "approved": true, "recommendation": "Good",\
+                 "winner_data": "from-b1"}"""));
         when(agent2.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("Great output"));
-        when(agent3.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Poor output"));
-        when(rubricEngine.exists("quality")).thenReturn(true);
-        when(rubricEngine.evaluate(eq("quality"), any(), any()))
                 .thenReturn(
-                        RubricEvaluation.builder()
-                                .rubricId("quality")
-                                .score(90.0)
-                                .passed(true)
-                                .build())
+                        AgentResponse.TextResponse.of(
+                                """
+                {"score": 20, "approved": false, "recommendation": "Bad",\
+                 "loser_data": "from-b2"}"""));
+        when(agent3.execute(any(), any()))
                 .thenReturn(
-                        RubricEvaluation.builder()
-                                .rubricId("quality")
-                                .score(85.0)
-                                .passed(true)
-                                .build())
-                .thenReturn(
-                        RubricEvaluation.builder()
-                                .rubricId("quality")
-                                .score(40.0)
-                                .passed(false)
-                                .build());
+                        AgentResponse.TextResponse.of(
+                                """
+                {"score": 80, "approved": true, "recommendation": "Solid"}"""));
 
         var agents =
                 Map.of(
-                        "r1",
-                        AgentConfig.builder().id("r1").role("Reviewer").model("test").build(),
-                        "r2",
-                        AgentConfig.builder().id("r2").role("Reviewer").model("test").build(),
-                        "r3",
-                        AgentConfig.builder().id("r3").role("Reviewer").model("test").build());
+                        "a1", AgentConfig.builder().id("a1").role("Agent").model("test").build(),
+                        "a2", AgentConfig.builder().id("a2").role("Agent").model("test").build(),
+                        "a3", AgentConfig.builder().id("a3").role("Agent").model("test").build());
         var nodes = new HashMap<String, Node>();
         nodes.put(
                 "parallel",
                 ParallelNode.builder("parallel")
-                        .branch("b1", "r1", "Review", "quality")
-                        .branch("b2", "r2", "Review", "quality")
-                        .branch("b3", "r3", "Review", "quality")
+                        .branch(new Branch("b1", "a1", "Work", null, 1.0, List.of("winner_data")))
+                        .branch(new Branch("b2", "a2", "Work", null, 1.0, List.of("loser_data")))
+                        .branch(new Branch("b3", "a3", "Work", null, 1.0, List.of()))
                         .consensus(null, ConsensusStrategy.MAJORITY_VOTE)
                         .transitionRules(
                                 List.of(
-                                        new SuccessTransition("success-end"),
-                                        new FailureTransition(0, "failure-end")))
+                                        new SuccessTransition("end"),
+                                        new FailureTransition(0, "fail-end")))
                         .build());
-        nodes.put("success-end", end("success-end"));
-        nodes.put("failure-end", failEnd("failure-end"));
+        nodes.put("end", end("end"));
+        nodes.put("fail-end", failEnd("fail-end"));
         var workflow =
                 Workflow.builder()
-                        .id("rubric-consensus")
+                        .id("loser-isolation")
                         .agents(agents)
                         .nodes(nodes)
                         .startNode("parallel")
-                        .rubrics(Map.of("quality", "test-path"))
                         .build();
 
         var result = executor.execute(workflow, new HashMap<>());
 
-        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-        assertThat(((ExecutionResult.Completed) result).getExitStatus())
-                .isEqualTo(ExitStatus.SUCCESS);
+        var completed = (ExecutionResult.Completed) result;
+        assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+        assertThat(completed.getFinalState().getContext()).containsEntry("winner_data", "from-b1");
+        assertThat(completed.getFinalState().getContext()).containsEntry("loser_data", "from-b2");
     }
 
+    // — Branch isolation ————————————————————————————————————————————————————
+
     @Test
-    void shouldSkipRubricWhenBranchHasNoRubricId() throws Exception {
-        // Branches without rubricId fall back to keyword heuristics.
-        // "approve" keyword → APPROVE for both → UNANIMOUS → SUCCESS.
+    void shouldIsolateBranchContextFromSiblings() throws Exception {
+        // Both branches read a shared "input" key from parent context.
+        // Each produces a different yield. If isolation breaks, one branch
+        // could see the other's extracted values during execution.
         var agent1 = mock(Agent.class);
         var agent2 = mock(Agent.class);
-        when(agentRegistry.getAgent("r1")).thenReturn(Optional.of(agent1));
-        when(agentRegistry.getAgent("r2")).thenReturn(Optional.of(agent2));
+        when(agentRegistry.getAgent("a1")).thenReturn(Optional.of(agent1));
+        when(agentRegistry.getAgent("a2")).thenReturn(Optional.of(agent2));
         when(agent1.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("I approve this"));
+                .thenReturn(
+                        AgentResponse.TextResponse.of(
+                                """
+                {"score": 90, "approved": true, "recommendation": "Good",\
+                 "branch1_out": "from-branch-1"}"""));
         when(agent2.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("I approve this"));
+                .thenReturn(
+                        AgentResponse.TextResponse.of(
+                                """
+                {"score": 85, "approved": true, "recommendation": "OK",\
+                 "branch2_out": "from-branch-2"}"""));
 
         var agents =
                 Map.of(
-                        "r1",
-                        AgentConfig.builder().id("r1").role("Reviewer").model("test").build(),
-                        "r2",
-                        AgentConfig.builder().id("r2").role("Reviewer").model("test").build());
+                        "a1", AgentConfig.builder().id("a1").role("Agent").model("test").build(),
+                        "a2", AgentConfig.builder().id("a2").role("Agent").model("test").build());
         var nodes = new HashMap<String, Node>();
         nodes.put(
                 "parallel",
                 ParallelNode.builder("parallel")
-                        .branch("b1", "r1", "Review")
-                        .branch("b2", "r2", "Review")
+                        .branch(
+                                new Branch(
+                                        "b1",
+                                        "a1",
+                                        "Work on {input}",
+                                        null,
+                                        1.0,
+                                        List.of("branch1_out")))
+                        .branch(
+                                new Branch(
+                                        "b2",
+                                        "a2",
+                                        "Work on {input}",
+                                        null,
+                                        1.0,
+                                        List.of("branch2_out")))
                         .consensus(null, ConsensusStrategy.UNANIMOUS)
-                        .transitionRules(
-                                List.of(
-                                        new SuccessTransition("success-end"),
-                                        new FailureTransition(0, "failure-end")))
+                        .transitionRules(List.of(new SuccessTransition("end")))
                         .build());
-        nodes.put("success-end", end("success-end"));
-        nodes.put("failure-end", failEnd("failure-end"));
+        nodes.put("end", end("end"));
         var workflow =
                 Workflow.builder()
-                        .id("no-rubric-consensus")
+                        .id("isolation-test")
                         .agents(agents)
                         .nodes(nodes)
                         .startNode("parallel")
                         .build();
 
-        var result = executor.execute(workflow, new HashMap<>());
+        var initialContext = new HashMap<String, Object>();
+        initialContext.put("input", "shared-data");
 
-        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-        assertThat(((ExecutionResult.Completed) result).getExitStatus())
-                .isEqualTo(ExitStatus.SUCCESS);
-    }
+        var result = executor.execute(workflow, initialContext);
 
-    @Test
-    void shouldFailWhenUnanimousConsensusHasOneDissent() throws Exception {
-        // UNANIMOUS requires every branch to approve. Two approve, one rejects.
-        // The single "reject" keyword must break consensus → FAILURE transition.
-        // If the implementation treats UNANIMOUS like MAJORITY_VOTE, this test catches it.
-        var agent1 = mock(Agent.class);
-        var agent2 = mock(Agent.class);
-        var agent3 = mock(Agent.class);
-        when(agentRegistry.getAgent("r1")).thenReturn(Optional.of(agent1));
-        when(agentRegistry.getAgent("r2")).thenReturn(Optional.of(agent2));
-        when(agentRegistry.getAgent("r3")).thenReturn(Optional.of(agent3));
-        when(agent1.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("I approve this"));
-        when(agent2.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("I approve this"));
-        when(agent3.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("I reject this"));
-
-        var agents =
-                Map.of(
-                        "r1",
-                        AgentConfig.builder().id("r1").role("Reviewer").model("test").build(),
-                        "r2",
-                        AgentConfig.builder().id("r2").role("Reviewer").model("test").build(),
-                        "r3",
-                        AgentConfig.builder().id("r3").role("Reviewer").model("test").build());
-        var nodes = new HashMap<String, Node>();
-        nodes.put(
-                "parallel",
-                ParallelNode.builder("parallel")
-                        .branch("b1", "r1", "Review")
-                        .branch("b2", "r2", "Review")
-                        .branch("b3", "r3", "Review")
-                        .consensus(null, ConsensusStrategy.UNANIMOUS)
-                        .transitionRules(
-                                List.of(
-                                        new SuccessTransition("success-end"),
-                                        new FailureTransition(0, "failure-end")))
-                        .build());
-        nodes.put("success-end", end("success-end"));
-        nodes.put("failure-end", failEnd("failure-end"));
-        var workflow =
-                Workflow.builder()
-                        .id("unanimous-dissent")
-                        .agents(agents)
-                        .nodes(nodes)
-                        .startNode("parallel")
-                        .build();
-
-        var result = executor.execute(workflow, new HashMap<>());
-
-        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-        assertThat(((ExecutionResult.Completed) result).getExitStatus())
-                .isEqualTo(ExitStatus.FAILURE);
-    }
-
-    @Test
-    void shouldHandleRubricEvaluationFailureGracefully() throws Exception {
-        // rubricEngine throws RubricNotFoundException for branch evaluation.
-        // Executor must fall back to keyword heuristics rather than propagating the error.
-        var agent1 = mock(Agent.class);
-        var agent2 = mock(Agent.class);
-        when(agentRegistry.getAgent("r1")).thenReturn(Optional.of(agent1));
-        when(agentRegistry.getAgent("r2")).thenReturn(Optional.of(agent2));
-        when(agent1.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("I approve this"));
-        when(agent2.execute(any(), any()))
-                .thenReturn(AgentResponse.TextResponse.of("I approve this"));
-        when(rubricEngine.exists("quality")).thenReturn(true);
-        when(rubricEngine.evaluate(eq("quality"), any(), any()))
-                .thenThrow(new RubricNotFoundException("Rubric not found: quality"));
-
-        var agents =
-                Map.of(
-                        "r1",
-                        AgentConfig.builder().id("r1").role("Reviewer").model("test").build(),
-                        "r2",
-                        AgentConfig.builder().id("r2").role("Reviewer").model("test").build());
-        var nodes = new HashMap<String, Node>();
-        nodes.put(
-                "parallel",
-                ParallelNode.builder("parallel")
-                        .branch("b1", "r1", "Review", "quality")
-                        .branch("b2", "r2", "Review", "quality")
-                        .consensus(null, ConsensusStrategy.UNANIMOUS)
-                        .transitionRules(
-                                List.of(
-                                        new SuccessTransition("success-end"),
-                                        new FailureTransition(0, "failure-end")))
-                        .build());
-        nodes.put("success-end", end("success-end"));
-        nodes.put("failure-end", failEnd("failure-end"));
-        var workflow =
-                Workflow.builder()
-                        .id("rubric-failure-fallback")
-                        .agents(agents)
-                        .nodes(nodes)
-                        .startNode("parallel")
-                        .rubrics(Map.of("quality", "test-path"))
-                        .build();
-
-        // rubric fails → keyword "approve" fallback → unanimous → SUCCESS
-        var result = executor.execute(workflow, new HashMap<>());
-
-        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-        assertThat(((ExecutionResult.Completed) result).getExitStatus())
-                .isEqualTo(ExitStatus.SUCCESS);
+        var completed = (ExecutionResult.Completed) result;
+        assertThat(completed.getExitStatus()).isEqualTo(ExitStatus.SUCCESS);
+        // Both winners' yields merged
+        assertThat(completed.getFinalState().getContext())
+                .containsEntry("branch1_out", "from-branch-1")
+                .containsEntry("branch2_out", "from-branch-2");
+        // Parent input survived untouched
+        assertThat(completed.getFinalState().getContext()).containsEntry("input", "shared-data");
     }
 
     // — helpers ———————————————————————————————————————————————————————————
@@ -360,23 +274,23 @@ class WorkflowExecutorParallelTest extends WorkflowExecutorTestBase {
         var agents =
                 Map.of(
                         "reviewer1",
-                        AgentConfig.builder()
-                                .id("reviewer1")
-                                .role("Reviewer")
-                                .model("test")
-                                .build(),
+                                AgentConfig.builder()
+                                        .id("reviewer1")
+                                        .role("Reviewer")
+                                        .model("test")
+                                        .build(),
                         "reviewer2",
-                        AgentConfig.builder()
-                                .id("reviewer2")
-                                .role("Reviewer")
-                                .model("test")
-                                .build(),
+                                AgentConfig.builder()
+                                        .id("reviewer2")
+                                        .role("Reviewer")
+                                        .model("test")
+                                        .build(),
                         "reviewer3",
-                        AgentConfig.builder()
-                                .id("reviewer3")
-                                .role("Reviewer")
-                                .model("test")
-                                .build());
+                                AgentConfig.builder()
+                                        .id("reviewer3")
+                                        .role("Reviewer")
+                                        .model("test")
+                                        .build());
         var nodes = new HashMap<String, Node>();
         nodes.put(
                 "parallel",

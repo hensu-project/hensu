@@ -1,5 +1,6 @@
 package io.hensu.core.workflow.state;
 
+import io.hensu.core.execution.EngineVariables;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -43,7 +44,7 @@ public final class WorkflowStateSchema {
     /// - `recommendation` — plain-string improvement feedback or review reasoning, injected
     ///                      automatically on any node with `onScore` or `onApproval` routing
     public static final Set<String> ENGINE_VARIABLES =
-            Set.of("score", "approved", "recommendation");
+            Set.of(EngineVariables.SCORE, EngineVariables.APPROVED, EngineVariables.RECOMMENDATION);
 
     private final List<StateVariableDeclaration> variables;
     private final Map<String, StateVariableDeclaration> index;

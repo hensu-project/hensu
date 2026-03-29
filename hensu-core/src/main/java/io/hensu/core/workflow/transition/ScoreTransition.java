@@ -1,5 +1,6 @@
 package io.hensu.core.workflow.transition;
 
+import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.state.HensuState;
@@ -39,7 +40,7 @@ public record ScoreTransition(List<ScoreCondition> conditions) implements Transi
     private Double extractScore(HensuState state) {
         Map<String, Object> context = state.getContext();
         if (context == null) return null;
-        return parseScore(context.get("score"));
+        return parseScore(context.get(EngineVariables.SCORE));
     }
 
     private Double parseScore(Object value) {

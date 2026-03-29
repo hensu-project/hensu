@@ -14,6 +14,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
 
 class WorkflowExecutorTemplateResolutionTest extends WorkflowExecutorTestBase {
 
@@ -150,5 +152,63 @@ class WorkflowExecutorTemplateResolutionTest extends WorkflowExecutorTestBase {
         assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
         assertThat(((ExecutionResult.Completed) result).getFinalState().getContext().get("step1"))
                 .isEqualTo("AI research findings");
+    }
+
+    @Test
+    void shouldResolveWritesVariableBeforeWipingIt() throws Exception {
+        // Regression: a node that writes("article") AND references {article} in its prompt
+        // must resolve the template BEFORE the stale-writes cleanup removes the key.
+        // This is the backtrack-routing pattern: draft → review → refine,
+        // where refine reads the old article to produce a new one.
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("read-modify-write")
+                        .agent(agentCfg())
+                        .startNode(
+                                StandardNode.builder()
+                                        .id("draft")
+                                        .agentId("test-agent")
+                                        .prompt("Write about {topic}")
+                                        .writes(List.of("article"))
+                                        .transitionRules(List.of(new SuccessTransition("refine")))
+                                        .build())
+                        .node(
+                                StandardNode.builder()
+                                        .id("refine")
+                                        .agentId("test-agent")
+                                        .prompt("Refine: {article}")
+                                        .writes(List.of("article"))
+                                        .transitionRules(List.of(new SuccessTransition("end")))
+                                        .build())
+                        .node(end("end"))
+                        .build();
+
+        when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
+
+        // draft produces the initial article
+        when(mockAgent.execute(any(), any()))
+                .thenReturn(
+                        AgentResponse.TextResponse.of(
+                                """
+                                {"article": "First draft content"}"""))
+                .thenReturn(
+                        AgentResponse.TextResponse.of(
+                                """
+                                {"article": "Refined content"}"""));
+
+        var ctx = new HashMap<String, Object>();
+        ctx.put("topic", "AI");
+        var result = executor.execute(workflow, ctx);
+
+        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
+
+        // Verify refine node received the article in its prompt, not an empty string
+        var captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mockAgent, Mockito.times(2)).execute(captor.capture(), any());
+        String refinePrompt = captor.getAllValues().get(1);
+        assertThat(refinePrompt).contains("First draft content");
+
+        // Final state should have the refined article
+        var finalState = ((ExecutionResult.Completed) result).getFinalState();
+        assertThat(finalState.getContext().get("article")).isEqualTo("Refined content");
     }
 }

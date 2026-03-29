@@ -163,6 +163,23 @@ class ParallelNodeBuilderTest {
                 .isInstanceOf(IllegalStateException::class.java)
                 .hasMessageContaining("must have an agent")
         }
+
+        @Test
+        fun `should reject yields that collide with engine variables`() {
+            val builder = ParallelNodeBuilder("parallel-1", workingDir)
+
+            assertThatThrownBy {
+                    builder.apply {
+                        branch("b1") {
+                            agent = "reviewer"
+                            prompt = "Review"
+                            yields("score")
+                        }
+                    }
+                }
+                .isInstanceOf(IllegalArgumentException::class.java)
+                .hasMessageContaining("reserved engine variable")
+        }
     }
 
     @Nested

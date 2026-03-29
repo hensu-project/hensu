@@ -7,11 +7,10 @@ import io.hensu.core.workflow.transition.ScoreTransition;
 
 /// Injects the `recommendation` string output requirement into the node prompt.
 ///
-/// Applied when the node has a {@link ScoreTransition} or {@link ApprovalTransition} rule.
-/// Both transition types imply that the agent is making a judgment — scoring content or
-/// approving/rejecting it — and must justify that judgment with improvement feedback or
-/// review reasoning. Without this field, downstream prompt variables such as
-/// `{recommendation}` resolve to empty strings and the improvement loop breaks.
+/// Applied when the node has a {@link ScoreTransition} or {@link ApprovalTransition} rule,
+/// or when executing a consensus branch that requires self-scoring (non-JUDGE_DECIDES
+/// strategies). Ensures the agent justifies its judgment with improvement feedback or
+/// review reasoning.
 ///
 /// ### Engine variable contract
 ///
@@ -37,12 +36,14 @@ public final class RecommendationVariableInjector implements EngineVariableInjec
 
     @Override
     public String inject(String prompt, Node node, ExecutionContext ctx) {
-        boolean applies =
+        boolean needs =
                 node.getTransitionRules().stream()
-                        .anyMatch(
-                                r ->
-                                        r instanceof ScoreTransition
-                                                || r instanceof ApprovalTransition);
-        return applies ? prompt + INSTRUCTION : prompt;
+                                .anyMatch(
+                                        r ->
+                                                r instanceof ScoreTransition
+                                                        || r instanceof ApprovalTransition)
+                        || (ctx.getBranchConfig() != null
+                                && ctx.getBranchConfig().needsSelfScoring());
+        return needs ? prompt + INSTRUCTION : prompt;
     }
 }

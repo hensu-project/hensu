@@ -1,11 +1,13 @@
 package io.hensu.dsl.builders
 
+import io.hensu.core.execution.EngineVariables
 import io.hensu.core.execution.parallel.Branch
 import io.hensu.core.execution.parallel.ConsensusConfig
 import io.hensu.core.execution.parallel.ConsensusStrategy
 import io.hensu.core.workflow.node.ParallelNode
 import io.hensu.dsl.WorkingDirectory
 import io.hensu.dsl.extensions.resolveAsPrompt
+import java.util.logging.Logger
 
 /**
  * DSL builder for parallel nodes with consensus-based outcome evaluation.
@@ -45,6 +47,7 @@ import io.hensu.dsl.extensions.resolveAsPrompt
 @WorkflowDsl
 class ParallelNodeBuilder(private val id: String, private val workingDirectory: WorkingDirectory) :
     BaseNodeBuilder, ConsensusMarkers {
+    private val logger = Logger.getLogger(ParallelNodeBuilder::class.java.name)
     private val branches = mutableListOf<BranchBuilder>()
     private var consensusConfig: ConsensusConfig? = null
     private val transitionBuilder = TransitionBuilder()
@@ -128,6 +131,21 @@ class ParallelNodeBuilder(private val id: String, private val workingDirectory: 
 
         val builtBranches = branches.map { it.build() }
 
+        // Warn when consensus branches declare no yields – likely an author oversight.
+        // Pure go/no-go gating (no domain output) is valid but rare.
+        if (consensusConfig != null) {
+            builtBranches
+                .filter { it.yields.isEmpty() }
+                .forEach { branch ->
+                    logger.warning(
+                        "Parallel node '$id': branch '${branch.id}' participates in consensus " +
+                            "but declares no yields(). It will contribute no domain data to the " +
+                            "context after consensus. If this is intentional (pure vote), ignore " +
+                            "this warning."
+                    )
+                }
+        }
+
         return ParallelNode.builder(id)
             .branches(builtBranches)
             .consensus(consensusConfig)
@@ -162,6 +180,35 @@ class BranchBuilder(private val id: String, private val workingDirectory: Workin
     /** Weight for weighted voting consensus. Default: 1.0. */
     var weight: Double = 1.0
 
+    private val yieldFields = mutableListOf<String>()
+
+    /**
+     * Declares state variable names this branch produces as structured output.
+     *
+     * Yielded fields are extracted from the agent's JSON response by the processor pipeline and
+     * promoted to the parent context when the branch wins consensus.
+     *
+     * Example:
+     * ```kotlin
+     * branch("analyzer") {
+     *     agent = "api-analyst"
+     *     prompt = "Analyze the API: {spec}"
+     *     yields("api_schema", "summary")
+     * }
+     * ```
+     *
+     * @param fields state variable names to extract from agent output
+     */
+    fun yields(vararg fields: String) {
+        for (field in fields) {
+            require(!EngineVariables.isEngineVar(field)) {
+                "Branch '$id': yield field '$field' is a reserved engine variable. " +
+                    "Use a different name (e.g. 'review_$field')."
+            }
+        }
+        yieldFields.addAll(fields.toList())
+    }
+
     /**
      * Builds the [Branch] from this builder.
      *
@@ -175,6 +222,7 @@ class BranchBuilder(private val id: String, private val workingDirectory: Workin
             prompt.resolveAsPrompt(workingDirectory) ?: "",
             rubric,
             weight,
+            yieldFields,
         )
 }
 
