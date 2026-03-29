@@ -1,5 +1,6 @@
 package io.hensu.core.execution.pipeline;
 
+import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.util.AgentOutputValidator;
@@ -66,17 +67,9 @@ public final class OutputExtractionPostProcessor implements PostNodeExecutionPro
 
         String output = result.getOutput().toString();
 
-        if (AgentOutputValidator.containsDangerousChars(output)) {
-            return rejectOutput(state, node.getId(), "contains illegal control characters");
-        }
-
-        if (AgentOutputValidator.containsUnicodeTricks(output)) {
-            return rejectOutput(state, node.getId(), "contains Unicode manipulation characters");
-        }
-
-        if (AgentOutputValidator.exceedsSizeLimit(
-                output, AgentOutputValidator.MAX_LLM_OUTPUT_BYTES)) {
-            return rejectOutput(state, node.getId(), "exceeds maximum allowed size");
+        Optional<String> violation = AgentOutputValidator.validate(output);
+        if (violation.isPresent()) {
+            return rejectOutput(state, node.getId(), violation.get());
         }
 
         if (node instanceof StandardNode standardNode) {
@@ -122,14 +115,14 @@ public final class OutputExtractionPostProcessor implements PostNodeExecutionPro
         boolean hasApproval = false;
         for (var rule : node.getTransitionRules()) {
             if (rule instanceof ScoreTransition) {
-                vars.add("score");
+                vars.add(EngineVariables.SCORE);
                 hasScore = true;
             } else if (rule instanceof ApprovalTransition) {
-                vars.add("approved");
+                vars.add(EngineVariables.APPROVED);
                 hasApproval = true;
             }
         }
-        if (hasScore || hasApproval) vars.add("recommendation");
+        if (hasScore || hasApproval) vars.add(EngineVariables.RECOMMENDATION);
         return vars;
     }
 

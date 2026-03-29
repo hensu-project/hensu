@@ -6,9 +6,8 @@ import io.hensu.core.workflow.transition.ScoreTransition;
 
 /// Injects the `score` numeric output requirement into the node prompt.
 ///
-/// Applied when the node has a {@link ScoreTransition} rule. This includes both
-/// rubric nodes (which must always pair with an {@code onScore} transition) and
-/// self-scoring nodes without a rubric.
+/// Applied when the node has a {@link ScoreTransition} rule or when executing
+/// a consensus branch that requires self-scoring (non-JUDGE_DECIDES strategies).
 ///
 /// @see EngineVariableInjector
 /// @see io.hensu.core.workflow.transition.ScoreTransition
@@ -24,8 +23,10 @@ public final class ScoreVariableInjector implements EngineVariableInjector {
 
     @Override
     public String inject(String prompt, Node node, ExecutionContext ctx) {
-        boolean hasScoreTransition =
-                node.getTransitionRules().stream().anyMatch(r -> r instanceof ScoreTransition);
-        return hasScoreTransition ? prompt + INSTRUCTION : prompt;
+        boolean needs =
+                node.getTransitionRules().stream().anyMatch(r -> r instanceof ScoreTransition)
+                        || (ctx.getBranchConfig() != null
+                                && ctx.getBranchConfig().needsSelfScoring());
+        return needs ? prompt + INSTRUCTION : prompt;
     }
 }

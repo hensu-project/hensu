@@ -279,6 +279,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── DefaultNodeExecutorRegistry.java # Default implementation
 │   │   ├── NodeResult.java                # Primary return type for all node executors
 │   │   ├── ExecutionContext.java           # Per-execution context carrier (state + tenant)
+│   │   ├── AgentLifecycleRunner.java      # Composition-based agent call: enrich → execute → extract
 │   │   ├── AgenticNodeExecutor.java       # Drives preparation + execution PlanPipelines for StandardNode
 │   │   ├── StandardNodeExecutor.java      # LLM prompt execution (no planning)
 │   │   ├── ParallelNodeExecutor.java      # Concurrent branch execution
@@ -289,14 +290,16 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── GenericNodeExecutor.java       # Custom node handlers
 │   │   ├── SubWorkflowNodeExecutor.java   # Nested workflow execution
 │   │   └── EndNodeExecutor.java           # Terminal nodes
+│   ├── EngineVariables.java                   # SSOT for engine variable names (score, approved, recommendation)
 │   ├── enricher/
 │   │   ├── EngineVariableInjector.java        # Single-injector interface
 │   │   ├── EngineVariablePromptEnricher.java  # Composite enricher — runs injector chain before each agent call
 │   │   ├── RubricPromptInjector.java          # Injects rubric criteria when node.rubricId is set
-│   │   ├── ScoreVariableInjector.java         # Injects `score` requirement on ScoreTransition nodes
-│   │   ├── ApprovalVariableInjector.java      # Injects `approved` requirement on ApprovalTransition nodes
-│   │   ├── RecommendationVariableInjector.java # Injects `recommendation` on score/approval nodes
-│   │   └── WritesVariableInjector.java        # Injects field requirements for writes() variables with optional description hints
+│   │   ├── ScoreVariableInjector.java         # Injects `score` requirement on ScoreTransition nodes or consensus branches
+│   │   ├── ApprovalVariableInjector.java      # Injects `approved` requirement on ApprovalTransition nodes or consensus branches
+│   │   ├── RecommendationVariableInjector.java # Injects `recommendation` on score/approval nodes or consensus branches
+│   │   ├── WritesVariableInjector.java        # Injects field requirements for writes() variables with optional description hints
+│   │   └── YieldsVariableInjector.java        # Injects field requirements for branch yields() variables
 │   ├── pipeline/
 │   │   ├── NodeExecutionProcessor.java          # Base processor interface
 │   │   ├── PreNodeExecutionProcessor.java       # Pre-execution processor marker interface
@@ -326,6 +329,7 @@ hensu-core/src/main/java/io/hensu/core/
 │       ├── ConsensusConfig.java   # Consensus configuration (strategy, threshold)
 │       ├── ConsensusEvaluator.java # Evaluates branch results against consensus rules
 │       ├── ConsensusResult.java   # Outcome of consensus evaluation
+│       ├── BranchExecutionConfig.java # Typed branch metadata on ExecutionContext (consensus, yields)
 │       ├── FailureMarker.java     # Sentinel for failed branches in fork/join
 │       └── ForkJoinContext.java   # Shared fork/join state
 ├── workflow/
@@ -390,7 +394,7 @@ hensu-core/src/main/java/io/hensu/core/
 | Node              | Description                                                                                                        |
 |-------------------|--------------------------------------------------------------------------------------------------------------------|
 | `StandardNode`    | Executes an LLM prompt, optionally writes structured state variables via `writes`, and transitions based on result |
-| `ParallelNode`    | Runs multiple branches concurrently                                                                                |
+| `ParallelNode`    | Runs multiple branches concurrently; branches declare domain output via `yields()` which merge into workflow state |
 | `ForkNode`        | Splits execution into parallel paths                                                                               |
 | `JoinNode`        | Merges parallel results with configurable strategy                                                                 |
 | `LoopNode`        | Iterates until a condition or max iterations                                                                       |

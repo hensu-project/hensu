@@ -192,14 +192,17 @@ parallel("review-committee") {
     branch("reviewer1") {
         agent = "reviewer"
         prompt = "Review the content: {previous-output}"
+        yields("feedback", "suggestions")
     }
     branch("reviewer2") {
         agent = "reviewer"
         prompt = "Review the content: {previous-output}"
+        yields("feedback", "suggestions")
     }
     branch("reviewer3") {
         agent = "reviewer"
         prompt = "Review the content: {previous-output}"
+        yields("feedback", "suggestions")
     }
 
     consensus {
@@ -214,12 +217,13 @@ parallel("review-committee") {
 
 #### Branch Properties
 
-| Property | Type    | Required | Description                                                                                                                                                           |
-|----------|---------|----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `agent`  | String  | Yes      | ID of the agent to execute                                                                                                                                            |
-| `prompt` | String? | No       | Prompt template or `.md` file reference                                                                                                                               |
-| `rubric` | String? | No       | ID of rubric for branch evaluation. When set, the rubric's pass/fail result determines the branch's consensus vote (APPROVE/REJECT), overriding text-based heuristics |
-| `weight` | Double  | No       | Vote weight for `WEIGHTED_VOTE` consensus strategy. Higher values give more influence to the branch score (default: 1.0)                                              |
+| Property   | Type          | Required | Description                                                                                                                                                                         |
+|------------|---------------|----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `agent`    | String        | Yes      | ID of the agent to execute                                                                                                                                                          |
+| `prompt`   | String?       | No       | Prompt template or `.md` file reference                                                                                                                                             |
+| `rubric`   | String?       | No       | ID of rubric for branch evaluation. When set, the rubric's pass/fail result determines the branch's consensus vote (APPROVE/REJECT), overriding text-based heuristics               |
+| `weight`   | Double        | No       | Vote weight for `WEIGHTED_VOTE` consensus strategy. Higher values give more influence to the branch score (default: 1.0)                                                            |
+| `yields()` | vararg String | No       | State variable names this branch produces as structured domain output. The agent's JSON response must include these fields; the engine extracts and merges them into workflow state |
 
 #### Rubric-Based Consensus
 
@@ -228,7 +232,18 @@ When a branch declares a `rubric`, the engine evaluates the branch output agains
 - **Rubric passed** → branch votes **APPROVE** with the rubric score
 - **Rubric failed** → branch votes **REJECT** with the rubric score
 
-Branches without a rubric fall back to text-based heuristics (keyword detection, score pattern extraction). This allows mixing rubric-evaluated and heuristic-evaluated branches in the same parallel node.
+Branches without a rubric use engine-injected self-scoring – the agent produces `score`, `approved`, and `recommendation` fields automatically for vote-based strategies (not JUDGE_DECIDES).
+
+#### Yield Merge Semantics
+
+Votes and yields serve different purposes. Votes gate the transition path (`onConsensus` / `onNoConsensus`). Yields carry domain data into workflow state.
+
+| Strategy                                      | Merge behavior                                                        |
+|-----------------------------------------------|-----------------------------------------------------------------------|
+| `MAJORITY_VOTE`, `UNANIMOUS`, `WEIGHTED_VOTE` | **All** branch yields merge into state, regardless of individual vote |
+| `JUDGE_DECIDES`                               | Only the **winning** branch's yields merge into state                 |
+
+When multiple branches yield the same field name, later branches overwrite earlier ones (map merge order matches branch declaration order).
 
 #### Consensus Configuration
 
@@ -240,12 +255,12 @@ Branches without a rubric fall back to text-based heuristics (keyword detection,
 
 #### Consensus Strategies
 
-| Strategy        | Description                                                                 |
-|-----------------|-----------------------------------------------------------------------------|
-| `MAJORITY_VOTE` | Consensus when approvals >= ceil(total * threshold). Default threshold: 50% |
-| `WEIGHTED_VOTE` | Weighted approval ratio must exceed threshold. ABSTAIN votes excluded       |
-| `UNANIMOUS`     | All branches must vote APPROVE                                              |
-| `JUDGE_DECIDES` | External judge agent reviews all branch outputs and makes final decision    |
+| Strategy        | Description                                                                          |
+|-----------------|--------------------------------------------------------------------------------------|
+| `MAJORITY_VOTE` | Consensus when approvals strictly exceed `total * threshold`. Default threshold: 50% |
+| `WEIGHTED_VOTE` | Weighted approval ratio must meet or exceed threshold                                |
+| `UNANIMOUS`     | All branches must vote APPROVE                                                       |
+| `JUDGE_DECIDES` | External judge agent reviews all branch outputs and makes final decision             |
 
 ### Fork Node
 
@@ -1017,10 +1032,12 @@ fun contentPipeline() = workflow("ContentPipeline") {
             branch("quality-review") {
                 agent = "reviewer"
                 prompt = "Review for quality: {article}"
+                yields("quality_feedback")
             }
             branch("accuracy-review") {
                 agent = "reviewer"
                 prompt = "Review for accuracy: {article}"
+                yields("accuracy_feedback")
             }
 
             consensus {

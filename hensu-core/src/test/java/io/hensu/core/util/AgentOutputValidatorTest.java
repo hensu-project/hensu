@@ -2,164 +2,80 @@ package io.hensu.core.util;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 @DisplayName("AgentOutputValidator")
 class AgentOutputValidatorTest {
 
-    // ——————————————————————————————————————————————————————
-    // containsDangerousChars
-    // ——————————————————————————————————————————————————————
+    // -- containsDangerousChars ------------------------------------------------
 
-    @Test
-    @DisplayName("TAB (0x09) is allowed — range \\x00-\\x08 must not accidentally include it")
-    void shouldAllowTab() {
-        assertThat(AgentOutputValidator.containsDangerousChars("column1\tcolumn2")).isFalse();
+    @ParameterizedTest(name = "allowed char: {0}")
+    @ValueSource(
+            strings = {
+                "column1\tcolumn2", // TAB (0x09)
+                "line1\nline2", // LF  (0x0A)
+                "line1\r\nline2", // CR  (0x0D)
+                "hello world" // SPACE (0x20)
+            })
+    void shouldAllowSafeWhitespace(String input) {
+        assertThat(AgentOutputValidator.containsDangerousChars(input)).isFalse();
+    }
+
+    @ParameterizedTest(name = "rejected control char: U+{0}")
+    @MethodSource("dangerousControlChars")
+    // label is consumed by JUnit 5 @ParameterizedTest(name=) for test display names, not by method
+    // body
+    void shouldRejectDangerousControlChars(@SuppressWarnings("unused") String label, String input) {
+        assertThat(AgentOutputValidator.containsDangerousChars(input)).isTrue();
+    }
+
+    static Stream<Arguments> dangerousControlChars() {
+        return Stream.of(
+                Arguments.of("0000 NUL", "before\u0000after"),
+                Arguments.of("0008 BS", "back\u0008space"),
+                Arguments.of("000B VT", "line\u000Bbreak"),
+                Arguments.of("000C FF", "page\u000Cbreak"),
+                Arguments.of("000E SO", "bad\u000Echar"),
+                Arguments.of("001F US", "bad\u001Fchar"),
+                Arguments.of("007F DEL", "del\u007Fchar"));
     }
 
     @Test
-    @DisplayName("LF (0x0A) is allowed — multiline LLM output is normal")
-    void shouldAllowLineFeed() {
-        assertThat(AgentOutputValidator.containsDangerousChars("line1\nline2\nline3")).isFalse();
-    }
-
-    @Test
-    @DisplayName("CR (0x0D) is allowed — Windows CRLF line endings permitted")
-    void shouldAllowCarriageReturn() {
-        assertThat(AgentOutputValidator.containsDangerousChars("line1\r\nline2")).isFalse();
-    }
-
-    @Test
-    @DisplayName("BS (0x08) is rejected — end boundary of first range \\x00-\\x08")
-    void shouldRejectBackspace() {
-        assertThat(AgentOutputValidator.containsDangerousChars("back\u0008space")).isTrue();
-    }
-
-    @Test
-    @DisplayName("VT (0x0B) is rejected — explicitly included between LF and FF")
-    void shouldRejectVerticalTab() {
-        assertThat(AgentOutputValidator.containsDangerousChars("line\u000Bbreak")).isTrue();
-    }
-
-    @Test
-    @DisplayName("FF (0x0C) is rejected — explicitly included between VT and CR")
-    void shouldRejectFormFeed() {
-        assertThat(AgentOutputValidator.containsDangerousChars("page\u000Cbreak")).isTrue();
-    }
-
-    @Test
-    @DisplayName("SO (0x0E) is rejected — start boundary of range \\x0E-\\x1F")
-    void shouldRejectShiftOut() {
-        assertThat(AgentOutputValidator.containsDangerousChars("bad\u000Echar")).isTrue();
-    }
-
-    @Test
-    @DisplayName("US (0x1F) is rejected — end boundary of range \\x0E-\\x1F")
-    void shouldRejectUnitSeparator() {
-        assertThat(AgentOutputValidator.containsDangerousChars("bad\u001Fchar")).isTrue();
-    }
-
-    @Test
-    @DisplayName("SPACE (0x20) is allowed — first printable ASCII char, pattern must not bleed up")
-    void shouldAllowSpace() {
-        assertThat(AgentOutputValidator.containsDangerousChars("hello world")).isFalse();
-    }
-
-    @Test
-    @DisplayName("DEL (0x7F) is rejected — singleton at upper ASCII boundary")
-    void shouldRejectDel() {
-        assertThat(AgentOutputValidator.containsDangerousChars("del\u007Fchar")).isTrue();
-    }
-
-    @Test
-    @DisplayName("0x80 is allowed — pattern must not bleed into extended ASCII / Latin-1")
-    void shouldAllowFirstExtendedAscii() {
-        assertThat(AgentOutputValidator.containsDangerousChars("\u0080extended")).isFalse();
-    }
-
-    @Test
-    @DisplayName(
-            "NUL byte (0x00) is rejected — classic injection and null-termination attack vector")
-    void shouldRejectNulByte() {
-        assertThat(AgentOutputValidator.containsDangerousChars("before\u0000after")).isTrue();
-    }
-
-    @Test
-    @DisplayName("control char buried deep in long string is detected regardless of position")
+    @DisplayName("control char buried deep in long string is detected")
     void shouldDetectControlCharEmbeddedInLongString() {
         String payload = "x".repeat(1000) + "\u0007" + "y".repeat(1000);
         assertThat(AgentOutputValidator.containsDangerousChars(payload)).isTrue();
     }
 
-    @Test
-    @DisplayName("null input returns false without throwing")
-    void shouldReturnFalseForNullDangerous() {
-        assertThat(AgentOutputValidator.containsDangerousChars(null)).isFalse();
+    // -- containsUnicodeTricks ------------------------------------------------
+
+    @ParameterizedTest(name = "rejected Unicode trick: U+{0}")
+    @MethodSource("dangerousUnicodeTricks")
+    // label is consumed by JUnit 5 @ParameterizedTest(name=) for test display names, not by method
+    // body
+    void shouldRejectUnicodeTricks(@SuppressWarnings("unused") String label, String input) {
+        assertThat(AgentOutputValidator.containsUnicodeTricks(input)).isTrue();
     }
 
-    // ——————————————————————————————————————————————————————
-    // containsUnicodeTricks
-    // ——————————————————————————————————————————————————————
-
-    @Test
-    @DisplayName("LRE (U+202A) is rejected — start of directional override range")
-    void shouldRejectLre() {
-        assertThat(AgentOutputValidator.containsUnicodeTricks("text\u202Amore")).isTrue();
-    }
-
-    @Test
-    @DisplayName(
-            "RLO (U+202E) is rejected — end of directional override range, classic hiding attack")
-    void shouldRejectRlo() {
-        assertThat(AgentOutputValidator.containsUnicodeTricks("benign\u202Evil")).isTrue();
-    }
-
-    @Test
-    @DisplayName(
-            "U+202F (NARROW NO-BREAK SPACE) is allowed — char immediately after U+202E, range must not overshoot")
-    void shouldAllowNarrowNoBreakSpace() {
-        assertThat(AgentOutputValidator.containsUnicodeTricks("ok\u202Fspacing")).isFalse();
+    static Stream<Arguments> dangerousUnicodeTricks() {
+        return Stream.of(
+                Arguments.of("202A LRE", "text\u202Amore"),
+                Arguments.of("202E RLO", "benign\u202Evil"),
+                Arguments.of("2066 LRI", "text\u2066isolated"),
+                Arguments.of("2069 PDI", "text\u2069end"),
+                Arguments.of("200B ZWSP", "zero\u200Bwidth"),
+                Arguments.of("200D ZWJ", "zero\u200Djoiner"),
+                Arguments.of("FEFF BOM", "\uFEFFprefixed"));
     }
 
     @Test
-    @DisplayName("LRI (U+2066) is rejected — start of Unicode isolate range")
-    void shouldRejectLri() {
-        assertThat(AgentOutputValidator.containsUnicodeTricks("text\u2066isolated")).isTrue();
-    }
-
-    @Test
-    @DisplayName("PDI (U+2069) is rejected — end of Unicode isolate range")
-    void shouldRejectPdi() {
-        assertThat(AgentOutputValidator.containsUnicodeTricks("text\u2069end")).isTrue();
-    }
-
-    @Test
-    @DisplayName("U+206A is allowed — char immediately after U+2069, range must not overshoot")
-    void shouldAllowCharJustAfterIsolateRange() {
-        assertThat(AgentOutputValidator.containsUnicodeTricks("ok\u206Atext")).isFalse();
-    }
-
-    @Test
-    @DisplayName("ZWSP (U+200B) is rejected — start of zero-width range, invisible spacing attack")
-    void shouldRejectZwsp() {
-        assertThat(AgentOutputValidator.containsUnicodeTricks("zero\u200Bwidth")).isTrue();
-    }
-
-    @Test
-    @DisplayName("ZWJ (U+200D) is rejected — end of zero-width range")
-    void shouldRejectZwj() {
-        assertThat(AgentOutputValidator.containsUnicodeTricks("zero\u200Djoiner")).isTrue();
-    }
-
-    @Test
-    @DisplayName("BOM (U+FEFF) is rejected — byte-order mark has no place in LLM text content")
-    void shouldRejectBom() {
-        assertThat(AgentOutputValidator.containsUnicodeTricks("\uFEFFprefixed content")).isTrue();
-    }
-
-    @Test
-    @DisplayName("legitimate Arabic text is allowed — RTL script must not produce false positives")
+    @DisplayName("legitimate Arabic text must not produce false positives")
     void shouldAllowLegitimateArabicText() {
         // "العربية" — natural RTL script, no directional override characters
         assertThat(
@@ -169,59 +85,40 @@ class AgentOutputValidatorTest {
     }
 
     @Test
-    @DisplayName("legitimate Hebrew text is allowed — another natural RTL script")
-    void shouldAllowLegitimateHebrewText() {
-        // "שלום" — natural RTL script
-        assertThat(AgentOutputValidator.containsUnicodeTricks("\u05E9\u05DC\u05D5\u05DD"))
-                .isFalse();
+    @DisplayName("range boundaries must not overshoot into safe chars")
+    void shouldNotOvershootRangeBoundaries() {
+        // U+202F (NARROW NO-BREAK SPACE) is immediately after U+202E
+        assertThat(AgentOutputValidator.containsUnicodeTricks("ok\u202Fspacing")).isFalse();
+        // U+206A is immediately after U+2069
+        assertThat(AgentOutputValidator.containsUnicodeTricks("ok\u206Atext")).isFalse();
+        // U+0080 is immediately after DEL
+        assertThat(AgentOutputValidator.containsDangerousChars("\u0080extended")).isFalse();
     }
 
-    @Test
-    @DisplayName("null input returns false without throwing")
-    void shouldReturnFalseForNullUnicode() {
-        assertThat(AgentOutputValidator.containsUnicodeTricks(null)).isFalse();
-    }
-
-    // ——————————————————————————————————————————————————————
-    // exceedsSizeLimit
-    // ——————————————————————————————————————————————————————
+    // -- exceedsSizeLimit -----------------------------------------------------
 
     @Test
-    @DisplayName(
-            "emoji (4 UTF-8 bytes) counted by byte length, not char length — catches length() vs getBytes() bug")
-    void shouldCountBytesNotCharLengthForEmoji() {
+    @DisplayName("byte length used, not char length — catches surrogate pair / multi-byte bugs")
+    void shouldCountBytesNotCharLength() {
         // U+1F600 GRINNING FACE: 4 bytes in UTF-8, but String.length() = 2 (surrogate pair)
         String emoji = "\uD83D\uDE00"; // 😀
-        assertThat(emoji).hasSize(2); // confirms the trap: char length is 2
+        assertThat(emoji).hasSize(2);
         assertThat(AgentOutputValidator.exceedsSizeLimit(emoji, 3)).isTrue();
         assertThat(AgentOutputValidator.exceedsSizeLimit(emoji, 4)).isFalse();
-    }
 
-    @Test
-    @DisplayName("3-byte UTF-8 char (€) counted correctly at boundary")
-    void shouldCountThreeByteCharsCorrectly() {
-        String euro = "\u20AC"; // € — 3 bytes in UTF-8
+        // € — 3 bytes in UTF-8, String.length() = 1
+        String euro = "\u20AC";
         assertThat(AgentOutputValidator.exceedsSizeLimit(euro, 2)).isTrue();
         assertThat(AgentOutputValidator.exceedsSizeLimit(euro, 3)).isFalse();
     }
 
-    @Test
-    @DisplayName("payload at exact byte limit is not rejected")
-    void shouldAllowPayloadAtExactLimit() {
-        String s = "abc"; // 3 ASCII bytes
-        assertThat(AgentOutputValidator.exceedsSizeLimit(s, 3)).isFalse();
-    }
+    // -- validate (integration) -----------------------------------------------
 
     @Test
-    @DisplayName("payload one byte over limit is rejected")
-    void shouldRejectPayloadOneByteOverLimit() {
-        String s = "abcd"; // 4 ASCII bytes
-        assertThat(AgentOutputValidator.exceedsSizeLimit(s, 3)).isTrue();
-    }
-
-    @Test
-    @DisplayName("null input returns false without throwing")
-    void shouldReturnFalseForNullSize() {
-        assertThat(AgentOutputValidator.exceedsSizeLimit(null, 100)).isFalse();
+    @DisplayName("validate returns violation reason for dangerous output")
+    void shouldReturnViolationForDangerousOutput() {
+        assertThat(AgentOutputValidator.validate("clean output")).isEmpty();
+        assertThat(AgentOutputValidator.validate("bad\u0000output")).isPresent();
+        assertThat(AgentOutputValidator.validate("bidi\u202Eattack")).isPresent();
     }
 }

@@ -155,7 +155,14 @@ class WorkflowSerializerTest {
         ParallelNode parallel =
                 ParallelNode.builder("parallel")
                         .branch(new Branch("b1", "writer", "prompt1", null))
-                        .branch(new Branch("b2", "reviewer", "prompt2", "rubric1", 2.0))
+                        .branch(
+                                new Branch(
+                                        "b2",
+                                        "reviewer",
+                                        "prompt2",
+                                        "rubric1",
+                                        2.0,
+                                        List.of("api_schema", "confidence")))
                         .consensus(
                                 new ConsensusConfig("judge", ConsensusStrategy.JUDGE_DECIDES, 0.8))
                         .transitionRules(List.of(new SuccessTransition("done")))
@@ -175,7 +182,10 @@ class WorkflowSerializerTest {
         ParallelNode restoredParallel = (ParallelNode) restored.getNodes().get("parallel");
         assertThat(restoredParallel.getBranchesList()).hasSize(2);
         assertThat(restoredParallel.getBranchesList().get(0).getWeight()).isEqualTo(1.0);
+        assertThat(restoredParallel.getBranchesList().get(0).getYields()).isEmpty();
         assertThat(restoredParallel.getBranchesList().get(1).getWeight()).isEqualTo(2.0);
+        assertThat(restoredParallel.getBranchesList().get(1).getYields())
+                .containsExactly("api_schema", "confidence");
         ConsensusConfig cc = restoredParallel.getConsensusConfig();
         assertThat(cc.strategy()).isEqualTo(ConsensusStrategy.JUDGE_DECIDES);
         assertThat(cc.judgeAgentId()).isEqualTo("judge");

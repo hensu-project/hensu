@@ -1268,15 +1268,19 @@ Registrations are split across four dedicated classes to keep each concern isola
 
 #### NativeImageConfig — Hensu domain model
 
-**Three patterns require registration here:**
+**Five patterns require registration here** (matching `NativeImageConfig` javadoc §1–§5):
 
 1. **`@JsonPOJOBuilder` mixin targets** — Jackson instantiates the builder via its private no-arg constructor, calls each setter, then calls `build()`. GraalVM cannot trace these calls through the generic mixin machinery.
 
 2. **`treeToValue` delegation** — When a custom deserializer calls `mapper.treeToValue(node, SomeClass.class)`, Jackson uses POJO reflection for `SomeClass`. Simple records (primitives, strings, enums only) should be **fixed** by switching to manual `JsonNode` extraction instead. Register only types where manual extraction is impractical (e.g., nested `Duration` fields).
 
-3. **Record types embedded in builder classes** — When a `record` is a field inside a mixin-registered builder type, Jackson reaches it via its canonical constructor and component accessors. GraalVM cannot trace those calls statically. Register the record and every nested record transitively. No mixin or custom deserializer is needed — registration alone is sufficient.
+3. **Manual deser, default Jackson ser** — Types deserialized manually in `NodeDeserializer` (direct `JsonNode` extraction) but serialized via Jackson's default `BeanSerializer` in `WorkflowSerializer.toJson()`. The deserialization path needs no reflection, but the serialization path reads record component accessors reflectively. Current types: `Branch`, `ConsensusConfig`, `ConsensusStrategy`, `ConsensusResult`, `ConsensusResult.Vote`, `ConsensusResult.VoteType`, `ScoreCondition`, `DoubleRange`.
 
-**When to add vs. fix:** if the class is a simple record with no `Duration`/nested-complex fields, fix the deserializer. If it contains `Duration` or deeply nested types, add it here. For records embedded in builder types, always register them. See [hensu-serialization Developer Guide](developer-guide-serialization.md#the-treetovalue-rule) for the full rule.
+4. **Simple immutable types with custom deser but default ser** — `WorkflowStateSchema` and `StateVariableDeclaration` use a custom deserializer (`WorkflowStateSchemaDeserializer`) that extracts fields manually. However, Jackson's default serializer reads `getVariables()` reflectively, so both classes must be registered.
+
+5. **Record types embedded in builder classes** — When a `record` is a field inside a mixin-registered builder type, Jackson reaches it via its canonical constructor and component accessors. GraalVM cannot trace those calls statically. Register the record and every nested record transitively. No mixin or custom deserializer is needed — registration alone is sufficient. Current types: `ReviewConfig`, `HensuSnapshot`, `PlanSnapshot` hierarchy.
+
+**When to add vs. fix:** if the class is a simple record with no `Duration`/nested-complex fields, fix the deserializer. If it contains `Duration` or deeply nested types, add it here. For records embedded in builder types, always register them. For types in pattern 3, registration is needed only because the serialization path uses default Jackson. See [hensu-serialization Developer Guide](developer-guide-serialization.md#the-treetovalue-rule) for the full rule.
 
 #### LangChain4j*NativeConfig — third-party provider DTOs
 

@@ -5,6 +5,7 @@ import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.workflow.Workflow;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.io.PrintStream;
 
 /// Factory for creating {@link VerboseExecutionListener} instances with CDI-injected dependencies.
 ///
@@ -29,7 +30,7 @@ public class VerboseExecutionListenerFactory {
     /// @param termWidth terminal width in columns for box-drawing alignment
     /// @return configured listener writing to {@code out}, never null
     public ExecutionListener create(
-            Workflow workflow, java.io.PrintStream out, boolean useColor, int termWidth) {
+            Workflow workflow, PrintStream out, boolean useColor, int termWidth) {
         return new VerboseExecutionListener(out, useColor, workflow, visualizer, termWidth);
     }
 }

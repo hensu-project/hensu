@@ -20,19 +20,19 @@ fun llmEvalTestWorkflow() = workflow("llm-eval-test") {
     agents {
         agent("writer") {
             role = "Technical content writer. Return JSON with key: article."
-            model = Models.CLAUDE_SONNET_4_5
+            model = Models.GEMINI_3_1_FLASH_LITE
             temperature = 0.7
         }
 
         agent("evaluator") {
             role = "Content quality evaluator. Return JSON with keys: reasoning, improvements."
-            model = Models.CLAUDE_SONNET_4_5
+            model = Models.CLAUDE_OPUS_4_5
             temperature = 0.2
         }
 
         agent("editor") {
             role = "Editor who revises content. Return JSON with key: article."
-            model = Models.CLAUDE_SONNET_4_5
+            model = Models.GEMINI_3_1_PRO
             temperature = 0.5
         }
     }

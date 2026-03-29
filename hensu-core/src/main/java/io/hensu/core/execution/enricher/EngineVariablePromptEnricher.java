@@ -14,14 +14,17 @@ import java.util.List;
 /// {@link #DEFAULT} runs in this order:
 /// 1. {@link RubricPromptInjector} — injects rubric criteria when `node.getRubricId()` is set
 /// 2. {@link ScoreVariableInjector} — injects `score` requirement when a
-///    {@link io.hensu.core.workflow.transition.ScoreTransition} exists
+///    {@link io.hensu.core.workflow.transition.ScoreTransition} exists or consensus branch
+///    needs self-scoring
 /// 3. {@link ApprovalVariableInjector} — injects `approved` requirement when an
-///    {@link io.hensu.core.workflow.transition.ApprovalTransition} exists
+///    {@link io.hensu.core.workflow.transition.ApprovalTransition} exists or consensus branch
+///    needs self-scoring
 /// 4. {@link RecommendationVariableInjector} — injects `recommendation` requirement when a
-///    {@link io.hensu.core.workflow.transition.ScoreTransition} or
-///    {@link io.hensu.core.workflow.transition.ApprovalTransition} exists
+///    score/approval transition exists or consensus branch needs self-scoring
 /// 5. {@link WritesVariableInjector} — injects field requirements for all user-declared
 ///    {@code writes()} variables so the LLM produces extractable JSON keys
+/// 6. {@link YieldsVariableInjector} — injects field requirements for branch
+///    {@code yields()} variables so the LLM produces extractable domain output
 ///
 /// ### Extension
 /// Construct a custom enricher with additional {@link EngineVariableInjector} implementations.
@@ -40,7 +43,8 @@ public final class EngineVariablePromptEnricher {
                             new ScoreVariableInjector(),
                             new ApprovalVariableInjector(),
                             new RecommendationVariableInjector(),
-                            new WritesVariableInjector()));
+                            new WritesVariableInjector(),
+                            new YieldsVariableInjector()));
 
     private final List<EngineVariableInjector> injectors;
 

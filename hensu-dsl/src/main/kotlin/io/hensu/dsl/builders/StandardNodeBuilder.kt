@@ -1,5 +1,6 @@
 package io.hensu.dsl.builders
 
+import io.hensu.core.execution.EngineVariables
 import io.hensu.core.plan.Plan
 import io.hensu.core.plan.PlanningConfig
 import io.hensu.core.review.ReviewConfig
@@ -101,6 +102,12 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
      * @param names variable names this node writes to
      */
     fun writes(vararg names: String) {
+        for (name in names) {
+            require(!EngineVariables.isEngineVar(name)) {
+                "Node '$id': writes field '$name' is a reserved engine variable. " +
+                    "Use a different name (e.g. 'review_$name')."
+            }
+        }
         writes = names.toList()
     }
 

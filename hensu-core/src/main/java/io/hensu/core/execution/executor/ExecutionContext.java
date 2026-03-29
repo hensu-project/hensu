@@ -4,6 +4,7 @@ import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.action.ActionExecutor;
+import io.hensu.core.execution.parallel.BranchExecutionConfig;
 import io.hensu.core.rubric.RubricEngine;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.template.TemplateResolver;
@@ -33,7 +34,8 @@ import java.util.concurrent.ExecutorService;
 /// - `workflowRepository` - For loading sub-workflow definitions
 ///
 /// @implNote Immutable after construction. Thread-safe for read access.
-/// Modified copies can be created via {@link #withState} and {@link #withWorkflow}.
+/// Modified copies can be created via {@link #withState}, {@link #withListener},
+/// and {@link #withBranchConfig}.
 ///
 /// @see NodeExecutor for node execution logic
 /// @see WorkflowExecutor for main execution loop
@@ -43,6 +45,9 @@ public final class ExecutionContext {
     private final HensuState state;
     private final Workflow workflow;
     private final ExecutionListener listener;
+
+    // Branch execution metadata - null when not executing a parallel branch
+    private final BranchExecutionConfig branchConfig;
 
     // Services - provided by registry, executors pull what they need
     private final AgentRegistry agentRegistry;
@@ -58,6 +63,7 @@ public final class ExecutionContext {
         this.state = builder.state;
         this.workflow = builder.workflow;
         this.listener = builder.listener;
+        this.branchConfig = builder.branchConfig;
         this.agentRegistry = builder.agentRegistry;
         this.templateResolver = builder.templateResolver;
         this.executorService = builder.executorService;
@@ -149,6 +155,18 @@ public final class ExecutionContext {
         return workflowRepository;
     }
 
+    /// Returns the branch execution configuration, if executing inside a parallel branch.
+    ///
+    /// Non-null only during branch execution within {@code ParallelNodeExecutor}.
+    /// Enrichers use this to detect consensus branches and read yield declarations
+    /// without polluting the user-visible state context map.
+    ///
+    /// @return branch config, or null if not executing a branch
+    /// @see BranchExecutionConfig
+    public BranchExecutionConfig getBranchConfig() {
+        return branchConfig;
+    }
+
     /// Creates a new context builder.
     ///
     /// @return new builder instance, never null
@@ -168,6 +186,7 @@ public final class ExecutionContext {
                 .state(newState)
                 .workflow(this.workflow)
                 .listener(this.listener)
+                .branchConfig(this.branchConfig)
                 .agentRegistry(this.agentRegistry)
                 .templateResolver(this.templateResolver)
                 .executorService(this.executorService)
@@ -179,18 +198,43 @@ public final class ExecutionContext {
                 .build();
     }
 
-    /// Creates a child context with a different workflow.
+    /// Creates a child context with a different listener.
     ///
-    /// Used for sub-workflow invocation where the workflow definition
-    /// changes but services remain the same.
+    /// Used by {@code ParallelNodeExecutor} to wrap the listener in a
+    /// thread-safe decorator for concurrent branch execution.
     ///
-    /// @param newWorkflow the new workflow definition, not null
-    /// @return new context with updated workflow, never null
-    public ExecutionContext withWorkflow(Workflow newWorkflow) {
+    /// @param newListener the new execution listener, not null
+    /// @return new context with updated listener, never null
+    public ExecutionContext withListener(ExecutionListener newListener) {
         return builder()
                 .state(this.state)
-                .workflow(newWorkflow)
+                .workflow(this.workflow)
+                .listener(newListener)
+                .branchConfig(this.branchConfig)
+                .agentRegistry(this.agentRegistry)
+                .templateResolver(this.templateResolver)
+                .executorService(this.executorService)
+                .nodeExecutorRegistry(this.nodeExecutorRegistry)
+                .workflowExecutor(this.workflowExecutor)
+                .actionExecutor(this.actionExecutor)
+                .rubricEngine(this.rubricEngine)
+                .workflowRepository(this.workflowRepository)
+                .build();
+    }
+
+    /// Creates a child context with branch execution metadata.
+    ///
+    /// Used by {@code ParallelNodeExecutor} to attach branch-specific config
+    /// (consensus flag, yield declarations) without polluting the state context map.
+    ///
+    /// @param config branch execution configuration, may be null to clear
+    /// @return new context with branch config set, never null
+    public ExecutionContext withBranchConfig(BranchExecutionConfig config) {
+        return builder()
+                .state(this.state)
+                .workflow(this.workflow)
                 .listener(this.listener)
+                .branchConfig(config)
                 .agentRegistry(this.agentRegistry)
                 .templateResolver(this.templateResolver)
                 .executorService(this.executorService)
@@ -211,6 +255,7 @@ public final class ExecutionContext {
         private HensuState state;
         private Workflow workflow;
         private ExecutionListener listener = ExecutionListener.NOOP;
+        private BranchExecutionConfig branchConfig;
         private AgentRegistry agentRegistry;
         private TemplateResolver templateResolver;
         private ExecutorService executorService;
@@ -234,6 +279,11 @@ public final class ExecutionContext {
 
         public Builder listener(ExecutionListener listener) {
             this.listener = listener != null ? listener : ExecutionListener.NOOP;
+            return this;
+        }
+
+        public Builder branchConfig(BranchExecutionConfig branchConfig) {
+            this.branchConfig = branchConfig;
             return this;
         }
 

@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -161,7 +162,7 @@ public class CommandRegistry {
     }
 
     /// Get all registered command IDs.
-    public java.util.Set<String> getCommandIds() {
+    public Set<String> getCommandIds() {
         return Collections.unmodifiableSet(commands.keySet());
     }
 

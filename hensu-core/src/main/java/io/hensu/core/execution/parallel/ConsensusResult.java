@@ -1,6 +1,8 @@
 package io.hensu.core.execution.parallel;
 
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 
 /// Result of consensus evaluation across parallel branch executions.
@@ -10,7 +12,7 @@ import java.util.Map;
 ///
 /// @param consensusReached true if consensus was achieved according to the strategy
 /// @param strategyUsed the strategy that was applied, not null
-/// @param winningBranchId identifier of the branch with the winning output, may be null
+/// @param winningBranchIds identifiers of branches that won consensus, empty list if none
 /// @param finalOutput the selected output to use as the result, may be null
 /// @param votes map of branch ID to vote details, not null
 /// @param reasoning human-readable explanation of the consensus decision, may be null
@@ -20,7 +22,7 @@ import java.util.Map;
 public record ConsensusResult(
         boolean consensusReached,
         ConsensusStrategy strategyUsed,
-        String winningBranchId,
+        List<String> winningBranchIds,
         Object finalOutput,
         Map<String, Vote> votes,
         String reasoning) {
@@ -71,6 +73,15 @@ public record ConsensusResult(
         REJECT,
         /// Branch abstains from voting
         ABSTAIN
+    }
+
+    /// Returns the first winning branch identifier, or null if none.
+    ///
+    /// Convenience accessor for callers that expect a single winner.
+    ///
+    /// @return the first winning branch ID, or null if no winners
+    public String winningBranchId() {
+        return winningBranchIds.isEmpty() ? null : winningBranchIds.getFirst();
     }
 
     /// Counts the number of approval votes.
@@ -132,7 +143,7 @@ public record ConsensusResult(
     public static final class Builder {
         private boolean consensusReached;
         private ConsensusStrategy strategyUsed;
-        private String winningBranchId;
+        private final List<String> winningBranchIds = new ArrayList<>();
         private Object finalOutput;
         private Map<String, Vote> votes = Map.of();
         private String reasoning;
@@ -155,12 +166,24 @@ public record ConsensusResult(
             return this;
         }
 
-        /// Sets the winning branch identifier.
+        /// Adds a single winning branch identifier.
         ///
-        /// @param branchId the winning branch ID, may be null
+        /// @param branchId the winning branch ID, not null
         /// @return this builder for chaining
         public Builder winningBranchId(String branchId) {
-            this.winningBranchId = branchId;
+            if (branchId != null) {
+                this.winningBranchIds.add(branchId);
+            }
+            return this;
+        }
+
+        /// Sets all winning branch identifiers, replacing any previously added.
+        ///
+        /// @param branchIds the winning branch IDs, not null
+        /// @return this builder for chaining
+        public Builder winningBranchIds(List<String> branchIds) {
+            this.winningBranchIds.clear();
+            this.winningBranchIds.addAll(branchIds);
             return this;
         }
 
@@ -196,7 +219,12 @@ public record ConsensusResult(
         /// @return a new ConsensusResult, never null
         public ConsensusResult build() {
             return new ConsensusResult(
-                    consensusReached, strategyUsed, winningBranchId, finalOutput, votes, reasoning);
+                    consensusReached,
+                    strategyUsed,
+                    List.copyOf(winningBranchIds),
+                    finalOutput,
+                    votes,
+                    reasoning);
         }
     }
 }

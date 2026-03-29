@@ -235,6 +235,10 @@ class NodeDeserializer extends StdDeserializer<Node> {
     private List<Branch> deserializeBranches(JsonNode array) {
         List<Branch> branches = new ArrayList<>();
         for (JsonNode b : array) {
+            List<String> yields =
+                    b.has("yields") && b.get("yields").isArray()
+                            ? readStringList(b.get("yields"))
+                            : List.of();
             branches.add(
                     new Branch(
                             b.get("id").asText(),
@@ -245,9 +249,18 @@ class NodeDeserializer extends StdDeserializer<Node> {
                             b.has("rubricId") && !b.get("rubricId").isNull()
                                     ? b.get("rubricId").asText()
                                     : null,
-                            b.has("weight") ? b.get("weight").doubleValue() : 1.0));
+                            b.has("weight") ? b.get("weight").doubleValue() : 1.0,
+                            yields));
         }
         return branches;
+    }
+
+    private List<String> readStringList(JsonNode array) {
+        List<String> result = new ArrayList<>();
+        for (JsonNode item : array) {
+            result.add(item.asText());
+        }
+        return result;
     }
 
     private String textOrNull(JsonNode root, String field) {

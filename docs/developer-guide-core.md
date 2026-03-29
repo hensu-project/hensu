@@ -11,6 +11,7 @@ This guide covers API usage, adapter development, extension points, and testing 
 - [Execution Pipeline](#execution-pipeline)
   - [Pre-Execution Pipeline](#pre-execution-pipeline)
   - [Post-Execution Pipeline](#post-execution-pipeline)
+  - [Parallel Branch Concurrency](#parallel-branch-concurrency)
   - [Agentic Output Validation](#agentic-output-validation)
 - [Creating Custom Adapters](#creating-custom-adapters)
 - [Generic Nodes](#generic-nodes)
@@ -193,6 +194,29 @@ step, enabling self-correcting loops.
 **`TransitionPostProcessor`** — The final step. Evaluates the current node's `TransitionRule` list in order. The first
 rule that returns a valid target node ID wins, and the state is updated to point to that next node. Throws
 `IllegalStateException` if no rule matches, preventing the workflow from silently getting stuck.
+
+### Parallel Branch Concurrency
+
+`ParallelNodeExecutor` runs each branch on a virtual thread with two concurrency guarantees:
+
+**1. ScopedValue isolation** – each branch receives an isolated context snapshot bound via
+`ScopedValue.where(BRANCH_CONTEXT, snapshot)`. Branch mutations never leak into sibling branches
+or the parent state. This is the same mechanism used for tenant isolation (`TenantContext`).
+
+> **Extension rule:** Never use `ThreadLocal` in branch-aware code. `ScopedValue` is the only
+> safe context propagation mechanism for virtual threads. See `10-java-standards.md` for details.
+
+**2. SynchronizedListenerDecorator** – the parent `ExecutionListener` is wrapped in a
+`SynchronizedListenerDecorator` before branch submission. Every callback is `synchronized` so that
+multi-line output (e.g., box-drawing in verbose CLI, SSE event frames) completes atomically without
+interleaving across concurrent branches.
+
+Custom `ExecutionListener` implementations do **not** need their own synchronization when used with
+parallel nodes – the decorator handles it. Only the parallel execution path pays the synchronization
+cost; sequential nodes use the raw listener.
+
+> **JEP 491 (Java 24+):** Virtual thread pinning on `synchronized` blocks was eliminated. Monitor
+> contention on I/O-bound listener callbacks is negligible for typical branch counts (3–10).
 
 ### Agentic Output Validation
 
@@ -711,27 +735,40 @@ Validation is a no-op when no schema is declared. Legacy workflows always pass t
 
 ## Engine Variable Injection
 
-Before each agent call, `StandardNodeExecutor` runs `EngineVariablePromptEnricher` to append
+Before each agent call, `AgentLifecycleRunner` runs `EngineVariablePromptEnricher` to append
 format requirements to the resolved prompt. The enricher is a dumb iterator over an ordered chain
 of `EngineVariableInjector`s — each one self-contained, deciding independently whether it applies.
 
+Engine variable names (`score`, `approved`, `recommendation`) are defined in the `EngineVariables`
+class — the single source of truth for all engine-managed variable keys.
+
 ### Injection Pipeline
+
+Each injector fires when **either** of two conditions is met:
+1. The node has a matching transition rule (e.g., `ScoreTransition` for `ScoreVariableInjector`)
+2. The execution context carries a `BranchExecutionConfig` where `needsSelfScoring()` returns true
+   (consensus branch with a non-JUDGE_DECIDES strategy)
 
 ```mermaid
 flowchart LR
-    r(["RubricPromptInjector"]) -->|"rubricId != null"| s(["ScoreVariableInjector"])
-    s -->|"has ScoreTransition"| a(["ApprovalVariableInjector"])
-    a -->|"has ApprovalTransition"| rec(["RecommendationVariable\nInjector"])
-    rec -->|"has Score/Approval\nTransition"| w(["WritesVariableInjector"])
+    r(["RubricPromptInjector\n· rubricId != null"]) --> s(["ScoreVariableInjector\n· ScoreTransition or\nconsensus branch"])
+    s --> a(["ApprovalVariableInjector\n· ApprovalTransition or\nconsensus branch"])
+    a --> rec(["RecommendationVariable\nInjector\n· Score/Approval or\nconsensus branch"])
+    rec --> w(["WritesVariableInjector\n· has writes()"])
+    w --> y(["YieldsVariableInjector\n· has yields()"])
 
     style r fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style s fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style a fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style rec fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style w fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style y fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
 
     linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
+
+Each injector runs unconditionally in order. The condition listed under each name is when that
+injector **appends** its instruction – otherwise it passes the prompt through unchanged.
 
 ### Description Hints in WritesVariableInjector
 
@@ -757,6 +794,7 @@ EngineVariablePromptEnricher enricher = new EngineVariablePromptEnricher(
         new ApprovalVariableInjector(),
         new RecommendationVariableInjector(),
         new WritesVariableInjector(),
+        new YieldsVariableInjector(),
         new MyCustomInjector()   // appended after built-ins
     ));
 ```
@@ -1268,7 +1306,11 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `plan/Planner.java`                                     | Planner interface (`createPlan` / `revisePlan`)                                                  |
 | `plan/StaticPlanner.java`                               | Resolves predefined `plan { }` steps from `PlanningConfig`                                       |
 | `plan/LlmPlanner.java`                                  | LLM-based plan generation and revision (`DYNAMIC` mode)                                          |
+| `execution/EngineVariables.java`                        | SSOT for engine variable names (`score`, `approved`, `recommendation`)                           |
+| `execution/SynchronizedListenerDecorator.java`          | Thread-safe listener wrapper for parallel branch execution                                       |
+| `execution/executor/AgentLifecycleRunner.java`          | Composition-based agent call: prompt enrichment → agent execution → output extraction            |
 | `execution/executor/AgenticNodeExecutor.java`           | Drives preparation + execution `PlanPipeline`s for `StandardNode`                                |
+| `execution/parallel/BranchExecutionConfig.java`         | Typed branch metadata on `ExecutionContext` (consensus strategy, yields list)                    |
 | `template/SimpleTemplateResolver.java`                  | `{variable}` substitution                                                                        |
 | `review/ReviewHandler.java`                             | Human review interface                                                                           |
 | `execution/pipeline/ProcessorPipeline.java`             | Orchestrates pre/post processor chains                                                           |

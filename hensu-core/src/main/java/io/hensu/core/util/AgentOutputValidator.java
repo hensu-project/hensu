@@ -1,6 +1,7 @@
 package io.hensu.core.util;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 /// Validates LLM-generated node output before it is stored in workflow state.
@@ -55,6 +56,26 @@ public final class AgentOutputValidator {
 
     private AgentOutputValidator() {}
 
+    /// Validates LLM output against all safety checks.
+    ///
+    /// Runs dangerous-chars, Unicode-tricks, and size-limit checks in sequence.
+    /// Returns empty if the output is safe; the rejection reason if any check fails.
+    ///
+    /// @param value the output string to validate, may be null
+    /// @return empty if valid or null; the failure reason otherwise
+    public static Optional<String> validate(String value) {
+        if (containsDangerousChars(value)) {
+            return Optional.of("contains illegal control characters");
+        }
+        if (containsUnicodeTricks(value)) {
+            return Optional.of("contains Unicode manipulation characters");
+        }
+        if (exceedsSizeLimit(value, MAX_LLM_OUTPUT_BYTES)) {
+            return Optional.of("exceeds maximum allowed size");
+        }
+        return Optional.empty();
+    }
+
     /// Checks whether the value contains dangerous ASCII control characters.
     ///
     /// Detects null bytes and non-printable control characters
@@ -64,7 +85,7 @@ public final class AgentOutputValidator {
     /// @param value the string to check, may be null
     /// @return `true` if the value contains illegal control characters;
     ///         `false` if null or clean
-    public static boolean containsDangerousChars(String value) {
+    static boolean containsDangerousChars(String value) {
         return value != null && DANGEROUS_CONTROL.matcher(value).find();
     }
 
@@ -77,7 +98,7 @@ public final class AgentOutputValidator {
     /// @param value the string to check, may be null
     /// @return `true` if the value contains Unicode manipulation characters;
     ///         `false` if null or clean
-    public static boolean containsUnicodeTricks(String value) {
+    static boolean containsUnicodeTricks(String value) {
         return value != null && UNICODE_TRICKS.matcher(value).find();
     }
 
@@ -87,7 +108,7 @@ public final class AgentOutputValidator {
     /// @param maxBytes the maximum allowed size in bytes, must be positive
     /// @return `true` if the UTF-8 byte length of `value` exceeds `maxBytes`;
     ///         `false` if null or within limit
-    public static boolean exceedsSizeLimit(String value, int maxBytes) {
+    static boolean exceedsSizeLimit(String value, int maxBytes) {
         return value != null && value.getBytes(StandardCharsets.UTF_8).length > maxBytes;
     }
 }
