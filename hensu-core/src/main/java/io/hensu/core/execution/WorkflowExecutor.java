@@ -10,6 +10,7 @@ import io.hensu.core.execution.pipeline.ProcessorContext;
 import io.hensu.core.execution.pipeline.ProcessorPipeline;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionResult;
+import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.rubric.RubricEngine;
@@ -22,7 +23,6 @@ import io.hensu.core.workflow.node.EndNode;
 import io.hensu.core.workflow.node.Node;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
 import java.util.logging.Logger;
 
 /// Main execution engine for Hensu workflows.
@@ -60,7 +60,6 @@ public class WorkflowExecutor {
 
     private final NodeExecutorRegistry nodeExecutorRegistry;
     private final AgentRegistry agentRegistry;
-    private final ExecutorService executorService;
     private final RubricEngine rubricEngine;
     private final TemplateResolver templateResolver;
     private final ActionExecutor actionExecutor;
@@ -72,20 +71,17 @@ public class WorkflowExecutor {
     ///
     /// @param nodeExecutorRegistry registry for node-type-specific executors, not null
     /// @param agentRegistry        registry of available AI agents, not null
-    /// @param executorService      thread pool for parallel execution, not null
     /// @param rubricEngine         engine for rubric-based quality evaluation, not null
     /// @param reviewHandler        handler for human review checkpoints, may be null (defaults to
     ///                                                         auto-approve)
     public WorkflowExecutor(
             NodeExecutorRegistry nodeExecutorRegistry,
             AgentRegistry agentRegistry,
-            ExecutorService executorService,
             RubricEngine rubricEngine,
             ReviewHandler reviewHandler) {
         this(
                 nodeExecutorRegistry,
                 agentRegistry,
-                executorService,
                 rubricEngine,
                 reviewHandler,
                 null,
@@ -97,7 +93,6 @@ public class WorkflowExecutor {
     ///
     /// @param nodeExecutorRegistry registry for node-type-specific executors, not null
     /// @param agentRegistry        registry of available AI agents, not null
-    /// @param executorService      thread pool for parallel execution, not null
     /// @param rubricEngine         engine for rubric-based quality evaluation, not null
     /// @param reviewHandler        handler for human review checkpoints, may be null (defaults to
     ///                                                         auto-approve)
@@ -106,14 +101,12 @@ public class WorkflowExecutor {
     public WorkflowExecutor(
             NodeExecutorRegistry nodeExecutorRegistry,
             AgentRegistry agentRegistry,
-            ExecutorService executorService,
             RubricEngine rubricEngine,
             ReviewHandler reviewHandler,
             ActionExecutor actionExecutor) {
         this(
                 nodeExecutorRegistry,
                 agentRegistry,
-                executorService,
                 rubricEngine,
                 reviewHandler,
                 actionExecutor,
@@ -125,7 +118,6 @@ public class WorkflowExecutor {
     ///
     /// @param nodeExecutorRegistry registry for node-type-specific executors, not null
     /// @param agentRegistry        registry of available AI agents, not null
-    /// @param executorService      thread pool for parallel execution, not null
     /// @param rubricEngine         engine for rubric-based quality evaluation, not null
     /// @param reviewHandler        handler for human review checkpoints, may be null (defaults to
     ///                                                         auto-approve)
@@ -136,7 +128,6 @@ public class WorkflowExecutor {
     public WorkflowExecutor(
             NodeExecutorRegistry nodeExecutorRegistry,
             AgentRegistry agentRegistry,
-            ExecutorService executorService,
             RubricEngine rubricEngine,
             ReviewHandler reviewHandler,
             ActionExecutor actionExecutor,
@@ -144,7 +135,6 @@ public class WorkflowExecutor {
             WorkflowRepository workflowRepository) {
         this.nodeExecutorRegistry = nodeExecutorRegistry;
         this.agentRegistry = agentRegistry;
-        this.executorService = executorService;
         this.rubricEngine = rubricEngine;
         reviewHandler = reviewHandler != null ? reviewHandler : ReviewHandler.AUTO_APPROVE;
         this.actionExecutor = actionExecutor;
@@ -202,7 +192,7 @@ public class WorkflowExecutor {
                         .history(new ExecutionHistory())
                         .build();
 
-        return executeLoop(state, workflow, listener);
+        return executeLoop(state, workflow, listener, null);
     }
 
     /// Resumes execution of a workflow from a previously saved state.
@@ -228,28 +218,59 @@ public class WorkflowExecutor {
     public ExecutionResult executeFrom(
             Workflow workflow, HensuState savedState, ExecutionListener listener) throws Exception {
         registerWorkflowAgents(workflow);
-        return executeLoop(savedState, workflow, listener);
+        return executeLoop(savedState, workflow, listener, null);
     }
 
-    /// Core execution loop shared by {@link #execute} and {@link #executeFrom}.
+    /// Executes a sub-flow that stops at a named boundary node.
+    ///
+    /// Used by {@code ForkNodeExecutor} to run forked sub-flows. The execution
+    /// traverses the graph from {@code state.getCurrentNode()} through the full
+    /// pipeline (pre- / post-processors) for each node, stopping when it reaches
+    /// the boundary node. The boundary node itself is NOT executed – it serves
+    /// as a graph marker read by the fork executor for merge configuration.
+    ///
+    /// @param boundaryNodeId the node ID where execution stops (typically a join node), not null
+    /// @param state          branch-isolated state positioned at the sub-flow start node, not null
+    /// @param workflow       the workflow definition containing all nodes, not null
+    /// @param listener       execution event listener (should be thread-safe for
+    ///                       concurrent sub-flows), not null
+    /// @return {@link ExecutionResult.Completed} when the boundary is reached, with the
+    /// branch state containing all variables written by sub-flow nodes via {@code writes()}
+    /// @throws Exception if any sub-flow node fails
+    public ExecutionResult executeUntil(
+            String boundaryNodeId, HensuState state, Workflow workflow, ExecutionListener listener)
+            throws Exception {
+        return executeLoop(state, workflow, listener, boundaryNodeId);
+    }
+
+    /// Core execution loop shared by {@link #execute}, {@link #executeFrom},
+    /// and {@link #executeUntil}.
     ///
     /// Traverses the workflow graph with a symmetric pipeline model:
     /// PRE-PIPELINE -> node execution -> POST-PIPELINE. The loop handles:
-    /// node lookup, end-node detection, pre-pipeline directives,
+    /// node lookup, boundary detection, end-node detection, pre-pipeline directives,
     /// node execution, PENDING detection, and post-pipeline directive dispatch.
     ///
-    /// @param state    current workflow state with position, not null
-    /// @param workflow workflow definition, not null
-    /// @param listener execution event listener, not null
+    /// @param state          current workflow state with position, not null
+    /// @param workflow       workflow definition, not null
+    /// @param listener       execution event listener, not null
+    /// @param boundaryNodeId optional boundary node ID for sub-flow execution (null for main flow)
     /// @return execution result, never null
     /// @throws Exception if execution fails
     private ExecutionResult executeLoop(
-            HensuState state, Workflow workflow, ExecutionListener listener) throws Exception {
+            HensuState state, Workflow workflow, ExecutionListener listener, String boundaryNodeId)
+            throws Exception {
 
         ExecutionContext context = createExecutionContext(state, workflow, listener);
 
         while (true) {
             String currentNodeId = state.getCurrentNode();
+
+            // Boundary check – sub-flow reached join node, stop without executing it
+            if (currentNodeId.equals(boundaryNodeId)) {
+                return new ExecutionResult.Completed(state, ExitStatus.SUCCESS);
+            }
+
             Node node = workflow.getNodes().get(currentNodeId);
             if (node == null) {
                 throw new IllegalStateException("Node not found: " + currentNodeId);
@@ -288,7 +309,6 @@ public class WorkflowExecutor {
                 .listener(listener)
                 .agentRegistry(agentRegistry)
                 .templateResolver(templateResolver)
-                .executorService(executorService)
                 .nodeExecutorRegistry(nodeExecutorRegistry)
                 .workflowExecutor(this)
                 .actionExecutor(actionExecutor)

@@ -2,7 +2,6 @@ package io.hensu.server.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hensu.adapter.langchain4j.LangChain4jProvider;
-import io.hensu.core.HensuConfig;
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.HensuFactory;
 import io.hensu.core.execution.action.ActionExecutor;
@@ -13,7 +12,6 @@ import io.hensu.serialization.plan.JacksonPlanResponseParser;
 import io.hensu.server.persistence.ExecutionLeaseManager;
 import io.hensu.server.persistence.JdbcWorkflowRepository;
 import io.hensu.server.persistence.JdbcWorkflowStateRepository;
-import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.Produces;
@@ -86,7 +84,6 @@ public class HensuEnvironmentProducer {
 
         HensuFactory.Builder factoryBuilder =
                 HensuFactory.builder()
-                        .config(HensuConfig.builder().useVirtualThreads(true).build())
                         .loadCredentials(properties)
                         .agentProviders(List.of(new LangChain4jProvider()))
                         .actionExecutor(actionExecutor)
@@ -150,16 +147,5 @@ public class HensuEnvironmentProducer {
                 .ifPresent(value -> properties.setProperty(stubEnabledKey, value));
 
         return properties;
-    }
-
-    /// Cleanup callback invoked when the application shuts down.
-    ///
-    /// Closes the HensuEnvironment to release resources (thread pools, connections).
-    @PreDestroy
-    public void cleanup() {
-        if (hensuEnvironment != null) {
-            hensuEnvironment.close();
-            LOG.info("HensuEnvironment closed");
-        }
     }
 }

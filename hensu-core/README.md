@@ -94,7 +94,6 @@ var env = HensuFactory.createEnvironment();
 
 // With explicit providers (recommended)
 var env = HensuFactory.builder()
-    .config(HensuConfig.builder().useVirtualThreads(true).build())
     .loadCredentials(properties)
     .agentProviders(List.of(new LangChain4jProvider()))
     .build();
@@ -259,7 +258,7 @@ plan generation and execution.
 hensu-core/src/main/java/io/hensu/core/
 ├── HensuFactory.java              # Entry point — builder for HensuEnvironment
 ├── HensuEnvironment.java          # Component container (executor, registry, etc.)
-├── HensuConfig.java               # Configuration (threading, storage)
+├── HensuConfig.java               # Configuration (storage backend)
 ├── agent/
 │   ├── Agent.java                 # Core agent interface
 │   ├── AgentConfig.java           # Agent configuration (model, temperature, etc.)
@@ -331,7 +330,7 @@ hensu-core/src/main/java/io/hensu/core/
 │       ├── ConsensusResult.java   # Outcome of consensus evaluation
 │       ├── BranchExecutionConfig.java # Typed branch metadata on ExecutionContext (consensus, yields)
 │       ├── FailureMarker.java     # Sentinel for failed branches in fork/join
-│       └── ForkJoinContext.java   # Shared fork/join state
+│       └── BranchExecutionConfig.java # Typed branch metadata on ExecutionContext (consensus, yields)
 ├── workflow/
 │   ├── Workflow.java              # Workflow definition (agents + graph + optional state schema)
 │   ├── WorkflowRepository.java   # Tenant-scoped workflow storage interface
@@ -395,8 +394,8 @@ hensu-core/src/main/java/io/hensu/core/
 |-------------------|--------------------------------------------------------------------------------------------------------------------|
 | `StandardNode`    | Executes an LLM prompt, optionally writes structured state variables via `writes`, and transitions based on result |
 | `ParallelNode`    | Runs multiple branches concurrently; branches declare domain output via `yields()` which merge into workflow state |
-| `ForkNode`        | Splits execution into parallel paths                                                                               |
-| `JoinNode`        | Merges parallel results with configurable strategy                                                                 |
+| `ForkNode`        | Splits execution into parallel paths via `StructuredTaskScope`                                                     |
+| `JoinNode`        | Merges parallel results via `writes()` with configurable strategy; `exports()` filters boundary variables          |
 | `LoopNode`        | Iterates until a condition or max iterations                                                                       |
 | `ActionNode`      | Dispatches actions (send HTTP, execute command)                                                                    |
 | `GenericNode`     | Custom handler for extensible operations                                                                           |

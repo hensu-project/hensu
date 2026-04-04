@@ -35,12 +35,14 @@ subprojects {
 
     val jvm25Args = listOf(
         "--enable-native-access=ALL-UNNAMED",
-        "--add-opens", "java.base/java.lang=ALL-UNNAMED"
+        "--add-opens", "java.base/java.lang=ALL-UNNAMED",
+        "--enable-preview"
     )
 
     tasks.withType<JavaCompile> {
         options.encoding = "UTF-8"
         options.compilerArgs.add("-parameters")
+        options.compilerArgs.add("--enable-preview")
     }
 
     tasks.withType<JavaExec> {

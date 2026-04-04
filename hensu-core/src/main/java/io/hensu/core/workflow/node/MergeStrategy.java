@@ -1,6 +1,10 @@
 package io.hensu.core.workflow.node;
 
-/// Strategy for merging outputs from forked execution paths in {@link JoinNode}.
+/// Strategy for merging outputs from forked sub-flow execution paths.
+///
+/// Applied by {@link io.hensu.core.execution.executor.ForkNodeExecutor} after
+/// all sub-flows complete. The merged result is stored in state under the
+/// {@link JoinNode}'s output field.
 public enum MergeStrategy {
     /// Collect all outputs into a map keyed by target node ID. Output: Map&lt;String, Object&gt;
     /// where key is target ID, value is output.
@@ -18,9 +22,5 @@ public enum MergeStrategy {
 
     /// Merge all outputs assuming they are maps. Later outputs override earlier ones for duplicate
     /// keys.
-    MERGE_MAPS,
-
-    /// Use a custom merge function provided in the join configuration. The function receives
-    /// `List<ForkResult>` and returns merged output.
-    CUSTOM
+    MERGE_MAPS
 }

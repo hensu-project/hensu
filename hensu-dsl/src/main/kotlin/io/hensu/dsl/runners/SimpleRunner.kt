@@ -116,8 +116,6 @@ fun main(args: Array<String>) {
     } catch (e: Exception) {
         System.err.println(" [FAIL] Workflow execution failed: ${e.message}")
         e.printStackTrace()
-    } finally {
-        environment.close()
     }
 }
 

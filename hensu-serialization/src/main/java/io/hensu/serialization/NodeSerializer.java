@@ -22,8 +22,8 @@ import java.io.Serial;
 /// GENERIC        │ executorType, config, transitionRules, rubricId
 /// PARALLEL       │ branches, consensusConfig, transitionRules
 /// FORK           │ targets, targetConfigs, transitionRules, waitForAll
-/// JOIN           │ awaitTargets, mergeStrategy, outputField, timeoutMs,
-///                │ failOnAnyError, transitionRules
+/// JOIN           │ awaitTargets, mergeStrategy, writes, exports,
+///                │ timeoutMs, failOnAnyError, transitionRules
 /// SUB_WORKFLOW   │ workflowId, inputMapping, outputMapping, transitionRules
 /// LOOP           │ (none — only id and nodeType are written)
 /// ```
@@ -138,7 +138,10 @@ class NodeSerializer extends StdSerializer<Node> {
             throws IOException {
         provider.defaultSerializeField("awaitTargets", n.getAwaitTargets(), gen);
         gen.writeStringField("mergeStrategy", n.getMergeStrategy().name());
-        gen.writeStringField("outputField", n.getOutputField());
+        provider.defaultSerializeField("writes", n.getWrites(), gen);
+        if (!n.getExports().isEmpty()) {
+            provider.defaultSerializeField("exports", n.getExports(), gen);
+        }
         gen.writeNumberField("timeoutMs", n.getTimeoutMs());
         gen.writeBooleanField("failOnAnyError", n.isFailOnAnyError());
         if (!n.getTransitionRules().isEmpty()) {

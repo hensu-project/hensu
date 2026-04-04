@@ -85,15 +85,19 @@ class ForkNodeBuilder(private val id: String) : BaseNodeBuilder, ForkJoinMarkers
  * DSL builder for join nodes that await and merge forked execution results.
  *
  * Join nodes wait for specified fork nodes to complete, then merge their outputs according to the
- * configured [mergeStrategy]. The merged result is stored in the workflow context under
- * [outputField].
+ * configured [mergeStrategy]. The merged result is stored in the workflow context under the
+ * variable(s) declared by [writes].
+ *
+ * Strategy determines `writes()` cardinality:
+ * - **COLLECT_ALL, FIRST_SUCCESSFUL, CONCATENATE** – exactly 1 variable (single merged blob)
+ * - **MERGE_MAPS** – 1+ variables (branch exports spread into individual parent state variables)
  *
  * Example:
  * ```kotlin
  * join("merge-results") {
  *     await("parallel-tasks")
  *     mergeStrategy = MergeStrategy.COLLECT_ALL
- *     outputField = "merged_output"
+ *     writes("merged_output")
  *     timeout = 30000
  *     onSuccess goto "process-results"
  *     onFailure retry 0 otherwise "handle-error"
@@ -107,6 +111,8 @@ class ForkNodeBuilder(private val id: String) : BaseNodeBuilder, ForkJoinMarkers
 @WorkflowDsl
 class JoinNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMarkers {
     private val awaitList = mutableListOf<String>()
+    private val writesList = mutableListOf<String>()
+    private val exportList = mutableListOf<String>()
     private val transitionBuilder = TransitionBuilder()
 
     /**
@@ -116,14 +122,37 @@ class JoinNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMarke
      */
     var mergeStrategy: MergeStrategy = MergeStrategy.COLLECT_ALL
 
-    /** Context field name where merged output will be stored. Default: "fork_results". */
-    var outputField: String = "fork_results"
-
     /** Timeout in milliseconds for waiting on forks. 0 means no timeout (wait indefinitely). */
     var timeout: Long = 0
 
     /** Whether to fail the join if any forked execution fails. Default: true. */
     var failOnError: Boolean = true
+
+    /**
+     * Declares the state variable(s) where merged output will be stored.
+     *
+     * Strategy determines cardinality:
+     * - **COLLECT_ALL, FIRST_SUCCESSFUL, CONCATENATE** – exactly 1 variable
+     * - **MERGE_MAPS** – 1+ variables (each branch export spread into parent state)
+     *
+     * @param names variable names to write merged output into
+     */
+    fun writes(vararg names: String) {
+        writesList.addAll(names)
+    }
+
+    /**
+     * Declares which sub-flow variables are allowed to cross the join boundary.
+     *
+     * Only variables listed here will appear in the merge output. Intermediate sub-flow variables
+     * (e.g., raw research before refinement) are excluded. If not called, all diffed variables are
+     * included (backward-compatible default).
+     *
+     * @param names variable names to export from sub-flow branches
+     */
+    fun exports(vararg names: String) {
+        exportList.addAll(names)
+    }
 
     /**
      * Adds fork node IDs to await before proceeding.
@@ -181,13 +210,26 @@ class JoinNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMarke
      *
      * @return compiled join node, never null
      */
-    override fun build(): JoinNode =
-        JoinNode.builder(id)
+    override fun build(): JoinNode {
+        check(awaitList.isNotEmpty()) { "JoinNode '$id' must have at least one await target" }
+        check(writesList.isNotEmpty()) { "JoinNode '$id' must declare writes()" }
+
+        when (mergeStrategy) {
+            MergeStrategy.MERGE_MAPS -> {}
+            else ->
+                check(writesList.size == 1) {
+                    "JoinNode '$id': ${mergeStrategy.name} requires exactly one writes() variable, got ${writesList.size}"
+                }
+        }
+
+        return JoinNode.builder(id)
             .awaitTargets(awaitList)
             .mergeStrategy(mergeStrategy)
-            .outputField(outputField)
+            .writes(writesList.toList())
+            .exports(exportList)
             .timeoutMs(timeout)
             .failOnAnyError(failOnError)
             .transitionRules(transitionBuilder.build())
             .build()
+    }
 }

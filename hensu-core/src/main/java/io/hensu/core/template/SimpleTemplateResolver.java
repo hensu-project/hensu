@@ -1,5 +1,7 @@
 package io.hensu.core.template;
 
+import io.hensu.core.util.JsonUtil;
+import java.util.Collection;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -21,7 +23,13 @@ public class SimpleTemplateResolver implements TemplateResolver {
         while (matcher.find()) {
             String variable = matcher.group(1);
             Object value = context.get(variable);
-            String replacement = value != null ? value.toString() : "";
+            String replacement =
+                    switch (value) {
+                        case null -> "";
+                        case String s -> s;
+                        case Map<?, ?> _, Collection<?> _ -> JsonUtil.toJson(value);
+                        default -> value.toString();
+                    };
             matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
         }
 

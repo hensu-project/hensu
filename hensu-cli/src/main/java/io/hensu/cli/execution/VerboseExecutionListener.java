@@ -4,7 +4,11 @@ import io.hensu.cli.ui.AnsiStyles;
 import io.hensu.cli.visualizer.TextVisualizationFormat;
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.execution.ExecutionListener;
+import io.hensu.core.execution.executor.NodeResult;
+import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.workflow.Workflow;
+import io.hensu.core.workflow.node.ForkNode;
+import io.hensu.core.workflow.node.JoinNode;
 import io.hensu.core.workflow.node.Node;
 import java.io.PrintStream;
 
@@ -92,6 +96,48 @@ public class VerboseExecutionListener implements ExecutionListener {
         printIndented(extractOutput(response), true);
         out.println(styles.separatorBottom(termWidth));
         out.println();
+    }
+
+    @Override
+    public void onNodeStart(Node node) {
+        switch (node) {
+            case ForkNode fork -> {
+                String label =
+                        styles.accent("fork")
+                                + styles.dim(" · ")
+                                + fork.getId()
+                                + styles.dim(" · ")
+                                + fork.getTargets().size()
+                                + " targets";
+                out.println(styles.boxTopWithLabel(label, termWidth));
+                for (String target : fork.getTargets()) {
+                    out.println("  " + styles.arrow() + " " + target);
+                }
+                out.println(styles.separatorBottom(termWidth));
+                out.println();
+            }
+            case JoinNode join -> {
+                String label =
+                        styles.accent("join")
+                                + styles.dim(" · ")
+                                + join.getId()
+                                + styles.dim(" · ")
+                                + join.getMergeStrategy();
+                out.println(styles.boxTopWithLabel(label, termWidth));
+            }
+            default -> {}
+        }
+    }
+
+    @Override
+    public void onNodeComplete(Node node, NodeResult result) {
+        if (node instanceof JoinNode join) {
+            boolean ok = result.getStatus() == ResultStatus.SUCCESS;
+            String status = styles.successOrError(ok ? "merged" : "FAILED", ok);
+            out.println("  " + status + styles.dim(" → ") + String.join(", ", join.getWrites()));
+            out.println(styles.separatorBottom(termWidth));
+            out.println();
+        }
     }
 
     private String extractOutput(AgentResponse response) {

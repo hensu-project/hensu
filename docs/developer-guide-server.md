@@ -190,7 +190,6 @@ when the `inmem` profile disables the datasource:
 public HensuEnvironment hensuEnvironment() {
     Properties properties = extractHensuProperties();
     HensuFactory.Builder factoryBuilder = HensuFactory.builder()
-            .config(HensuConfig.builder().useVirtualThreads(true).build())
             .loadCredentials(properties)
             .actionExecutor(actionExecutor);  // ServerActionExecutor (send-action dispatcher)
 

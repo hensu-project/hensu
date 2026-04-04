@@ -1,5 +1,7 @@
 package io.hensu.core.util;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -9,8 +11,8 @@ import java.util.logging.Logger;
 ///
 /// Uses a handwritten recursive descent parser for correctness across all JSON value types:
 /// strings with escape sequences, numbers, booleans, null, nested objects, and arrays.
-/// Nested objects and arrays are returned as their raw JSON strings so template substitution
-/// always receives a meaningful value rather than null.
+/// Nested objects and arrays are returned as structured types ({@code Map} and {@code List})
+/// so state stores native data rather than serialized JSON strings.
 ///
 /// @implNote **Dependency-free.** No regex, no external libraries. GraalVM native-image safe.
 public final class JsonUtil {
@@ -19,6 +21,73 @@ public final class JsonUtil {
 
     // Sentinel distinguishing "key present with JSON null" from "key absent".
     static final Object NULL_SENTINEL = new Object();
+
+    // — Serialization ——————————————————————————————————————————————————————————
+
+    /// Serializes a value to a JSON string.
+    ///
+    /// Handles {@code Map}, {@code Collection}, {@code String}, {@code Number},
+    /// {@code Boolean}, and {@code null}. Maps and collections are serialized
+    /// recursively. All other types fall back to {@link Object#toString()}.
+    ///
+    /// @implNote Dependency-free recursive serializer. No external libraries.
+    /// GraalVM native-image safe.
+    ///
+    /// @param value the value to serialize, may be null
+    /// @return JSON string representation, never null
+    public static String toJson(Object value) {
+        if (value == null) return "null";
+        if (value instanceof String s) return escapeJsonString(s);
+        if (value instanceof Number || value instanceof Boolean) return value.toString();
+        if (value instanceof Map<?, ?> map) {
+            StringBuilder sb = new StringBuilder("{");
+            boolean first = true;
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (!first) sb.append(",");
+                first = false;
+                sb.append(escapeJsonString(String.valueOf(entry.getKey())));
+                sb.append(":");
+                sb.append(toJson(entry.getValue()));
+            }
+            return sb.append("}").toString();
+        }
+        if (value instanceof Collection<?> coll) {
+            StringBuilder sb = new StringBuilder("[");
+            boolean first = true;
+            for (Object item : coll) {
+                if (!first) sb.append(",");
+                first = false;
+                sb.append(toJson(item));
+            }
+            return sb.append("]").toString();
+        }
+        return escapeJsonString(value.toString());
+    }
+
+    /// Wraps a string in double quotes with JSON escape sequences.
+    private static String escapeJsonString(String s) {
+        StringBuilder sb = new StringBuilder("\"");
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        return sb.append("\"").toString();
+    }
 
     // — Public API ————————————————————————————————————————————————————————————
 
@@ -55,7 +124,7 @@ public final class JsonUtil {
     /// Extracts named parameters from an LLM output string and stores them in context.
     ///
     /// Finds the first balanced JSON object in the output, then extracts each named key.
-    /// Nested objects and arrays are stored as raw JSON strings.
+    /// Nested objects are stored as {@code Map<String, Object>}, arrays as {@code List<Object>}.
     ///
     /// @param paramNames names of keys to extract, not null
     /// @param output     raw LLM output, not null
@@ -126,7 +195,8 @@ public final class JsonUtil {
     /// - `Double`        — JSON number
     /// - `Boolean`       — JSON boolean
     /// - `NULL_SENTINEL` — JSON null (key present with null value)
-    /// - raw JSON `String` — nested object `{...}` or array `[...]`
+    /// - `Map<String, Object>` — nested JSON object (recursive)
+    /// - `List<Object>`        — JSON array (recursive)
     /// - `null`          — key not found or parse error
     ///
     /// @param json the JSON object string, not null
@@ -151,8 +221,8 @@ public final class JsonUtil {
     /// JSON number  ——> Double
     /// JSON boolean ——> Boolean
     /// JSON null    ——> NULL_SENTINEL
-    /// JSON object  ——> raw JSON String  (preserves content for template substitution)
-    /// JSON array   ——> raw JSON String
+    /// JSON object  ——> Map<String, Object>  (recursive)
+    /// JSON array   ——> List<Object>         (recursive)
     /// ```
     private static final class Parser {
         private final String src;
@@ -211,18 +281,17 @@ public final class JsonUtil {
             return map;
         }
 
-        /// Consumes an array and returns its raw JSON text.
-        String parseArray() {
-            int start = pos;
+        List<Object> parseList() {
             expect('[');
+            List<Object> list = new ArrayList<>();
             skipWs();
             if (peek() == ']') {
                 pos++;
-                return src.substring(start, pos);
+                return list;
             }
             while (true) {
                 skipWs();
-                parseValue();
+                list.add(parseValue());
                 skipWs();
                 char next = peek();
                 if (next == ']') {
@@ -235,19 +304,15 @@ public final class JsonUtil {
                 }
                 throw new IllegalStateException("Expected ',' or ']' at pos " + pos);
             }
-            return src.substring(start, pos);
+            return list;
         }
 
         Object parseValue() {
             skipWs();
             return switch (peek()) {
                 case '"' -> parseString();
-                case '{' -> {
-                    int s = pos;
-                    parseObject();
-                    yield src.substring(s, pos);
-                }
-                case '[' -> parseArray();
+                case '{' -> parseObject();
+                case '[' -> parseList();
                 case 't', 'f' -> parseBoolean();
                 case 'n' -> {
                     expectNull();

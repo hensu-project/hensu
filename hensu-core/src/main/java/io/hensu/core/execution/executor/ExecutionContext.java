@@ -10,7 +10,6 @@ import io.hensu.core.state.HensuState;
 import io.hensu.core.template.TemplateResolver;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
-import java.util.concurrent.ExecutorService;
 
 /// Encapsulates all dependencies and state needed for node execution.
 ///
@@ -26,7 +25,6 @@ import java.util.concurrent.ExecutorService;
 /// ### Optional Services
 /// - `agentRegistry` - For resolving agent instances
 /// - `templateResolver` - For prompt variable substitution
-/// - `executorService` - For parallel node execution
 /// - `nodeExecutorRegistry` - For node type dispatch
 /// - `workflowExecutor` - For sub-workflow invocation
 /// - `actionExecutor` - For command/action execution
@@ -52,7 +50,6 @@ public final class ExecutionContext {
     // Services - provided by registry, executors pull what they need
     private final AgentRegistry agentRegistry;
     private final TemplateResolver templateResolver;
-    private final ExecutorService executorService;
     private final NodeExecutorRegistry nodeExecutorRegistry;
     private final WorkflowExecutor workflowExecutor;
     private final ActionExecutor actionExecutor;
@@ -66,7 +63,6 @@ public final class ExecutionContext {
         this.branchConfig = builder.branchConfig;
         this.agentRegistry = builder.agentRegistry;
         this.templateResolver = builder.templateResolver;
-        this.executorService = builder.executorService;
         this.nodeExecutorRegistry = builder.nodeExecutorRegistry;
         this.workflowExecutor = builder.workflowExecutor;
         this.actionExecutor = builder.actionExecutor;
@@ -107,13 +103,6 @@ public final class ExecutionContext {
     /// @return template resolver, or null if not configured
     public TemplateResolver getTemplateResolver() {
         return templateResolver;
-    }
-
-    /// Returns the executor service for parallel execution.
-    ///
-    /// @return executor service, or null if not configured
-    public ExecutorService getExecutorService() {
-        return executorService;
     }
 
     /// Returns the node executor registry for type dispatch.
@@ -189,7 +178,6 @@ public final class ExecutionContext {
                 .branchConfig(this.branchConfig)
                 .agentRegistry(this.agentRegistry)
                 .templateResolver(this.templateResolver)
-                .executorService(this.executorService)
                 .nodeExecutorRegistry(this.nodeExecutorRegistry)
                 .workflowExecutor(this.workflowExecutor)
                 .actionExecutor(this.actionExecutor)
@@ -213,7 +201,6 @@ public final class ExecutionContext {
                 .branchConfig(this.branchConfig)
                 .agentRegistry(this.agentRegistry)
                 .templateResolver(this.templateResolver)
-                .executorService(this.executorService)
                 .nodeExecutorRegistry(this.nodeExecutorRegistry)
                 .workflowExecutor(this.workflowExecutor)
                 .actionExecutor(this.actionExecutor)
@@ -237,7 +224,6 @@ public final class ExecutionContext {
                 .branchConfig(config)
                 .agentRegistry(this.agentRegistry)
                 .templateResolver(this.templateResolver)
-                .executorService(this.executorService)
                 .nodeExecutorRegistry(this.nodeExecutorRegistry)
                 .workflowExecutor(this.workflowExecutor)
                 .actionExecutor(this.actionExecutor)
@@ -258,7 +244,6 @@ public final class ExecutionContext {
         private BranchExecutionConfig branchConfig;
         private AgentRegistry agentRegistry;
         private TemplateResolver templateResolver;
-        private ExecutorService executorService;
         private NodeExecutorRegistry nodeExecutorRegistry;
         private WorkflowExecutor workflowExecutor;
         private ActionExecutor actionExecutor;
@@ -294,11 +279,6 @@ public final class ExecutionContext {
 
         public Builder templateResolver(TemplateResolver templateResolver) {
             this.templateResolver = templateResolver;
-            return this;
-        }
-
-        public Builder executorService(ExecutorService executorService) {
-            this.executorService = executorService;
             return this;
         }
 

@@ -168,6 +168,7 @@ public class DaemonCommand extends HensuCommand {
                                     binary,
                                     "--enable-native-access=ALL-UNNAMED",
                                     "--sun-misc-unsafe-memory-access=allow",
+                                    "--enable-preview",
                                     "-jar",
                                     hensuJar,
                                     "daemon",

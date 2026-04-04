@@ -200,8 +200,11 @@ class NodeDeserializer extends StdDeserializer<Node> {
         if (root.has("mergeStrategy")) {
             b.mergeStrategy(MergeStrategy.valueOf(root.get("mergeStrategy").asText()));
         }
-        if (root.has("outputField")) {
-            b.outputField(root.get("outputField").asText());
+        if (root.has("writes")) {
+            b.writes(readValue(mapper, root, "writes", STRING_LIST));
+        }
+        if (root.has("exports")) {
+            b.exports(readValue(mapper, root, "exports", STRING_LIST));
         }
         if (root.has("timeoutMs")) {
             b.timeoutMs(root.get("timeoutMs").asLong());

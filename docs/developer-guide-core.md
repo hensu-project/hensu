@@ -43,7 +43,6 @@ var env = HensuFactory.createEnvironment();
 **With explicit providers (recommended):**
 ```java
 var env = HensuFactory.builder()
-    .config(HensuConfig.builder().useVirtualThreads(true).build())
     .loadCredentials(properties)
     .agentProviders(List.of(new LangChain4jProvider()))
     .build();
@@ -55,11 +54,6 @@ The builder provides fine-grained control over all components:
 
 ```java
 HensuEnvironment env = HensuFactory.builder()
-    // Configuration
-    .config(HensuConfig.builder()
-        .useVirtualThreads(true)
-        .build())
-
     // Credentials (multiple loading strategies)
     .loadCredentials(properties)              // From Properties + env vars
     .loadCredentialsFromEnvironment()         // From env vars only
@@ -197,7 +191,9 @@ rule that returns a valid target node ID wins, and the state is updated to point
 
 ### Parallel Branch Concurrency
 
-`ParallelNodeExecutor` runs each branch on a virtual thread with two concurrency guarantees:
+Both `ParallelNodeExecutor` and `ForkNodeExecutor` run branches on named virtual threads
+via `StructuredTaskScope` (preview, Java 25). Two concurrency guarantees apply to all
+parallel execution paths:
 
 **1. ScopedValue isolation** – each branch receives an isolated context snapshot bound via
 `ScopedValue.where(BRANCH_CONTEXT, snapshot)`. Branch mutations never leak into sibling branches
@@ -1265,7 +1261,7 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 |---------------------------------------------------------|--------------------------------------------------------------------------------------------------|
 | `HensuFactory.java`                                     | Bootstrap and environment creation                                                               |
 | `HensuEnvironment.java`                                 | Container for all core components                                                                |
-| `HensuConfig.java`                                      | Configuration (threading, storage)                                                               |
+| `HensuConfig.java`                                      | Configuration (storage backend)                                                                  |
 | `agent/AgentFactory.java`                               | Creates agents from explicit providers                                                           |
 | `agent/AgentProvider.java`                              | Provider interface for pluggable AI backends                                                     |
 | `agent/AgentRegistry.java`                              | Agent lookup interface                                                                           |

@@ -204,7 +204,8 @@ class WorkflowSerializerTest {
                 JoinNode.builder("join")
                         .awaitTargets(List.of("fork"))
                         .mergeStrategy(MergeStrategy.COLLECT_ALL)
-                        .outputField("results")
+                        .writes("results")
+                        .exports("finding_a", "finding_b")
                         .timeoutMs(30000)
                         .failOnAnyError(false)
                         .transitionRules(List.of(new SuccessTransition("done")))
@@ -226,7 +227,8 @@ class WorkflowSerializerTest {
 
         JoinNode restoredJoin = (JoinNode) restored.getNodes().get("join");
         assertThat(restoredJoin.getMergeStrategy()).isEqualTo(MergeStrategy.COLLECT_ALL);
-        assertThat(restoredJoin.getOutputField()).isEqualTo("results");
+        assertThat(restoredJoin.getWrites().getFirst()).isEqualTo("results");
+        assertThat(restoredJoin.getExports()).containsExactly("finding_a", "finding_b");
         assertThat(restoredJoin.getTimeoutMs()).isEqualTo(30000);
         assertThat(restoredJoin.isFailOnAnyError()).isFalse();
     }

@@ -12,9 +12,10 @@ import io.hensu.core.template.TemplateResolver;
 import io.hensu.core.util.AgentOutputValidator;
 import io.hensu.core.util.JsonUtil;
 import io.hensu.core.workflow.node.ParallelNode;
+import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
+import java.util.concurrent.StructuredTaskScope;
+import java.util.concurrent.StructuredTaskScope.Subtask;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -48,8 +49,8 @@ import java.util.stream.Collectors;
 /// This keeps engine-internal flags out of the user data bus and invisible to
 /// the LLM agent.
 ///
-/// @implNote The {@code ExecutorService} is obtained from {@code ExecutionContext}
-/// and is NOT shut down by this executor – lifecycle is managed by the owner.
+/// @implNote Uses Java 25 preview API ({@code StructuredTaskScope}).
+/// Compile with {@code --enable-preview}.
 ///
 /// @see AgentLifecycleRunner for the shared agent call lifecycle
 /// @see ConsensusEvaluator for vote extraction and strategy evaluation
@@ -75,7 +76,6 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
     @Override
     public NodeResult execute(ParallelNode node, ExecutionContext context) throws Exception {
         HensuState state = context.getState();
-        ExecutorService executorService = context.getExecutorService();
 
         logger.info(
                 "Executing parallel node: "
@@ -88,15 +88,29 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
         ExecutionContext safeContext =
                 context.withListener(new SynchronizedListenerDecorator(context.getListener()));
 
-        List<Future<BranchResult>> futures =
-                Arrays.stream(node.getBranches())
-                        .map(
-                                branch ->
-                                        executorService.submit(
-                                                () -> executeBranch(branch, node, safeContext)))
-                        .toList();
+        // Fork branches using StructuredTaskScope
+        List<BranchResult> branchResults;
+        var threadFactory = Thread.ofVirtual().name("parallel-" + node.getId() + "-", 0).factory();
+        try (var scope =
+                StructuredTaskScope.open(
+                        StructuredTaskScope.Joiner.awaitAll(),
+                        cf ->
+                                cf.withThreadFactory(threadFactory)
+                                        .withTimeout(Duration.ofSeconds(DEFAULT_TIMEOUT_SECONDS))
+                                        .withName("parallel-" + node.getId()))) {
 
-        List<BranchResult> branchResults = collectResults(futures, node, DEFAULT_TIMEOUT_SECONDS);
+            List<Subtask<BranchResult>> subtasks =
+                    Arrays.stream(node.getBranches())
+                            .map(
+                                    branch ->
+                                            scope.fork(
+                                                    () -> executeBranch(branch, node, safeContext)))
+                            .toList();
+
+            scope.join();
+
+            branchResults = subtasks.stream().map(Subtask::get).toList();
+        }
 
         if (branchResults.stream()
                 .anyMatch(br -> br.getResult().getStatus() == ResultStatus.FAILURE)) {
@@ -146,65 +160,83 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
                 new BranchExecutionConfig(
                         cc != null, cc != null ? cc.getStrategy() : null, branch.getYields());
 
-        return ScopedValue.where(BRANCH_CONTEXT, branchSnapshot)
-                .call(
-                        () -> {
-                            HensuState branchState =
-                                    new HensuState(
-                                            branchSnapshot,
-                                            parentState.getWorkflowId(),
-                                            parentState.getCurrentNode(),
-                                            new ExecutionHistory());
-                            ExecutionContext branchCtx =
-                                    context.withState(branchState).withBranchConfig(branchConfig);
+        try {
+            return ScopedValue.where(BRANCH_CONTEXT, branchSnapshot)
+                    .call(
+                            () -> {
+                                HensuState branchState =
+                                        new HensuState(
+                                                branchSnapshot,
+                                                parentState.getWorkflowId(),
+                                                parentState.getCurrentNode(),
+                                                new ExecutionHistory());
+                                ExecutionContext branchCtx =
+                                        context.withState(branchState)
+                                                .withBranchConfig(branchConfig);
 
-                            String branchNodeId = node.getId() + "/" + branch.getId();
+                                String branchNodeId = node.getId() + "/" + branch.getId();
 
-                            // Resolve template against branch-isolated snapshot
-                            TemplateResolver resolver = branchCtx.getTemplateResolver();
-                            String resolvedPrompt =
-                                    branch.getPrompt() != null
-                                            ? resolver.resolve(branch.getPrompt(), branchSnapshot)
-                                            : "";
+                                // Resolve template against branch-isolated snapshot
+                                TemplateResolver resolver = branchCtx.getTemplateResolver();
+                                String resolvedPrompt =
+                                        branch.getPrompt() != null
+                                                ? resolver.resolve(
+                                                        branch.getPrompt(), branchSnapshot)
+                                                : "";
 
-                            // Delegate to shared agent execution lifecycle
-                            NodeResult nodeResult =
-                                    AgentLifecycleRunner.execute(
-                                            branchNodeId,
-                                            branch.getAgentId(),
-                                            resolvedPrompt,
-                                            node,
-                                            branchCtx);
+                                // Delegate to shared agent execution lifecycle
+                                NodeResult nodeResult =
+                                        AgentLifecycleRunner.execute(
+                                                branchNodeId,
+                                                branch.getAgentId(),
+                                                resolvedPrompt,
+                                                node,
+                                                branchCtx);
 
-                            // Validate output before extraction (same safety contract as
-                            // OutputExtractionPostProcessor for sequential nodes)
-                            if (nodeResult.getOutput() != null) {
-                                String output = nodeResult.getOutput().toString();
-                                Optional<String> violation = AgentOutputValidator.validate(output);
-                                if (violation.isPresent()) {
-                                    logger.warning(
-                                            "Branch ["
-                                                    + branch.getId()
-                                                    + "] output rejected: "
-                                                    + violation.get());
-                                    return new BranchResult(
-                                            branch.getId(),
-                                            new NodeResult(
-                                                    ResultStatus.FAILURE,
-                                                    "Branch output " + violation.get(),
-                                                    Map.of("error", "output_validation_failed")),
-                                            Map.of(),
-                                            branch.getWeight());
+                                // Validate output before extraction (same safety contract as
+                                // OutputExtractionPostProcessor for sequential nodes)
+                                if (nodeResult.getOutput() != null) {
+                                    String output = nodeResult.getOutput().toString();
+                                    Optional<String> violation =
+                                            AgentOutputValidator.validate(output);
+                                    if (violation.isPresent()) {
+                                        logger.warning(
+                                                "Branch ["
+                                                        + branch.getId()
+                                                        + "] output rejected: "
+                                                        + violation.get());
+                                        return new BranchResult(
+                                                branch.getId(),
+                                                new NodeResult(
+                                                        ResultStatus.FAILURE,
+                                                        "Branch output " + violation.get(),
+                                                        Map.of(
+                                                                "error",
+                                                                "output_validation_failed")),
+                                                Map.of(),
+                                                branch.getWeight());
+                                    }
                                 }
-                            }
 
-                            // Extract structured yields from agent output
-                            Map<String, Object> yields =
-                                    extractBranchYields(branch, node, nodeResult, branchSnapshot);
+                                // Extract structured yields from agent output
+                                Map<String, Object> yields =
+                                        extractBranchYields(
+                                                branch, node, nodeResult, branchSnapshot);
 
-                            return new BranchResult(
-                                    branch.getId(), nodeResult, yields, branch.getWeight());
-                        });
+                                return new BranchResult(
+                                        branch.getId(), nodeResult, yields, branch.getWeight());
+                            });
+        } catch (Exception e) {
+            logger.warning("Branch [" + branch.getId() + "] execution failed: " + e.getMessage());
+            return new BranchResult(
+                    branch.getId(),
+                    new NodeResult(
+                            ResultStatus.FAILURE,
+                            "Branch execution failed: " + e.getMessage(),
+                            Map.of("error", e.getClass().getName())),
+                    Map.of(),
+                    branch.getWeight());
+        }
     }
 
     /// Extracts structured output from branch agent response into a yields map.
@@ -243,51 +275,6 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
             }
         }
         return yields;
-    }
-
-    // -- Result collection -------------------------------------------------------
-
-    private List<BranchResult> collectResults(
-            List<Future<BranchResult>> futures, ParallelNode node, long timeoutSeconds) {
-
-        List<BranchResult> results = new ArrayList<>();
-
-        for (int i = 0; i < futures.size(); i++) {
-            Future<BranchResult> future = futures.get(i);
-            String branchId = node.getBranches()[i].getId();
-
-            try {
-                results.add(future.get(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS));
-            } catch (java.util.concurrent.TimeoutException e) {
-                logger.warning("Branch timed out after " + timeoutSeconds + "s: " + branchId);
-                future.cancel(true);
-                results.add(
-                        new BranchResult(
-                                branchId,
-                                new NodeResult(
-                                        ResultStatus.FAILURE,
-                                        "Branch timed out",
-                                        Map.of("error", "timeout"))));
-            } catch (java.util.concurrent.ExecutionException e) {
-                logger.warning("Branch failed: " + branchId + " - " + e.getCause().getMessage());
-                results.add(
-                        new BranchResult(
-                                branchId,
-                                new NodeResult(
-                                        ResultStatus.FAILURE,
-                                        "Branch execution failed: " + e.getCause().getMessage(),
-                                        Map.of(
-                                                "error",
-                                                e.getCause().getClass().getName(),
-                                                "message",
-                                                e.getCause().getMessage()))));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new RuntimeException("Parallel execution interrupted", e);
-            }
-        }
-
-        return results;
     }
 
     // -- Result aggregation (no consensus) ---------------------------------------

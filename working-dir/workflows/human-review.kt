@@ -11,11 +11,11 @@ fun workflow() = workflow("human-review-test") {
 
     agents {
         agent("researcher") {
-            model = Models.CLAUDE_SONNET_4_6
+            model = Models.GEMINI_3_1_FLASH_LITE
             role = "Research analyst gathering information"
         }
         agent("writer") {
-            model = Models.CLAUDE_SONNET_4_6
+            model = Models.GEMINI_3_1_FLASH_LITE
             role = "Content writer creating drafts"
         }
         agent("editor") {
@@ -37,7 +37,7 @@ fun workflow() = workflow("human-review-test") {
         // Step 1: Research phase
         node("research") {
             agent = "researcher"
-            prompt = "Research the topic: {topic}"
+            prompt = "Research the topic: {topic}. The number of output words not bigger than 400"
             writes("research")
 
             // Human review checkpoint - can backtrack to restart research

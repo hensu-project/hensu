@@ -127,7 +127,7 @@ public class ValidWorkflowValidator implements ConstraintValidator<ValidWorkflow
                 if (awaits != null) {
                     awaits.forEach(t -> requireSafeId(errors, p + ".awaitTargets[]", t));
                 }
-                optionalSafeId(errors, p + ".outputField", jn.getOutputField());
+                jn.getWrites().forEach(w -> requireSafeId(errors, p + ".writes[]", w));
             }
             case GenericNode gn -> {
                 requireSafeId(errors, p + ".executorType", gn.getExecutorType());

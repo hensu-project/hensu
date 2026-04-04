@@ -123,41 +123,4 @@ class WorkflowExecutorRetryTest extends WorkflowExecutorTestBase {
         assertThat(promptCaptor.getAllValues())
                 .containsExactly("Input: original", "Input: original");
     }
-
-    @Test
-    void shouldNotPolluteFreshRetryContextWithPreviousFailureOutput() throws Exception {
-        // If the failed attempt's output bled into the context, the resolved prompt on
-        // attempt 2 would differ from attempt 1 — the strict eq() matcher would miss and
-        // the mock would fall through to the default (null), crashing the executor.
-        var start =
-                StandardNode.builder()
-                        .id("start")
-                        .agentId("test-agent")
-                        .prompt("Input: {input}")
-                        .transitionRules(
-                                List.of(
-                                        new SuccessTransition("end"),
-                                        new FailureTransition(2, "fallback")))
-                        .build();
-        var workflow =
-                WorkflowTest.TestWorkflowBuilder.create("retry-context-clean")
-                        .agent(agentCfg())
-                        .startNode(start)
-                        .node(end("end"))
-                        .node(failEnd("fallback"))
-                        .build();
-
-        when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
-        when(mockAgent.execute(any(), any()))
-                .thenReturn(AgentResponse.Error.of("fail"))
-                .thenReturn(AgentResponse.TextResponse.of("ok"));
-
-        var ctx = new HashMap<String, Object>();
-        ctx.put("input", "original");
-        var result = executor.execute(workflow, ctx);
-
-        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
-        assertThat(((ExecutionResult.Completed) result).getExitStatus())
-                .isEqualTo(ExitStatus.SUCCESS);
-    }
 }

@@ -36,8 +36,6 @@ import io.hensu.core.tool.ToolRegistry;
 import io.hensu.core.workflow.InMemoryWorkflowRepository;
 import io.hensu.core.workflow.WorkflowRepository;
 import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /// Factory for creating and wiring Hensu workflow execution environments.
 ///
@@ -50,7 +48,6 @@ import java.util.concurrent.Executors;
 /// **Builder with explicit providers** (recommended for Quarkus apps):
 /// {@snippet :
 /// var env = HensuFactory.builder()
-///     .config(HensuConfig.builder().useVirtualThreads(true).build())
 ///     .loadCredentials(properties)
 ///     .agentProviders(List.of(new LangChain4jProvider()))
 ///     .build();
@@ -95,7 +92,6 @@ public final class HensuFactory {
     ///
     /// @apiNote **Side effects**:
     /// - Reads environment variables matching API key patterns
-    /// - Creates a new thread pool (virtual or platform based on config)
     ///
     /// @return a fully-configured environment, never null
     /// @see #loadCredentialsFromEnvironment()
@@ -120,7 +116,6 @@ public final class HensuFactory {
     ///
     /// @apiNote **Side effects**:
     /// - Sets `hensu.stub.enabled` system property if stub mode is enabled in credentials
-    /// - Creates a new thread pool based on configuration
     ///
     /// @param config configuration options for threading and storage, not null
     /// @param credentials map of API keys and settings, not null (may be empty)
@@ -137,15 +132,10 @@ public final class HensuFactory {
         // Create AgentRegistry using the factory
         AgentRegistry agentRegistry = new DefaultAgentRegistry(agentFactory);
 
-        ExecutorService executorService =
-                config.isUseVirtualThreads()
-                        ? Executors.newVirtualThreadPerTaskExecutor()
-                        : Executors.newFixedThreadPool(config.getThreadPoolSize());
-
         // Create NodeExecutorRegistry (stateless executors get services from ExecutionContext)
         NodeExecutorRegistry nodeExecutorRegistry = new DefaultNodeExecutorRegistry();
 
-        return createEnvironment(config, nodeExecutorRegistry, agentRegistry, executorService);
+        return createEnvironment(config, nodeExecutorRegistry, agentRegistry);
     }
 
     /// Sets the `hensu.stub.enabled` system property if enabled in credentials.
@@ -167,20 +157,17 @@ public final class HensuFactory {
     /// @param config configuration options, not null
     /// @param nodeExecutorRegistry registry for node type executors, not null
     /// @param agentRegistry registry for AI agents, not null
-    /// @param executorService thread pool for parallel execution, not null
     /// @return a fully-configured environment, never null
     public static HensuEnvironment createEnvironment(
             HensuConfig config,
             NodeExecutorRegistry nodeExecutorRegistry,
-            AgentRegistry agentRegistry,
-            ExecutorService executorService) {
+            AgentRegistry agentRegistry) {
         return createEnvironment(
                 config,
                 nodeExecutorRegistry,
                 agentRegistry,
                 null,
                 null,
-                executorService,
                 new InMemoryWorkflowRepository(),
                 new InMemoryWorkflowStateRepository());
     }
@@ -191,21 +178,18 @@ public final class HensuFactory {
     /// @param nodeExecutorRegistry registry for node type executors, not null
     /// @param agentRegistry registry for AI agents, not null
     /// @param reviewHandler handler for human review checkpoints, may be null for auto-approve
-    /// @param executorService thread pool for parallel execution, not null
     /// @return a fully-configured environment, never null
     public static HensuEnvironment createEnvironment(
             HensuConfig config,
             NodeExecutorRegistry nodeExecutorRegistry,
             AgentRegistry agentRegistry,
-            ReviewHandler reviewHandler,
-            ExecutorService executorService) {
+            ReviewHandler reviewHandler) {
         return createEnvironment(
                 config,
                 nodeExecutorRegistry,
                 agentRegistry,
                 reviewHandler,
                 null,
-                executorService,
                 new InMemoryWorkflowRepository(),
                 new InMemoryWorkflowStateRepository());
     }
@@ -220,7 +204,6 @@ public final class HensuFactory {
     /// @param agentRegistry registry for AI agents, not null
     /// @param reviewHandler handler for human review checkpoints, may be null for auto-approve
     /// @param actionExecutor executor for executable actions, may be null for logging-only mode
-    /// @param executorService thread pool for parallel execution, not null
     /// @param workflowRepository tenant-scoped storage for workflow definitions, not null
     /// @param workflowStateRepository tenant-scoped storage for execution state snapshots, not null
     /// @return a fully-configured environment, never null
@@ -230,7 +213,6 @@ public final class HensuFactory {
             AgentRegistry agentRegistry,
             ReviewHandler reviewHandler,
             ActionExecutor actionExecutor,
-            ExecutorService executorService,
             WorkflowRepository workflowRepository,
             WorkflowStateRepository workflowStateRepository) {
         return buildCoreComponents(
@@ -239,7 +221,6 @@ public final class HensuFactory {
                 agentRegistry,
                 reviewHandler,
                 actionExecutor,
-                executorService,
                 workflowRepository,
                 workflowStateRepository,
                 null,
@@ -258,7 +239,6 @@ public final class HensuFactory {
             AgentRegistry agentRegistry,
             ReviewHandler reviewHandler,
             ActionExecutor actionExecutor,
-            ExecutorService executorService,
             WorkflowRepository workflowRepository,
             WorkflowStateRepository workflowStateRepository,
             Planner planner,
@@ -272,7 +252,6 @@ public final class HensuFactory {
                 new WorkflowExecutor(
                         nodeExecutorRegistry,
                         agentRegistry,
-                        executorService,
                         rubricEngine,
                         reviewHandler,
                         actionExecutor,
@@ -284,7 +263,6 @@ public final class HensuFactory {
                 nodeExecutorRegistry,
                 agentRegistry,
                 rubricRepository,
-                executorService,
                 actionExecutor,
                 workflowRepository,
                 workflowStateRepository,
@@ -405,7 +383,6 @@ public final class HensuFactory {
     /// ### Example
     /// {@snippet :
     /// var env = HensuFactory.builder()
-    ///     .config(HensuConfig.builder().useVirtualThreads(true).build())
     ///     .loadCredentials(properties)
     ///     .agentProviders(List.of(new LangChain4jProvider()))
     ///     .actionExecutor(actionExecutor)
@@ -424,7 +401,6 @@ public final class HensuFactory {
         private ActionExecutor actionExecutor = null;
         private WorkflowRepository workflowRepository;
         private WorkflowStateRepository workflowStateRepository;
-        private ExecutorService executorService;
         private Planner planner;
         private PlanResponseParser planResponseParser;
         private final List<StepHandler<?>> stepHandlers = new ArrayList<>();
@@ -594,15 +570,6 @@ public final class HensuFactory {
             return this;
         }
 
-        /// Sets a custom executor service for parallel execution.
-        ///
-        /// @param executorService the thread pool, may be null for auto-created pool
-        /// @return this builder for chaining, never null
-        public Builder executorService(ExecutorService executorService) {
-            this.executorService = executorService;
-            return this;
-        }
-
         /// Loads credentials from environment variables matching API key patterns.
         ///
         /// @return this builder for chaining, never null
@@ -720,7 +687,6 @@ public final class HensuFactory {
         /// @apiNote **Side effects**:
         /// - Auto-loads environment credentials if none were explicitly provided
         /// - Sets `hensu.stub.enabled` system property if stub mode is enabled
-        /// - Creates a thread pool if none was provided
         ///
         /// @return the configured environment, never null
         public HensuEnvironment build() {
@@ -731,12 +697,6 @@ public final class HensuFactory {
             // Apply stub mode setting
             applyStubModeSetting(credentials);
 
-            if (executorService == null) {
-                executorService =
-                        config.isUseVirtualThreads()
-                                ? Executors.newVirtualThreadPerTaskExecutor()
-                                : Executors.newFixedThreadPool(config.getThreadPoolSize());
-            }
             if (agentRegistry == null) {
                 // Always include StubAgentProvider alongside explicit providers
                 List<AgentProvider> allProviders = new ArrayList<>(agentProviders);
@@ -808,7 +768,6 @@ public final class HensuFactory {
                     agentRegistry,
                     reviewHandler,
                     actionExecutor,
-                    executorService,
                     workflowRepository,
                     workflowStateRepository,
                     planner,

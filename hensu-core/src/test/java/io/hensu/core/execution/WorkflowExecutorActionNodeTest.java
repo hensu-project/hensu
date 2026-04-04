@@ -33,7 +33,6 @@ class WorkflowExecutorActionNodeTest extends WorkflowExecutorTestBase {
                 new WorkflowExecutor(
                         new DefaultNodeExecutorRegistry(),
                         agentRegistry,
-                        executorService,
                         rubricEngine,
                         ReviewHandler.AUTO_APPROVE,
                         mockActionExecutor);

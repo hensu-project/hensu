@@ -1,7 +1,6 @@
 package io.hensu.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.agent.AgentRegistry;
@@ -11,8 +10,6 @@ import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.EndNode;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -28,14 +25,6 @@ class HensuFactoryTest {
 
     @Mock private NodeExecutorRegistry mockNodeExecutorRegistry;
     @Mock private AgentRegistry mockAgentRegistry;
-    @Mock private ExecutorService mockExecutorService;
-
-    @AfterEach
-    void tearDown() {
-        if (environment != null) {
-            environment.close();
-        }
-    }
 
     @Nested
     @DisplayName("builder")
@@ -102,10 +91,7 @@ class HensuFactoryTest {
         void shouldWireCustomNodeExecutorRegistry() {
             environment =
                     HensuFactory.createEnvironment(
-                            new HensuConfig(),
-                            mockNodeExecutorRegistry,
-                            mockAgentRegistry,
-                            mockExecutorService);
+                            new HensuConfig(), mockNodeExecutorRegistry, mockAgentRegistry);
 
             assertThat(environment.getNodeExecutorRegistry()).isSameAs(mockNodeExecutorRegistry);
         }
@@ -115,25 +101,9 @@ class HensuFactoryTest {
         void shouldWireCustomAgentRegistry() {
             environment =
                     HensuFactory.createEnvironment(
-                            new HensuConfig(),
-                            mockNodeExecutorRegistry,
-                            mockAgentRegistry,
-                            mockExecutorService);
+                            new HensuConfig(), mockNodeExecutorRegistry, mockAgentRegistry);
 
             assertThat(environment.getAgentRegistry()).isSameAs(mockAgentRegistry);
-        }
-    }
-
-    @Nested
-    @DisplayName("lifecycle")
-    class Lifecycle {
-
-        @Test
-        @DisplayName("close does not throw")
-        void shouldCloseWithoutException() {
-            environment = HensuFactory.builder().build();
-
-            assertThatCode(() -> environment.close()).doesNotThrowAnyException();
         }
     }
 }

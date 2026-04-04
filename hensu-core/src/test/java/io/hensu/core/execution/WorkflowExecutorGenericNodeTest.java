@@ -29,11 +29,7 @@ class WorkflowExecutorGenericNodeTest extends WorkflowExecutorTestBase {
         genericRegistry = new DefaultNodeExecutorRegistry();
         executor =
                 new WorkflowExecutor(
-                        genericRegistry,
-                        agentRegistry,
-                        executorService,
-                        rubricEngine,
-                        ReviewHandler.AUTO_APPROVE);
+                        genericRegistry, agentRegistry, rubricEngine, ReviewHandler.AUTO_APPROVE);
     }
 
     @Test
