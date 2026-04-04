@@ -1,11 +1,8 @@
 package io.hensu.server.config;
 
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import io.hensu.core.HensuEnvironment;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Optional;
@@ -74,30 +71,6 @@ class HensuEnvironmentProducerTest {
 
             org.assertj.core.api.Assertions.assertThat(props)
                     .containsEntry("hensu.stub.enabled", "true");
-        }
-    }
-
-    @Nested
-    class Cleanup {
-
-        @Test
-        void shouldCloseEnvironmentOnCleanup() throws Exception {
-            HensuEnvironment env = mock(HensuEnvironment.class);
-
-            // Inject environment via reflection
-            var envField = HensuEnvironmentProducer.class.getDeclaredField("hensuEnvironment");
-            envField.setAccessible(true);
-            envField.set(producer, env);
-
-            producer.cleanup();
-
-            verify(env).close();
-        }
-
-        @Test
-        void shouldNotThrowWhenEnvironmentIsNull() {
-            // hensuEnvironment is null by default
-            assertThatCode(() -> producer.cleanup()).doesNotThrowAnyException();
         }
     }
 }

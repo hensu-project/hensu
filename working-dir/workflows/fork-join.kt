@@ -10,30 +10,37 @@
  *
  * Flow:
  *   start → analyze-task → fork(research-a, research-b, research-c) → join → synthesize → success
+ *
+ *   Sub-flow 1 is a multi-node chain (research → refine) to validate
+ *   that executeUntil() traverses full sub-flows, not just single nodes.
  */
 fun workflow() = workflow("fork-join-demo") {
     description = "Demonstrates fork-join parallel execution with virtual threads"
 
     agents {
         agent("analyzer") {
-            model = "stub"
+            model = Models.GEMINI_3_1_FLASH_LITE
             role = "Task analyzer"
         }
         agent("researcher") {
-            model = "stub"
+            model = Models.GEMINI_3_1_FLASH_LITE
             role = "Research specialist"
         }
         agent("synthesizer") {
-            model = "stub"
+            model = Models.GEMINI_3_1_FLASH_LITE
             role = "Content synthesizer"
         }
     }
 
     state {
         variable("analysis",           VarType.STRING, "identified research areas from task analysis")
-        variable("research_technical", VarType.STRING, "findings on technical aspects of AI workflow automation")
-        variable("research_use_cases", VarType.STRING, "findings on practical use cases for AI workflow automation")
-        variable("research_trends",    VarType.STRING, "findings on future trends in AI workflow automation")
+        variable("area_1",             VarType.STRING, "first research area identified by the analyzer")
+        variable("area_2",             VarType.STRING, "second research area identified by the analyzer")
+        variable("area_3",             VarType.STRING, "third research area identified by the analyzer")
+        variable("research_1_raw",     VarType.STRING, "raw research findings for the first area")
+        variable("research_1",         VarType.STRING, "refined research findings for the first area")
+        variable("research_2",         VarType.STRING, "research findings for the second area")
+        variable("research_3",         VarType.STRING, "research findings for the third area")
         variable("research_results",   VarType.STRING, "merged research results from all branches")
         variable("report",             VarType.STRING, "final synthesized report")
     }
@@ -44,8 +51,8 @@ fun workflow() = workflow("fork-join-demo") {
         // Initial analysis node
         node("analyze-task") {
             agent = "analyzer"
-            prompt = "Analyze the following topic and identify 3 key research areas: AI workflow automation"
-            writes("analysis")
+            prompt = "Analyze the following topic and identify exactly 3 key research areas: AI workflow automation"
+            writes("analysis", "area_1", "area_2", "area_3")
             onSuccess goto "parallel-research"
         }
 
@@ -55,44 +62,58 @@ fun workflow() = workflow("fork-join-demo") {
             onComplete goto "merge-research"
         }
 
-        // Research branch 1: Technical aspects
+        // Sub-flow 1: multi-node chain (research → refine → join boundary)
         node("research-area-1") {
             agent = "researcher"
             prompt = """
-                Research technical aspects of AI workflow automation.
-                Focus on: architecture patterns, execution engines, state management.
-                Previous analysis: {analysis}
+                Research the following area in depth: {area_1}
+                Provide detailed findings with concrete examples and patterns.
             """.trimIndent()
-            writes("research_technical")
+            writes("research_1_raw")
+            onSuccess goto "refine-area-1"
         }
 
-        // Research branch 2: Use cases
+        node("refine-area-1") {
+            agent = "researcher"
+            prompt = """
+                Review and refine the following raw research findings for clarity and accuracy.
+                Remove redundancies, strengthen examples, and ensure logical flow.
+
+                Raw findings:
+                {research_1_raw}
+            """.trimIndent()
+            writes("research_1")
+            onSuccess goto "merge-research"
+        }
+
+        // Sub-flow 2: transitions to join boundary
         node("research-area-2") {
             agent = "researcher"
             prompt = """
-                Research practical use cases for AI workflow automation.
-                Focus on: enterprise applications, developer tools, automation scenarios.
-                Previous analysis: {analysis}
+                Research the following area in depth: {area_2}
+                Provide detailed findings with concrete examples and patterns.
             """.trimIndent()
-            writes("research_use_cases")
+            writes("research_2")
+            onSuccess goto "merge-research"
         }
 
-        // Research branch 3: Future trends
+        // Sub-flow 3: transitions to join boundary
         node("research-area-3") {
             agent = "researcher"
             prompt = """
-                Research future trends in AI workflow automation.
-                Focus on: emerging patterns, potential innovations, market direction.
-                Previous analysis: {analysis}
+                Research the following area in depth: {area_3}
+                Provide detailed findings with concrete examples and patterns.
             """.trimIndent()
-            writes("research_trends")
+            writes("research_3")
+            onSuccess goto "merge-research"
         }
 
         // Join: await all research branches and merge results
         join("merge-research") {
             await("parallel-research")
             mergeStrategy = MergeStrategy.COLLECT_ALL
-            outputField = "research_results"
+            exports("research_1", "research_2", "research_3")
+            writes("research_results")
             timeout = 60000  // 60 second timeout
             failOnError = true
             onSuccess goto "synthesize-report"

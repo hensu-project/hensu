@@ -128,6 +128,7 @@ export COLUMNS="\${COLUMNS:-\$(tput cols 2>/dev/null || echo 80)}"
 exec java \\
     --enable-native-access=ALL-UNNAMED \\
     --sun-misc-unsafe-memory-access=allow \\
+    --enable-preview \\
     -jar "\${HENSU_JAR}" \\
     "\$@"
 EOF

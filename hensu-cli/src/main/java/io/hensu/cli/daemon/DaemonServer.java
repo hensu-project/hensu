@@ -410,10 +410,10 @@ public class DaemonServer {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             tryMarkCancelled(execution, execId);
-        } catch (Exception e) {
-            log.warning("Execution " + execId + " failed: " + e.getMessage());
-            String errFrame = safeSerialize(DaemonFrame.error(execId, e.getMessage(), true));
-            execution.markFailed(e.getMessage(), errFrame);
+        } catch (Throwable t) {
+            log.warning("Execution " + execId + " failed: " + t.getMessage());
+            String errFrame = safeSerialize(DaemonFrame.error(execId, t.getMessage(), true));
+            execution.markFailed(t.getMessage(), errFrame);
         }
     }
 

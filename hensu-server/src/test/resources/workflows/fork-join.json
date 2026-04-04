@@ -58,7 +58,7 @@
       "nodeType" : "JOIN",
       "awaitTargets" : [ "fork" ],
       "mergeStrategy" : "COLLECT_ALL",
-      "outputField" : "results",
+      "writes" : [ "results" ],
       "timeoutMs" : 30000,
       "failOnAnyError" : true,
       "transitionRules" : [ {

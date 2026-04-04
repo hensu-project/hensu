@@ -140,7 +140,6 @@ class SpecializedNodeIntegrationTest extends IntegrationTestBase {
 
         assertThat(snapshot.context()).containsKey("results");
         Map<String, Object> results = (Map<String, Object>) snapshot.context().get("results");
-        assertThat(results).containsKey("process-a");
-        assertThat(results).containsKey("process-b");
+        assertThat(results).containsKeys("process-a", "process-b");
     }
 }

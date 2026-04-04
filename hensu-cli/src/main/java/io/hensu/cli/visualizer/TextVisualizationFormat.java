@@ -247,7 +247,10 @@ public class TextVisualizationFormat implements VisualizationFormat {
                 sb.append(
                         String.format(
                                 "%s%s  %-9s %s%n",
-                                indent, styles.boxMid(), "output", joinNode.getOutputField()));
+                                indent,
+                                styles.boxMid(),
+                                "writes",
+                                String.join(", ", joinNode.getWrites())));
                 appendTransitions(sb, indent, joinNode.getTransitionRules(), styles);
             }
             case GenericNode genericNode -> {

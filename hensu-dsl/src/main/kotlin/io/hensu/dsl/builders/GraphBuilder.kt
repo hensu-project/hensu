@@ -161,7 +161,7 @@ class GraphBuilder(private val workingDirectory: WorkingDirectory) {
      * join("merge-results") {
      *     await("parallel-tasks")
      *     mergeStrategy = MergeStrategy.COLLECT_ALL
-     *     outputField = "merged_output"
+     *     writes("merged_output")
      *     onSuccess goto "process-merged"
      *     onFailure retry 0 otherwise "error"
      * }

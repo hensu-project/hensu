@@ -36,7 +36,6 @@ class WorkflowExecutorHumanReviewTest extends WorkflowExecutorTestBase {
                 new WorkflowExecutor(
                         new DefaultNodeExecutorRegistry(),
                         agentRegistry,
-                        executorService,
                         rubricEngine,
                         mockReviewHandler);
     }

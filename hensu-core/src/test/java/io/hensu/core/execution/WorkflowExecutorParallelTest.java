@@ -268,6 +268,69 @@ class WorkflowExecutorParallelTest extends WorkflowExecutorTestBase {
         assertThat(completed.getFinalState().getContext()).containsEntry("input", "shared-data");
     }
 
+    // — Branch crash under StructuredTaskScope ————————————————————————————
+
+    @Test
+    void shouldProduceFailureWhenBranchThrowsRuntimeException() throws Exception {
+        // If an agent throws a RuntimeException mid-flight, the branch must catch it
+        // and return a FAILURE BranchResult — consistent with ForkNodeExecutor's
+        // sub-flow error handling. The consensus evaluator then sees the failure and
+        // routes via FailureTransition.
+        var agent1 = mock(Agent.class);
+        var agent2 = mock(Agent.class);
+        when(agentRegistry.getAgent("reviewer1")).thenReturn(Optional.of(agent1));
+        when(agentRegistry.getAgent("reviewer2")).thenReturn(Optional.of(agent2));
+        when(agent1.execute(any(), any())).thenThrow(new RuntimeException("Simulated agent crash"));
+        when(agent2.execute(any(), any()))
+                .thenReturn(
+                        AgentResponse.TextResponse.of(
+                                """
+                {"score": 90, "approved": true, "recommendation": "Good"}"""));
+
+        var agents =
+                Map.of(
+                        "reviewer1",
+                                AgentConfig.builder()
+                                        .id("reviewer1")
+                                        .role("Reviewer")
+                                        .model("test")
+                                        .build(),
+                        "reviewer2",
+                                AgentConfig.builder()
+                                        .id("reviewer2")
+                                        .role("Reviewer")
+                                        .model("test")
+                                        .build());
+        var nodes = new HashMap<String, Node>();
+        nodes.put(
+                "parallel",
+                ParallelNode.builder("parallel")
+                        .branch("b1", "reviewer1", "Review")
+                        .branch("b2", "reviewer2", "Review")
+                        .consensus(null, ConsensusStrategy.UNANIMOUS)
+                        .transitionRules(
+                                List.of(
+                                        new SuccessTransition("end"),
+                                        new FailureTransition(0, "fail-end")))
+                        .build());
+        nodes.put("end", end("end"));
+        nodes.put("fail-end", failEnd("fail-end"));
+        var workflow =
+                Workflow.builder()
+                        .id("branch-crash")
+                        .agents(agents)
+                        .nodes(nodes)
+                        .startNode("parallel")
+                        .build();
+
+        var result = executor.execute(workflow, new HashMap<>());
+
+        // Crashed branch produces FAILURE, consensus fails → FailureTransition
+        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
+        assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                .isEqualTo(ExitStatus.FAILURE);
+    }
+
     // — helpers ———————————————————————————————————————————————————————————
 
     private Workflow buildMajorityWorkflow() {

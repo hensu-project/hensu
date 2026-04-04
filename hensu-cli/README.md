@@ -40,7 +40,9 @@ and re-attach at any time without interrupting execution.
 
 ## Installation
 
-**Requires Java 25+.**
+**Requires Java 25+ with preview features.** The install scripts pass `--enable-preview`
+automatically. If you launch manually via `java -jar`, you must include `--enable-preview`
+(required for `StructuredTaskScope`).
 
 ```bash
 # Install latest release (recommended)
@@ -118,7 +120,7 @@ options:
   <workflow-name>          Workflow name from workflows/ (default: hensu.workflow.file property)
   -d, --working-dir        Working directory
   -c, --context <value>    Context as a JSON string  '{"key":"value"}'  or path to a JSON/YAML file
-  -v, --verbose            Show agent inputs and outputs
+  -v, --verbose            Show agent inputs/outputs and fork/join execution structure
   -i, --interactive        Enable interactive human review mode with manual backtracking
       --no-color           Disable ANSI colored output
       --no-daemon          Force inline execution even if the daemon is running

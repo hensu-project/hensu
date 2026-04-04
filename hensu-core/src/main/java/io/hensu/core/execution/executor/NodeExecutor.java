@@ -41,7 +41,6 @@ public interface NodeExecutor<T extends Node> {
     /// - `listener` - Execution listener for observability
     /// - `agentRegistry` - Registry of available agents
     /// - `templateResolver` - For resolving template variables
-    /// - `executorService` - For parallel execution
     /// - `nodeExecutorRegistry` - For delegating to other executors
     /// - `workflowExecutor` - For sub-workflow execution
     ///

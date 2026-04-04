@@ -290,7 +290,7 @@ Join nodes await forked execution paths and merge their results.
 join("merge-results") {
     await("parallel-research")  // Fork node ID to await
     mergeStrategy = MergeStrategy.COLLECT_ALL
-    outputField = "merged_results"
+    writes("merged_results")
     timeout = 60000  // 60 seconds
     failOnError = true
 
@@ -301,21 +301,23 @@ join("merge-results") {
 
 #### Join Node Properties
 
-| Property        | Type          | Default        | Description                        |
-|-----------------|---------------|----------------|------------------------------------|
-| `await(...)`    | vararg String | -              | Fork node IDs to await             |
-| `mergeStrategy` | MergeStrategy | COLLECT_ALL    | How to merge forked outputs        |
-| `outputField`   | String        | "fork_results" | Context field for merged output    |
-| `timeout`       | Long          | 0              | Timeout in ms (0 = no timeout)     |
-| `failOnError`   | Boolean       | true           | Fail join if any forked path fails |
+| Property        | Type          | Default     | Description                                                                                           |
+|-----------------|---------------|-------------|-------------------------------------------------------------------------------------------------------|
+| `await(...)`    | vararg String | -           | Fork node IDs to await                                                                                |
+| `mergeStrategy` | MergeStrategy | COLLECT_ALL | How to merge forked outputs                                                                           |
+| `writes(...)`   | vararg String | -           | State variable(s) for merged output. Single-output strategies require exactly 1; MERGE_MAPS allows 1+ |
+| `exports(...)`  | vararg String | (all)       | Whitelist of branch vars crossing join boundary                                                       |
+| `timeout`       | Long          | 0           | Timeout in ms (0 = no timeout)                                                                        |
+| `failOnError`   | Boolean       | true        | Fail join if any forked path fails                                                                    |
 
 #### Merge Strategies
 
-| Strategy        | Description                     |
-|-----------------|---------------------------------|
-| `COLLECT_ALL`   | Collect all outputs into a list |
-| `FIRST_SUCCESS` | Use the first successful result |
-| `CONCATENATE`   | Concatenate all outputs as text |
+| Strategy           | Description                                                        |
+|--------------------|--------------------------------------------------------------------|
+| `COLLECT_ALL`      | Collect all outputs into a list                                    |
+| `FIRST_SUCCESSFUL` | Use the first successful result                                    |
+| `CONCATENATE`      | Concatenate all outputs as text                                    |
+| `MERGE_MAPS`       | Spread each branch's map entries into individual parent state vars |
 
 ### Generic Node
 

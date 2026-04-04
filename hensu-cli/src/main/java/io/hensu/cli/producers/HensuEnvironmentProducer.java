@@ -5,14 +5,12 @@ import io.hensu.cli.action.CLIActionExecutor;
 import io.hensu.cli.daemon.CredentialsLoader;
 import io.hensu.cli.review.CLIReviewHandler;
 import io.hensu.cli.review.DaemonReviewHandler;
-import io.hensu.core.HensuConfig;
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.HensuFactory;
 import io.hensu.core.execution.executor.GenericNodeHandler;
 import io.hensu.core.review.ReviewHandler;
 import io.hensu.serialization.WorkflowSerializer;
 import io.hensu.serialization.plan.JacksonPlanResponseParser;
-import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.Produces;
@@ -78,7 +76,6 @@ public class HensuEnvironmentProducer {
 
         hensuEnvironment =
                 HensuFactory.builder()
-                        .config(HensuConfig.builder().useVirtualThreads(true).build())
                         .loadCredentials(properties)
                         .agentProviders(List.of(new LangChain4jProvider()))
                         .reviewHandler(reviewHandler)
@@ -140,15 +137,5 @@ public class HensuEnvironmentProducer {
                 .ifPresent(value -> properties.setProperty("hensu.stub.enabled", value));
 
         return properties;
-    }
-
-    /// Cleanup callback invoked when the application shuts down.
-    ///
-    /// Closes the HensuEnvironment to release resources (thread pools, connections).
-    @PreDestroy
-    public void cleanup() {
-        if (hensuEnvironment != null) {
-            hensuEnvironment.close();
-        }
     }
 }

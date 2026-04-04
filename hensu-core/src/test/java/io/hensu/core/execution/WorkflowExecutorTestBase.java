@@ -12,9 +12,6 @@ import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.transition.SuccessTransition;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -38,26 +35,16 @@ abstract class WorkflowExecutorTestBase {
     @Mock protected RubricEngine rubricEngine;
     @Mock protected Agent mockAgent;
 
-    protected ExecutorService executorService;
     protected WorkflowExecutor executor;
 
     @BeforeEach
     void setUpBase() {
-        executorService = Executors.newFixedThreadPool(2);
         executor =
                 new WorkflowExecutor(
                         new DefaultNodeExecutorRegistry(),
                         agentRegistry,
-                        executorService,
                         rubricEngine,
                         ReviewHandler.AUTO_APPROVE);
-    }
-
-    @AfterEach
-    void tearDownBase() {
-        if (executorService != null && !executorService.isShutdown()) {
-            executorService.shutdown();
-        }
     }
 
     /// Creates an {@link AgentConfig} for the default {@code "test-agent"}.

@@ -8,6 +8,7 @@ plugins {
 tasks.named<QuarkusDev>("quarkusDev") {
     openJavaLang.set(true)
     jvmArguments.add("--enable-native-access=ALL-UNNAMED")
+    jvmArguments.add("--enable-preview")
 }
 
 dependencies {

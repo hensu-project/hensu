@@ -113,7 +113,36 @@ For non-agent steps, `GenericNode` runs custom synchronous logic registered by `
 `ActionNode` dispatches asynchronous tasks to external systems via a registered `ActionHandler`
 (e.g., webhooks, git operations, notifications).
 
-### 5. Quality Gates (Rubric Evaluation)
+### 5. Structured Concurrency (Preview API)
+
+All parallel execution – `ParallelNodeExecutor`, `ForkNodeExecutor` – uses Java's
+`StructuredTaskScope` (preview, JEP 453) instead of raw `ExecutorService`.
+This is a deliberate trade-off: preview API in exchange for three structural guarantees.
+
+**Why preview:** `StructuredTaskScope` enforces a parent–child relationship between the
+spawning thread and its subtasks. When the scope closes, all subtasks are guaranteed to have
+completed or been canceled – there is no "fire and forget" leak path. With raw
+`ExecutorService`, a forgotten `Future` or a missed `shutdown()` silently leaks threads.
+In a workflow engine where every fork spawns N virtual threads running LLM calls, that leak
+compounds per execution.
+
+**What it buys us:**
+
+| Guarantee                          | `ExecutorService`                        | `StructuredTaskScope`          |
+|:-----------------------------------|:-----------------------------------------|:-------------------------------|
+| Subtask lifetime bounded by parent | Manual (`shutdown` + `awaitTermination`) | Automatic (scope close)        |
+| First failure cancels siblings     | Manual (`Future.cancel` loop)            | Built-in (`ShutdownOnFailure`) |
+| Thread dumps show parent–child     | No – flat pool                           | Yes – structured hierarchy     |
+
+**Operational consequence:** `--enable-preview` is required everywhere – Gradle compile tasks,
+CLI launcher scripts, daemon `ProcessBuilder`, Quarkus dev mode, and native image build args.
+The install scripts and build config handle this automatically; manual `java -jar` invocations
+must include the flag.
+
+Each parallel execution creates and closes its own `StructuredTaskScope` within the node
+executor method, scoped to that single fork/parallel operation. No shared thread pool exists.
+
+### 6. Quality Gates (Rubric Evaluation)
 
 Node outputs can be evaluated against markdown rubric definitions before the workflow transitions. The
 `RubricEngine` coordinates evaluation through `ScoreExtractingEvaluator`, which reads the `score`
@@ -123,7 +152,7 @@ outputs are sent back for revision. The evaluator also accumulates feedback into
 engine variable, which `RecommendationVariableInjector` injects into the next agent's prompt
 automatically when a `ScoreTransition` or `ApprovalTransition` is present on the node.
 
-### 6. Storage Architecture
+### 7. Storage Architecture
 
 Repository interfaces and in-memory defaults live in **hensu-core**:
 
@@ -134,7 +163,7 @@ Repository interfaces and in-memory defaults live in **hensu-core**:
 `HensuEnvironment` via `@Produces @Singleton` — it never creates instances directly. Production deployments can
 substitute database-backed implementations through the builder.
 
-### 7. Distributed Execution & Recovery
+### 8. Distributed Execution & Recovery
 
 In a multi-instance deployment, each server node holds a **lease** on the executions it is
 currently running. Leases are tracked via two columns in `hensu.execution_states`:
@@ -183,7 +212,7 @@ is **not terminal** (`isTerminal() == false`): the execution's virtual thread re
 blocked, holding no lease but retaining in-process state. A client `hensu attach` resumes the
 review inline without replaying from a checkpoint.
 
-### 8. REST API Separation
+### 9. REST API Separation
 
 All path/query identifiers are validated by `@ValidId`; workflow request bodies by `@ValidWorkflow`
 (deep-validates the entire object graph for safe identifiers and control-character-free text);
@@ -738,18 +767,19 @@ The unified architecture provides:
 3. **Centralized Bootstrap** — `HensuFactory.builder()` as the single entry point for all core infrastructure
 4. **Zero-Trust Execution** — Server has no shell; `Action.Execute` is rejected; side effects route via registered `ActionHandler`s (MCP by default) to tenant clients
 5. **Non-Linear Graphs** — Loops, conditional branches, fork/join, parallel fan-out with consensus, backtracking
-6. **Rubric Evaluation** — Quality gates that score outputs and route on thresholds for self-correcting loops
-7. **Pause / Resume** — Workflows checkpoint at any node (including micro-plan step index via `PlanSnapshot`) and resume; the lease protocol protects against data races when the owning node crashes
-8. **Distributed Recovery** — Heartbeat/sweeper lease protocol for crashed-node detection; atomic PostgreSQL `UPDATE…RETURNING` claim
-9. **Sub-Workflows** — Hierarchical composition via `SubWorkflowNode` with input/output mapping
-10. **Flexible Planning** — Static (predefined) or Dynamic (LLM-generated) execution plans within nodes
-11. **Human Review** — Checkpoints for manual approval at both plan and execution levels
-12. **Multi-Tenancy** — Java 25 `ScopedValues` for safe tenant context propagation and isolation
-13. **Storage in Core** — Repository interfaces with in-memory defaults; server delegates via CDI
-14. **Shared Serialization** — `hensu-serialization` provides consistent JSON format; zero Jackson in `hensu-core`
-15. **API Separation** — Workflow definitions and executions are distinct REST resources
-16. **GraalVM-First Design** — No-reflection core; explicit wiring enables static analysis
-17. **Three-Layer Testing** — Unit (Mockito), Integration (inmem + stubs), Persistence (Testcontainers)
-18. **State Schema Validation** — `WorkflowStateSchema` + `WorkflowValidator` enforce typed variable declarations and prompt bindings at load time
-19. **Execution Observability** — `ExecutionEventBroadcaster` fans out engine events to SSE subscribers; `ScopedValue` routes events across virtual threads without `ThreadLocal`
-20. **CLI Daemon** — `DaemonServer` keeps the JVM and Kotlin compiler warm; `OutputRingBuffer` allows detach/re-attach without losing execution output
+6. **Structured Concurrency** — `StructuredTaskScope` (preview) for all parallel execution; no `ExecutorService`, no thread pool lifecycle
+7. **Rubric Evaluation** — Quality gates that score outputs and route on thresholds for self-correcting loops
+8. **Pause / Resume** — Workflows checkpoint at any node (including micro-plan step index via `PlanSnapshot`) and resume; the lease protocol protects against data races when the owning node crashes
+9. **Distributed Recovery** — Heartbeat/sweeper lease protocol for crashed-node detection; atomic PostgreSQL `UPDATE…RETURNING` claim
+10. **Sub-Workflows** — Hierarchical composition via `SubWorkflowNode` with input/output mapping
+11. **Flexible Planning** — Static (predefined) or Dynamic (LLM-generated) execution plans within nodes
+12. **Human Review** — Checkpoints for manual approval at both plan and execution levels
+13. **Multi-Tenancy** — Java 25 `ScopedValues` for safe tenant context propagation and isolation
+14. **Storage in Core** — Repository interfaces with in-memory defaults; server delegates via CDI
+15. **Shared Serialization** — `hensu-serialization` provides consistent JSON format; zero Jackson in `hensu-core`
+16. **API Separation** — Workflow definitions and executions are distinct REST resources
+17. **GraalVM-First Design** — No-reflection core; explicit wiring enables static analysis
+18. **Three-Layer Testing** — Unit (Mockito), Integration (inmem + stubs), Persistence (Testcontainers)
+19. **State Schema Validation** — `WorkflowStateSchema` + `WorkflowValidator` enforce typed variable declarations and prompt bindings at load time
+20. **Execution Observability** — `ExecutionEventBroadcaster` fans out engine events to SSE subscribers; `ScopedValue` routes events across virtual threads without `ThreadLocal`
+21. **CLI Daemon** — `DaemonServer` keeps the JVM and Kotlin compiler warm; `OutputRingBuffer` allows detach/re-attach without losing execution output
