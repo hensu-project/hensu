@@ -116,8 +116,7 @@ public class WorkflowRegistryService {
         Objects.requireNonNull(workflowId, "workflowId must not be null");
         LOG.infov(
                 "Delete workflow: id={0}, tenant={1}",
-                LogSanitizer.sanitize(workflowId),
-                LogSanitizer.sanitize(tenantId));
+                LogSanitizer.sanitize(workflowId), LogSanitizer.sanitize(tenantId));
         return workflowRepository.delete(tenantId, workflowId);
     }
 }
