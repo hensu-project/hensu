@@ -16,6 +16,7 @@ and re-attach at any time without interrupting execution.
   - [`hensu validate`](#hensu-validate)
   - [`hensu visualize`](#hensu-visualize)
   - [`hensu build`](#hensu-build)
+  - [Sub-Workflows](#sub-workflows)
 - [Daemon Commands](#daemon-commands)
   - [`hensu daemon`](#hensu-daemon)
   - [`hensu ps`](#hensu-ps)
@@ -115,6 +116,7 @@ execution when the daemon is not available.
 ```
 hensu run [<workflow-name>] [-d <working-dir>]
           [-v] [-i] [--no-color] [--no-daemon] [-c <context>]
+          [--with <sub-workflow>]...
 
 options:
   <workflow-name>          Workflow name from workflows/ (default: hensu.workflow.file property)
@@ -122,6 +124,7 @@ options:
   -c, --context <value>    Context as a JSON string  '{"key":"value"}'  or path to a JSON/YAML file
   -v, --verbose            Show agent inputs/outputs and fork/join execution structure
   -i, --interactive        Enable interactive human review mode with manual backtracking
+      --with <name>        Sub-workflow to load alongside the root (repeatable); see Sub-Workflows below
       --no-color           Disable ANSI colored output
       --no-daemon          Force inline execution even if the daemon is running
 ```
@@ -144,11 +147,12 @@ the decision. A 30-minute fallback timeout applies.
 
 ### `hensu validate`
 
-Parse the workflow and perform static analysis: syntax errors, missing node references, and
-unreachable nodes.
+Parse the workflow and perform static analysis: syntax errors, missing node references,
+unreachable nodes, and – when `--with` supplies sub-workflows – cycles in the sub-workflow
+reference graph.
 
 ```
-hensu validate [<workflow-name>] [-d <working-dir>]
+hensu validate [<workflow-name>] [-d <working-dir>] [--with <sub-workflow>]...
 ```
 
 ### `hensu visualize`
@@ -156,10 +160,11 @@ hensu validate [<workflow-name>] [-d <working-dir>]
 Render the workflow graph to the terminal.
 
 ```
-hensu visualize [<workflow-name>] [-d <working-dir>] [--format <fmt>]
+hensu visualize [<workflow-name>] [-d <working-dir>] [--format <fmt>] [--with <sub-workflow>]...
 
 options:
   --format <text|mermaid>  Output format  (default: text)
+  --with <name>            Sub-workflow to include in the rendered graph (repeatable)
 ```
 
 ### `hensu build`
@@ -170,6 +175,35 @@ and is required by `hensu push`.
 ```
 hensu build [<workflow-name>] [-d <working-dir>]
 ```
+
+`build` does not accept `--with`. Sub-workflows are compiled and pushed independently;
+the server resolves references at runtime via its own registry and rejects dangling refs
+at push time.
+
+---
+
+## Sub-Workflows
+
+A workflow can delegate to another workflow via a `subWorkflow` node. For commands that
+execute or analyze the graph locally – `run`, `validate`, `visualize` – referenced children
+must be supplied explicitly with `--with`. The flag is repeatable.
+
+```bash
+hensu run parent --with child-a --with child-b -d ./my-project
+```
+
+Under the hood:
+
+- Each `--with <name>` resolves to `workflows/<name>.kt` in the working directory.
+- The root plus all `--with` workflows are registered under the CLI tenant
+  (`SubWorkflowLoader.CLI_TENANT`) so `SubWorkflowNodeExecutor` can resolve children at runtime.
+- When the daemon handles the execution, the full set is serialized and shipped across the
+  wire – the daemon JVM does not share your working directory.
+- `validate` additionally runs `SubWorkflowGraphValidator` over the supplied set, rejecting
+  cycles before execution.
+
+`build` and `push` do not use `--with` – each workflow is compiled and pushed independently,
+and the server validates the full reference graph (cycles + dangling refs) at push time.
 
 ---
 

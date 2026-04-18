@@ -223,6 +223,7 @@ class NodeDeserializer extends StdDeserializer<Node> {
         return SubWorkflowNode.builder()
                 .id(id)
                 .workflowId(root.get("workflowId").asText())
+                .targetVersion(textOrNull(root, "targetVersion"))
                 .inputMapping(
                         root.has("inputMapping")
                                 ? mapper.convertValue(root.get("inputMapping"), STRING_MAP)

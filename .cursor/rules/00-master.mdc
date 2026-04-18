@@ -18,5 +18,4 @@ MANDATORY: Before every session:
 - Adhere to the "Model Coordination" in `01-model-coordination.mdc`.
 - Adhere to the "GraalVM Native Image" in `10-java-standards.mdc`.
 - Adhere to the "Hensu Java & Kotlin Standards" in `20-native-safety.mdc`.
-- All diagrams and badges must follow the [Visual Style Guide](../../docs/visual-style-guide.md).
 - Document all public APIs following the [Javadoc Guide](../../docs/javadoc-guide.md).

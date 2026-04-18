@@ -144,12 +144,17 @@ is disabled and a default tenant is used (see [Local Development](#local-develop
 
 Terraform/kubectl-style operations for managing workflow definitions (CLI integration).
 
-| Method   | Path                             | Description                      |
-|----------|----------------------------------|----------------------------------|
-| `POST`   | `/api/v1/workflows`              | Push workflow (create or update) |
-| `GET`    | `/api/v1/workflows`              | List all workflows for tenant    |
-| `GET`    | `/api/v1/workflows/{workflowId}` | Pull workflow definition         |
-| `DELETE` | `/api/v1/workflows/{workflowId}` | Delete workflow                  |
+| Method   | Path                             | Description                                                   |
+|----------|----------------------------------|---------------------------------------------------------------|
+| `POST`   | `/api/v1/workflows`              | Push workflow (create or update; validates sub-workflow refs) |
+| `GET`    | `/api/v1/workflows`              | List all workflows for tenant                                 |
+| `GET`    | `/api/v1/workflows/{workflowId}` | Pull workflow definition                                      |
+| `DELETE` | `/api/v1/workflows/{workflowId}` | Delete workflow                                               |
+
+Push is serialized cluster-wide by `WorkflowPushLock` (pg_advisory_xact_lock with JVM
+fallback) and runs `SubWorkflowGraphValidator` over the forward-reachable sub-workflow
+graph — rejecting cycles and dangling `target` references before any row is written.
+See [Sub-Workflows](#sub-workflows) below.
 
 ### Execution Operations
 
@@ -306,6 +311,27 @@ when a DataSource is available, otherwise falls back to in-memory. Repositories 
 - **`inmem` profile**: `quarkus.datasource.active=false` disables PostgreSQL; `quarkus.scheduler.enabled=false`
   disables all lease jobs for in-memory-only operation
 
+### Sub-Workflows
+
+`SubWorkflowNode` lets a parent workflow delegate to another workflow by id. The server
+adds three guarantees on top of core execution:
+
+- **Push-time validation** (`WorkflowRegistryService` → `SubWorkflowGraphValidator`): a single
+  DFS walks the forward-reachable sub-workflow graph from the incoming workflow, rejecting
+  cycles and dangling `target` references. Unresolved ids are looked up lazily via
+  `WorkflowRepository.findById(tenant, id)`, so validation always reflects the post-push
+  graph without an intermediate write.
+- **Cluster-wide serialization** (`WorkflowPushLock`): push acquires `pg_advisory_xact_lock`
+  (JVM-lock fallback when the datasource is inactive) so two concurrent nodes cannot each
+  observe a clean graph and together introduce a cycle.
+- **Runtime isolation**: `_tenant_id` is propagated into the child context and child lookup
+  uses the tenant-scoped `WorkflowRepository`, so a workflow can never resolve a child from
+  a different tenant. Recursion depth is bounded by `SubWorkflowNodeExecutor.MAX_DEPTH = 16`
+  (tracked via `_sub_workflow_depth`).
+
+See [Sub-Workflow Validation on Push](../docs/developer-guide-server.md#sub-workflow-validation-on-push)
+in the Server Developer Guide for the push pipeline.
+
 ## Configuration
 
 ### application.properties
@@ -380,31 +406,51 @@ hensu-server/
 │   ├── execution/                         # Server-side execution listeners
 │   │   ├── LoggingExecutionListener.java  # Structured log output for plan/step events
 │   │   └── CompositeExecutionListener.java # Combines multiple ExecutionListeners
+│   ├── dev/                               # Dev-only handlers (excluded from prod image)
+│   │   └── SleepHandler.java              # Simulates long-running node for crash-recovery tests
 │   ├── mcp/                               # MCP integration (SSE split-pipe transport)
 │   │   ├── JsonRpc.java
 │   │   ├── McpConnection.java
 │   │   ├── McpConnectionFactory.java
 │   │   ├── McpConnectionPool.java
+│   │   ├── McpException.java
 │   │   ├── McpSessionManager.java
-│   │   ├── McpSidecar.java
-│   │   └── SseMcpConnection.java
+│   │   ├── McpSidecar.java                # ActionHandler dispatching to MCP tools
+│   │   ├── McpToolDiscovery.java          # Runtime tool schema discovery + cache
+│   │   ├── SseMcpConnection.java
+│   │   └── TenantToolRegistry.java        # Merges base + tenant MCP tools (MCP precedence)
+│   ├── security/                          # JWT + tenant resolution + error mapping
+│   │   ├── GlobalExceptionMapper.java     # Global @Provider — normalizes errors to JSON
+│   │   └── RequestTenantResolver.java     # Extracts tenant_id claim from JWT
 │   ├── persistence/                       # PostgreSQL persistence (plain JDBC)
 │   │   ├── JdbcWorkflowRepository.java        # Workflow definitions (JSONB)
 │   │   ├── JdbcWorkflowStateRepository.java   # Execution state snapshots (JSONB + lease columns)
 │   │   ├── ExecutionLeaseManager.java         # Distributed lease management (@ApplicationScoped)
+│   │   ├── WorkflowPushLock.java              # Cluster-wide push mutex (pg_advisory_xact_lock + JVM fallback)
 │   │   ├── JdbcSupport.java                   # JDBC helper (queryList, update)
 │   │   └── PersistenceException.java          # Unchecked wrapper for SQLException
 │   ├── workflow/              # Business logic
-│   │   ├── WorkflowService.java
-│   │   ├── ExecutionHeartbeatJob.java     # Periodic heartbeat emission (@Scheduled)
-│   │   └── WorkflowRecoveryJob.java       # Orphaned execution sweeper (@Scheduled)
+│   │   ├── WorkflowService.java                 # Facade over registry + execution + query services
+│   │   ├── WorkflowRegistryService.java         # Push pipeline: WorkflowPushLock + SubWorkflowGraphValidator
+│   │   ├── WorkflowExecutionService.java        # Start/resume orchestration
+│   │   ├── ExecutionQueryService.java           # Read-side: status, plan, output, paused list
+│   │   ├── ExecutionStateService.java           # Snapshot load/save with split-brain guard
+│   │   ├── ExecutionHeartbeatJob.java           # Periodic heartbeat emission (@Scheduled)
+│   │   ├── WorkflowRecoveryJob.java             # Orphaned execution sweeper (@Scheduled)
+│   │   ├── ExecutionStartResult.java            # DTO
+│   │   ├── ExecutionOutput.java                 # DTO
+│   │   ├── ExecutionStatus.java                 # Enum: COMPLETED / PAUSED / RUNNING
+│   │   ├── ExecutionSummary.java                # DTO for paused-list
+│   │   ├── PlanInfo.java                        # DTO for plan review
+│   │   ├── ResumeDecision.java                  # DTO
+│   │   ├── ExecutionNotFoundException.java
+│   │   ├── WorkflowNotFoundException.java
+│   │   └── WorkflowExecutionException.java
 │   ├── streaming/             # SSE event streaming
 │   │   ├── ExecutionEvent.java
 │   │   └── ExecutionEventBroadcaster.java
 │   └── tenant/                # Multi-tenancy
-│       ├── TenantContext.java
-│       ├── TenantAware.java
-│       └── TenantResolutionInterceptor.java
+│       └── TenantContext.java                   # ScopedValue-based tenant context
 └── src/test/java/
     └── io/hensu/server/
         ├── action/

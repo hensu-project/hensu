@@ -187,6 +187,35 @@ class GraphBuilder(private val workingDirectory: WorkingDirectory) {
     }
 
     /**
+     * Defines a sub-workflow delegation node.
+     *
+     * The node invokes a nested workflow identified by `target`. Parent state vars named in
+     * `imports` are copied to the child under the same name; the child's `writes` are mirrored back
+     * to the parent under the same name.
+     *
+     * Usage:
+     * ```kotlin
+     * subWorkflow("delegate_summary") {
+     *     target        = "sub-summarizer"
+     *     targetVersion = "1.0.0"
+     *     imports("draft")
+     *     writes("tl_dr")
+     *     onSuccess goto "publish"
+     *     onFailure goto "publish"
+     * }
+     * ```
+     *
+     * @param id unique node identifier
+     * @param block sub-workflow configuration block
+     * @see SubWorkflowNodeBuilder for configuration options
+     */
+    fun subWorkflow(id: String, block: SubWorkflowNodeBuilder.() -> Unit) {
+        val builder = SubWorkflowNodeBuilder(id)
+        builder.apply(block)
+        nodeBuilders[id] = builder
+    }
+
+    /**
      * Define an action node for executing commands mid-workflow.
      *
      * Action nodes execute side effects (shell commands, messaging, HTTP calls) and then transition

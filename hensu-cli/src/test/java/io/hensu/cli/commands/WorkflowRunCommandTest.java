@@ -48,6 +48,7 @@ class WorkflowRunCommandTest extends BaseWorkflowCommandTest {
 
         command = new WorkflowRunCommand();
         injectField(command, "kotlinParser", kotlinParser);
+        injectField(command, "subWorkflowLoader", createSubWorkflowLoader(kotlinParser));
         injectField(command, "environment", environment);
         injectField(command, "workingDirPath", tempDir);
         injectField(command, "noDaemon", true); // force inline — tests run alongside a live daemon

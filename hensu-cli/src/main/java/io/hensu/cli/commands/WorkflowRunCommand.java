@@ -8,6 +8,7 @@ import io.hensu.cli.execution.VerboseExecutionListenerFactory;
 import io.hensu.cli.review.CLIReviewHandler;
 import io.hensu.cli.review.DaemonClientReviewer;
 import io.hensu.cli.ui.AnsiStyles;
+import io.hensu.cli.workflow.SubWorkflowLoader;
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.agent.stub.StubResponseRegistry;
 import io.hensu.core.execution.ExecutionListener;
@@ -21,11 +22,13 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
@@ -93,6 +96,14 @@ class WorkflowRunCommand extends WorkflowCommand {
             description = "Force inline execution even if daemon is running")
     private boolean noDaemon = false;
 
+    @Option(
+            names = {"--with"},
+            description =
+                    """
+                            Sub-workflow to load alongside the root \
+                            (repeatable, resolved from working-dir/workflows/, .kt optional)""")
+    private List<String> withNames = List.of();
+
     @Inject private HensuEnvironment environment;
     @Inject private VerboseExecutionListenerFactory listenerFactory;
 
@@ -105,7 +116,7 @@ class WorkflowRunCommand extends WorkflowCommand {
                 System.setProperty("hensu.review.interactive", "true");
             }
 
-            Workflow workflow = getWorkflow(workflowName);
+            Workflow workflow = getWorkflow(workflowName, withNames);
 
             ExecutionSink sink = LocalExecutionSink.INSTANCE;
             @SuppressWarnings("resource") // wraps System.out — must not be closed
@@ -114,9 +125,20 @@ class WorkflowRunCommand extends WorkflowCommand {
                     "%n%s %s%n",
                     styles.checkmark(), styles.bold(workflow.getMetadata().getName() + " loaded"));
             sinkOut.printf("  agents   %d%n", workflow.getAgents().size());
-            sinkOut.printf("  nodes    %d%n%n", workflow.getNodes().size());
+            sinkOut.printf("  nodes    %d%n", workflow.getNodes().size());
+            if (!loadedSubWorkflows.isEmpty()) {
+                String subIds =
+                        loadedSubWorkflows.stream()
+                                .map(w -> w.getMetadata().getName())
+                                .collect(Collectors.joining(", "));
+                sinkOut.printf("  subs     %d (%s)%n", loadedSubWorkflows.size(), subIds);
+            }
+            sinkOut.println();
 
             Map<String, Object> context = loadContext(contextInput);
+            // Seed the tenant so SubWorkflowNodeExecutor resolves children from the
+            // repository slot the loader just populated.
+            context.putIfAbsent("_tenant_id", SubWorkflowLoader.CLI_TENANT);
 
             // — Daemon mode ——————————————————————————————————————————————
             if (!noDaemon && DaemonClient.isAlive()) {
@@ -150,6 +172,12 @@ class WorkflowRunCommand extends WorkflowCommand {
         req.execId = execId;
         req.workflowId = workflow.getMetadata().getName();
         req.workflowJson = workflowJson;
+        // Ship `--with` subs across the wire — the daemon runs in a separate JVM with its
+        // own WorkflowRepository, so the loader's in-process registration doesn't reach it.
+        if (!loadedSubWorkflows.isEmpty()) {
+            req.subWorkflowsJson =
+                    loadedSubWorkflows.stream().map(WorkflowSerializer::toJson).toList();
+        }
         req.context = context;
         req.verbose = verbose;
         req.color = color;

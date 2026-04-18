@@ -3,6 +3,7 @@ package io.hensu.core.workflow.validation;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
+import io.hensu.core.workflow.node.SubWorkflowNode;
 import io.hensu.core.workflow.state.WorkflowStateSchema;
 import java.util.ArrayList;
 import java.util.List;
@@ -52,7 +53,13 @@ public final class WorkflowValidator {
 
         for (Map.Entry<String, Node> entry : workflow.getNodes().entrySet()) {
             String nodeId = entry.getKey();
-            if (!(entry.getValue() instanceof StandardNode standardNode)) continue;
+            Node node = entry.getValue();
+
+            if (node instanceof SubWorkflowNode sub) {
+                validateSubWorkflow(nodeId, sub, schema, errors);
+                continue;
+            }
+            if (!(node instanceof StandardNode standardNode)) continue;
 
             for (String name : standardNode.getWrites()) {
                 if (!schema.contains(name)) {
@@ -87,6 +94,34 @@ public final class WorkflowValidator {
                             + workflow.getId()
                             + "' has schema violations:\n"
                             + String.join("\n", errors));
+        }
+    }
+
+    private static void validateSubWorkflow(
+            String nodeId, SubWorkflowNode sub, WorkflowStateSchema schema, List<String> errors) {
+        if (sub.getWorkflowId() == null || sub.getWorkflowId().isBlank()) {
+            errors.add("Sub-workflow node '" + nodeId + "' has no target workflow id");
+        }
+        // Same-name discipline: input/output maps are identity. Check declared in parent schema.
+        for (String name : sub.getInputMapping().keySet()) {
+            if (!schema.contains(name)) {
+                errors.add(
+                        "Sub-workflow node '"
+                                + nodeId
+                                + "' imports '"
+                                + name
+                                + "' which is not declared in parent state schema");
+            }
+        }
+        for (String name : sub.getOutputMapping().keySet()) {
+            if (!schema.contains(name)) {
+                errors.add(
+                        "Sub-workflow node '"
+                                + nodeId
+                                + "' writes '"
+                                + name
+                                + "' which is not declared in parent state schema");
+            }
         }
     }
 }

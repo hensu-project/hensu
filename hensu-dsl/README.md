@@ -88,7 +88,7 @@ See [DSL Reference](../docs/dsl-reference.md) for the complete syntax reference 
 
 - Workflow structure and configuration
 - Agent definitions and model constants
-- Node types (standard, parallel, fork/join, action, generic, end)
+- Node types (standard, parallel, fork/join, action, generic, sub-workflow, end)
 - Transition rules (success, failure, score-based, approval, consensus)
 - State variables (`writes()` + `{placeholder}` syntax), branch outputs (`yields()`), join boundary filter (`exports()`)
 - State schema (`state { }` block with typed `input`/`variable` declarations and load-time validation)
@@ -115,6 +115,7 @@ hensu-dsl/src/main/kotlin/io/hensu/dsl/
 │   ├── ForkJoinBuilders.kt       # Fork/join node builders
 │   ├── ActionNodeBuilder.kt      # Action node builder
 │   ├── GenericNodeBuilder.kt     # Custom node type builder
+│   ├── SubWorkflowNodeBuilder.kt # Sub-workflow delegation builder
 │   ├── EndNodeBuilder.kt         # Terminal node builder
 │   ├── BaseNodeBuilder.kt        # Shared node builder base
 │   ├── StateSchemaBuilder.kt     # Typed state schema builder (`state { }` block)

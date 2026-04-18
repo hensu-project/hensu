@@ -35,6 +35,7 @@ class WorkflowValidateCommandTest extends BaseWorkflowCommandTest {
 
         command = new WorkflowValidateCommand();
         injectField(command, "kotlinParser", kotlinParser);
+        injectField(command, "subWorkflowLoader", createSubWorkflowLoader(kotlinParser));
         injectField(command, "workingDirPath", tempDir);
     }
 

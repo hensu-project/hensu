@@ -7,7 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.workflow.WorkflowService.ExecutionStartResult;
+import io.hensu.server.workflow.ExecutionStartResult;
 import io.quarkus.test.junit.QuarkusTest;
 import java.util.List;
 import java.util.Map;

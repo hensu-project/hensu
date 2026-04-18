@@ -98,16 +98,16 @@ Unicode manipulation, and excessive payload size before the output is written to
 
 Workflows are not limited to linear chains. The graph engine supports:
 
-| Capability                | Mechanism                                                                                                                                                                                                           |
-|:--------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Conditional branching** | `ScoreTransition` routes based on rubric scores; `SuccessTransition` / `FailureTransition` route on result                                                                                                          |
-| **Loops**                 | `LoopNode` with configurable break conditions and max iterations                                                                                                                                                    |
-| **Parallel fan-out**      | `ParallelNode` executes branches concurrently on virtual threads                                                                                                                                                    |
-| **Fork / Join**           | `ForkNode` spawns independent parallel paths; `JoinNode` awaits and merges results                                                                                                                                  |
-| **Consensus**             | Majority vote, unanimous, weighted vote, or judge-decides strategies. Branches declare domain output via `yields()`. Vote strategies merge all branch yields; JUDGE_DECIDES merges only the winning branch's yields |
-| **Backtracking**          | Review decisions can jump to any previous node, restoring state from execution history                                                                                                                              |
-| **Sub-workflows**         | `SubWorkflowNode` with input/output mapping for hierarchical composition                                                                                                                                            |
-| **Pause / Resume**        | Any node returning `PENDING` checkpoints state (including `PlanSnapshot` — micro-plan step index — alongside node position); `executeFrom()` resumes from snapshot                                                  |
+| Capability                | Mechanism                                                                                                                                                                                                                                                |
+|:--------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Conditional branching** | `ScoreTransition` routes based on rubric scores; `SuccessTransition` / `FailureTransition` route on result                                                                                                                                               |
+| **Loops**                 | `LoopNode` with configurable break conditions and max iterations                                                                                                                                                                                         |
+| **Parallel fan-out**      | `ParallelNode` executes branches concurrently on virtual threads                                                                                                                                                                                         |
+| **Fork / Join**           | `ForkNode` spawns independent parallel paths; `JoinNode` awaits and merges results                                                                                                                                                                       |
+| **Consensus**             | Majority vote, unanimous, weighted vote, or judge-decides strategies. Branches declare domain output via `yields()`. Vote strategies merge all branch yields; JUDGE_DECIDES merges only the winning branch's yields                                      |
+| **Backtracking**          | Review decisions can jump to any previous node, restoring state from execution history                                                                                                                                                                   |
+| **Sub-workflows**         | `SubWorkflowNode` delegates to another workflow by id with input/output mapping; `SubWorkflowGraphValidator` rejects cycles and dangling refs at push, `SubWorkflowNodeExecutor.MAX_DEPTH = 16` bounds recursion, `_tenant_id` propagates into the child |
+| **Pause / Resume**        | Any node returning `PENDING` checkpoints state (including `PlanSnapshot` — micro-plan step index — alongside node position); `executeFrom()` resumes from snapshot                                                                                       |
 
 For non-agent steps, `GenericNode` runs custom synchronous logic registered by `executorType`;
 `ActionNode` dispatches asynchronous tasks to external systems via a registered `ActionHandler`
@@ -221,7 +221,7 @@ Violations return `400 Bad Request`. See [Server Developer Guide — Input Valid
 
 ```
 /api/v1/workflows    → WorkflowResource (definition management - CLI integration)
-├── POST   /                    Push workflow (create/update)
+├── POST   /                    Push workflow (create/update; validates sub-workflow graph under push lock)
 ├── GET    /                    List workflows
 ├── GET    /{workflowId}        Pull workflow
 └── DELETE /{workflowId}        Delete workflow
@@ -334,6 +334,7 @@ Zero-dependency Java library. Contains:
 - `WorkflowRepository` / `WorkflowStateRepository` — Tenant-scoped storage interfaces with in-memory defaults
 - `HensuState` / `HensuSnapshot` / `ExecutionHistory` — Mutable runtime state, immutable checkpoints, execution trace
 - Workflow model, Node types (including `SubWorkflowNode`), Transition rules
+- `SubWorkflowGraphValidator` (`workflow/validation`) — cycle + dangling-ref detection across the sub-workflow reference graph, single-DFS with `globallyVisited`; `SubWorkflowNodeExecutor` enforces `MAX_DEPTH = 16` and propagates `_tenant_id` into the child context
 
 ### hensu-dsl (Kotlin DSL)
 
@@ -353,7 +354,9 @@ Extends core with HTTP, MCP, and multi-tenancy:
 - `HensuEnvironmentProducer` — CDI producer using `HensuFactory.builder()`
 - `ServerConfiguration` — Delegates core components from `HensuEnvironment` via `@Produces @Singleton`
 - `ServerActionExecutor` — Send-action dispatcher (routes to registered handlers, falls back to MCP; rejects `Action.Execute`)
-- `WorkflowService` — Service layer: start/resume executions, snapshot management
+- `WorkflowService` — Service layer facade: start/resume executions, snapshot management
+- `WorkflowRegistryService` — Push pipeline: wraps save in `WorkflowPushLock` and invokes `SubWorkflowGraphValidator` lazily resolving sub-workflow ids through the repository
+- `WorkflowPushLock` — Cluster-wide push mutex (`pg_advisory_xact_lock` with JVM `ReentrantLock` fallback) preventing concurrent pushes on different nodes from introducing cycles
 - `WorkflowResource` — Workflow definition management (push/pull/delete/list)
 - `ExecutionResource` — Execution runtime (start/resume/status/plan)
 - `McpSidecar` / `McpGateway` — MCP protocol integration
@@ -771,7 +774,7 @@ The unified architecture provides:
 7. **Rubric Evaluation** — Quality gates that score outputs and route on thresholds for self-correcting loops
 8. **Pause / Resume** — Workflows checkpoint at any node (including micro-plan step index via `PlanSnapshot`) and resume; the lease protocol protects against data races when the owning node crashes
 9. **Distributed Recovery** — Heartbeat/sweeper lease protocol for crashed-node detection; atomic PostgreSQL `UPDATE…RETURNING` claim
-10. **Sub-Workflows** — Hierarchical composition via `SubWorkflowNode` with input/output mapping
+10. **Sub-Workflows** — Hierarchical composition via `SubWorkflowNode` with input/output mapping; `SubWorkflowGraphValidator` rejects cycles and dangling refs at push (under `WorkflowPushLock`); recursion bounded by `MAX_DEPTH = 16`; tenant isolation preserved across the boundary via `_tenant_id` propagation
 11. **Flexible Planning** — Static (predefined) or Dynamic (LLM-generated) execution plans within nodes
 12. **Human Review** — Checkpoints for manual approval at both plan and execution levels
 13. **Multi-Tenancy** — Java 25 `ScopedValues` for safe tenant context propagation and isolation

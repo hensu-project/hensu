@@ -14,6 +14,7 @@ This document provides a complete reference for the Hensu Kotlin DSL used to def
   - [Join Node](#join-node)
   - [Generic Node](#generic-node)
   - [Action Node](#action-node)
+  - [Sub-Workflow Node](#sub-workflow-node)
   - [End Node](#end-node)
 - [Transitions](#transitions)
 - [State Variables (`writes`)](#state-variables-writes)
@@ -132,16 +133,17 @@ graph {
 
 ### Graph Functions
 
-| Function            | Description                                                |
-|---------------------|------------------------------------------------------------|
-| `start at "nodeId"` | Sets the workflow entry point node                         |
-| `node(id) { }`      | Defines a standard agent-based node                        |
-| `parallel(id) { }`  | Defines a parallel node with consensus                     |
-| `fork(id) { }`      | Defines a fork node for parallel execution                 |
-| `join(id) { }`      | Defines a join node to await forked paths                  |
-| `generic(id) { }`   | Defines a generic node with custom executor                |
-| `action(id) { }`    | Defines an action node for executing commands mid-workflow |
-| `end(id)`           | Defines an end node (workflow termination)                 |
+| Function              | Description                                                |
+|-----------------------|------------------------------------------------------------|
+| `start at "nodeId"`   | Sets the workflow entry point node                         |
+| `node(id) { }`        | Defines a standard agent-based node                        |
+| `parallel(id) { }`    | Defines a parallel node with consensus                     |
+| `fork(id) { }`        | Defines a fork node for parallel execution                 |
+| `join(id) { }`        | Defines a join node to await forked paths                  |
+| `generic(id) { }`     | Defines a generic node with custom executor                |
+| `action(id) { }`      | Defines an action node for executing commands mid-workflow |
+| `subWorkflow(id) { }` | Defines a sub-workflow delegation node                     |
+| `end(id)`             | Defines an end node (workflow termination)                 |
 
 ## Nodes
 
@@ -445,6 +447,59 @@ graph {
     end("end_failure", ExitStatus.FAILURE)
 }
 ```
+
+### Sub-Workflow Node
+
+Sub-workflow nodes delegate execution to a nested workflow. The parent pauses at the boundary, the child runs to completion, and control returns with selected state variables mirrored back into the parent.
+
+```kotlin
+subWorkflow("delegate_summary") {
+    target        = "sub-summarizer"
+    targetVersion = "1.0.0"      // Optional, forward-compat with workflow versioning
+
+    imports("draft")             // Copy from parent state into child under the same name
+    writes("tl_dr")              // Mirror from child state back into parent under the same name
+
+    onSuccess goto "publish"
+    onFailure goto "handle_error"
+}
+```
+
+#### Sub-Workflow Node Properties
+
+| Property        | Type    | Required | Description                                                                                            |
+|-----------------|---------|----------|--------------------------------------------------------------------------------------------------------|
+| `target`        | String  | Yes      | Id of the child workflow to invoke                                                                     |
+| `targetVersion` | String? | No       | Pinned version of the child workflow. Round-tripped through serialization; not enforced at runtime yet |
+
+#### Sub-Workflow Node Functions
+
+| Function              | Description                                                                                     |
+|-----------------------|-------------------------------------------------------------------------------------------------|
+| `imports("a", "b")`   | Parent state variables copied into the child under the same name                                |
+| `writes("x", "y")`    | Child state variables mirrored back into the parent under the same name                         |
+| `onSuccess goto`      | Route on successful child completion                                                            |
+| `onFailure goto`      | Route on child failure                                                                          |
+
+#### Same-Name Discipline
+
+The DSL enforces identity mapping across the boundary – a name in `imports` or `writes` refers to the same key in both parent and child. The child's `state { }` schema is the contract; parents adapt their state variable names to match. This keeps sub-workflow integration explicit and greppable.
+
+Validation rules (checked by `WorkflowBuilder.build()`):
+
+- Every name in `imports` and `writes` must be declared in the parent workflow's `state { }` block.
+- Engine variables (`score`, `approved`, `recommendation`) are rejected.
+- `imports` and `writes` must not overlap.
+- Duplicate names within either list are rejected.
+
+#### Reference Graph Constraints
+
+Sub-workflow references are validated before any node executes:
+
+- **Cycles** – `SubWorkflowGraphValidator` rejects any cycle in the sub-workflow reference graph at load time (CLI) and push time (server).
+- **Dangling references** – On the server push path, unresolved child ids are rejected alongside cycles in a single pass.
+- **Depth cap** – Nested invocation is capped at depth 16 (`SubWorkflowNodeExecutor.MAX_DEPTH`). The executor throws before invoking a child beyond the cap; this is a hard guard against runaway recursion, not a tunable.
+- **Tenant isolation** – `_tenant_id` is propagated from parent to child context, preserving multi-tenant isolation across the boundary.
 
 ### End Node
 

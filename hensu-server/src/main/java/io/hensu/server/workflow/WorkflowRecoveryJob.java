@@ -32,7 +32,8 @@ import org.jboss.logging.Logger;
 ///
 /// @implNote Thread-safe. `claimStaleExecutions` is atomic under PostgreSQL
 /// `READ COMMITTED` — two concurrent sweepers cannot claim the same row.
-/// Each `resumeExecution` call runs synchronously on a virtual thread.
+/// Each claimed execution is dispatched to its own virtual thread so a slow
+/// recovered workflow cannot block the scheduler tick or starve heartbeats.
 ///
 /// @see ExecutionLeaseManager#claimStaleExecutions(Instant)
 /// @see ExecutionHeartbeatJob
@@ -69,15 +70,21 @@ public class WorkflowRecoveryJob {
         LOG.infov("Recovering {0} orphaned execution(s)", stale.size());
 
         for (ExecutionRef ref : stale) {
-            try {
-                workflowService.resumeExecution(ref.tenantId(), ref.executionId(), null);
-                LOG.infov("Recovered execution: {0}", LogSanitizer.sanitize(ref.executionId()));
-            } catch (Exception e) {
-                LOG.errorv(
-                        e,
-                        "Failed to recover execution: {0}",
-                        LogSanitizer.sanitize(ref.executionId()));
-            }
+            Thread.ofVirtual()
+                    .name("wf-recover-" + ref.executionId())
+                    .start(() -> resumeRecovered(ref));
+        }
+    }
+
+    private void resumeRecovered(ExecutionRef ref) {
+        try {
+            workflowService.resumeExecution(ref.tenantId(), ref.executionId(), null);
+            LOG.infov("Recovered execution: {0}", LogSanitizer.sanitize(ref.executionId()));
+        } catch (Exception e) {
+            LOG.errorv(
+                    e,
+                    "Failed to recover execution: {0}",
+                    LogSanitizer.sanitize(ref.executionId()));
         }
     }
 }

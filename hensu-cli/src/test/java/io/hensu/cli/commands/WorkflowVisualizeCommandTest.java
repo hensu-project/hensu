@@ -38,6 +38,7 @@ class WorkflowVisualizeCommandTest extends BaseWorkflowCommandTest {
 
         command = new WorkflowVisualizeCommand();
         injectField(command, "kotlinParser", kotlinParser);
+        injectField(command, "subWorkflowLoader", createSubWorkflowLoader(kotlinParser));
         injectField(command, "visualizer", visualizer);
         injectField(command, "workingDirPath", tempDir);
     }

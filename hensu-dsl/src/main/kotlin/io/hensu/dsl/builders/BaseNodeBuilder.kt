@@ -7,7 +7,7 @@ import io.hensu.core.workflow.node.Node
  *
  * Sealed to ensure all node types are known at compile time. Implementations:
  * [StandardNodeBuilder], [EndNodeBuilder], [ParallelNodeBuilder], [GenericNodeBuilder],
- * [ForkNodeBuilder], [JoinNodeBuilder], [ActionNodeBuilder]
+ * [ForkNodeBuilder], [JoinNodeBuilder], [ActionNodeBuilder], [SubWorkflowNodeBuilder]
  */
 sealed interface BaseNodeBuilder {
     fun build(): Node
