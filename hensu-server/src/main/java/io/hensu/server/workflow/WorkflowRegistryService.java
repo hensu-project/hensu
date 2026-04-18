@@ -4,6 +4,7 @@ import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.core.workflow.validation.SubWorkflowGraphValidator;
 import io.hensu.server.persistence.WorkflowPushLock;
+import io.hensu.server.validation.LogSanitizer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.List;
@@ -113,7 +114,10 @@ public class WorkflowRegistryService {
     public boolean deleteWorkflow(String tenantId, String workflowId) {
         Objects.requireNonNull(tenantId, "tenantId must not be null");
         Objects.requireNonNull(workflowId, "workflowId must not be null");
-        LOG.infov("Delete workflow: id={0}, tenant={1}", workflowId, tenantId);
+        LOG.infov(
+                "Delete workflow: id={0}, tenant={1}",
+                LogSanitizer.sanitize(workflowId),
+                LogSanitizer.sanitize(tenantId));
         return workflowRepository.delete(tenantId, workflowId);
     }
 }
