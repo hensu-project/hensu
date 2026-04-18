@@ -1,11 +1,13 @@
 package io.hensu.cli.commands;
 
 import io.hensu.cli.exception.UnsupportedWorkflowException;
+import io.hensu.cli.workflow.SubWorkflowLoader;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.dsl.WorkingDirectory;
 import io.hensu.dsl.parsers.KotlinScriptParser;
 import jakarta.inject.Inject;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -49,6 +51,16 @@ public abstract class WorkflowCommand extends HensuCommand {
 
     @Inject private KotlinScriptParser kotlinParser;
 
+    @Inject private SubWorkflowLoader subWorkflowLoader;
+
+    /// Sub-workflows loaded alongside the root by the most recent
+    /// {@link #getWorkflow(String, List)} call, in declaration order and deduplicated.
+    /// Empty when the root was loaded without `--with` or has no sub-workflow references.
+    /// Subclasses that forward execution off-JVM (e.g. to the background daemon) must
+    /// transport these alongside the root — the loader only registers them in the CLI's
+    /// in-memory repository.
+    protected List<Workflow> loadedSubWorkflows = List.of();
+
     /// Loads and parses a workflow by name from the working directory.
     ///
     /// Resolves the workflow name using CLI argument or config default, then parses
@@ -59,6 +71,22 @@ public abstract class WorkflowCommand extends HensuCommand {
     /// @throws UnsupportedWorkflowException if workflow name is not specified and
     /// no default configured
     protected Workflow getWorkflow(String workflowName) throws UnsupportedWorkflowException {
+        return getWorkflow(workflowName, List.of());
+    }
+
+    /// Loads and parses the root workflow plus every sub-workflow declared via `--with`.
+    ///
+    /// Each `withName` is resolved through the same {@link WorkingDirectory} as the root
+    /// (shared `workflows/`, `prompts/`, `rubrics/`). The compiled workflows are saved to
+    /// the shared repository under the CLI tenant so `SubWorkflowNodeExecutor` can resolve
+    /// them at runtime.
+    ///
+    /// @param workflowName root workflow name, may be null
+    /// @param withNames sub-workflow names declared via `--with`, may be empty
+    /// @return parsed root workflow, never null
+    /// @throws UnsupportedWorkflowException if no root workflow name is configured
+    protected Workflow getWorkflow(String workflowName, List<String> withNames)
+            throws UnsupportedWorkflowException {
         String effectiveWorkflowName = resolveWorkflowName(workflowName);
         if (effectiveWorkflowName == null) {
             System.err.println(
@@ -74,7 +102,17 @@ public abstract class WorkflowCommand extends HensuCommand {
         System.out.println("Using working directory: " + workingDir.root());
         System.out.println("Compiling Kotlin DSL workflow: " + effectiveWorkflowName);
 
-        return kotlinParser.parse(workingDir, effectiveWorkflowName);
+        Workflow root = kotlinParser.parse(workingDir, effectiveWorkflowName);
+        loadedSubWorkflows = resolveSubWorkflows(workingDir, root, withNames);
+        return root;
+    }
+
+    /// Hook for subclasses to override sub-workflow resolution behavior.
+    ///
+    /// @return loaded sub-workflows in declaration order; empty when none are required
+    protected List<Workflow> resolveSubWorkflows(
+            WorkingDirectory workingDir, Workflow root, List<String> withNames) {
+        return subWorkflowLoader.resolveDeclared(workingDir, root, withNames);
     }
 
     /// Returns the effective working directory for workflow resolution.

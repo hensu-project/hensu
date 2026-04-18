@@ -133,6 +133,15 @@ public final class DaemonFrame {
     @JsonProperty("workflow_json")
     public String workflowJson;
 
+    /// Pre-compiled sub-workflow JSONs from `--with` (run frames).
+    /// Each entry is a standalone {@link io.hensu.core.workflow.Workflow} serialized via
+    /// {@link io.hensu.serialization.WorkflowSerializer}. The daemon registers them in its
+    /// own {@link io.hensu.core.workflow.WorkflowRepository} under the run's tenant before
+    /// the executor starts so {@code SubWorkflowNodeExecutor} can resolve them. Empty or
+    /// null when the run has no sub-workflow references.
+    @JsonProperty("sub_workflows")
+    public List<String> subWorkflowsJson;
+
     /// Initial context map (run frames).
     @JsonProperty("context")
     public Map<String, Object> context;

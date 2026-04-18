@@ -81,6 +81,29 @@ public class ExecutionLeaseManager {
              RETURNING tenant_id, execution_id
             """;
 
+    /// Conditional claim of a single execution. Succeeds when the row is unowned
+    /// (`server_node_id IS NULL`) or already owned by this node (re-entrant for the
+    /// recovery → resume hand-off).
+    static final String SQL_TRY_CLAIM =
+            """
+            UPDATE runtime.execution_states
+               SET server_node_id    = ?,
+                   last_heartbeat_at = NOW()
+             WHERE tenant_id    = ?
+               AND execution_id = ?
+               AND (server_node_id IS NULL OR server_node_id = ?)
+            """;
+
+    /// Releases a lease held by this node. No-op if another node owns the row.
+    static final String SQL_RELEASE =
+            """
+            UPDATE runtime.execution_states
+               SET server_node_id = NULL
+             WHERE tenant_id      = ?
+               AND execution_id   = ?
+               AND server_node_id = ?
+            """;
+
     // --- CDI-injected fields ---
 
     @Inject Config config;
@@ -166,6 +189,55 @@ public class ExecutionLeaseManager {
                 ps -> ps.setString(1, serverNodeId),
                 "Failed to update heartbeats for node: " + serverNodeId);
         LOG.debugv("Heartbeat updated for node: {0}", serverNodeId);
+    }
+
+    /// Attempts to claim a single execution for this node before resuming it.
+    ///
+    /// Returns `true` when the row is unowned or already owned by this node — the
+    /// recovery sweeper claims via {@link #claimStaleExecutions} and then drives
+    /// `resumeExecution` against the same row, so re-entry must succeed.
+    ///
+    /// Returns `true` unconditionally when leasing is inactive (e.g., the
+    /// `inmem` profile) so single-node and test setups bypass the check.
+    ///
+    /// @param tenantId    the tenant owning the execution, not null
+    /// @param executionId the execution identifier, not null
+    /// @return `true` if this node now holds (or already held) the lease
+    public boolean tryClaim(String tenantId, String executionId) {
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
+        Objects.requireNonNull(executionId, "executionId must not be null");
+        if (!active) return true;
+        int updated =
+                jdbc.update(
+                        SQL_TRY_CLAIM,
+                        ps -> {
+                            ps.setString(1, serverNodeId);
+                            ps.setString(2, tenantId);
+                            ps.setString(3, executionId);
+                            ps.setString(4, serverNodeId);
+                        },
+                        "Failed to claim execution: " + executionId);
+        return updated > 0;
+    }
+
+    /// Releases a lease held by this node. Safe to call from a `finally` after a
+    /// successful or failed `tryClaim` — the WHERE clause filters by this node id,
+    /// so a release after another node took over is a no-op.
+    ///
+    /// @param tenantId    the tenant owning the execution, not null
+    /// @param executionId the execution identifier, not null
+    public void release(String tenantId, String executionId) {
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
+        Objects.requireNonNull(executionId, "executionId must not be null");
+        if (!active) return;
+        jdbc.update(
+                SQL_RELEASE,
+                ps -> {
+                    ps.setString(1, tenantId);
+                    ps.setString(2, executionId);
+                    ps.setString(3, serverNodeId);
+                },
+                "Failed to release execution: " + executionId);
     }
 
     /// Atomically claims all executions whose heartbeat is older than the given threshold.

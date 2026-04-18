@@ -9,6 +9,8 @@ import io.hensu.core.HensuEnvironment;
 import io.hensu.core.HensuFactory;
 import io.hensu.core.execution.executor.GenericNodeHandler;
 import io.hensu.core.review.ReviewHandler;
+import io.hensu.core.workflow.InMemoryWorkflowRepository;
+import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.serialization.WorkflowSerializer;
 import io.hensu.serialization.plan.JacksonPlanResponseParser;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -53,6 +55,21 @@ public class HensuEnvironmentProducer {
 
     private HensuEnvironment hensuEnvironment;
 
+    /// Shared in-memory workflow repository for the CLI runtime. The same instance is wired
+    /// into {@link HensuEnvironment} and exposed for CDI injection so callers can populate or
+    /// query workflows through the lifetime of the process. On-demand sub-workflow resolution
+    /// is one current consumer; any other component is free to use it the same way.
+    private final InMemoryWorkflowRepository workflowRepository = new InMemoryWorkflowRepository();
+
+    /// Exposes the shared in-memory workflow repository for CDI injection.
+    ///
+    /// @return the singleton repository instance backing {@link HensuEnvironment}, never null
+    @Produces
+    @ApplicationScoped
+    public WorkflowRepository workflowRepository() {
+        return workflowRepository;
+    }
+
     @Inject Config config;
 
     @Inject Instance<GenericNodeHandler> genericNodeHandlers;
@@ -80,6 +97,7 @@ public class HensuEnvironmentProducer {
                         .agentProviders(List.of(new LangChain4jProvider()))
                         .reviewHandler(reviewHandler)
                         .actionExecutor(actionExecutor)
+                        .workflowRepository(workflowRepository)
                         .planResponseParser(
                                 new JacksonPlanResponseParser(WorkflowSerializer.createMapper()))
                         .build();

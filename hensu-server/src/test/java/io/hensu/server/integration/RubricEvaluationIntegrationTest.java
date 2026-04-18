@@ -7,7 +7,7 @@ import io.hensu.core.rubric.RubricParser;
 import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.workflow.WorkflowService.ExecutionStartResult;
+import io.hensu.server.workflow.ExecutionStartResult;
 import io.quarkus.test.junit.QuarkusTest;
 import java.nio.file.Path;
 import java.util.List;
@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 /// `registerRubricIfAbsent()` skip file parsing entirely.
 ///
 /// ### Score Normalization
-/// The [DefaultRubricEvaluator][io.hensu.core.rubric.evaluator.DefaultRubricEvaluator]
+/// The [ScoreExtractingEvaluator][io.hensu.core.rubric.evaluator.ScoreExtractingEvaluator]
 /// extracts a self-reported `score` from the agent's JSON output and returns it
 /// directly. The [RubricEngine][io.hensu.core.rubric.RubricEngine] then computes
 /// the final score as `(weightedSum / maxWeight) * 100`. With a single default
@@ -44,7 +44,7 @@ import org.junit.jupiter.api.Test;
 ///
 /// @see IntegrationTestBase for shared test infrastructure
 /// @see io.hensu.core.rubric.RubricEngine for evaluation logic
-/// @see io.hensu.core.rubric.evaluator.DefaultRubricEvaluator for score extraction
+/// @see io.hensu.core.rubric.evaluator.ScoreExtractingEvaluator for score extraction
 @QuarkusTest
 class RubricEvaluationIntegrationTest extends IntegrationTestBase {
 
@@ -52,14 +52,14 @@ class RubricEvaluationIntegrationTest extends IntegrationTestBase {
     /// self-reported score exceeds the rubric pass threshold.
     ///
     /// The stub response includes a JSON `score` field that the
-    /// [DefaultRubricEvaluator][io.hensu.core.rubric.evaluator.DefaultRubricEvaluator]
+    /// [ScoreExtractingEvaluator][io.hensu.core.rubric.evaluator.ScoreExtractingEvaluator]
     /// extracts as the self-evaluation score. A normalized score of `0.85`
     /// yields a final score of 85, which exceeds the default rubric pass
     /// threshold (70). No backtracking occurs and the workflow transitions
     /// directly to the end node.
     @Test
     void shouldCompleteWhenRubricPasses() {
-        parseAndRegisterRubric("quality", "quality-high.md");
+        parseAndRegisterRubric("quality-high.md");
         Workflow workflow = loadWorkflow("rubric-evaluation-pass.json");
 
         registerStub(
@@ -97,7 +97,7 @@ class RubricEvaluationIntegrationTest extends IntegrationTestBase {
     /// execution history, confirming the retry mechanism was triggered.
     @Test
     void shouldRetryAndCompleteOnMinorRubricFailure() {
-        parseAndRegisterRubric("quality", "quality-low.md");
+        parseAndRegisterRubric("quality-low.md");
         Workflow workflow = loadWorkflow("rubric-backtrack-critical.json");
 
         registerStub("research", "Research findings about quantum computing.");
@@ -134,16 +134,15 @@ class RubricEvaluationIntegrationTest extends IntegrationTestBase {
     /// is replaced by building a new rubric with the desired `rubricId`,
     /// preserving all criteria and thresholds from the original file.
     ///
-    /// @param rubricId     the ID the workflow expects (e.g. `"quality"`), not null
     /// @param resourceName rubric file under `/rubrics/` (e.g. `"quality-high.md"`), not null
-    private void parseAndRegisterRubric(String rubricId, String resourceName) {
+    private void parseAndRegisterRubric(String resourceName) {
         String rubricPath = resolveRubricPath(resourceName);
         Rubric parsed = RubricParser.parse(Path.of(rubricPath));
 
         // Rebuild with the rubricId the workflow expects
         Rubric rubric =
                 Rubric.builder()
-                        .id(rubricId)
+                        .id("quality")
                         .name(parsed.getName())
                         .version(parsed.getVersion())
                         .type(parsed.getType())

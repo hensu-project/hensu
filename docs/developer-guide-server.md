@@ -10,6 +10,7 @@ This guide covers the architecture, patterns, and best practices for developing 
 - [Package Structure](#package-structure)
 - [Multi-Tenancy](#multi-tenancy)
 - [REST API Development](#rest-api-development)
+  - [Sub-Workflow Validation on Push](#sub-workflow-validation-on-push)
 - [SSE Streaming](#sse-streaming)
 - [MCP Integration](#mcp-integration)
   - [Dynamic Tool Discovery](#dynamic-tool-discovery)
@@ -296,9 +297,16 @@ io.hensu.server/
 │   └── ConstraintViolationExceptionMapper  # Global 400 error mapper
 │
 ├── config/                # CDI configuration
-│   ├── HensuEnvironmentProducer # HensuFactory → HensuEnvironment
-│   ├── ServerBootstrap          # Startup registrations
-│   └── ServerConfiguration      # CDI delegation + server beans
+│   ├── HensuEnvironmentProducer        # HensuFactory → HensuEnvironment
+│   ├── NativeImageConfig               # @RegisterForReflection — Hensu domain model
+│   ├── LangChain4jNativeConfig         # @RegisterForReflection — JDK HTTP transport
+│   ├── LangChain4jAnthropicNativeConfig # @RegisterForReflection — Anthropic DTOs
+│   ├── LangChain4jGeminiNativeConfig   # @RegisterForReflection — Gemini DTOs
+│   ├── ServerBootstrap                 # Startup registrations
+│   └── ServerConfiguration             # CDI delegation + server beans
+│
+├── dev/                   # Dev-only handlers (excluded from prod image)
+│   └── SleepHandler             # Simulates long-running node for crash-recovery tests
 │
 ├── execution/             # Server-side execution listeners
 │   ├── LoggingExecutionListener   # Logs plan/step lifecycle events
@@ -308,21 +316,37 @@ io.hensu.server/
 │   ├── JsonRpc                  # JSON-RPC 2.0 message helper
 │   ├── McpSessionManager        # SSE session management
 │   ├── McpConnection            # Connection interface
+│   ├── McpConnectionFactory     # Factory for per-tenant connections
 │   ├── McpConnectionPool        # Connection pooling
+│   ├── McpException             # Checked MCP protocol errors
 │   ├── McpSidecar               # ActionHandler for MCP tools
-│   └── SseMcpConnection         # SSE-based connection impl
+│   ├── McpToolDiscovery         # Runtime tool schema discovery + cache
+│   ├── SseMcpConnection         # SSE-based connection impl
+│   └── TenantToolRegistry       # Merges base + tenant MCP tools (MCP precedence)
+│
+├── security/              # JWT + tenant resolution + error mapping
+│   ├── GlobalExceptionMapper    # Global @Provider — normalizes errors to JSON
+│   └── RequestTenantResolver    # Extracts tenant_id claim from JWT
 │
 ├── persistence/           # PostgreSQL persistence (plain JDBC)
 │   ├── JdbcWorkflowRepository         # Workflow definitions (JSONB)
 │   ├── JdbcWorkflowStateRepository    # Execution state snapshots (JSONB + lease columns)
 │   ├── ExecutionLeaseManager          # Distributed lease management (@ApplicationScoped)
+│   ├── WorkflowPushLock               # Cluster-wide push mutex (pg_advisory_xact_lock + JVM fallback)
 │   ├── JdbcSupport                    # JDBC helper (queryList, update)
 │   └── PersistenceException           # Unchecked wrapper for SQLException
 │
-├── service/               # Business logic layer
-│   ├── WorkflowService              # Workflow operations
+├── workflow/              # Business logic layer
+│   ├── WorkflowService              # Facade over registry + execution + query services
+│   ├── WorkflowRegistryService      # Push pipeline: WorkflowPushLock + SubWorkflowGraphValidator
+│   ├── WorkflowExecutionService     # Start/resume orchestration
+│   ├── ExecutionQueryService        # Read-side: status, plan, output, paused list
+│   ├── ExecutionStateService        # Snapshot load/save with split-brain guard
 │   ├── ExecutionHeartbeatJob        # Periodic heartbeat emission (@Scheduled)
-│   └── WorkflowRecoveryJob          # Orphaned execution sweeper (@Scheduled)
+│   ├── WorkflowRecoveryJob          # Orphaned execution sweeper (@Scheduled)
+│   ├── ExecutionStartResult / ExecutionOutput / ExecutionSummary / PlanInfo / ResumeDecision   # DTOs
+│   ├── ExecutionStatus              # Enum: COMPLETED / PAUSED / RUNNING
+│   └── {Execution,Workflow}{NotFound,Execution}Exception   # Domain exceptions
 │
 ├── streaming/             # Execution event streaming
 │   ├── ExecutionEvent           # Event DTOs (sealed interface)
@@ -546,6 +570,46 @@ public Response push(@ValidWorkflow Workflow workflow) {
     // workflow is guaranteed safe here — all IDs and text fields validated
 }
 ```
+
+#### Sub-Workflow Validation on Push
+
+`ValidWorkflowValidator` checks the incoming workflow in isolation. Cross-workflow
+consistency — cycles and dangling sub-workflow references — is a second pass handled by
+`WorkflowRegistryService` before the row is written:
+
+```java
+// WorkflowRegistryService.push()
+pushLock.runExclusive(tenantId, workflowId, () -> {
+    SubWorkflowGraphValidator.validate(
+            workflow,
+            id -> id.equals(workflow.getId())
+                    ? Optional.of(workflow)                          // incoming overrides repo
+                    : repository.findById(tenantId, id));            // lazy resolution
+    repository.save(tenantId, workflow);
+});
+```
+
+Key properties:
+
+- **Cluster-wide mutex** — `WorkflowPushLock` wraps the save in `pg_advisory_xact_lock`
+  (JVM `ReentrantLock` fallback when `quarkus.datasource.active=false`). Without this,
+  two concurrent pushes on different nodes could each observe a clean graph and together
+  introduce a cycle.
+- **Post-push view** — the resolver short-circuits to the incoming workflow for its own
+  id, so the DFS sees the graph *as it will exist* after the push — no intermediate write
+  is needed, and a push that would fix an existing cycle validates correctly.
+- **Single DFS** — `SubWorkflowGraphValidator.validate(Workflow, Function)` uses one
+  `globallyVisited` set for both cycle detection and dangling-ref detection.
+- **Tenant-scoped resolution** — `repository.findById(tenantId, id)` never looks up
+  workflows from another tenant, so a sub-workflow target that exists under a different
+  tenant is rejected as dangling.
+- **Runtime bounds** — even if validation passes, recursion is capped at
+  `SubWorkflowNodeExecutor.MAX_DEPTH = 16` (tracked via `_sub_workflow_depth`) and
+  `_tenant_id` is propagated into the child context, so a malicious deep chain cannot
+  exhaust the stack and a child cannot escape its tenant boundary.
+
+See the [hensu-core Developer Guide — `SubWorkflowGraphValidator` checks](developer-guide-core.md#subworkflowgraphvalidator-checks)
+for the core-side algorithm and the CLI-only `validate(Collection<Workflow>)` overload.
 
 #### Log Sanitizer (Defense-in-Depth)
 

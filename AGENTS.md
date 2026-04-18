@@ -121,6 +121,8 @@ concerns (e.g., adding a new rubric) from the core agent execution logic.
 - `ExecutionLeaseManager` - Distributed lease manager; generates `server_node_id`, bumps heartbeats, atomically claims stale executions (`@ApplicationScoped`)
 - `ExecutionHeartbeatJob` - Scheduled heartbeat; runs every `hensu.lease.heartbeat-interval` (default 30s) (`@ApplicationScoped`)
 - `WorkflowRecoveryJob` - Scheduled sweeper; claims orphaned executions older than `hensu.lease.stale-threshold` (default 90s) and resumes them (`@ApplicationScoped`)
+- `WorkflowRegistryService` - Push pipeline: wraps save in `WorkflowPushLock` and invokes `SubWorkflowGraphValidator` lazily resolving sub-workflow ids through the repository; rejects cycles and dangling refs before any row is written (`@ApplicationScoped`)
+- `WorkflowPushLock` - Cluster-wide push mutex (`pg_advisory_xact_lock` with JVM `ReentrantLock` fallback) so two concurrent pushes on different nodes cannot together introduce a cycle (`@ApplicationScoped`)
 
 **AI Provider Interface**:
 
@@ -151,7 +153,7 @@ Workflow
 - `GenericNode` - Custom execution logic via registered handlers
 - `ActionNode` - Execute commands mid-workflow (git, deploy, notify)
 - `EndNode` - Workflow termination (SUCCESS/FAILURE/CANCELLED)
-- `SubWorkflowNode` - Nested workflows
+- `SubWorkflowNode` - Delegation to another workflow by id with input/output mapping; cycle + dangling-ref validation at push (`SubWorkflowGraphValidator`); depth cap `MAX_DEPTH = 16`; tenant isolation preserved via `_tenant_id` propagation
 
 **Transitions** (`TransitionRule` interface):
 
@@ -229,6 +231,7 @@ the recovery sweeper's scope.
 
 - `_tenant_id` — tenant identifier, read by `SubWorkflowNodeExecutor` for loading child workflows
 - `_execution_id` — ensures `WorkflowExecutor` uses the same ID the service layer tracks
+- `_sub_workflow_depth` — recursion depth counter enforced by `SubWorkflowNodeExecutor.MAX_DEPTH = 16`
 
 ### Patterns & Conventions
 
@@ -384,6 +387,8 @@ CRUD operations, UPSERT semantics, FK constraints, tenant isolation, and seriali
 - `hensu-core/.../execution/enricher/YieldsVariableInjector.java` - Injects yield format instructions for branch prompts
 - `hensu-core/.../workflow/transition/ApprovalTransition.java` - Boolean approval routing via `approved` engine variable
 - `hensu-core/.../workflow/validation/WorkflowValidator.java` - Load-time validator for `writes` and prompt variable references
+- `hensu-core/.../workflow/validation/SubWorkflowGraphValidator.java` - Cycle + dangling-ref detection across the sub-workflow reference graph (single DFS, `globallyVisited`); CLI overload `validate(Collection<Workflow>)` for local cycle-only checks, server overload `validate(Workflow, Function<String,Workflow>)` for push with lazy repository resolution
+- `hensu-core/.../execution/executor/SubWorkflowNodeExecutor.java` - Child workflow execution with `MAX_DEPTH = 16` recursion cap and `_tenant_id` propagation
 
 **DSL:**
 
@@ -414,8 +419,10 @@ CRUD operations, UPSERT semantics, FK constraints, tenant isolation, and seriali
 - `hensu-server/src/main/resources/db/migration/V1__create_persistence_tables.sql` - Flyway schema migration
 - `hensu-server/src/main/resources/db/migration/V2__add_execution_leases.sql` - Lease columns migration
 - `hensu-server/.../persistence/ExecutionLeaseManager.java` - Distributed lease manager (heartbeat + atomic claim)
-- `hensu-server/.../service/ExecutionHeartbeatJob.java` - Heartbeat emission (@Scheduled)
-- `hensu-server/.../service/WorkflowRecoveryJob.java` - Recovery sweeper (@Scheduled)
+- `hensu-server/.../persistence/WorkflowPushLock.java` - Cluster-wide push mutex (pg_advisory_xact_lock + JVM fallback)
+- `hensu-server/.../workflow/ExecutionHeartbeatJob.java` - Heartbeat emission (@Scheduled)
+- `hensu-server/.../workflow/WorkflowRecoveryJob.java` - Recovery sweeper (@Scheduled)
+- `hensu-server/.../workflow/WorkflowRegistryService.java` - Push pipeline: `WorkflowPushLock` + `SubWorkflowGraphValidator`
 
 **CLI:**
 

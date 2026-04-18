@@ -77,19 +77,6 @@ Hensu leverages the latest JVM features to reduce boilerplate and increase type 
 
 ---
 
-## Native-Image Constraints (The "No-Go" List)
-
-Since Hensu is optimized for **GraalVM**, you must avoid the following "dynamic" patterns:
-
-* **No Unregistered Reflection:** Never use `Class.forName()` or `method.invoke()` unless the class is explicitly
-  registered in Quarkus build-time metadata.
-* **No Dynamic Proxies:** Avoid libraries that generate bytecode at runtime (e.g., standard CGLIB or Hibernate
-  lazy-loading).
-* **No Classpath Scanning:** All `AgentProvider` and `NodeExecutor` instances must be wired explicitly via
-  `HensuFactory.builder()`.
-
----
-
 ## Testing Integrity
 
 * **Unit Tests:** Must be pure JVM and use `StubAgentProvider` to avoid API costs and network latency.

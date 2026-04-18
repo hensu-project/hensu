@@ -1,5 +1,6 @@
 package io.hensu.cli.commands;
 
+import io.hensu.cli.workflow.SubWorkflowLoader;
 import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.BacktrackEvent;
@@ -8,12 +9,14 @@ import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.state.HensuState;
+import io.hensu.core.workflow.InMemoryWorkflowRepository;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowMetadata;
 import io.hensu.core.workflow.node.EndNode;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.transition.SuccessTransition;
+import io.hensu.dsl.parsers.KotlinScriptParser;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.lang.reflect.Field;
@@ -53,6 +56,17 @@ abstract class BaseWorkflowCommandTest {
         Field field = findField(target.getClass(), fieldName);
         field.setAccessible(true);
         field.set(target, value);
+    }
+
+    /// Creates a real {@link SubWorkflowLoader} wired with the given parser and an
+    /// in-memory repository. Safe for command tests that pass no `--with` names: the
+    /// loader only saves the root and is otherwise a no-op.
+    protected SubWorkflowLoader createSubWorkflowLoader(KotlinScriptParser parser)
+            throws Exception {
+        SubWorkflowLoader loader = new SubWorkflowLoader();
+        injectField(loader, "kotlinParser", parser);
+        injectField(loader, "workflowRepository", new InMemoryWorkflowRepository());
+        return loader;
     }
 
     private Field findField(Class<?> clazz, String fieldName) throws NoSuchFieldException {

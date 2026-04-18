@@ -31,7 +31,7 @@ flowchart TD
         end
         subgraph nodes["Node Executors"]
             direction LR
-            std(["Standard"]) ~~~ par(["Parallel"]) ~~~ fj(["Fork/Join"]) ~~~ loop(["Loop"]) ~~~ act(["Action"]) ~~~ gen(["Generic"])
+            std(["Standard"]) ~~~ par(["Parallel"]) ~~~ fj(["Fork/Join"]) ~~~ loop(["Loop"]) ~~~ act(["Action"]) ~~~ gen(["Generic"]) ~~~ sub(["SubWorkflow"])
         end
         subgraph mid["Infrastructure"]
             direction LR
@@ -64,6 +64,7 @@ flowchart TD
     style loop fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style act fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style gen fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style sub fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style af fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style pe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style ae fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
@@ -342,6 +343,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── StateVariableDeclaration.java # Variable declaration record (name, type, isInput)
 │   │   └── VarType.java                  # Type enum: STRING, NUMBER, BOOLEAN, LIST_STRING
 │   └── validation/
+│       ├── SubWorkflowGraphValidator.java # Load-time cycle + dangling-ref detection
 │       └── WorkflowValidator.java        # Load-time validator for writes + prompt {variable} refs
 ├── rubric/                        # Quality evaluation engine
 │   ├── RubricEngine.java          # Evaluation orchestrator
@@ -401,6 +403,8 @@ hensu-core/src/main/java/io/hensu/core/
 | `GenericNode`     | Custom handler for extensible operations                                                                           |
 | `SubWorkflowNode` | Delegates to another workflow                                                                                      |
 | `EndNode`         | Terminal node                                                                                                      |
+
+**Sub-workflow constraints.** Nested execution is capped at depth 16 (`SubWorkflowNodeExecutor.MAX_DEPTH`) to prevent unbounded recursion. The executor propagates `_tenant_id` into the child context so multi-tenant isolation holds across the boundary. Reference graphs are validated at load time (CLI) and push time (server) by `SubWorkflowGraphValidator` – both cycles and dangling references are rejected before execution starts.
 
 ## Transition Rules
 

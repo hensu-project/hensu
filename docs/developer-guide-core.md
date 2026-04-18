@@ -15,6 +15,7 @@ This guide covers API usage, adapter development, extension points, and testing 
   - [Agentic Output Validation](#agentic-output-validation)
 - [Creating Custom Adapters](#creating-custom-adapters)
 - [Generic Nodes](#generic-nodes)
+- [Sub-Workflows](#sub-workflows)
 - [Action Handlers](#action-handlers)
 - [Rubric Engine](#rubric-engine)
   - [Score-Based Routing](#score-based-routing)
@@ -486,6 +487,30 @@ private void registerGenericHandlers() {
 4. **Return meaningful metadata**: Include relevant info in `NodeResult` metadata map
 5. **Handle errors gracefully**: Return `NodeResult.failure()` with clear error messages
 
+## Sub-Workflows
+
+`SubWorkflowNode` delegates execution to a nested workflow. The parent pauses on the boundary, the child runs to completion, and control returns to the parent with selected outputs mapped back into its state.
+
+### Context propagation and depth limit
+
+- `_tenant_id` is copied from parent into child context, preserving multi-tenant isolation across the boundary.
+- Nested invocation is capped at depth 16 (`SubWorkflowNodeExecutor.MAX_DEPTH`) via `_sub_workflow_depth`. The executor throws before invoking a child beyond the cap – this is a hard guard against runaway recursion, not a tunable.
+
+### Input and output mappings
+
+Data crosses the boundary only through explicit mappings declared on `SubWorkflowNode`:
+
+| Mapping         | Direction              | Semantics                                                                                                                    |
+|-----------------|------------------------|------------------------------------------------------------------------------------------------------------------------------|
+| `inputMapping`  | `childKey → parentKey` | Before the child starts, the executor reads `parentKey` from parent state and writes it as `childKey` in child state.        |
+| `outputMapping` | `parentKey → childKey` | On successful child completion, the executor reads `childKey` from child state and writes it as `parentKey` in parent state. |
+
+Anything not covered by these mappings stays on its side of the boundary. There is no implicit state leakage between parent and child.
+
+### Reference graph validation
+
+`SubWorkflowGraphValidator` rejects cycles and dangling references at graph-load time, before any node executes. See [SubWorkflowGraphValidator checks](#subworkflowgraphvalidator-checks) under State Schema.
+
 ## Action Handlers
 
 Action handlers send data from workflow actions to external systems. Handlers can implement any integration: HTTP calls, messaging (Slack, email), event publishing (Kafka, RabbitMQ), database operations, or custom logic.
@@ -728,6 +753,17 @@ WorkflowValidator.validate(workflow); // throws IllegalStateException on violati
 | Prompt `{var}` not in schema | `Node 'write' prompt references '{tone}' which is not declared in state schema` |
 
 Validation is a no-op when no schema is declared. Legacy workflows always pass through unchanged.
+
+### `SubWorkflowGraphValidator` checks
+
+`SubWorkflowGraphValidator` runs at graph-load time over the sub-workflow reference graph. It rejects cycles and – on the server push path – unresolved references, so neither can surface mid-execution. Two overloads serve the two entry points:
+
+| Overload                         | Caller           | Detects                               | Unknown targets                                                                                |
+|----------------------------------|------------------|---------------------------------------|------------------------------------------------------------------------------------------------|
+| `validate(Collection<Workflow>)` | CLI batch loader | Cycles only                           | Silently skipped – loader reports missing `--with` declarations separately with richer context |
+| `validate(Workflow, Function)`   | Server push path | Cycles **and** unknown referenced ids | Aggregated into a single `IllegalStateException` alongside any cycles, in a single DFS pass    |
+
+The `(Workflow, Function)` overload shadows the incoming workflow for its own id so re-push/update sees the post-push graph without an intermediate write. The resolver is queried lazily and only for ids forward-reachable from the root – bounded by a `globallyVisited` set so each id costs at most one repository lookup.
 
 ## Engine Variable Injection
 
@@ -1283,6 +1319,7 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `workflow/state/StateVariableDeclaration.java`          | Single variable declaration record (name, type, isInput)                                         |
 | `workflow/state/VarType.java`                           | Variable type enum: STRING, NUMBER, BOOLEAN, LIST_STRING                                         |
 | `workflow/transition/ApprovalTransition.java`           | Boolean approval routing via the `approved` engine variable                                      |
+| `workflow/validation/SubWorkflowGraphValidator.java`    | Load-time cycle + dangling-reference detector for sub-workflow graphs                            |
 | `workflow/validation/WorkflowValidator.java`            | Load-time validator for `writes` and prompt `{variable}` references                              |
 | `rubric/RubricEngine.java`                              | Quality evaluation engine                                                                        |
 | `rubric/model/Rubric.java`                              | Rubric definition model                                                                          |

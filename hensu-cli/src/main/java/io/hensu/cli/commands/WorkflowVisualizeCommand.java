@@ -3,6 +3,7 @@ package io.hensu.cli.commands;
 import io.hensu.cli.visualizer.WorkflowVisualizer;
 import io.hensu.core.workflow.Workflow;
 import jakarta.inject.Inject;
+import java.util.List;
 import picocli.CommandLine;
 
 /// CLI command for rendering workflow graphs in various formats.
@@ -34,12 +35,20 @@ class WorkflowVisualizeCommand extends WorkflowCommand {
             description = "Output format: text, mermaid")
     private String format;
 
+    @CommandLine.Option(
+            names = {"--with"},
+            description =
+                    """
+                            Sub-workflow to load alongside the root \
+                            (repeatable, resolved from working-dir/workflows/, .kt optional)""")
+    private List<String> withNames = List.of();
+
     @Inject WorkflowVisualizer visualizer;
 
     @Override
     protected void execute() {
         try {
-            Workflow workflow = getWorkflow(workflowName);
+            Workflow workflow = getWorkflow(workflowName, withNames);
             String output = visualizer.visualize(workflow, format);
             System.out.println(output);
         } catch (Exception e) {

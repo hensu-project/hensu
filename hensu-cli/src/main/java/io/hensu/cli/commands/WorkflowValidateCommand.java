@@ -33,10 +33,18 @@ class WorkflowValidateCommand extends WorkflowCommand {
             arity = "0..1")
     private String workflowName;
 
+    @CommandLine.Option(
+            names = {"--with"},
+            description =
+                    """
+                            Sub-workflow to load and validate alongside the root \
+                            (repeatable, resolved from working-dir/workflows/, .kt optional)""")
+    private List<String> withNames = List.of();
+
     @Override
     protected void execute() {
         try {
-            Workflow workflow = getWorkflow(workflowName);
+            Workflow workflow = getWorkflow(workflowName, withNames);
 
             System.out.println(" [OK] Workflow is valid!");
             System.out.println("   Name: " + workflow.getMetadata().getName());

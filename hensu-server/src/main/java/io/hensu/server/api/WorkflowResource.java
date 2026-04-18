@@ -1,13 +1,15 @@
 package io.hensu.server.api;
 
 import io.hensu.core.workflow.Workflow;
-import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.validation.LogSanitizer;
 import io.hensu.server.validation.ValidId;
 import io.hensu.server.validation.ValidWorkflow;
+import io.hensu.server.workflow.WorkflowNotFoundException;
+import io.hensu.server.workflow.WorkflowRegistryService;
 import jakarta.inject.Inject;
 import jakarta.validation.constraints.NotNull;
+import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
@@ -42,7 +44,7 @@ import org.jboss.logging.Logger;
 /// hensu delete <id>       → DELETE /api/v1/workflows/{id}
 /// ```
 ///
-/// @see WorkflowRepository for persistence
+/// @see WorkflowRegistryService for definition CRUD and cross-workflow cycle validation
 /// @see ExecutionResource for execution operations
 @Path("/api/v1/workflows")
 @Produces(MediaType.APPLICATION_JSON)
@@ -51,17 +53,22 @@ public class WorkflowResource {
 
     private static final Logger LOG = Logger.getLogger(WorkflowResource.class);
 
-    private final WorkflowRepository workflowRepository;
+    private final WorkflowRegistryService registryService;
     private final RequestTenantResolver tenantResolver;
 
     @Inject
     public WorkflowResource(
-            WorkflowRepository workflowRepository, RequestTenantResolver tenantResolver) {
-        this.workflowRepository = workflowRepository;
+            WorkflowRegistryService registryService, RequestTenantResolver tenantResolver) {
+        this.registryService = registryService;
         this.tenantResolver = tenantResolver;
     }
 
     /// Pushes a workflow definition (idempotent create or update).
+    ///
+    /// The registry service atomically validates the cross-workflow reference graph
+    /// for cycles before persisting. If the incoming workflow would close a cycle
+    /// with already-stored workflows (e.g. A→B pushed, then B→A), the push is
+    /// rejected with 400 Bad Request and no state change occurs.
     ///
     /// ### Request
     /// ```
@@ -96,17 +103,24 @@ public class WorkflowResource {
                 LogSanitizer.sanitize(workflow.getVersion()),
                 tenantId);
 
-        boolean exists = workflowRepository.exists(tenantId, workflow.getId());
-        workflowRepository.save(tenantId, workflow);
+        boolean created;
+        try {
+            created = registryService.pushWorkflow(tenantId, workflow);
+        } catch (IllegalStateException e) {
+            LOG.warnv(
+                    "Rejected push for workflow {0}: {1}",
+                    LogSanitizer.sanitize(workflow.getId()), e.getMessage());
+            throw new BadRequestException(e.getMessage());
+        }
 
-        Response.Status status = exists ? Response.Status.OK : Response.Status.CREATED;
+        Response.Status status = created ? Response.Status.CREATED : Response.Status.OK;
 
         return Response.status(status)
                 .entity(
                         Map.of(
                                 "id", workflow.getId(),
                                 "version", workflow.getVersion(),
-                                "created", !exists))
+                                "created", created))
                 .build();
     }
 
@@ -138,11 +152,12 @@ public class WorkflowResource {
         LOG.debugv(
                 "Pull workflow: id={0}, tenant={1}", LogSanitizer.sanitize(workflowId), tenantId);
 
-        Workflow workflow =
-                workflowRepository
-                        .findById(tenantId, workflowId)
-                        .orElseThrow(
-                                () -> new NotFoundException("Workflow not found: " + workflowId));
+        Workflow workflow;
+        try {
+            workflow = registryService.getWorkflow(tenantId, workflowId);
+        } catch (WorkflowNotFoundException e) {
+            throw new NotFoundException(e.getMessage());
+        }
 
         return Response.ok().entity(workflow).build();
     }
@@ -169,7 +184,7 @@ public class WorkflowResource {
 
         LOG.debugv("List workflows: tenant={0}", tenantId);
 
-        List<Workflow> workflows = workflowRepository.findAll(tenantId);
+        List<Workflow> workflows = registryService.listWorkflows(tenantId);
 
         List<Map<String, String>> summaries =
                 workflows.stream()
@@ -197,7 +212,7 @@ public class WorkflowResource {
         LOG.infov(
                 "Delete workflow: id={0}, tenant={1}", LogSanitizer.sanitize(workflowId), tenantId);
 
-        boolean deleted = workflowRepository.delete(tenantId, workflowId);
+        boolean deleted = registryService.deleteWorkflow(tenantId, workflowId);
 
         if (!deleted) {
             throw new NotFoundException("Workflow not found: " + workflowId);

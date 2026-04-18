@@ -30,6 +30,7 @@ class WorkflowBuildCommandTest extends BaseWorkflowCommandTest {
     void setUp() throws Exception {
         command = new WorkflowBuildCommand();
         injectField(command, "kotlinParser", kotlinParser);
+        injectField(command, "subWorkflowLoader", createSubWorkflowLoader(kotlinParser));
         injectField(command, "workingDirPath", tempDir);
     }
 

@@ -6,7 +6,7 @@ import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.action.ActionExecutor.ActionResult;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.workflow.WorkflowService.ExecutionStartResult;
+import io.hensu.server.workflow.ExecutionStartResult;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.util.List;

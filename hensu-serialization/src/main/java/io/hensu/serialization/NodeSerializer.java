@@ -152,6 +152,7 @@ class NodeSerializer extends StdSerializer<Node> {
     private void writeSubWorkflowNode(
             SubWorkflowNode n, JsonGenerator gen, SerializerProvider provider) throws IOException {
         gen.writeStringField("workflowId", n.getWorkflowId());
+        writeIfNotNull(gen, "targetVersion", n.getTargetVersion());
         provider.defaultSerializeField("inputMapping", n.getInputMapping(), gen);
         provider.defaultSerializeField("outputMapping", n.getOutputMapping(), gen);
         provider.defaultSerializeField("transitionRules", n.getTransitionRules(), gen);

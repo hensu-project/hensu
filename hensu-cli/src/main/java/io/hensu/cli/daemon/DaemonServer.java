@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import io.hensu.cli.execution.DaemonExecutionSink;
 import io.hensu.cli.execution.VerboseExecutionListenerFactory;
 import io.hensu.cli.review.DaemonReviewHandler;
+import io.hensu.cli.workflow.SubWorkflowLoader;
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.result.ExecutionResult;
@@ -28,6 +29,7 @@ import java.nio.file.Files;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -392,6 +394,12 @@ public class DaemonServer {
             // DaemonReviewManager cannot correlate the review to this execution.
             context.put("_execution_id", execId);
 
+            // Register `--with` subs in the daemon's repository under the run's tenant
+            // before the executor starts — SubWorkflowNodeExecutor looks them up there.
+            // The CLI process registered them in its own JVM; nothing crossed the wire
+            // until the frame added `sub_workflows`.
+            registerSubWorkflows(req, context);
+
             var sink = new DaemonExecutionSink(execution, mapper);
             ExecutionListener listener =
                     verbose
@@ -414,6 +422,19 @@ public class DaemonServer {
             log.warning("Execution " + execId + " failed: " + t.getMessage());
             String errFrame = safeSerialize(DaemonFrame.error(execId, t.getMessage(), true));
             execution.markFailed(t.getMessage(), errFrame);
+        }
+    }
+
+    /// Deserializes every `--with` sub-workflow from the run frame and saves it into the
+    /// daemon's {@link io.hensu.core.workflow.WorkflowRepository} under the context's
+    /// {@code _tenant_id}. No-op when the frame has no subs. The tenant defaults to
+    /// {@code io.hensu.cli.workflow.SubWorkflowLoader#CLI_TENANT} to match the CLI seed.
+    private void registerSubWorkflows(DaemonFrame req, Map<String, Object> context) {
+        if (req.subWorkflowsJson == null || req.subWorkflowsJson.isEmpty()) return;
+        String tenantId = (String) context.getOrDefault("_tenant_id", SubWorkflowLoader.CLI_TENANT);
+        for (String json : req.subWorkflowsJson) {
+            var sub = WorkflowSerializer.fromJson(json);
+            environment.getWorkflowRepository().save(tenantId, sub);
         }
     }
 

@@ -16,6 +16,7 @@ public final class SubWorkflowNode extends Node {
 
     private final NodeType nodeType = NodeType.SUB_WORKFLOW;
     private final String workflowId;
+    private final String targetVersion;
     private final Map<String, String> inputMapping;
     private final Map<String, String> outputMapping;
     private final List<TransitionRule> transitionRules;
@@ -23,6 +24,7 @@ public final class SubWorkflowNode extends Node {
     private SubWorkflowNode(Builder builder) {
         super(builder.id);
         this.workflowId = builder.workflowId;
+        this.targetVersion = builder.targetVersion;
         this.inputMapping =
                 builder.inputMapping != null ? Map.copyOf(builder.inputMapping) : Map.of();
         this.outputMapping =
@@ -45,9 +47,20 @@ public final class SubWorkflowNode extends Node {
         return workflowId;
     }
 
+    /// Returns the pinned version of the target workflow, or null if unpinned.
+    ///
+    /// Stored for forward compatibility with workflow versioning; not enforced at runtime yet.
+    ///
+    /// @return target workflow version, or null
+    public String getTargetVersion() {
+        return targetVersion;
+    }
+
     /// Returns the input variable mapping from parent context to sub-workflow context.
     ///
-    /// Keys are parent context keys; values are sub-workflow context keys.
+    /// Keys are sub-workflow (child) context keys; values are parent context keys.
+    /// At execution time the executor reads `parent[value]` and writes it to
+    /// `child[key]`.
     ///
     /// @return unmodifiable mapping, never null (may be empty)
     public Map<String, String> getInputMapping() {
@@ -56,7 +69,9 @@ public final class SubWorkflowNode extends Node {
 
     /// Returns the output variable mapping from sub-workflow context back to parent context.
     ///
-    /// Keys are sub-workflow context keys; values are parent context keys.
+    /// Keys are parent context keys; values are sub-workflow (child) context keys.
+    /// At execution time the executor reads `child[value]` and writes it to
+    /// `parent[key]`.
     ///
     /// @return unmodifiable mapping, never null (may be empty)
     public Map<String, String> getOutputMapping() {
@@ -93,6 +108,7 @@ public final class SubWorkflowNode extends Node {
     public static final class Builder {
         private String id;
         private String workflowId;
+        private String targetVersion;
         private Map<String, String> inputMapping;
         private Map<String, String> outputMapping;
         private List<TransitionRule> transitionRules;
@@ -114,6 +130,17 @@ public final class SubWorkflowNode extends Node {
         /// @return this builder for chaining
         public Builder workflowId(String workflowId) {
             this.workflowId = workflowId;
+            return this;
+        }
+
+        /// Sets the pinned target workflow version (optional).
+        ///
+        /// Stored for forward compatibility with workflow versioning; not enforced yet.
+        ///
+        /// @param targetVersion version string, may be null
+        /// @return this builder for chaining
+        public Builder targetVersion(String targetVersion) {
+            this.targetVersion = targetVersion;
             return this;
         }
 
@@ -166,6 +193,7 @@ public final class SubWorkflowNode extends Node {
         var that = (SubWorkflowNode) obj;
         return Objects.equals(this.id, that.id)
                 && Objects.equals(this.workflowId, that.workflowId)
+                && Objects.equals(this.targetVersion, that.targetVersion)
                 && Objects.equals(this.inputMapping, that.inputMapping)
                 && Objects.equals(this.outputMapping, that.outputMapping)
                 && Objects.equals(this.transitionRules, that.transitionRules);
@@ -173,7 +201,8 @@ public final class SubWorkflowNode extends Node {
 
     @Override
     public int hashCode() {
-        return Objects.hash(id, workflowId, inputMapping, outputMapping, transitionRules);
+        return Objects.hash(
+                id, workflowId, targetVersion, inputMapping, outputMapping, transitionRules);
     }
 
     @Override
@@ -184,6 +213,9 @@ public final class SubWorkflowNode extends Node {
                 + ", "
                 + "workflowId="
                 + workflowId
+                + ", "
+                + "targetVersion="
+                + targetVersion
                 + ", "
                 + "inputMapping="
                 + inputMapping
