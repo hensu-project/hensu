@@ -8,9 +8,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiFunction;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -57,8 +59,19 @@ public class StubResponseRegistry {
     private final Map<String, String> resourceCache = new ConcurrentHashMap<>();
     private volatile Path stubsDirectory;
 
+    private final List<Lookup> userScenarioLadder;
+    private final List<Lookup> defaultFallbackLadder;
+
     private StubResponseRegistry() {
-        // Private constructor for singleton
+        this.userScenarioLadder =
+                List.of(
+                        new Lookup("registered", this::getRegisteredResponse),
+                        new Lookup("classpath resource", this::loadResourceResponse),
+                        new Lookup("filesystem", this::loadFilesystemResponse));
+        this.defaultFallbackLadder =
+                List.of(
+                        new Lookup("default classpath resource", this::loadResourceResponse),
+                        new Lookup("default filesystem", this::loadFilesystemResponse));
     }
 
     /// Returns the singleton registry instance.
@@ -163,126 +176,53 @@ public class StubResponseRegistry {
     public String getResponse(
             String nodeId, String agentId, Map<String, Object> context, String prompt) {
         String scenario = getScenario(context);
-        String response;
+        String[] identifiers = {nodeId, agentId};
 
-        if (nodeId != null) {
-            response = getRegisteredResponse(scenario, nodeId);
-            if (response != null) {
-                logger.info(
-                        "[STUB] Using registered response for node: "
-                                + nodeId
-                                + " (scenario: "
-                                + scenario
-                                + ")");
-                return processResponse(response, context);
-            }
+        String response = firstHit(userScenarioLadder, scenario, identifiers);
+        if (response == null && !DEFAULT_SCENARIO.equals(scenario)) {
+            response = firstHit(defaultFallbackLadder, DEFAULT_SCENARIO, identifiers);
         }
-
-        if (agentId != null) {
-            response = getRegisteredResponse(scenario, agentId);
-            if (response != null) {
-                logger.info(
-                        "[STUB] Using registered response for agent: "
-                                + agentId
-                                + " (scenario: "
-                                + scenario
-                                + ")");
-                return processResponse(response, context);
-            }
-        }
-
-        if (nodeId != null) {
-            response = loadResourceResponse(scenario, nodeId);
-            if (response != null) {
-                logger.info(
-                        "[STUB] Loaded resource response for node: "
-                                + nodeId
-                                + " (scenario: "
-                                + scenario
-                                + ")");
-                return processResponse(response, context);
-            }
-        }
-
-        if (agentId != null) {
-            response = loadResourceResponse(scenario, agentId);
-            if (response != null) {
-                logger.info(
-                        "[STUB] Loaded resource response for agent: "
-                                + agentId
-                                + " (scenario: "
-                                + scenario
-                                + ")");
-                return processResponse(response, context);
-            }
-        }
-
-        // Filesystem lookup (working directory stubs)
-        if (nodeId != null) {
-            response = loadFilesystemResponse(scenario, nodeId);
-            if (response != null) {
-                logger.info(
-                        "[STUB] Loaded filesystem response for node: "
-                                + nodeId
-                                + " (scenario: "
-                                + scenario
-                                + ")");
-                return processResponse(response, context);
-            }
-        }
-
-        if (agentId != null) {
-            response = loadFilesystemResponse(scenario, agentId);
-            if (response != null) {
-                logger.info(
-                        "[STUB] Loaded filesystem response for agent: "
-                                + agentId
-                                + " (scenario: "
-                                + scenario
-                                + ")");
-                return processResponse(response, context);
-            }
-        }
-
-        if (!DEFAULT_SCENARIO.equals(scenario)) {
-            if (nodeId != null) {
-                response = loadResourceResponse(DEFAULT_SCENARIO, nodeId);
-                if (response != null) {
-                    logger.info("[STUB] Loaded default resource for node: " + nodeId);
-                    return processResponse(response, context);
-                }
-            }
-
-            if (agentId != null) {
-                response = loadResourceResponse(DEFAULT_SCENARIO, agentId);
-                if (response != null) {
-                    logger.info("[STUB] Loaded default resource for agent: " + agentId);
-                    return processResponse(response, context);
-                }
-            }
-
-            // Default scenario filesystem fallback
-            if (nodeId != null) {
-                response = loadFilesystemResponse(DEFAULT_SCENARIO, nodeId);
-                if (response != null) {
-                    logger.info("[STUB] Loaded default filesystem response for node: " + nodeId);
-                    return processResponse(response, context);
-                }
-            }
-
-            if (agentId != null) {
-                response = loadFilesystemResponse(DEFAULT_SCENARIO, agentId);
-                if (response != null) {
-                    logger.info("[STUB] Loaded default filesystem response for agent: " + agentId);
-                    return processResponse(response, context);
-                }
-            }
+        if (response != null) {
+            return processResponse(response, context);
         }
 
         logger.info(
                 "[STUB] Generating fallback response for: " + (nodeId != null ? nodeId : agentId));
         return null;
     }
+
+    /// Walks the resolution ladder strategy-by-strategy, trying each identifier
+    /// at each tier. Preserves strategy-major precedence: a registered stub for
+    /// any identifier beats a filesystem stub for any identifier.
+    ///
+    /// @param ladder ordered list of lookup strategies
+    /// @param scenario scenario name to query, not null
+    /// @param identifiers candidate keys in specificity order (nulls skipped)
+    /// @return the first non-null response, or null if none match
+    private String firstHit(List<Lookup> ladder, String scenario, String[] identifiers) {
+        for (Lookup lookup : ladder) {
+            for (String id : identifiers) {
+                if (id == null) continue;
+                String response = lookup.fn.apply(scenario, id);
+                if (response != null) {
+                    logger.info(
+                            "[STUB] "
+                                    + lookup.label
+                                    + " matched for "
+                                    + id
+                                    + " (scenario: "
+                                    + scenario
+                                    + ")");
+                    return response;
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Pairs a human-readable label with the lookup function for a single
+    /// resolution tier.
+    private record Lookup(String label, BiFunction<String, String, String> fn) {}
 
     /// Determines the current scenario from context or system property.
     ///
