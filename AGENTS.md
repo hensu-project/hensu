@@ -1,437 +1,53 @@
 # AGENTS.md: Hensu™ Project Operational Manual
 
-- Project Status: Pre-Beta
-- Lead Developer: @alxsuv
-- Standard: AGENTS.md v1.2 (2026)
+Single Source of Truth for all AI coding agents. You MUST read this before proposing changes or executing commands.
 
-This file is the Single Source of Truth for all AI coding agents (Claude, Cursor, etc.). You MUST read this before
-proposing changes or executing commands.
+Guides live in [docs/](docs/) — read on demand (core/server developer guides, DSL reference, architecture, javadoc standards).
 
----
+## Build
 
-## Documentation
+Standard Gradle wrapper (`./gradlew build`, `./gradlew test`, `./gradlew <module>:test --tests "FooTest"`, `./gradlew hensu-server:quarkusDev`).
 
-| Document                                                 | Description                                    |
-|----------------------------------------------------------|------------------------------------------------|
-| [Core Developer Guide](docs/developer-guide-core.md)     | API usage, adapters, extension points, testing |
-| [DSL Reference](docs/dsl-reference.md)                   | Complete Kotlin DSL syntax and examples        |
-| [Javadoc Guide](docs/javadoc-guide.md)                   | Documentation standards                        |
-| [Unified Architecture](docs/unified-architecture.md)     | Unified Architecture Vision                    |
-| [Server Developer Guide](docs/developer-guide-server.md) | Server development patterns                    |
+Modules: `hensu-core`, `hensu-dsl`, `hensu-serialization`, `hensu-cli`, `hensu-server`, `hensu-langchain4j-adapter`.
+Dependency flow: `cli → dsl → core`, `cli → serialization → core`, `server → serialization → core`, `langchain4j-adapter → core`.
 
-## Build Commands
+## Architecture
 
-```bash
-# Build all modules
-./gradlew build
+Hensu is a modular AI workflow engine on Java 25 + Kotlin DSL. Core design principle: **zero external dependencies in `hensu-core`** — all AI provider integrations go through the `AgentProvider` interface, wired explicitly via `HensuFactory.builder().agentProviders(...)`. No classpath scanning, GraalVM-native-safe.
 
-# Build specific module
-./gradlew hensu-core:build
-./gradlew hensu-serialization:build
-./gradlew hensu-cli:build
-./gradlew hensu-server:build
-
-# Run all tests
-./gradlew test
-
-# Run tests for specific module
-./gradlew hensu-core:test
-./gradlew hensu-serialization:test
-./gradlew hensu-server:test
-
-# Run a single test class
-./gradlew hensu-core:test --tests "RubricEngineTest"
-
-# Run CLI in Quarkus dev mode
-./gradlew hensu-cli:quarkusDev
-
-# Run server in Quarkus dev mode
-./gradlew hensu-server:quarkusDev
-```
-
-## Architecture Overview
-
-Hensu is a modular AI workflow engine built on Java 25 with Kotlin DSL support.
-
-Key features:
-
-- Declarative Workflow Configuration - Define workflows declaratively with an intuitive Kotlin DSL
-- Extensible Node System - Create custom nodes to extend workflow capabilities when needed
-- Complex Workflows - Undirected flows, loops, forks, parallel execution, consensus-based decisions
-- Rubric-Driven Quality Gates - Evaluate outputs against defined criteria with score-based routing
-- Human Review Integration - Optional or required review at any workflow step
-- Multi-Provider Support - Claude, GPT, Gemini, DeepSeek via pluggable adapters
-- Pause / Resume - Workflows can pause at checkpoints and resume (potentially on a different server instance)
-- Sub-Workflows - Hierarchical composition via `SubWorkflowNode` with input/output mapping
-- Time-Travel Debugging - Execution history with backtracking support
-- Zero Lock-In - Self-hosted, pure code, no proprietary formats
-
-The core module design principle is **zero external dependencies** — all AI provider integrations happen through the
-`AgentProvider` interface, wired explicitly via `HensuFactory.builder().agentProviders(...)`.
-
-### Module Structure
-
-```
-hensu-core                    # Core workflow engine (pure Java, zero external deps)
-hensu-dsl                     # Kotlin DSL for workflow definitions
-hensu-serialization           # Jackson-based JSON serialization for workflow types (Node, TransitionRule, Action)
-hensu-cli                     # Quarkus-based CLI (PicoCLI) - compiles DSL, executes locally
-hensu-server                  # Quarkus-based server (native image) - receives JSON, executes via MCP
-hensu-langchain4j-adapter     # LangChain4j integration (Claude, GPT, Gemini, DeepSeek)
-```
-
-**Dependency flow**: `cli → dsl → core`, `cli → serialization → core`, `server → serialization → core`,
-`langchain4j-adapter → core`
-
-### Key Components
-
-**Entry Point**: `HensuFactory.builder()...build()` bootstraps everything:
-
-- `HensuEnvironment` - Container holding all core components (NEVER construct components directly)
-- `AgentFactory` - Creates agents from explicitly-wired providers
-- `AgentRegistry` / `DefaultAgentRegistry` - Manages agent instances
-- `WorkflowExecutor` - Executes workflow graphs
-- `NodeExecutorRegistry` - Registry for node type executors
-- `RubricEngine` - Evaluates output quality (rubrics embedded in workflow JSON)
-- `TemplateResolver` - Resolves `{placeholder}` syntax in prompts
-- `ReviewHandler` - Handles human review checkpoints (optional)
-- `ActionExecutor` - Executes workflow actions (CLI: local bash, Server: MCP-only)
-- `WorkflowRepository` - Tenant-scoped storage for workflow definitions (defaults to in-memory; JDBC impl in server)
-- `WorkflowStateRepository` - Tenant-scoped storage for execution state snapshots (defaults to in-memory; JDBC impl in server)
-- `ExecutionListener` - Lifecycle callbacks including `onCheckpoint(HensuState)` for inter-node persistence
-- `ProcessorPipeline` - Orchestrates pre/post node execution processor chains
-- `EngineVariables` - SSOT for engine-managed variable names (`score`, `approved`, `recommendation`)
-- `AgentLifecycleRunner` - Stateless agent call lifecycle (resolve → enrich → lookup → listener → execute → convert); shared by `StandardNodeExecutor` and `ParallelNodeExecutor`
-- `SynchronizedListenerDecorator` - Thread-safe `ExecutionListener` wrapper for parallel branch execution
-
-**Execution Lifecycle**: The `WorkflowExecutor` processes each node through a strict PRE-EXECUTE-POST pipeline.
-Pre-execution processors run in order: checkpoint → node start. Post-execution processors run in order: output
-extraction → node complete → history recording → human review → rubric evaluation → transition resolution. Any
-processor can short-circuit the pipeline by returning a terminal `ExecutionResult`. This design isolates cross-cutting
-concerns (e.g., adding a new rubric) from the core agent execution logic.
-
-**Server-Specific Components** (in `hensu-server`):
-
-- `HensuEnvironmentProducer` - CDI producer using HensuFactory.builder(); conditionally wires JDBC or in-memory repos
-- `ServerActionExecutor` - MCP-only action executor (rejects local execution)
-- `WorkflowResource` - REST API for workflow definitions (push/pull/delete/list)
-- `ExecutionResource` - REST API for execution runtime (start/resume/status/plan)
-- `JdbcWorkflowRepository` - PostgreSQL-backed workflow storage (plain class, not CDI bean)
-- `JdbcWorkflowStateRepository` - PostgreSQL-backed execution state storage (plain class, not CDI bean)
-- `ExecutionLeaseManager` - Distributed lease manager; generates `server_node_id`, bumps heartbeats, atomically claims stale executions (`@ApplicationScoped`)
-- `ExecutionHeartbeatJob` - Scheduled heartbeat; runs every `hensu.lease.heartbeat-interval` (default 30s) (`@ApplicationScoped`)
-- `WorkflowRecoveryJob` - Scheduled sweeper; claims orphaned executions older than `hensu.lease.stale-threshold` (default 90s) and resumes them (`@ApplicationScoped`)
-- `WorkflowRegistryService` - Push pipeline: wraps save in `WorkflowPushLock` and invokes `SubWorkflowGraphValidator` lazily resolving sub-workflow ids through the repository; rejects cycles and dangling refs before any row is written (`@ApplicationScoped`)
-- `WorkflowPushLock` - Cluster-wide push mutex (`pg_advisory_xact_lock` with JVM `ReentrantLock` fallback) so two concurrent pushes on different nodes cannot together introduce a cycle (`@ApplicationScoped`)
-
-**AI Provider Interface**:
-
-- `AgentProvider` interface in `io.hensu.core.agent`
-- Providers wired explicitly via `HensuFactory.builder().agentProviders(...)` — no classpath scanning, GraalVM-safe
-- Priority system: higher `getPriority()` wins when multiple providers support same model
-- `StubAgentProvider` (priority 1000) always auto-included by `build()` for testing
-
-### Data Model
-
-**Workflow Structure** (immutable, builder pattern):
-
-```
-Workflow
-├── agents: Map<String, AgentConfig>
-├── rubrics: Map<String, String>
-├── nodes: Map<String, Node>
-└── startNode: String
-```
-
-**Node Types**:
-
-- `StandardNode` - Regular step with agent execution, typed state variable output (`writes`), and transitions
-- `LoopNode` - Iterative execution with break conditions
-- `ParallelNode` - Concurrent execution with consensus; branches declare domain output via `yields()`
-- `ForkNode` - Spawn parallel execution paths
-- `JoinNode` - Await and merge forked paths
-- `GenericNode` - Custom execution logic via registered handlers
-- `ActionNode` - Execute commands mid-workflow (git, deploy, notify)
-- `EndNode` - Workflow termination (SUCCESS/FAILURE/CANCELLED)
-- `SubWorkflowNode` - Delegation to another workflow by id with input/output mapping; cycle + dangling-ref validation at push (`SubWorkflowGraphValidator`); depth cap `MAX_DEPTH = 16`; tenant isolation preserved via `_tenant_id` propagation
-
-**Transitions** (`TransitionRule` interface):
-
-- `SuccessTransition` / `FailureTransition` - Based on execution result
-- `ScoreTransition` - Conditional on rubric score (e.g., score >= 80 → approve)
-- `ApprovalTransition` - Routes on the `approved` boolean engine variable (injected by `ApprovalVariableInjector`); falls through if absent or non-boolean
-- `AlwaysTransition` - Unconditional
-
-### State Schema
-
-`WorkflowStateSchema` is an optional typed declaration on a `Workflow` that lists all domain-specific state variables:
-
-- `StateVariableDeclaration(name, type, isInput)` — declares one variable. Inputs are expected in the initial context; outputs are produced by nodes via `writes`.
-- `VarType` — `STRING`, `NUMBER`, `BOOLEAN`, `LIST_STRING`
-- **Engine variables** (`score`, `approved`) are always implicitly valid — never declare them in the schema.
-
-`WorkflowValidator` is called by `WorkflowBuilder.build()` and throws `IllegalStateException` listing all violations when:
-- A node's `writes` list contains a name not in the schema
-- A prompt `{variable}` reference is not in the schema
-
-Workflows without a schema operate in **legacy mode** (no load-time validation; outputs keyed by node ID).
-
-**DSL** (`state { }` block in `WorkflowBuilder`):
-```kotlin
-state {
-    input("topic", VarType.STRING)
-    variable("article", VarType.STRING)
-    variable("approved", VarType.BOOLEAN)   // NOT needed — engine variable, shown for clarity only
-}
-```
-
-### State Model
-
-Execution state flows through three types:
-
-- `HensuState` — Mutable runtime state during execution. Holds `executionId`, `workflowId`, `currentNode`, `context`
-  (Map), and `ExecutionHistory`. Created by `WorkflowExecutor` at execution start; mutated during node transitions.
-- `HensuSnapshot` — Immutable checkpoint record. Created from `HensuState.toSnapshot()` at pause points and completion.
-  Stored in `WorkflowStateRepository`. Contains `checkpointReason` ("paused", "completed", etc.).
-- `ExecutionHistory` — Tracks executed steps and backtracks. Its `copy()` returns mutable copies (not `List.copyOf()`)
-  so resumed executions can continue appending steps.
-
-**Checkpoint lifecycle** (inter-node persistence for failover):
-
-1. `CheckpointPreProcessor` fires `listener.onCheckpoint(state)` as the first step before each non-end node
-2. `WorkflowService` implements `ExecutionListener.onCheckpoint()` to save a `HensuSnapshot` with reason `"checkpoint"`
-3. If server dies mid-execution → restart → `findPaused()` returns interrupted executions → resume from last checkpoint
-
-**Pause / Resume lifecycle:**
-
-1. Node returns `ResultStatus.PENDING` → `WorkflowExecutor` returns `ExecutionResult.Paused(state)`
-2. `WorkflowService` saves snapshot with reason `"paused"`
-3. Later: `WorkflowService.resumeExecution()` loads snapshot → restores `HensuState` → calls
-   `WorkflowExecutor.executeFrom()` → saves final snapshot
-
-**Distributed Recovery & Leasing:**
-
-Each `HensuSnapshot` with `checkpointReason = "checkpoint"` is tied to a server lease via two
-columns in `hensu.execution_states`:
-
-- `server_node_id` — set to the owning server's UUID on `save("checkpoint")`; cleared to `NULL`
-  on `"completed"`, `"paused"`, `"failed"`, or `"rejected"`
-- `last_heartbeat_at` — bumped every `hensu.lease.heartbeat-interval` (default 30s) by
-  `ExecutionHeartbeatJob`
-
-`WorkflowRecoveryJob` periodically scans for rows where
-`last_heartbeat_at < NOW() - stale-threshold` (default 90s) and atomically claims them via a
-single `UPDATE … RETURNING` statement (safe under PostgreSQL `READ COMMITTED`). Claimed
-executions are immediately passed to `WorkflowService.resumeExecution()` on the surviving node.
-
-`findPaused()` filters `WHERE server_node_id IS NULL` — human-review checkpoints never appear in
-the recovery sweeper's scope.
-
-**Key context keys** (set by `WorkflowService.startExecution()`):
-
-- `_tenant_id` — tenant identifier, read by `SubWorkflowNodeExecutor` for loading child workflows
-- `_execution_id` — ensures `WorkflowExecutor` uses the same ID the service layer tracks
-- `_sub_workflow_depth` — recursion depth counter enforced by `SubWorkflowNodeExecutor.MAX_DEPTH = 16`
-
-### Patterns & Conventions
+## Patterns & Conventions
 
 1. **Builder pattern** for all domain models: `Workflow.builder().id(...).build()`
-2. **Constructor injection** - No @Autowired, explicit dependency wiring
+2. **Constructor injection** — no `@Autowired`, explicit dependency wiring
 3. **Sealed interfaces** for results: `ExecutionResult` → `Completed | Paused | Rejected | Failure | Success`
 4. **Template resolution**: `{variable}` syntax in prompts, resolved via `SimpleTemplateResolver`
-5. **@DslMarker** on Kotlin builders to prevent scope leakage
+5. **`@DslMarker`** on Kotlin builders to prevent scope leakage
 
-### Kotlin DSL
+## Key Architectural Rules
 
-Workflows defined in `.kt` files parsed by `KotlinScriptParser`:
+1. **HensuFactory pattern**: ALWAYS use `HensuFactory.builder()` — never construct core components directly.
+2. **Client-side compilation**: CLI compiles Kotlin DSL → JSON; server receives pre-compiled JSON (no Kotlin compiler in native image).
+3. **Build-then-push**: `hensu build` compiles to `{working-dir}/build/`; `hensu push` reads compiled JSON (no recompilation).
+4. **Shared serialization**: CLI and server both use `hensu-serialization`; `WorkflowSerializer.createMapper()` is the single `ObjectMapper` factory.
+5. **Server MCP-only**: server never executes bash locally, only MCP requests to external tools.
+6. **Storage in core**: repository interfaces and in-memory defaults live in `hensu-core`. JDBC impls live in `hensu-server/persistence/` as plain classes (not CDI beans). `HensuEnvironmentProducer` conditionally wires JDBC vs in-memory. Server exposes core components via `@Produces @Singleton` — never instantiates directly.
+7. **API separation**: `/api/v1/workflows` (definitions) and `/api/v1/executions` (runtime) are distinct resources.
+8. **JWT authentication**: SmallRye JWT bearer auth. Tenant identity extracted from `tenant_id` claim via `RequestTenantResolver`. CLI sends `Authorization: Bearer <token>` via `--token` or `hensu.server.token` config. Dev/test mode disables auth (`hensu.tenant.default`). RSA keys live outside the repo (e.g. `~/.hensu/`).
 
-```kotlin
-workflow("example") {
-    agents {
-        agent("writer") { model = Models.CLAUDE_SONNET_4_5 }
-    }
-    graph {
-        start at "write"
+## CLI
 
-        node("write") {
-            agent = "writer"
-            prompt = "Write about {topic}"
-            onSuccess goto "end"
-        }
+Verbs: `run | validate | visualize | build | push | pull | delete | list`. Use `-h` for args. `build` compiles `.kt` → JSON in `{working-dir}/build/`; `push` reads compiled JSON by workflow ID (not the `.kt`).
 
-        end("end")
-    }
-}
-```
+Example workflows: `working-dir/workflows/*.kt`.
 
-### Environment Variables
+## Environment Variables
 
-Credentials loaded via `HensuFactory.loadCredentialsFromEnvironment()`:
-
-- `ANTHROPIC_API_KEY` - Claude models
-- `OPENAI_API_KEY` - GPT models
-- `GOOGLE_API_KEY` - Gemini models
-- `DEEPSEEK_API_KEY` - DeepSeek models
-- `OPENROUTER_API_KEY`, `AZURE_OPENAI_KEY`
-
-### CLI Commands
-
-```bash
-# Local execution
-./hensu run -d working-dir workflow.kt                    # Execute workflow locally
-./hensu run -d working-dir workflow.kt -v                 # Execute with verbose output
-./hensu validate -d working-dir workflow.kt               # Validate syntax
-./hensu visualize -d working-dir workflow.kt              # Visualize as ASCII text
-./hensu visualize -d working-dir workflow.kt --format mermaid  # Visualize as Mermaid diagram
-
-# Build (compile DSL → JSON)
-./hensu build workflow.kt -d working-dir                  # Compile to working-dir/build/{id}.json
-
-# Server workflow management (terraform/kubectl pattern)
-./hensu push <workflow-id> --server http://host:8080      # Push compiled JSON to server
-./hensu pull <workflow-id>                                 # Pull workflow definition from server
-./hensu delete <workflow-id>                               # Delete workflow from server
-./hensu list                                              # List all workflows on server
-```
-
-**Build-then-push workflow**: `build` compiles Kotlin DSL → JSON in `{working-dir}/build/`. `push` reads the compiled
-JSON by workflow ID (not the .kt file).
-
-### Key Architectural Rules
-
-1. **HensuFactory pattern**: ALWAYS use `HensuFactory.builder()` - never construct core components directly
-2. **Client-side compilation**: CLI compiles Kotlin DSL → JSON; server receives pre-compiled JSON (no Kotlin compiler in
-   native image)
-3. **Build-then-push**: `hensu build` compiles to `{working-dir}/build/`; `hensu push` reads compiled JSON (no
-   recompilation)
-4. **Shared serialization**: Both CLI and server use `hensu-serialization` for JSON format —
-   `WorkflowSerializer.createMapper()` is the single ObjectMapper factory
-5. **Server MCP-only**: Server never executes bash commands locally, only sends MCP requests to external tools
-6. **Storage in core**: Repository interfaces (`WorkflowRepository`, `WorkflowStateRepository`) and in-memory defaults
-   live in `hensu-core`. JDBC implementations live in `hensu-server/persistence/` as plain classes (not CDI beans).
-   `HensuEnvironmentProducer` conditionally creates JDBC repos when DataSource is available, otherwise falls back to
-   in-memory. Server delegates from `HensuEnvironment` via `@Produces @Singleton` — never creates instances directly
-7. **API separation**: Workflow definitions (`/api/v1/workflows`) and executions (`/api/v1/executions`) are distinct
-   REST resources
-8. **JWT authentication**: Server uses SmallRye JWT (`quarkus-smallrye-jwt`) for bearer token auth. Tenant identity
-   is extracted from the `tenant_id` claim via `RequestTenantResolver`. CLI sends `Authorization: Bearer <token>`
-   header via `--token` option or `hensu.server.token` config. In dev/test mode, auth is disabled and a default tenant
-   is used (`hensu.tenant.default`). RSA keys are stored externally (e.g., `~/.hensu/`), never in the repository.
+Provider credentials loaded via `HensuFactory.loadCredentialsFromEnvironment()`: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `AZURE_OPENAI_KEY`.
 
 ## Testing
 
-- JUnit 5 + AssertJ + Mockito
-- Stub mode for testing without API calls: `HENSU_STUB_ENABLED=true`
-- Mock agents for unit testing
-- Core module testable in complete isolation (no AI dependencies)
-
-### Integration Tests (`hensu-server`)
-
-**Integration tests** extend `IntegrationTestBase` and run under `@QuarkusTest` with `@TestProfile(InMemoryTestProfile.class)`.
-The `inmem` profile disables PostgreSQL (no Docker required). The base class provides:
-
-- `loadWorkflow("fixture.json")` — Loads a JSON fixture from `test/resources/workflows/`
-- `registerStub("nodeId", "response")` — Registers a programmatic stub response
-- `registerStub("scenario", "nodeId", "response")` — Registers a scenario-specific stub
-- `pushAndExecute(workflow, context)` — Saves workflow to repository and executes via `WorkflowService`
-- `pushAndExecuteWithMcp(workflow, context, endpoint)` — Same but within a `TenantContext` with MCP endpoint
-- `resolveRubricPath("quality.md")` — Copies a classpath rubric to a temp file (required by `RubricParser`)
-
-Per-test cleanup (`@BeforeEach`): clears `StubResponseRegistry`, deletes all tenant data via
-`WorkflowStateRepository.deleteAllForTenant()` and `WorkflowRepository.deleteAllForTenant()` (execution states first
-due to FK constraint).
-
-**Test handlers** (`@ApplicationScoped` beans auto-discovered by Quarkus):
-
-- `TestActionHandler` — `GenericNodeHandler` for `type="test-action"`, captures invocations
-- `TestReviewHandler` — Configurable `ReviewHandler` returning approve/reject/backtrack
-- `TestPauseHandler` — `GenericNodeHandler` for `type="pause"`, returns PENDING on first call, SUCCESS on second
-- `TestValidatorHandler` — `GenericNodeHandler` for `type="test-validator"`, validates context keys
-
-**Stub resolution order**: programmatic → `/stubs/{scenario}/{nodeId}.txt` → `/stubs/default/{nodeId}.txt` → echo
-fallback.
-
-**Repository tests** (`io.hensu.server.persistence`) use plain JUnit 5 + Testcontainers PostgreSQL (no Quarkus context).
-`JdbcRepositoryTestBase` starts a PostgreSQL container, runs Flyway migrations, and provides a DataSource. Tests verify
-CRUD operations, UPSERT semantics, FK constraints, tenant isolation, and serialization round-trips.
-
-## Key Files to Understand
-
-**Core:**
-
-- `hensu-core/.../HensuFactory.java` - Bootstrap and environment creation
-- `hensu-core/.../HensuEnvironment.java` - Container for all core components
-- `hensu-core/.../agent/AgentFactory.java` - Creates agents from explicit providers
-- `hensu-core/.../execution/WorkflowExecutor.java` - Main execution engine
-- `hensu-core/.../execution/pipeline/ProcessorPipeline.java` - Pre/post processor orchestration
-- `hensu-core/.../execution/pipeline/ProcessorContext.java` - Per-iteration context carrier
-- `hensu-core/.../workflow/Workflow.java` - Core data model
-- `hensu-core/.../rubric/RubricEngine.java` - Quality evaluation engine
-- `hensu-core/.../tool/ToolRegistry.java` - Protocol-agnostic tool descriptors
-- `hensu-core/.../plan/PlanPipeline.java` - Executes ordered `PlanProcessor` chains (preparation + execution)
-- `hensu-core/.../plan/PlanContext.java` - Mutable state carrier flowing through both plan pipelines
-- `hensu-core/.../plan/PlanExecutor.java` - Iterates plan steps via `StepHandlerRegistry`
-- `hensu-core/.../plan/StepHandlerRegistry.java` - Dispatches `PlanStepAction` to registered `StepHandler` instances
-- `hensu-core/.../plan/StaticPlanner.java` - Resolves predefined DSL `plan { }` steps (`STATIC` mode)
-- `hensu-core/.../plan/LlmPlanner.java` - Generates and revises plans via LLM agent (`DYNAMIC` mode)
-- `hensu-core/.../execution/executor/AgenticNodeExecutor.java` - Drives the two-pipeline plan flow for `StandardNode`
-- `hensu-core/.../workflow/WorkflowRepository.java` - Tenant-scoped workflow storage interface
-- `hensu-core/.../state/WorkflowStateRepository.java` - Tenant-scoped execution state storage interface
-- `hensu-core/.../workflow/state/WorkflowStateSchema.java` - Typed state variable schema (optional per-workflow declaration)
-- `hensu-core/.../workflow/state/StateVariableDeclaration.java` - Single variable declaration (name, type, isInput)
-- `hensu-core/.../workflow/state/VarType.java` - Variable type enum (STRING, NUMBER, BOOLEAN, LIST_STRING)
-- `hensu-core/.../execution/EngineVariables.java` - SSOT for engine-managed variable names (score, approved, recommendation)
-- `hensu-core/.../execution/SynchronizedListenerDecorator.java` - Thread-safe listener wrapper for parallel branches
-- `hensu-core/.../execution/executor/AgentLifecycleRunner.java` - Shared agent call lifecycle (resolve → enrich → execute)
-- `hensu-core/.../execution/parallel/BranchExecutionConfig.java` - Per-branch config carried on ExecutionContext
-- `hensu-core/.../execution/enricher/YieldsVariableInjector.java` - Injects yield format instructions for branch prompts
-- `hensu-core/.../workflow/transition/ApprovalTransition.java` - Boolean approval routing via `approved` engine variable
-- `hensu-core/.../workflow/validation/WorkflowValidator.java` - Load-time validator for `writes` and prompt variable references
-- `hensu-core/.../workflow/validation/SubWorkflowGraphValidator.java` - Cycle + dangling-ref detection across the sub-workflow reference graph (single DFS, `globallyVisited`); CLI overload `validate(Collection<Workflow>)` for local cycle-only checks, server overload `validate(Workflow, Function<String,Workflow>)` for push with lazy repository resolution
-- `hensu-core/.../execution/executor/SubWorkflowNodeExecutor.java` - Child workflow execution with `MAX_DEPTH = 16` recursion cap and `_tenant_id` propagation
-
-**DSL:**
-
-- `hensu-dsl/.../dsl/HensuDSL.kt` - DSL entry point (`workflow()` function)
-- `hensu-dsl/.../dsl/parsers/KotlinScriptParser.kt` - Script compilation
-- `hensu-dsl/.../dsl/builders/GraphBuilder.kt` - Graph DSL (node, action, end, etc.)
-- `hensu-dsl/.../dsl/builders/StateSchemaBuilder.kt` - `state { }` DSL block builder (input/variable declarations)
-
-**Serialization:**
-
-- `hensu-serialization/.../WorkflowSerializer.java` - Entry point: `toJson()`, `fromJson()`, `createMapper()`
-- `hensu-serialization/.../HensuJacksonModule.java` - Jackson module registering all custom ser/deser
-- `hensu-serialization/.../NodeSerializer.java` / `NodeDeserializer.java` - Node type hierarchy
-- `hensu-serialization/.../TransitionRuleSerializer.java` / `TransitionRuleDeserializer.java` - Transition rules
-- `hensu-serialization/.../ActionSerializer.java` / `ActionDeserializer.java` - Action types
-- `hensu-serialization/.../mixin/` - Jackson mixins for builder-based deserialization (Workflow, AgentConfig)
-
-**Server:**
-
-- `hensu-server/.../config/HensuEnvironmentProducer.java` - CDI producer (HensuFactory → HensuEnvironment); conditional JDBC/in-memory wiring
-- `hensu-server/.../config/ServerConfiguration.java` - CDI delegation + server beans (ObjectMapper via
-  `WorkflowSerializer.createMapper()`)
-- `hensu-server/.../action/ServerActionExecutor.java` - MCP-only action executor
-- `hensu-server/.../api/WorkflowResource.java` - Workflow definition management REST API
-- `hensu-server/.../api/ExecutionResource.java` - Execution runtime REST API
-- `hensu-server/.../persistence/JdbcWorkflowRepository.java` - PostgreSQL workflow storage (plain JDBC, JSONB)
-- `hensu-server/.../persistence/JdbcWorkflowStateRepository.java` - PostgreSQL execution state storage (plain JDBC, JSONB)
-- `hensu-server/src/main/resources/db/migration/V1__create_persistence_tables.sql` - Flyway schema migration
-- `hensu-server/src/main/resources/db/migration/V2__add_execution_leases.sql` - Lease columns migration
-- `hensu-server/.../persistence/ExecutionLeaseManager.java` - Distributed lease manager (heartbeat + atomic claim)
-- `hensu-server/.../persistence/WorkflowPushLock.java` - Cluster-wide push mutex (pg_advisory_xact_lock + JVM fallback)
-- `hensu-server/.../workflow/ExecutionHeartbeatJob.java` - Heartbeat emission (@Scheduled)
-- `hensu-server/.../workflow/WorkflowRecoveryJob.java` - Recovery sweeper (@Scheduled)
-- `hensu-server/.../workflow/WorkflowRegistryService.java` - Push pipeline: `WorkflowPushLock` + `SubWorkflowGraphValidator`
-
-**CLI:**
-
-- `hensu-cli/.../commands/HensuCLI.java` - Top-level command registration
-- `hensu-cli/.../commands/WorkflowBuildCommand.java` - Compile DSL → JSON (`hensu build`)
-- `hensu-cli/.../commands/WorkflowPushCommand.java` - Push compiled JSON to server (`hensu push`)
-- `hensu-cli/.../commands/ServerCommand.java` - Base class for server-interacting commands (HTTP client,
-  --server/--token options, JWT bearer authentication)
-
-**Examples:**
-
-- `working-dir/workflows/*.kt` - Example workflows
+- JUnit 5 + AssertJ + Mockito. Stub mode: `HENSU_STUB_ENABLED=true`. Core testable in isolation (no AI deps).
+- **Integration tests** (`hensu-server`): extend `IntegrationTestBase`, run under `@QuarkusTest` with `@TestProfile(InMemoryTestProfile.class)`. The `inmem` profile disables PostgreSQL (no Docker). Base class provides `loadWorkflow`, `registerStub`, `pushAndExecute`, `pushAndExecuteWithMcp`, `resolveRubricPath`. Per-test cleanup clears `StubResponseRegistry` and deletes tenant data (execution states first, FK constraint).
+- **Test handlers** (auto-discovered `@ApplicationScoped`): `TestActionHandler`, `TestReviewHandler`, `TestPauseHandler`, `TestValidatorHandler`.
+- **Stub resolution order**: programmatic → `/stubs/{scenario}/{nodeId}.txt` → `/stubs/default/{nodeId}.txt` → echo fallback.
+- **Repository tests** (`io.hensu.server.persistence`): plain JUnit 5 + Testcontainers PostgreSQL (no Quarkus). `JdbcRepositoryTestBase` starts container, runs Flyway, provides `DataSource`.
