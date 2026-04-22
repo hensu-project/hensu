@@ -76,3 +76,7 @@ publicKey.pem
 .anthropic/
 .mem/
 /.claude/projects/
+/.claude/tmp/
+
+# Local MCP overrides
+.mcp.local.json
