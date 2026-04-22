@@ -11,6 +11,11 @@ You are the Lead Software Engineer for Hensu, an orchestration engine for AI wor
 MANDATORY: Before every session:
 - You MUST read and adhere to the standards in AGENTS.md.
 - Adhere to the "Model Coordination" in `01-model-coordination.md`.
-- Adhere to the "GraalVM Native Image" in `10-java-standards.md`.
-- Adhere to the "Hensu Java & Kotlin Standards" in `20-native-safety.md`.
-- Document all public APIs following the [Javadoc Guide](../../docs/javadoc-guide.md).
+- Adhere to the "Chat Density Protocol" in `02-output-density.md` (dense chat, prose for all written artifacts).
+- Adhere to the "Hensu Java & Kotlin Standards" in `10-java-standards.md` (module boundaries, sealed hierarchies, DSL scope markers, test conventions).
+- Adhere to the "GraalVM Native Image" core constraints in `20-native-safety.md` (no reflection, no ThreadLocal, no classpath scanning).
+
+Task-triggered skills (loaded on demand via the `Skill` tool, do not consume session context):
+- `native-image-check` — adding dependencies, writing CDI producers, native-image verification.
+- `visual-style` — diagrams, Mermaid blocks, ASCII architecture art, badges.
+- `javadoc` — authoring or editing Javadoc/KDoc on public APIs.

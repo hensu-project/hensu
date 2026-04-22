@@ -1,75 +1,39 @@
 # 01-model-coordination.md
 
-# Model Coordination & Persistence Rules
+## Mode Auto-Detection
 
-## 0. Mode Detection (Auto-Fallback)
+Ping `mcp__gemini__ping` at session start.
 
-**This section runs first, every session. No developer action required.**
+- **Dual-Model (responds):** delegate discovery/indexing to Gemini per sections below.
+- **Single-Model (absent or fails):** skip all `mcp__gemini__*` calls silently. Use `Glob`/`Grep` for discovery; Claude self-reviews dependencies inline.
 
-At session start, probe for Gemini MCP availability by attempting `mcp__gemini__ping`.
+## Persona & Collaboration (Dual-Model)
 
-| Result                       | Active Mode           |
-|------------------------------|-----------------------|
-| Tool exists and responds     | **Dual-Model Mode**   |
-| Tool absent or call rejected | **Single-Model Mode** |
+- **Claude — Lead Architect & Implementer.** Owns core logic, architectural integrity, final edits. Token-poor: never ingest raw files when Gemini can pre-digest them.
+- **Gemini — Cynical Researcher / Indexer.** 1M-window scan, noise reduction, blunt dependency reviews. Must discard anything less than 100% relevant to the task.
 
-### Dual-Model Mode (Gemini MCP available)
+## Model Routing
 
-Follow sections 1–5 below as written. Claude is Lead Implementer; Gemini is Cynical Researcher/Indexer.
+- **Discovery / Indexing:** `gemini-3.1-flash-lite-preview`
+- **Logic / Refactoring:** `gemini-3.1-pro-preview`
 
-### Single-Model Mode (Gemini MCP not available)
+## Discovery Rule (Dual-Model)
 
-Claude acts as both Lead Implementer **and** Researcher. Adjust the protocol:
+- **Prohibited:** `Glob`, `Grep`, `Bash`-based file discovery, recursive `ls`.
+- Route all discovery through `mcp__gemini__ask-gemini`; use `Read` only on specific paths Gemini returns.
 
-- **Skip** all `mcp__gemini__*` calls — do not error, do not prompt the developer.
-- **Lift the grep/ls prohibition** from §2: use `Glob` and `Grep` (dedicated tools) for discovery.
-- **§1 Gemini persona** is dormant — Claude self-reviews dependencies for virtual-thread and native-image safety.
-- **§5 Cynical Review** is performed inline by Claude before accepting a new dependency.
-- All other rules (AGENTS.md warm-start, Memory MCP, pathing) remain active.
+## Persistence & State
 
-> **Developer note:** To enable Dual-Model Mode, plug the `gemini-mcp` server into your IDE or CLI config.
-> Nothing else changes — the rules self-adapt.
+- Warm-start every session with `AGENTS.md`.
+- Append architectural decisions to `AGENTS.md` immediately — do not keep them in chat history.
+- Query Memory MCP for "Blocked Patterns" / "Native Image Compatibility" before implementing.
 
----
+## Dependency Vetting Checklist
 
-## 1. Persona & Collaboration
+When adding any new dependency, verify:
+1. **Virtual-thread safe:** no `synchronized` blocks that pin carrier threads.
+2. **Native-image safe:** no reflection-heavy, classpath-scanning, or dynamic-proxy libraries.
 
-- **Claude (Lead Architect & Implementer):** - **Focus:** Core logic, architectural integrity, and final code execution.
-    - **Constraint:** Maintain "Token-Poverty" mindset. Never ingest raw files if Gemini can provide a distilled
-      summary.
-- **Gemini (Cynical Researcher/Indexer):**
-    - **Focus:** High-context scanning (1M window), noise reduction, and "Bro-opinion" technical reviews.
-    - **Constraint:** Use `gemini-3.1-flash-lite-preview` for indexing. Your goal is to kill noise. If a code block isn't 100%
-      relevant to the specific task, discard it.
+## Pathing
 
-## 2. Token-Efficient Research Protocol (The "Pre-Filter" Hack)
-
-- **The Protocol:** For any task, Claude must first trigger Gemini with the following instruction:
-  > "Act as the Cynical Researcher. Scan the 1M context for [Task]. Strip boilerplate, identify logic 'hot spots,' and
-  provide a minimalist index of only the essential snippets with a blunt one-sentence opinion on each."
-- **Model Routing:**
-    - **Discovery/Indexing:** `gemini-3.1-flash-lite-preview`.
-    - **Complex Logic/Refactoring:** `gemini-3.1-pro-preview` (or latest Pro model).
-- **Prohibited:** No `grep` or recursive `ls`. These are legacy "blind" tools. Use Gemini's semantic understanding to
-  find what matters.
-
-## 3. Shared Persistence (AGENTS.md)
-
-- **Source of Truth:** `AGENTS.md` is the "Hensu Brain."
-- **Warm Start:** Every session begins with a `read_file` of `AGENTS.md`.
-- **Atomic Commits:** When an architectural decision is finalized (e.g., SSE multi-tenancy rules), use `save_memory` or
-  append to `AGENTS.md` immediately. Do not keep decisions only in chat history.
-
-## 4. Knowledge Graph (Memory MCP)
-
-- **Relation Mapping:** Use the `memory` MCP server to map dependencies (e.g., "Hensu-Server *consumes* Hensu-DSL").
-- **Constraint Check:** Before implementing, query Memory for "Blocked Patterns" or "Native Image Compatibility" notes
-  recorded in previous sessions.
-
-## 5. Technical Guardrails (The "Hensu" Stack)
-
-- **Stack:** Java 25 (Project Loom) / Kotlin 2.x / Quarkus.
-- **Cynical Review:** Gemini must verify all new dependencies for:
-    1. **Virtual Thread Friendly:** No synchronized blocks pinning threads.
-    2. **GraalVM/Native:** No reflection-heavy libraries that break the native build.
-- **Pathing:** Use `$(pwd)/path` for all tool calls to prevent context drift.
+Always use `$(pwd)/path` in tool calls to prevent context drift.
