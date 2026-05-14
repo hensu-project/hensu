@@ -1,5 +1,6 @@
 package io.hensu.server.workflow;
 
+import io.hensu.core.resume.ResumeInput;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.List;
@@ -44,8 +45,7 @@ public class WorkflowService {
         return executionService.startExecution(tenantId, workflowId, context);
     }
 
-    public void resumeExecution(
-            String tenantId, String executionId, io.hensu.core.resume.ResumeInput resumeInput) {
+    public void resumeExecution(String tenantId, String executionId, ResumeInput resumeInput) {
         stateService.resumeExecution(tenantId, executionId, resumeInput);
     }
 

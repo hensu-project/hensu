@@ -9,6 +9,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.hensu.core.resume.ResumeInput;
 import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.workflow.ExecutionNotFoundException;
 import io.hensu.server.workflow.ExecutionOutput;
@@ -88,11 +89,9 @@ class ExecutionResourceTest {
                 assertThat(response.getStatus()).isEqualTo(200);
             }
 
-            ArgumentCaptor<io.hensu.core.resume.ResumeInput> captor =
-                    ArgumentCaptor.forClass(io.hensu.core.resume.ResumeInput.class);
+            ArgumentCaptor<ResumeInput> captor = ArgumentCaptor.forClass(ResumeInput.class);
             verify(workflowService).resumeExecution(eq("tenant-1"), eq("exec-1"), captor.capture());
-            assertThat(captor.getValue())
-                    .isInstanceOf(io.hensu.core.resume.ResumeInput.ApplyReview.class);
+            assertThat(captor.getValue()).isInstanceOf(ResumeInput.ApplyReview.class);
         }
 
         @Test
@@ -105,11 +104,9 @@ class ExecutionResourceTest {
                 assertThat(response.getStatus()).isEqualTo(200);
             }
 
-            ArgumentCaptor<io.hensu.core.resume.ResumeInput> captor =
-                    ArgumentCaptor.forClass(io.hensu.core.resume.ResumeInput.class);
+            ArgumentCaptor<ResumeInput> captor = ArgumentCaptor.forClass(ResumeInput.class);
             verify(workflowService).resumeExecution(eq("tenant-1"), eq("exec-1"), captor.capture());
-            assertThat(captor.getValue())
-                    .isInstanceOf(io.hensu.core.resume.ResumeInput.ApplyContextEdits.class);
+            assertThat(captor.getValue()).isInstanceOf(ResumeInput.ApplyContextEdits.class);
         }
 
         @Test
@@ -118,10 +115,9 @@ class ExecutionResourceTest {
                 assertThat(response.getStatus()).isEqualTo(200);
             }
 
-            ArgumentCaptor<io.hensu.core.resume.ResumeInput> captor =
-                    ArgumentCaptor.forClass(io.hensu.core.resume.ResumeInput.class);
+            ArgumentCaptor<ResumeInput> captor = ArgumentCaptor.forClass(ResumeInput.class);
             verify(workflowService).resumeExecution(eq("tenant-1"), eq("exec-1"), captor.capture());
-            assertThat(captor.getValue()).isInstanceOf(io.hensu.core.resume.ResumeInput.None.class);
+            assertThat(captor.getValue()).isInstanceOf(ResumeInput.None.class);
         }
 
         @Test
