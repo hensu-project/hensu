@@ -27,7 +27,14 @@ import java.util.Optional;
 /// - **DYNAMIC** — invokes {@link Planner} at runtime; fires
 ///   {@code onPlannerStart} / {@code onPlannerComplete} listener events
 ///
-/// On success the plan is written to {@link PlanContext#setPlan(Plan)} and
+/// Before creating a plan, the processor checks the execution state for a
+/// persisted {@link Plan} from a prior checkpoint. If one exists and its
+/// {@code nodeId} matches the current node, the processor reuses it — skipping
+/// the planner entirely. A {@code nodeId} mismatch indicates a bug in plan
+/// lifecycle management and throws {@link IllegalStateException}.
+///
+/// On success the plan is written to both the execution state (for checkpoint
+/// persistence) and the {@link PlanContext} (for downstream processors), and
 /// {@link Optional#empty()} is returned so the pipeline continues.
 /// On {@link PlanCreationException} the processor short-circuits with a
 /// {@link ResultStatus#FAILURE} result, preserving any
@@ -53,8 +60,26 @@ public final class PlanCreationProcessor implements PlanProcessor {
 
     @Override
     public Optional<NodeResult> process(PlanContext context) {
+        var state = context.executionContext().getState();
+        Plan activePlan = state.getActivePlan();
+
+        if (activePlan != null) {
+            String currentNodeId = context.node().getId();
+            if (activePlan.nodeId().equals(currentNodeId)) {
+                context.setPlan(activePlan);
+                return Optional.empty();
+            }
+            throw new IllegalStateException(
+                    "Active plan belongs to node '"
+                            + activePlan.nodeId()
+                            + "' but current node is '"
+                            + currentNodeId
+                            + "'");
+        }
+
         try {
             Plan plan = createPlan(context);
+            state.setActivePlan(plan);
             context.setPlan(plan);
             return Optional.empty();
         } catch (PlanCreationException e) {

@@ -41,6 +41,7 @@ cannot resolve subtypes without reflection or annotations on the sealed interfac
 | `TransitionRule` | `TransitionRuleSerializer`  | `TransitionRuleDeserializer`  |
 | `Action`         | `ActionSerializer`          | `ActionDeserializer`          |
 | `PlanStepAction` | `PlanStepActionSerializer`  | `PlanStepActionDeserializer`  |
+| `ExecutionPhase` | `ExecutionPhaseSerializer`  | `ExecutionPhaseDeserializer`  |
 
 Each serializer writes a `"type"` discriminator field. The deserializer reads it to select the concrete class.
 
@@ -82,7 +83,7 @@ serialized via default Jackson machinery in `WorkflowSerializer.toJson()`. Both 
 | `ScoreCondition`           | Embedded in `ScoreTransition` via `NodeDeserializer`               |
 | `DoubleRange`              | Embedded in `ScoreCondition`                                       |
 
-All are registered in `NativeImageConfig` in `hensu-server`. Do **not** create mixins for these –
+All are registered in `CoreModelNativeConfig` in `hensu-server`. Do **not** create mixins for these –
 reflection registration is sufficient since they have public constructors and accessors.
 Errors are transient and not persisted in snapshots. The builder mixin (`NodeResultBuilderMixin`)
 also suppresses the `error(Throwable)` setter with `@JsonIgnore` — this prevents Jackson from
@@ -103,6 +104,8 @@ hensu-serialization/src/main/java/io/hensu/serialization/
 ├── ActionDeserializer.java          # Action sealed hierarchy deserializer
 ├── PlanStepActionSerializer.java    # PlanStepAction sealed hierarchy serializer
 ├── PlanStepActionDeserializer.java  # PlanStepAction sealed hierarchy deserializer
+├── ExecutionPhaseSerializer.java    # ExecutionPhase sealed hierarchy serializer
+├── ExecutionPhaseDeserializer.java  # ExecutionPhase sealed hierarchy deserializer
 ├── WorkflowStateSchemaDeserializer.java  # Direct-extraction deserializer (native-image perf)
 ├── plan/
 │   └── JacksonPlanResponseParser.java  # Parses LLM JSON responses into PlannedStep lists

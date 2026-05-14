@@ -1,9 +1,6 @@
 package io.hensu.integrations.springclient.demo;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hensu.integrations.springclient.client.HensuClient;
-import io.hensu.integrations.springclient.client.HensuEventStream;
 import io.hensu.integrations.springclient.config.HensuProperties;
 import io.hensu.integrations.springclient.mcp.HensuMcpTransport;
 import jakarta.annotation.PreDestroy;
@@ -33,9 +30,11 @@ import reactor.core.Disposable;
 ///
 /// 4. execution.paused SSE event received → operator prompted to review
 /// 5. Operator calls POST /demo/review/{executionId} (see ReviewController)
-/// 6. execution.completed SSE event received → output logged
+/// 6. Client re-subscribes to SSE after submitting the review
+/// 7. execution.completed SSE event received → output logged
 /// ```
 ///
+/// @see ExecutionEventHandler for SSE subscription management and event handling
 /// @see io.hensu.integrations.springclient.review.ReviewController for step 5
 /// @see io.hensu.integrations.springclient.mcp.HensuMcpTransport for steps 1 + tool calls
 @Component
@@ -45,25 +44,21 @@ public class DemoRunner implements CommandLineRunner {
     private static final Logger LOG = LoggerFactory.getLogger(DemoRunner.class);
 
     private final HensuClient hensuClient;
-    private final HensuEventStream eventStream;
+    private final ExecutionEventHandler eventHandler;
     private final HensuMcpTransport mcpTransport;
     private final HensuProperties props;
-    private final ObjectMapper objectMapper;
 
     private final AtomicReference<Disposable> mcpDisposable = new AtomicReference<>();
-    private final AtomicReference<Disposable> eventDisposable = new AtomicReference<>();
 
     public DemoRunner(
             HensuClient hensuClient,
-            HensuEventStream eventStream,
+            ExecutionEventHandler eventHandler,
             HensuMcpTransport mcpTransport,
-            HensuProperties props,
-            ObjectMapper objectMapper) {
+            HensuProperties props) {
         this.hensuClient = hensuClient;
-        this.eventStream = eventStream;
+        this.eventHandler = eventHandler;
         this.mcpTransport = mcpTransport;
         this.props = props;
-        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -98,106 +93,14 @@ public class DemoRunner implements CommandLineRunner {
         LOG.info("Execution started: executionId={}", executionId);
 
         // 3. Subscribe to SSE execution events
-        eventDisposable.set(eventStream.subscribe(
-                executionId,
-                event -> handleEvent(event, executionId),
-                error -> LOG.error("SSE stream error for execution {}", executionId, error)));
+        eventHandler.subscribe(executionId);
     }
 
     @PreDestroy
     void shutdown() {
-        dispose(mcpDisposable);
-        dispose(eventDisposable);
-    }
-
-    private static void dispose(AtomicReference<Disposable> ref) {
-        Disposable d = ref.getAndSet(null);
+        Disposable d = mcpDisposable.getAndSet(null);
         if (d != null && !d.isDisposed()) {
             d.dispose();
-        }
-    }
-
-    private String toJson(Object value) {
-        try {
-            return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(value);
-        } catch (JsonProcessingException e) {
-            return String.valueOf(value);
-        }
-    }
-
-    private void handleEvent(Map<String, Object> event, String executionId) {
-        String type = (String) event.getOrDefault("type", "unknown");
-
-        switch (type) {
-            case "execution.started" -> LOG.info(
-                    "[{}] Execution started: workflowId={}",
-                    executionId, event.get("workflowId"));
-
-            case "plan.created" -> LOG.info(
-                    "[{}] Plan created: planId={}, steps={}",
-                    executionId, event.get("planId"),
-                    event.get("steps") instanceof java.util.List<?> s ? s.size() : "?");
-
-            case "step.started" -> LOG.info(
-                    "[{}] Step started: tool={}, index={}",
-                    executionId, event.get("toolName"), event.get("stepIndex"));
-
-            case "step.completed" -> LOG.info(
-                    "[{}] Step completed: index={}, success={}",
-                    executionId, event.get("stepIndex"), event.get("success"));
-
-            case "execution.paused" -> LOG.warn("""
-
-                    ┌──────────────────────────────────────────────────────────
-                    │          EXECUTION PAUSED — ACTION REQUIRED
-                    ├──────────────────────────────────────────────────────────
-                    │  Execution : {}
-                    │  Node      : {}
-                    │  Reason    : {}
-                    ├──────────────────────────────────────────────────────────
-                    │  To APPROVE:
-                    │    curl -X POST http://localhost:8081/demo/review/{} \\
-                    │         -H 'Content-Type: application/json' \\
-                    │         -d '{"approved":true,"modifications":\\{}}'
-                    │
-                    │  To REJECT:
-                    │    curl -X POST http://localhost:8081/demo/review/{} \\
-                    │         -H 'Content-Type: application/json' \\
-                    │         -d '{"approved":false,"modifications":\\{}}'
-                    └──────────────────────────────────────────────────────────
-                    """,
-                    executionId,
-                    event.get("nodeId"),
-                    event.get("reason"),
-                    executionId,
-                    executionId);
-
-            case "execution.completed" -> {
-                boolean success = Boolean.TRUE.equals(event.get("success"));
-                String output = toJson(event.get("output"));
-                if (success) {
-                    LOG.info("""
-
-                            [{}] Execution COMPLETED successfully.
-                            Final node : {}
-                            Output     : {}
-                            """, executionId, event.get("finalNodeId"), output);
-                } else {
-                    LOG.warn("""
-
-                            [{}] Execution COMPLETED with failure.
-                            Final node : {}
-                            Output     : {}
-                            """, executionId, event.get("finalNodeId"), output);
-                }
-            }
-
-            case "execution.error" -> LOG.error(
-                    "[{}] Execution error at node={}: [{}] {}",
-                    executionId, event.get("nodeId"),
-                    event.get("errorType"), event.get("message"));
-
-            default -> {}
         }
     }
 }

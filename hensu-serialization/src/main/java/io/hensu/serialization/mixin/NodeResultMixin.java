@@ -18,7 +18,7 @@ import io.hensu.core.execution.executor.NodeResult;
 ///
 /// @implNote `NodeResult.Builder` has a private constructor. Native-image deployments
 /// require `NodeResult.class` and `NodeResult.Builder.class` to be registered in
-/// `NativeImageConfig` in `hensu-server`.
+/// `CoreModelNativeConfig` in `hensu-server`.
 ///
 /// @see NodeResultBuilderMixin
 /// @see io.hensu.serialization.HensuJacksonModule

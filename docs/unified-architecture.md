@@ -73,10 +73,10 @@ All core components are assembled through a single builder — `HensuFactory.bui
 `HensuEnvironment` container. This enforces a consistent wiring strategy across both CLI and Server deployments:
 agent providers, action executors, repositories, and configuration are resolved once at startup.
 
-The builder is the only place where deployment-specific behavior diverges: the CLI wires a local bash executor and
-the LangChain4j provider; the server wires an action executor that dispatches `Action.Send` to any registered
-`ActionHandler` (falling back to MCP for unrecognized handlers) while rejecting `Action.Execute` (local bash),
-and delegates all components via CDI producers.
+The builder is the only place where deployment-specific behavior diverges: both CLI and server wire the LangChain4j
+provider for LLM access. The CLI additionally wires a local bash executor (`CLIActionExecutor`); the server wires
+`ServerActionExecutor` that dispatches `Action.Send` to any registered `ActionHandler` (falling back to MCP for
+unrecognized handlers) while rejecting `Action.Execute` (local bash), and delegates all components via CDI producers.
 
 See [Core Developer Guide](developer-guide-core.md) for usage patterns.
 
@@ -98,16 +98,16 @@ Unicode manipulation, and excessive payload size before the output is written to
 
 Workflows are not limited to linear chains. The graph engine supports:
 
-| Capability                | Mechanism                                                                                                                                                                                                                                                |
-|:--------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Conditional branching** | `ScoreTransition` routes based on rubric scores; `SuccessTransition` / `FailureTransition` route on result                                                                                                                                               |
-| **Loops**                 | `LoopNode` with configurable break conditions and max iterations                                                                                                                                                                                         |
-| **Parallel fan-out**      | `ParallelNode` executes branches concurrently on virtual threads                                                                                                                                                                                         |
-| **Fork / Join**           | `ForkNode` spawns independent parallel paths; `JoinNode` awaits and merges results                                                                                                                                                                       |
-| **Consensus**             | Majority vote, unanimous, weighted vote, or judge-decides strategies. Branches declare domain output via `yields()`. Vote strategies merge all branch yields; JUDGE_DECIDES merges only the winning branch's yields                                      |
-| **Backtracking**          | Review decisions can jump to any previous node, restoring state from execution history                                                                                                                                                                   |
-| **Sub-workflows**         | `SubWorkflowNode` delegates to another workflow by id with input/output mapping; `SubWorkflowGraphValidator` rejects cycles and dangling refs at push, `SubWorkflowNodeExecutor.MAX_DEPTH = 16` bounds recursion, `_tenant_id` propagates into the child |
-| **Pause / Resume**        | Any node returning `PENDING` checkpoints state (including `PlanSnapshot` — micro-plan step index — alongside node position); `executeFrom()` resumes from snapshot                                                                                       |
+| Capability                | Mechanism                                                                                                                                                                                                                                                                     |
+|:--------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Conditional branching** | `ScoreTransition` routes on rubric scores; `SuccessTransition` / `FailureTransition` route on result; `AlwaysTransition` for unconditional hops; `RubricFailTransition` for rubric-specific failure; `ApprovalTransition` for review-gated routing                            |
+| **Loops**                 | `LoopNode` with configurable break conditions and max iterations                                                                                                                                                                                                              |
+| **Parallel fan-out**      | `ParallelNode` executes branches concurrently on virtual threads                                                                                                                                                                                                              |
+| **Fork / Join**           | `ForkNode` spawns independent parallel paths; `JoinNode` awaits and merges results                                                                                                                                                                                            |
+| **Consensus**             | Majority vote, unanimous, weighted vote, or judge-decides strategies. Branches declare domain output via `yields()`. Vote strategies merge all branch yields; JUDGE_DECIDES merges only the winning branch's yields                                                           |
+| **Backtracking**          | Review decisions can jump to any previous node, restoring state from execution history                                                                                                                                                                                        |
+| **Sub-workflows**         | `SubWorkflowNode` delegates to another workflow by id with input/output mapping; `SubWorkflowGraphValidator` rejects cycles and dangling refs at push, `SubWorkflowNodeExecutor.MAX_DEPTH = 16` bounds recursion, `_tenant_id` propagates into the child                      |
+| **Pause / Resume**        | Any node returning `PENDING` checkpoints state (including `PlanSnapshot` — micro-plan step index — alongside node position); `executeFrom()` resumes from snapshot. The SSE stream is closed on pause (reviews may take days); clients re-subscribe after submitting a resume |
 
 For non-agent steps, `GenericNode` runs custom synchronous logic registered by `executorType`;
 `ActionNode` dispatches asynchronous tasks to external systems via a registered `ActionHandler`
@@ -224,7 +224,7 @@ Violations return `400 Bad Request`. See [Server Developer Guide — Input Valid
 ├── POST   /                    Push workflow (create/update; validates sub-workflow graph under push lock)
 ├── GET    /                    List workflows
 ├── GET    /{workflowId}        Pull workflow
-└── DELETE /{workflowId}        Delete workflow
+└── DELETE /{workflowId}        Soft-delete workflow (sets deleted_at; FK constraints prevent hard-delete)
 
 /api/v1/executions   → ExecutionResource (runtime operations - client integration)
 ├── POST   /                          Start execution (202 Accepted — async; progress via SSE)
@@ -233,7 +233,14 @@ Violations return `400 Bad Request`. See [Server Developer Guide — Input Valid
 ├── POST   /{executionId}/resume      Resume paused execution
 ├── GET    /{executionId}/plan        Get pending plan
 ├── GET    /{executionId}/result      Get final output (public context, _-keys stripped)
-└── GET    /paused                    List paused executions
+├── GET    /paused                    List paused executions
+└── GET    /events                   Subscribe to all tenant execution events (SSE stream)
+
+/mcp                     → McpGatewayResource (MCP split-pipe transport)
+├── GET    /connect?clientId=...          SSE stream for tool call requests
+├── POST   /message                       Submit JSON-RPC responses
+├── GET    /status                        Gateway status (connected clients, pending requests)
+└── GET    /clients/{clientId}/status     Status of a specific MCP client connection
 ```
 
 ---
@@ -246,7 +253,7 @@ flowchart TD
         direction TB
         subgraph iface["Interface Layer"]
             direction LR
-            qapi(["Quarkus API\n(REST/SSE)"]) ~~~ mcpgw(["MCP Gateway\n(JSON-RPC)"]) ~~~ planner(["LLM Planner"])
+            qapi(["Quarkus API\n(REST/SSE)"]) ~~~ mcpgw(["MCP Gateway\n(JSON-RPC)"])
         end
 
         subgraph runtime["Server Runtime"]
@@ -257,7 +264,7 @@ flowchart TD
         subgraph core["hensu-core (HensuEnvironment)"]
             direction LR
             we(["Workflow\nExecutor"]) ~~~ ne(["Node\nExecutors"]) ~~~ pe(["Plan\nEngine"]) ~~~ ae(["Action\nExecutor"]) ~~~ re(["Rubric\nEngine"])
-            tr(["Tool\nRegistry"]) ~~~ ar(["Agent\nRegistry"]) ~~~ eb(["Event\nBus"]) ~~~ wr(["Workflow\nRepository"]) ~~~ wsr(["WorkflowState\nRepository"])
+            tr(["Tool\nRegistry"]) ~~~ ar(["Agent\nRegistry"]) ~~~ lp(["LLM\nPlanner"]) ~~~ el(["Execution\nListener"]) ~~~ wr(["Workflow\nRepository"]) ~~~ wsr(["WorkflowState\nRepository"])
         end
     end
 
@@ -277,7 +284,6 @@ flowchart TD
 
     style qapi fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style mcpgw fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style planner fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style sae fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style ane fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style tc fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
@@ -288,7 +294,8 @@ flowchart TD
     style re fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style tr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style ar fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style eb fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style lp fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style el fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style wr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style wsr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style tools fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
@@ -312,9 +319,9 @@ Zero-dependency Java library. Contains:
 - `AgentRegistry` / `AgentFactory` — Agent management with explicit provider wiring
 - `ActionExecutor` — Pluggable action dispatch (Send/Execute)
 - `PlanPipeline` / `PlanProcessor` / `PlanContext` — Pipeline-driven plan execution:
-  `AgenticNodeExecutor` runs a preparation pipeline (`PlanCreationProcessor` →
-  `SynthesizeEnrichmentProcessor` → `ReviewGateProcessor`) then an execution pipeline
-  (`PlanExecutionProcessor` → `PostExecutionReviewGateProcessor`); `PlanContext` is the mutable
+  `AgenticNodeExecutor` runs a **preparation pipeline** (`PlanCreationProcessor` →
+  `ReviewGateProcessor`) then an **execution pipeline** (`SynthesizeEnrichmentProcessor` →
+  `PlanExecutionProcessor` → `PostExecutionReviewGateProcessor`); `PlanContext` is the mutable
   carrier flowing through both
 - `PlanExecutor` / `StepHandlerRegistry` / `StepHandler` — `PlanExecutor` iterates plan steps
   dispatching each `PlanStepAction` via registry lookup; built-in handlers: `ToolCallStepHandler`
@@ -359,10 +366,20 @@ Extends core with HTTP, MCP, and multi-tenancy:
 - `WorkflowPushLock` — Cluster-wide push mutex (`pg_advisory_xact_lock` with JVM `ReentrantLock` fallback) preventing concurrent pushes on different nodes from introducing cycles
 - `WorkflowResource` — Workflow definition management (push/pull/delete/list)
 - `ExecutionResource` — Execution runtime (start/resume/status/plan)
-- `McpSidecar` / `McpGateway` — MCP protocol integration
+- `McpSidecar` / `McpGatewayResource` — MCP protocol integration
 - `TenantContext` — Java 25 `ScopedValue` carrying tenant identity for the scope of a request; `TenantContext.runAs()` is the safe propagation entry point
 - `ExecutionLeaseManager` / `ExecutionHeartbeatJob` / `WorkflowRecoveryJob` — Distributed recovery: heartbeat emission and orphaned-execution sweeper
 - `JdbcWorkflowRepository` / `JdbcWorkflowStateRepository` — PostgreSQL-backed storage (JSONB workflow definitions, execution state + lease columns)
+
+### hensu-langchain4j-adapter (LLM Provider Bridge)
+
+Bridges `hensu-core`'s `Agent` / `AgentProvider` abstraction with LangChain4j model implementations:
+
+- `LangChain4jProvider` — `AgentProvider` that creates `LangChain4jAgent` instances from `AgentConfig`
+- `LangChain4jAgent` — Wraps a LangChain4j `ChatModel` as a Hensu `Agent`
+- Programmatic `ChatModel` construction via builders (not CDI) – requires explicit native-image registration in `hensu-server` (`LangChain4j*NativeConfig` classes)
+
+Wired by both CLI and server via `HensuFactory.builder().agentProviders(List.of(new LangChain4jProvider()))`.
 
 ### hensu-serialization (JSON Serialization)
 
@@ -370,7 +387,7 @@ Jackson-based JSON serialization shared by CLI and server:
 
 - `WorkflowSerializer` - Entry point: `toJson()`, `fromJson()`, `createMapper()`
 - `HensuJacksonModule` - Custom serializers/deserializers for Node, TransitionRule, Action type hierarchies
-- Jackson mixins for builder-based deserialization (Workflow, AgentConfig)
+- Jackson mixins for builder-based deserialization (Workflow, AgentConfig, ExecutionStep, NodeResult, BacktrackEvent, ExecutionHistory)
 - GraalVM-safe: explicit registrations via `SimpleModule` (no reflective scanning)
 
 ### hensu-cli (Quarkus CLI)
@@ -378,8 +395,14 @@ Jackson-based JSON serialization shared by CLI and server:
 Developer-facing CLI tool:
 
 - Uses `hensu-dsl` for Kotlin DSL compilation (workflow.kt → JSON)
-- `hensu build` - Compile DSL to JSON (`{working-dir}/build/`)
-- `hensu push` / `pull` / `delete` / `list` - Server workflow management
+- `hensu run` — Execute a workflow (daemon-aware; inline fallback)
+- `hensu validate` — Validate workflow syntax and detect unreachable nodes
+- `hensu visualize` — Render workflow graph as text or Mermaid diagram
+- `hensu build` — Compile DSL to JSON (`{working-dir}/build/`)
+- `hensu push` / `pull` / `delete` / `list` — Server workflow management
+- `hensu daemon` (start / stop / status) — Background daemon lifecycle
+- `hensu ps` / `attach` / `cancel` — Daemon execution management
+- `hensu credentials` (set / list / unset) — API key management
 - Local execution mode (uses full HensuEnvironment with local action executor)
 - `HensuEnvironmentProducer` (CLI variant - wires LangChain4jProvider, bash execution)
 - `DaemonReviewHandler` / `CLIReviewHandler` / `ReviewTerminal` — Human-in-the-loop review over the daemon socket or inline
@@ -487,11 +510,11 @@ flowchart LR
 
     subgraph post["Post-Execution"]
         direction TB
-        oe(["OutputExtraction\n(validate + write)"]) --> nc(["NodeComplete\n(observability)"])
+        oe(["OutputExtraction\n(validate + write)"]) --> rbp(["Rubric\n(quality gate)"])
+        rbp --> rp(["Review\n(human-in-the-loop)"])
+        rp --> nc(["NodeComplete\n(observability)"])
         nc --> hp(["History\n(audit trail)"])
-        hp --> rp(["Review\n(human-in-the-loop)"])
-        rp --> rbp(["Rubric\n(quality gate)"])
-        rbp --> tp(["Transition\n(next node)"])
+        hp --> tp(["Transition\n(next node)"])
     end
 
     pre --> exec --> post
@@ -519,17 +542,16 @@ Any processor can short-circuit by returning a terminal `ExecutionResult`.
 flowchart LR
     subgraph ane["AgenticNodeExecutor"]
         direction LR
-        subgraph prep["Preparation"]
+        subgraph prep["Preparation (prePipeline)"]
             direction TB
-            pcp(["PlanCreation\n(Static/LlmPlanner)"]) --> sep(["SynthesizeEnrichment\n(PromptEnricher)"])
-            sep --> rg(["ReviewGate\n(pause if review)"])
+            pcp(["PlanCreation\n(Static/LlmPlanner)"]) --> rg(["ReviewGate\n(pause if review)"])
         end
 
         ctx(["PlanContext"])
 
-        subgraph execp["Execution"]
+        subgraph execp["Execution (executionPipeline)"]
             direction TB
-            steps(["S1 → S2 → S3 …\n(replan on failure)"])
+            sep(["SynthesizeEnrichment\n(PromptEnricher)"]) --> steps(["S1 → S2 → S3 …\n(replan on failure)"])
             subgraph handlers["StepHandlers"]
                 direction LR
                 tch(["ToolCall\n(ActionExec)"])
@@ -615,14 +637,12 @@ flowchart LR
             d1(["WorkflowExecutor"])
             d2(["AgentRegistry"])
             d3(["NodeExecutorRegistry"])
-            d4(["PlanExecutor"])
             d5(["WorkflowRepository"])
             d6(["WorkflowStateRepository"])
         end
         subgraph server_beans["Server-specific beans"]
             direction LR
             s1(["ObjectMapper"])
-            s2(["LlmPlanner"])
             s3(["McpConnectionFactory"])
         end
     end
@@ -642,11 +662,9 @@ flowchart LR
     style d1 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style d2 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style d3 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style d4 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style d5 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style d6 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style s1 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style s2 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style s3 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
 
     linkStyle default stroke:#0A84FF, stroke-width:1px
@@ -686,7 +704,7 @@ The prohibition on classpath scanning is why `HensuFactory.builder()` uses expli
 sites — GraalVM's static analysis can follow every reference.
 
 Classes in `hensu-core` that Jackson needs reflectively (builder constructors, setter methods)
-are registered in `NativeImageConfig` in `hensu-server` via `@RegisterForReflection`. No
+are registered in `CoreModelNativeConfig` in `hensu-server` via `@RegisterForReflection`. No
 Quarkus or Jackson annotations ever enter `hensu-core`.
 
 See [Server Developer Guide — GraalVM Native Image](developer-guide-server.md#graalvm-native-image).
@@ -706,18 +724,18 @@ library, testable and deployable without any JSON framework.
 
 `hensu-serialization` owns the entire Jackson configuration:
 
-| Component            | Role                                                                                                                                        |
-|:---------------------|:--------------------------------------------------------------------------------------------------------------------------------------------|
-| `WorkflowSerializer` | Entry point: `toJson()`, `fromJson()`, `createMapper()` — the single `ObjectMapper` factory                                                 |
-| `HensuJacksonModule` | `SimpleModule` registering all custom serializers/deserializers for `Node`, `TransitionRule`, `Action` hierarchies — no reflective scanning |
-| `mixin/` package     | Jackson mixins enabling builder-based deserialization without annotating core models                                                        |
+| Component            | Role                                                                                                                                                                                                   |
+|:---------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `WorkflowSerializer` | Entry point: `toJson()`, `fromJson()`, `createMapper()` — the single `ObjectMapper` factory                                                                                                            |
+| `HensuJacksonModule` | `SimpleModule` registering custom serializers/deserializers for `Node`, `TransitionRule`, `Action`, `PlanStepAction`, `ExecutionPhase` hierarchies plus `WorkflowStateSchema` — no reflective scanning |
+| `mixin/` package     | Jackson mixins enabling builder-based deserialization without annotating core models                                                                                                                   |
 
 `WorkflowSerializer.createMapper()` is the **single `ObjectMapper` factory** for CLI and server.
 `ServerConfiguration` exposes it as a CDI bean via `@Produces @Singleton`.
 
 ### GraalVM Implication
 
-Jackson mixins are a runtime event — Quarkus cannot trace them at build time. `NativeImageConfig`
+Jackson mixins are a runtime event — Quarkus cannot trace them at build time. `CoreModelNativeConfig`
 in `hensu-server` is the single `@RegisterForReflection` registration point for all `hensu-core`
 builder classes that the mixin machinery needs.
 

@@ -1,7 +1,7 @@
 import io.quarkus.gradle.tasks.QuarkusDev
 
 plugins {
-    id("io.quarkus") version "3.30.8"
+    id("io.quarkus") version "3.35.2"
 }
 
 // Quarkus dev mode forks its own JVM — pass Java 24+ args via QuarkusDev task API
@@ -11,10 +11,16 @@ tasks.named<QuarkusDev>("quarkusDev") {
     jvmArguments.add("--enable-preview")
 }
 
+// Exclude the JDK HTTP client — Quarkus provides JaxRsHttpClientBuilderFactory instead.
+// Both implement the same SPI; having two causes a ServiceLoader conflict at runtime.
+configurations.all {
+    exclude(group = "dev.langchain4j", module = "langchain4j-http-client-jdk")
+}
+
 dependencies {
     // Quarkus BOMs
-    implementation(platform("io.quarkus.platform:quarkus-bom:3.30.8"))
-    implementation(platform("io.quarkus.platform:quarkus-langchain4j-bom:3.30.8"))
+    implementation(platform("io.quarkus.platform:quarkus-bom:3.35.2"))
+    implementation(platform("io.quarkus.platform:quarkus-langchain4j-bom:3.35.2"))
 
     // Internal Modules
     implementation(project(":hensu-core"))

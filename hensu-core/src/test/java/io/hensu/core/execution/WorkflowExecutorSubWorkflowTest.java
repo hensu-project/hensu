@@ -43,12 +43,13 @@ class WorkflowExecutorSubWorkflowTest extends WorkflowExecutorTestBase {
     @BeforeEach
     void setUpSubWorkflowRepository() {
         repository = new InMemoryWorkflowRepository();
+        var registry = new DefaultNodeExecutorRegistry();
         executor =
                 new WorkflowExecutor(
-                        new DefaultNodeExecutorRegistry(),
+                        registry,
                         agentRegistry,
                         rubricEngine,
-                        ReviewHandler.AUTO_APPROVE,
+                        createCoordinator(registry, ReviewHandler.AUTO_APPROVE, rubricEngine),
                         null,
                         new SimpleTemplateResolver(),
                         repository);
@@ -331,13 +332,16 @@ class WorkflowExecutorSubWorkflowTest extends WorkflowExecutorTestBase {
 
     @Test
     void shouldThrowWhenWorkflowRepositoryIsNull() {
-        // Re-build executor without a repository (4-arg ctor leaves it null).
+        var registry = new DefaultNodeExecutorRegistry();
         executor =
                 new WorkflowExecutor(
-                        new DefaultNodeExecutorRegistry(),
+                        registry,
                         agentRegistry,
                         rubricEngine,
-                        ReviewHandler.AUTO_APPROVE);
+                        createCoordinator(registry, ReviewHandler.AUTO_APPROVE, rubricEngine),
+                        null,
+                        null,
+                        null);
 
         var sub =
                 SubWorkflowNode.builder()

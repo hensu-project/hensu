@@ -1,17 +1,21 @@
 plugins {
-    id("io.quarkus") version "3.30.8"
+    id("io.quarkus") version "3.35.2"
     kotlin("jvm")
 }
 
+configurations.all {
+    exclude(group = "dev.langchain4j", module = "langchain4j-http-client-jdk")
+}
+
 dependencies {
-    implementation(platform("io.quarkus.platform:quarkus-bom:3.30.8"))
+    implementation(platform("io.quarkus.platform:quarkus-bom:3.35.2"))
 
     implementation(project(":hensu-dsl"))
     implementation(project(":hensu-serialization"))
     implementation(project(":hensu-langchain4j-adapter"))
 
     // Quarkus LangChain4j extensions — register GraalVM reflection metadata for native image
-    implementation(platform("io.quarkus.platform:quarkus-langchain4j-bom:3.30.8"))
+    implementation(platform("io.quarkus.platform:quarkus-langchain4j-bom:3.35.2"))
     implementation("io.quarkiverse.langchain4j:quarkus-langchain4j-anthropic")
     implementation("io.quarkiverse.langchain4j:quarkus-langchain4j-openai")
     implementation("io.quarkiverse.langchain4j:quarkus-langchain4j-ai-gemini")

@@ -204,11 +204,12 @@ flowchart LR
     linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
-| Method | Path                        | Description                                          |
-|--------|-----------------------------|------------------------------------------------------|
-| `GET`  | `/mcp/connect?clientId=...` | SSE stream for receiving tool call requests          |
-| `POST` | `/mcp/message`              | Submit JSON-RPC responses                            |
-| `GET`  | `/mcp/status`               | Gateway status (connected clients, pending requests) |
+| Method | Path                             | Description                                          |
+|--------|----------------------------------|------------------------------------------------------|
+| `GET`  | `/mcp/connect?clientId=...`      | SSE stream for receiving tool call requests          |
+| `POST` | `/mcp/message`                   | Submit JSON-RPC responses                            |
+| `GET`  | `/mcp/status`                    | Gateway status (connected clients, pending requests) |
+| `GET`  | `/mcp/clients/{clientId}/status` | Status of a specific MCP client connection           |
 
 ### Event Streaming (SSE)
 
@@ -367,6 +368,13 @@ quarkus.flyway.schemas=runtime
 %inmem.quarkus.datasource.devservices.enabled=false
 %inmem.quarkus.flyway.migrate-at-start=false
 %inmem.quarkus.scheduler.enabled=false
+# Credentials — loaded by HensuEnvironmentProducer from hensu.credentials.* prefix
+# hensu.credentials.ANTHROPIC_API_KEY=sk-ant-...
+# hensu.credentials.GOOGLE_API_KEY=AIza...
+# Default tenant (used when JWT tenant_id claim is absent)
+# hensu.tenant.default=default
+# Verbose execution logging (enables LoggingExecutionListener)
+hensu.verbose.enabled=false
 # Distributed recovery leasing
 hensu.lease.heartbeat-interval=30s
 hensu.lease.recovery-interval=60s
@@ -384,7 +392,9 @@ hensu-server/
 │   │   ├── WorkflowResource.java          # Workflow definition management
 │   │   ├── ExecutionResource.java         # Execution runtime operations
 │   │   ├── ExecutionEventResource.java    # SSE endpoint for execution events
-│   │   └── McpGatewayResource.java        # MCP SSE/POST endpoints
+│   │   ├── McpGatewayResource.java        # MCP SSE/POST endpoints
+│   │   ├── ExecutionStartRequest.java     # Request DTO for POST /executions
+│   │   └── ResumeRequest.java             # Request DTO for POST /executions/{id}/resume
 │   ├── validation/                        # Input validation (Bean Validation)
 │   │   ├── InputValidator                  # Shared validation predicates (safe-ID, dangerous chars, size)
 │   │   ├── ValidId.java                    # Custom identifier constraint
@@ -393,14 +403,15 @@ hensu-server/
 │   │   ├── ValidMessageValidator     # Size-limit + control-character validator
 │   │   ├── ValidWorkflow.java              # Custom constraint for Workflow bodies
 │   │   ├── ValidWorkflowValidator.java     # Deep-validates workflow object graph
-│   │   ├── LogSanitizer.java               # Strips CR/LF for log injection prevention
+│   │   ├── IllegalArgumentExceptionMapper.java      # Maps IllegalArgumentException → 400
 │   │   └── ConstraintViolationExceptionMapper.java  # Global 400 error mapper
 │   ├── config/                            # CDI configuration
 │   │   ├── HensuEnvironmentProducer.java          # HensuFactory → HensuEnvironment
-│   │   ├── NativeImageConfig.java                 # @RegisterForReflection — Hensu domain model (mixin/builder, treeToValue, records)
+│   │   ├── CoreModelNativeConfig.java                 # @RegisterForReflection — Hensu domain model (mixin/builder, treeToValue, records)
 │   │   ├── LangChain4jNativeConfig.java           # @RegisterForReflection — JDK HTTP transport (ServiceLoader)
 │   │   ├── LangChain4jAnthropicNativeConfig.java  # @RegisterForReflection — Anthropic API request/response DTOs
 │   │   ├── LangChain4jGeminiNativeConfig.java     # @RegisterForReflection — Google AI Gemini API request/response DTOs
+│   │   ├── ExecutionEventNativeConfig.java        # @RegisterForReflection — SSE event sealed subtypes
 │   │   ├── ServerBootstrap.java                   # Startup registrations
 │   │   └── ServerConfiguration.java               # CDI delegation + server beans
 │   ├── execution/                         # Server-side execution listeners
@@ -446,6 +457,8 @@ hensu-server/
 │   │   ├── ExecutionNotFoundException.java
 │   │   ├── WorkflowNotFoundException.java
 │   │   └── WorkflowExecutionException.java
+│   ├── review/                # Server-side review handling
+│   │   └── InteractiveReviewHandler.java  # @ApplicationScoped default ReviewHandler for plan reviews
 │   ├── streaming/             # SSE event streaming
 │   │   ├── ExecutionEvent.java
 │   │   └── ExecutionEventBroadcaster.java

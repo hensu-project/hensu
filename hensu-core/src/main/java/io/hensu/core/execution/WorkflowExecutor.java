@@ -3,33 +3,28 @@ package io.hensu.core.execution;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.ExecutionContext;
-import io.hensu.core.execution.executor.NodeExecutor;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
-import io.hensu.core.execution.executor.NodeResult;
-import io.hensu.core.execution.pipeline.ProcessorContext;
 import io.hensu.core.execution.pipeline.ProcessorPipeline;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExitStatus;
-import io.hensu.core.execution.result.ResultStatus;
-import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.rubric.RubricEngine;
 import io.hensu.core.state.HensuState;
-import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.template.TemplateResolver;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
-import io.hensu.core.workflow.node.EndNode;
 import io.hensu.core.workflow.node.Node;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.logging.Logger;
 
-/// Main execution engine for Hensu workflows.
+/// Graph-traversal engine for Hensu workflows.
 ///
-/// Orchestrates workflow graph traversal from start node to end node,
-/// delegating pre- and post-execution logic to {@link ProcessorPipeline}s.
-/// The node lifecycle follows: PRE-PIPELINE -> EXECUTE -> POST-PIPELINE.
+/// Advances the workflow pointer from start node to end node, delegating
+/// the per-node lifecycle (phase dispatch, pipeline orchestration, node
+/// execution) to {@link NodeLifecycleCoordinator}. The traversal loop is
+/// intentionally thin: look up the current node, delegate, check result.
 ///
 /// ### Contracts
 /// - **Precondition**: `workflow.getStartNode()` must exist in the workflow's node map
@@ -41,9 +36,11 @@ import java.util.logging.Logger;
 /// per call — it carries no mutable state between executions.
 ///
 /// The one shared side effect is agent auto-registration in {@code registerWorkflowAgents()}:
-/// before each execution, agents declared in the workflow are registered into the
-/// shared {@link AgentRegistry} if not already present. Under concurrent calls with the
-/// same workflow, two threads may race past the {@code hasAgent()} check and both invoke
+/// before each execution, agents declared in the workflow are compared against the
+/// shared {@link AgentRegistry} by both ID and full {@link io.hensu.core.agent.AgentConfig}
+/// equality. Agents are only re-created when their configuration has changed (e.g. model
+/// update via {@code hensu push}). Under concurrent calls with the same workflow, two
+/// threads may race past the {@code hasAgent()} check and both invoke
 /// {@code registerAgent()} for the same id. With {@link io.hensu.core.agent.DefaultAgentRegistry}
 /// (backed by {@link java.util.concurrent.ConcurrentHashMap}) this race is **benign** —
 /// both threads register an equivalent agent from the same config and the second call
@@ -52,7 +49,8 @@ import java.util.logging.Logger;
 /// If a custom {@link AgentRegistry} implementation is injected that is not thread-safe,
 /// external synchronization around {@code execute()} is required.
 ///
-/// @see ProcessorPipeline for post-execution processing chain
+/// @see NodeLifecycleCoordinator for per-node lifecycle logic
+/// @see ProcessorPipeline for pre/post processor chains
 /// @see NodeExecutorRegistry for node type dispatch
 public class WorkflowExecutor {
 
@@ -64,84 +62,34 @@ public class WorkflowExecutor {
     private final TemplateResolver templateResolver;
     private final ActionExecutor actionExecutor;
     private final WorkflowRepository workflowRepository;
-    private final ProcessorPipeline prePipeline;
-    private final ProcessorPipeline postPipeline;
-
-    /// Creates a workflow executor with core dependencies.
-    ///
-    /// @param nodeExecutorRegistry registry for node-type-specific executors, not null
-    /// @param agentRegistry        registry of available AI agents, not null
-    /// @param rubricEngine         engine for rubric-based quality evaluation, not null
-    /// @param reviewHandler        handler for human review checkpoints, may be null (defaults to
-    ///                                                         auto-approve)
-    public WorkflowExecutor(
-            NodeExecutorRegistry nodeExecutorRegistry,
-            AgentRegistry agentRegistry,
-            RubricEngine rubricEngine,
-            ReviewHandler reviewHandler) {
-        this(
-                nodeExecutorRegistry,
-                agentRegistry,
-                rubricEngine,
-                reviewHandler,
-                null,
-                new SimpleTemplateResolver(),
-                null);
-    }
-
-    /// Creates a workflow executor with action execution support.
-    ///
-    /// @param nodeExecutorRegistry registry for node-type-specific executors, not null
-    /// @param agentRegistry        registry of available AI agents, not null
-    /// @param rubricEngine         engine for rubric-based quality evaluation, not null
-    /// @param reviewHandler        handler for human review checkpoints, may be null (defaults to
-    ///                                                         auto-approve)
-    /// @param actionExecutor       executor for executable actions, may be null (actions logged
-    ///                                                         only)
-    public WorkflowExecutor(
-            NodeExecutorRegistry nodeExecutorRegistry,
-            AgentRegistry agentRegistry,
-            RubricEngine rubricEngine,
-            ReviewHandler reviewHandler,
-            ActionExecutor actionExecutor) {
-        this(
-                nodeExecutorRegistry,
-                agentRegistry,
-                rubricEngine,
-                reviewHandler,
-                actionExecutor,
-                new SimpleTemplateResolver(),
-                null);
-    }
+    private final NodeLifecycleCoordinator lifecycleCoordinator;
 
     /// Creates a workflow executor with all dependencies.
     ///
-    /// @param nodeExecutorRegistry registry for node-type-specific executors, not null
-    /// @param agentRegistry        registry of available AI agents, not null
-    /// @param rubricEngine         engine for rubric-based quality evaluation, not null
-    /// @param reviewHandler        handler for human review checkpoints, may be null (defaults to
-    ///                                                         auto-approve)
-    /// @param actionExecutor       executor for executable actions, may be null
-    ///                                                         (actions logged only)
-    /// @param templateResolver     resolver for `{variable}` syntax in prompts, not null
-    /// @param workflowRepository   repository for loading sub-workflow definitions, not null
+    /// @param nodeExecutorRegistry  registry for node-type-specific executors, not null
+    /// @param agentRegistry         registry of available AI agents, not null
+    /// @param rubricEngine          engine for rubric-based quality evaluation, not null
+    /// @param lifecycleCoordinator  per-node lifecycle processor, not null
+    /// @param actionExecutor        executor for executable actions, may be null
+    /// @param templateResolver      resolver for `{variable}` syntax in prompts, not null
+    /// @param workflowRepository    repository for loading sub-workflow definitions, may be null
     public WorkflowExecutor(
             NodeExecutorRegistry nodeExecutorRegistry,
             AgentRegistry agentRegistry,
             RubricEngine rubricEngine,
-            ReviewHandler reviewHandler,
+            NodeLifecycleCoordinator lifecycleCoordinator,
             ActionExecutor actionExecutor,
             TemplateResolver templateResolver,
             WorkflowRepository workflowRepository) {
         this.nodeExecutorRegistry = nodeExecutorRegistry;
         this.agentRegistry = agentRegistry;
         this.rubricEngine = rubricEngine;
-        reviewHandler = reviewHandler != null ? reviewHandler : ReviewHandler.AUTO_APPROVE;
+        this.lifecycleCoordinator =
+                Objects.requireNonNull(
+                        lifecycleCoordinator, "lifecycleCoordinator must not be null");
         this.actionExecutor = actionExecutor;
         this.templateResolver = templateResolver;
         this.workflowRepository = workflowRepository;
-        this.prePipeline = ProcessorPipeline.preExecution();
-        this.postPipeline = ProcessorPipeline.postExecution(reviewHandler, rubricEngine);
     }
 
     /// Executes a workflow without observability listener.
@@ -243,13 +191,12 @@ public class WorkflowExecutor {
         return executeLoop(state, workflow, listener, boundaryNodeId);
     }
 
-    /// Core execution loop shared by {@link #execute}, {@link #executeFrom},
+    /// Graph-traversal loop shared by {@link #execute}, {@link #executeFrom},
     /// and {@link #executeUntil}.
     ///
-    /// Traverses the workflow graph with a symmetric pipeline model:
-    /// PRE-PIPELINE -> node execution -> POST-PIPELINE. The loop handles:
-    /// node lookup, boundary detection, end-node detection, pre-pipeline directives,
-    /// node execution, PENDING detection, and post-pipeline directive dispatch.
+    /// Advances the node pointer and delegates per-node processing to
+    /// {@link NodeLifecycleCoordinator#processNode}. Exits when the
+    /// coordinator returns a terminal result or the boundary node is reached.
     ///
     /// @param state          current workflow state with position, not null
     /// @param workflow       workflow definition, not null
@@ -266,7 +213,6 @@ public class WorkflowExecutor {
         while (true) {
             String currentNodeId = state.getCurrentNode();
 
-            // Boundary check – sub-flow reached join node, stop without executing it
             if (currentNodeId.equals(boundaryNodeId)) {
                 return new ExecutionResult.Completed(state, ExitStatus.SUCCESS);
             }
@@ -276,31 +222,14 @@ public class WorkflowExecutor {
                 throw new IllegalStateException("Node not found: " + currentNodeId);
             }
 
-            resetPerNodeState(state);
-
-            if (node instanceof EndNode endNode) {
-                NodeExecutor<EndNode> executor =
-                        nodeExecutorRegistry.getExecutorOrThrow(EndNode.class);
-                executor.execute(endNode, context);
-                return new ExecutionResult.Completed(state, endNode.getExitStatus());
+            ExecutionResult result = lifecycleCoordinator.processNode(node, state, context);
+            if (result != null) {
+                logTerminalResult(result, currentNodeId);
+                return result;
             }
-
-            var preResult = prePipeline.execute(new ProcessorContext(context, node, null));
-            if (preResult.isPresent()) return preResult.get();
-
-            NodeResult result = executeNode(node, context);
-
-            if (result.getStatus() == ResultStatus.PENDING) {
-                state.setCurrentNode(currentNodeId);
-                return new ExecutionResult.Paused(state);
-            }
-
-            var postResult = postPipeline.execute(new ProcessorContext(context, node, result));
-            if (postResult.isPresent()) return postResult.get();
         }
     }
 
-    /// Creates an execution context with all required services.
     private ExecutionContext createExecutionContext(
             HensuState state, Workflow workflow, ExecutionListener listener) {
         return ExecutionContext.builder()
@@ -317,32 +246,37 @@ public class WorkflowExecutor {
                 .build();
     }
 
-    /// Resets per-node transient state at the start of each loop iteration.
+    /// Logs all terminal execution results centrally for observability.
     ///
-    /// Clears state that is scoped to a single node execution and must not
-    /// carry over to the next node. Called once per iteration before the
-    /// pre-pipeline runs.
-    ///
-    /// @implNote If additional reset concerns are added here, extract this
-    /// method and its callers into a dedicated
-    /// {@link io.hensu.core.execution.pipeline.ProcessorPipeline}
-    /// pre-processor instead of accumulating logic inline.
-    private void resetPerNodeState(HensuState state) {
-        state.setRubricEvaluation(null);
-    }
-
-    /// Executes a node using the type-safe executor registry.
-    private NodeResult executeNode(Node node, ExecutionContext context) throws Exception {
-        NodeExecutor<Node> executor = nodeExecutorRegistry.getExecutorFor(node);
-        return executor.execute(node, context);
+    /// Covers every {@link ExecutionResult} variant so that completions,
+    /// rejections, pauses, and failures all produce a uniform INFO-level log
+    /// line from the same class.
+    private void logTerminalResult(ExecutionResult result, String lastNodeId) {
+        switch (result) {
+            case ExecutionResult.Completed(_, var exitStatus) ->
+                    logger.info("Reached end node: " + lastNodeId + " (" + exitStatus + ")");
+            case ExecutionResult.Rejected(var reason, _) ->
+                    logger.info(
+                            "Execution rejected at node: " + lastNodeId + " – reason: " + reason);
+            case ExecutionResult.Paused _ -> logger.info("Execution paused at node: " + lastNodeId);
+            case ExecutionResult.Failure(_, var e) ->
+                    logger.severe(
+                            "Execution failed at node: " + lastNodeId + " – " + e.getMessage());
+            case ExecutionResult.Success _ -> {
+                // Intermediate result, no terminal log needed
+            }
+        }
     }
 
     /// Registers all agents defined in the workflow.
+    ///
+    /// Compares each agent's configuration against the registry; re-creates
+    /// only when the config has changed (e.g. model update via {@code hensu push}).
     private void registerWorkflowAgents(Workflow workflow) {
         workflow.getAgents()
                 .forEach(
                         (agentId, config) -> {
-                            if (!agentRegistry.hasAgent(agentId)) {
+                            if (!agentRegistry.hasAgent(agentId, config)) {
                                 logger.info("Auto-registering agent from workflow: " + agentId);
                                 agentRegistry.registerAgent(agentId, config);
                             }

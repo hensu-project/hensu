@@ -14,7 +14,7 @@ import io.hensu.core.execution.result.ExecutionStep;
 ///
 /// @implNote `ExecutionStep.Builder` has a private constructor. Native-image deployments
 /// require `ExecutionStep.class` and `ExecutionStep.Builder.class` to be registered in
-/// `NativeImageConfig` in `hensu-server`.
+/// `CoreModelNativeConfig` in `hensu-server`.
 ///
 /// @see ExecutionStepBuilderMixin
 /// @see io.hensu.serialization.HensuJacksonModule

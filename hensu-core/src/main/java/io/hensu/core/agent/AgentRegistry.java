@@ -66,10 +66,16 @@ public interface AgentRegistry {
     /// @throws IllegalStateException if any configured model is unsupported
     void registerAgents(Map<String, AgentConfig> configs);
 
-    /// Checks whether an agent with the given ID is registered.
+    /// Checks whether an agent with the given ID and matching configuration is registered.
+    ///
+    /// Returns {@code true} only if an agent exists AND its configuration equals the
+    /// provided one. This ensures that updated workflow definitions (e.g. model changes
+    /// via {@code hensu push}) trigger re-registration.
     ///
     /// @param agentId the agent identifier to check, not null
-    /// @return `true` if an agent with this ID exists, `false` otherwise
-    /// @throws NullPointerException if agentId is null
-    boolean hasAgent(String agentId);
+    /// @param config the expected configuration to compare against, not null
+    /// @return {@code true} if an agent exists with an identical configuration,
+    ///         {@code false} otherwise
+    /// @throws NullPointerException if agentId or config is null
+    boolean hasAgent(String agentId, AgentConfig config);
 }

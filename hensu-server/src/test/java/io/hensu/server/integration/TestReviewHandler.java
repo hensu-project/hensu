@@ -5,6 +5,7 @@ import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.review.ReviewDecision;
 import io.hensu.core.review.ReviewHandler;
+import io.hensu.core.review.ReviewOutcome;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
@@ -44,8 +45,18 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 @ApplicationScoped
 public class TestReviewHandler implements ReviewHandler {
 
+    private final Queue<ReviewOutcome> outcomes = new ConcurrentLinkedQueue<>();
     private final Queue<ReviewDecision> decisions = new ConcurrentLinkedQueue<>();
     private volatile ReviewDecision defaultDecision = new ReviewDecision.Approve();
+
+    /// Enqueues a {@link ReviewOutcome} (including {@link ReviewOutcome.Pending})
+    /// to be returned on the next review request. Takes priority over
+    /// {@link #enqueueDecision}.
+    ///
+    /// @param outcome the outcome to enqueue, not null
+    public void enqueueOutcome(ReviewOutcome outcome) {
+        outcomes.add(outcome);
+    }
 
     /// Enqueues a review decision to be returned on the next review request.
     ///
@@ -56,22 +67,23 @@ public class TestReviewHandler implements ReviewHandler {
         decisions.add(decision);
     }
 
-    /// Sets the fallback decision returned when the queue is empty.
+    /// Sets the fallback decision returned when both queues are empty.
     ///
     /// @param decision the default decision, not null
     public void setDefaultDecision(ReviewDecision decision) {
         this.defaultDecision = decision;
     }
 
-    /// Resets the handler to its initial state (empty queue, approve default).
+    /// Resets the handler to its initial state (empty queues, approve default).
     ///
-    /// @apiNote **Side effects**: clears all enqueued decisions
+    /// @apiNote **Side effects**: clears all enqueued outcomes and decisions
     public void reset() {
+        outcomes.clear();
         decisions.clear();
         defaultDecision = new ReviewDecision.Approve();
     }
 
-    /// Returns the next enqueued decision, or the default if the queue is empty.
+    /// Returns the next enqueued outcome, then decision, then the default.
     ///
     /// @param node the executed node requiring review, not null
     /// @param result the execution result to review, not null
@@ -79,16 +91,19 @@ public class TestReviewHandler implements ReviewHandler {
     /// @param history execution history for backtrack selection, not null
     /// @param config review behavior settings, not null
     /// @param workflow the workflow definition, not null
-    /// @return the next scripted decision or the default, never null
+    /// @return the next scripted outcome or the default, never null
     @Override
-    public ReviewDecision requestReview(
+    public ReviewOutcome requestReview(
             Node node,
             NodeResult result,
             HensuState state,
             ExecutionHistory history,
             ReviewConfig config,
             Workflow workflow) {
+        ReviewOutcome nextOutcome = outcomes.poll();
+        if (nextOutcome != null) return nextOutcome;
+
         ReviewDecision next = decisions.poll();
-        return next != null ? next : defaultDecision;
+        return ReviewOutcome.decided(next != null ? next : defaultDecision);
     }
 }

@@ -47,6 +47,8 @@ import java.util.logging.Logger;
 /// @see AutoBacktrack for backtrack instruction
 public final class RubricPostProcessor implements PostNodeExecutionProcessor {
 
+    public static final String PROCESSOR_ID = "RubricPostProcessor";
+
     private static final Logger logger = Logger.getLogger(RubricPostProcessor.class.getName());
 
     private static final double CRITICAL_FAILURE_THRESHOLD = 30.0;
@@ -64,10 +66,15 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
     }
 
     @Override
-    public Optional<ExecutionResult> process(ProcessorContext context) {
+    public String id() {
+        return PROCESSOR_ID;
+    }
+
+    @Override
+    public ProcessorOutcome process(ProcessorContext context) {
         var node = context.currentNode();
         if (node.getRubricId() == null) {
-            return Optional.empty();
+            return ProcessorOutcome.CONTINUE;
         }
 
         RubricEvaluation evaluation;
@@ -78,7 +85,7 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
         } catch (RubricNotFoundException e) {
             logger.severe(
                     "Rubric evaluation failed for node " + node.getId() + ": " + e.getMessage());
-            return Optional.of(
+            return ProcessorOutcome.terminal(
                     new ExecutionResult.Failure(
                             context.state(), new IllegalStateException(e.getMessage(), e)));
         }
@@ -105,6 +112,7 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
                     HensuState state = context.state();
                     String targetNode = autoBacktrack.getTargetNode();
                     state.setCurrentNode(targetNode);
+                    state.setNodeRedirected(true);
                     state.getContext().putAll(autoBacktrack.getContextUpdates());
                     state.getHistory()
                             .addAutoBacktrack(
@@ -113,12 +121,12 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
                                     "Rubric score: " + evaluation.getScore(),
                                     evaluation);
 
-                    return Optional.empty();
+                    return ProcessorOutcome.CONTINUE;
                 }
             }
         }
 
-        return Optional.empty();
+        return ProcessorOutcome.CONTINUE;
     }
 
     private AutoBacktrack determineAutoBacktrack(

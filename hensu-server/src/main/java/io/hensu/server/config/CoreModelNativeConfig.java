@@ -11,7 +11,6 @@ import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.plan.Plan;
 import io.hensu.core.plan.PlanConstraints;
-import io.hensu.core.plan.PlanSnapshot;
 import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.plan.PlanningConfig;
 import io.hensu.core.review.ReviewConfig;
@@ -66,7 +65,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 /// trace these statically when Jackson uses default POJO machinery. Affected types:
 ///
 /// - `ReviewConfig` — embedded in workflow nodes via `AgentConfig`
-/// - `HensuSnapshot`, `PlanSnapshot` hierarchy — embedded in `ExecutionStep` for JDBC persistence
+/// - `HensuSnapshot` — embedded in `ExecutionStep` for JDBC persistence
 ///
 /// @implNote No Quarkus annotations are placed on `hensu-core` types. All native image metadata
 /// lives in `hensu-server`, keeping the core module dependency-free. LangChain4j transport and
@@ -75,6 +74,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 /// @see LangChain4jGeminiNativeConfig for Google AI Gemini DTO registrations
 /// @see io.hensu.serialization.HensuJacksonModule for the mixin registrations and
 ///     `treeToValue` delegation sites
+/// @see ExecutionEventNativeConfig for SSE execution event records
 @RegisterForReflection(
         targets = {
             // --- Mixin/builder pattern ---
@@ -108,9 +108,6 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
             StateVariableDeclaration.class,
             // --- Plain records (canonical constructor + component accessors) ---
             ReviewConfig.class,
-            HensuSnapshot.class,
-            PlanSnapshot.class,
-            PlanSnapshot.PlannedStepSnapshot.class,
-            PlanSnapshot.StepResultSnapshot.class
+            HensuSnapshot.class
         })
-public class NativeImageConfig {}
+public class CoreModelNativeConfig {}

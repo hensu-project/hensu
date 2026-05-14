@@ -1,9 +1,9 @@
 package io.hensu.server.api;
 
+import io.hensu.core.util.LogSanitizer;
 import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
-import io.hensu.server.validation.LogSanitizer;
 import io.hensu.server.validation.ValidId;
 import io.smallrye.mutiny.Multi;
 import jakarta.inject.Inject;

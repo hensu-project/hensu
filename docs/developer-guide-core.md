@@ -13,6 +13,7 @@ This guide covers API usage, adapter development, extension points, and testing 
   - [Post-Execution Pipeline](#post-execution-pipeline)
   - [Parallel Branch Concurrency](#parallel-branch-concurrency)
   - [Agentic Output Validation](#agentic-output-validation)
+- [Pause / Resume Lifecycle](#pause--resume-lifecycle)
 - [Creating Custom Adapters](#creating-custom-adapters)
 - [Generic Nodes](#generic-nodes)
 - [Sub-Workflows](#sub-workflows)
@@ -126,8 +127,15 @@ The lifecycle for every node is:
 2. **Node Execution** — the appropriate `NodeExecutor` is invoked
 3. **Post-Execution Pipeline** — processors that run *after* the node's main logic to process its result
 
-If any processor in a pipeline returns a terminal result (e.g., `Rejected`, `Failure`), the entire workflow execution
-halts immediately (short-circuit).
+Every processor returns a `ProcessorOutcome` — a sealed type with three variants:
+
+| Variant              | Meaning                                                                                                                        |
+|----------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| `Continue`           | Proceed to the next processor (or next loop iteration if this was the last one)                                                |
+| `Terminal(result)`   | Short-circuit the executor with the given `ExecutionResult` (e.g., `Rejected`, `Failure`)                                      |
+| `SuspendForExternal` | Pause the post-pipeline at this processor for an out-of-band resume (see [Pause / Resume Lifecycle](#pause--resume-lifecycle)) |
+
+`SuspendForExternal` is only valid in the post-pipeline. If a pre-pipeline processor returns it, the pipeline throws `IllegalStateException` — no node result exists to cache yet.
 
 ```mermaid
 flowchart LR
@@ -161,10 +169,10 @@ This is where the majority of the workflow's state management and decision-makin
 | Order | Processor                       | Responsibility                                                        |
 |-------|---------------------------------|-----------------------------------------------------------------------|
 | 1     | `OutputExtractionPostProcessor` | Validates (control chars, Unicode tricks, size) then stores output    |
-| 2     | `NodeCompletePostProcessor`     | Fires `listener.onNodeComplete(node, result)` for observability       |
-| 3     | `HistoryPostProcessor`          | Records execution step for audit and backtracking                     |
-| 4     | `ReviewPostProcessor`           | Human-in-the-loop checkpoints                                         |
-| 5     | `RubricPostProcessor`           | Automated quality evaluation and self-correction                      |
+| 2     | `RubricPostProcessor`           | Automated quality evaluation and self-correction                      |
+| 3     | `ReviewPostProcessor`           | Human-in-the-loop checkpoints (may suspend for async review)          |
+| 4     | `NodeCompletePostProcessor`     | Fires `listener.onNodeComplete(node, result)` for observability       |
+| 5     | `HistoryPostProcessor`          | Records execution step for audit and backtracking                     |
 | 6     | `TransitionPostProcessor`       | Determines next node via `TransitionRule` evaluation                  |
 
 **`OutputExtractionPostProcessor`** — First validates the raw output using `AgentOutputValidator` (see
@@ -174,20 +182,32 @@ map keyed by node ID. For `StandardNode`s with `writes` declared, it routes the 
 - **Single write**: attempts to parse the response as JSON and extract the declared key; falls back to the full raw text if the key is absent or the output is not valid JSON.
 - **Multiple writes**: the response is parsed as JSON and each declared key is extracted into context.
 
-**`HistoryPostProcessor`** — Appends an immutable `ExecutionStep` (containing a state snapshot, the node result, and a
-timestamp) to the `ExecutionHistory`. This is the foundation for time-travel debugging and backtracking.
-
-**`ReviewPostProcessor`** — If a node has a `reviewConfig`, this processor invokes the registered `ReviewHandler`.
-Based on the human's decision, it can allow the workflow to continue (`Approve`), reject it terminating execution
-(`Reject`), or backtrack to a previous node (`Backtrack`).
-
 **`RubricPostProcessor`** — If a node has a `rubricId`, this processor evaluates the output against the rubric's
 criteria using the `RubricEngine`. It stores the evaluation result in the state for use by `ScoreTransition` rules. If
 the evaluation fails and no explicit transition handles the low score, it can trigger an **auto-backtrack** to a prior
-step, enabling self-correcting loops.
+step, enabling self-correcting loops. On auto-backtrack, sets `state.nodeRedirected = true` — downstream processors
+check this flag to skip redundant work (e.g., `ReviewPostProcessor` skips review when a rubric already redirected).
+
+**`ReviewPostProcessor`** — If a node has a `reviewConfig`, this processor invokes the registered `ReviewHandler`.
+The handler returns a `ReviewOutcome`: either `Decided(ReviewDecision)` for synchronous review or
+`Pending(correlationId)` for asynchronous out-of-band review. On `Pending`, the processor emits
+`ProcessorOutcome.SuspendForExternal`, pausing the execution until a resume call delivers the decision.
+Based on the decision, the processor can allow the workflow to continue (`Approve`), reject it terminating execution
+(`Reject`), or backtrack to a previous node (`Backtrack`). Skipped when `state.isNodeRedirected()` is true (prior
+rubric backtrack).
+
+**`NodeCompletePostProcessor`** — Fires `listener.onNodeComplete(node, result)` for observability. Runs after
+Rubric/Review so rejected or redirected nodes are never marked complete.
+
+**`HistoryPostProcessor`** — Appends an immutable `ExecutionStep` (containing a state snapshot, the node result, and a
+timestamp) to the `ExecutionHistory`. Runs after Rubric/Review so the snapshot includes scores and review edits. This
+is the foundation for time-travel debugging and backtracking.
 
 **`TransitionPostProcessor`** — The final step. Evaluates the current node's `TransitionRule` list in order. The first
-rule that returns a valid target node ID wins, and the state is updated to point to that next node. Throws
+rule that returns a valid target node ID wins, and the state is updated to point to that next node. If
+`state.isNodeRedirected()` is true (set by Rubric or Review backtrack), the transition evaluator is skipped — the
+current node was already updated by the backtracking processor. The flag is then reset. Clears
+`state.activePlan` on every transition to prevent stale plans from leaking across nodes. Throws
 `IllegalStateException` if no rule matches, preventing the workflow from silently getting stuck.
 
 ### Parallel Branch Concurrency
@@ -197,8 +217,11 @@ via `StructuredTaskScope` (preview, Java 25). Two concurrency guarantees apply t
 parallel execution paths:
 
 **1. ScopedValue isolation** – each branch receives an isolated context snapshot bound via
-`ScopedValue.where(BRANCH_CONTEXT, snapshot)`. Branch mutations never leak into sibling branches
-or the parent state. This is the same mechanism used for tenant isolation (`TenantContext`).
+`ScopedValue.where(BRANCH_CONTEXT, snapshot)`. `ParallelNodeExecutor.BRANCH_CONTEXT` is a
+`ScopedValue<Map<String, Object>>` that carries branch-scoped metadata (like `BranchExecutionConfig` –
+consensus strategy, yield declarations) without polluting the state context map. Branch mutations
+never leak into sibling branches or the parent state. This is the same mechanism used for tenant
+isolation (`TenantContext`).
 
 > **Extension rule:** Never use `ThreadLocal` in branch-aware code. `ScopedValue` is the only
 > safe context propagation mechanism for virtual threads. See `10-java-standards.md` for details.
@@ -261,6 +284,61 @@ distinct trust boundaries and must not be merged:
 | Unicode tricks     | Not checked (low risk for humans)   | Checked (LLMs can produce overrides) |
 | Safe-ID validation | Yes — for user-supplied identifiers | Not applicable — no IDs in output    |
 | Framework          | Jakarta Bean Validation             | Pure utility, zero dependencies      |
+
+## Pause / Resume Lifecycle
+
+When a post-processor cannot complete synchronously (e.g., human review via a web UI), the execution suspends and resumes later without re-running the node's agent call. Three sealed types collaborate to make this work.
+
+### ExecutionPhase
+
+`ExecutionPhase` is a sealed interface on `HensuState` that tracks where inside a node's lifecycle the execution is:
+
+| Variant                                                                   | Meaning                                                                                         |
+|---------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
+| `Initial`                                                                 | Top of the loop — run pre-pipeline, execute node, post-pipeline normally                        |
+| `Awaiting(nodeId, processorId, cachedResult, correlationId, requestedAt)` | Paused inside the post-pipeline; resume re-enters at the named processor with the cached result |
+| `Terminal`                                                                | Execution finished — further calls fail fast                                                    |
+
+`NodeLifecycleCoordinator` dispatches on the phase:
+- **`Initial`** — full lifecycle: reset per-node state, pre-pipeline, execute node, post-pipeline.
+- **`Awaiting`** — resume path: skip pre-pipeline and node execution entirely; re-enter the post-pipeline at `processorId` via `ProcessorPipeline.executePostFrom(processorId, context)`.
+- **`Terminal`** — throws `IllegalStateException`.
+
+### ReviewOutcome
+
+`ReviewHandler.requestReview()` returns `ReviewOutcome` — a sealed type that replaces the previous synchronous `ReviewDecision` return:
+
+| Variant                  | Meaning                                                                |
+|--------------------------|------------------------------------------------------------------------|
+| `Decided(decision)`      | Handler answered synchronously — apply the `ReviewDecision` now        |
+| `Pending(correlationId)` | Handler accepted the request; answer arrives out-of-band via resume    |
+
+On `Pending`, `ReviewPostProcessor` emits `ProcessorOutcome.SuspendForExternal("ReviewPostProcessor", cachedResult, correlationId)`. The pipeline records an `ExecutionPhase.Awaiting` on state and returns `ExecutionResult.Paused`.
+
+### ResumeInput
+
+When the execution resumes, the caller supplies a `ResumeInput` — a sealed type set transiently on `HensuState` before `executeFrom()`:
+
+| Variant                                | Meaning                                                       |
+|----------------------------------------|---------------------------------------------------------------|
+| `ApplyReview(correlationId, decision)` | Deliver a `ReviewDecision` produced out-of-band by a reviewer |
+| `ApplyContextEdits(edits)`             | Merge free-form context edits without going through review    |
+| `None`                                 | Pure continuation (e.g., server restart recovery)             |
+
+`ResumeInput` is **transient** — it is never persisted in snapshots. It is set by the resume caller, consumed by post-processors, and cleared after the post-pipeline completes.
+
+### Resume flow
+
+1. Caller sets `state.setResumeInput(new ApplyReview(correlationId, decision))`.
+2. `NodeLifecycleCoordinator` sees `ExecutionPhase.Awaiting` → calls `postPipeline.executePostFrom("ReviewPostProcessor", ctx)`.
+3. `ReviewPostProcessor.process()` checks `state.getResumeInput()` for `ApplyReview` **before** calling `requestReview()` — this prevents an infinite `Pending` loop on resume.
+4. Validates that `correlationId` matches the `Awaiting` phase via `ExecutionPhase.validateCorrelation()`.
+5. Applies the decision (Approve/Backtrack/Reject) and clears `resumeInput`.
+6. Remaining post-processors run normally (NodeComplete → History → Transition).
+
+### Backtrack prompt override
+
+When a reviewer or rubric backtrack redirects execution to a previous node, `StandardNodeExecutor` checks for a `_prompt_override` key in the state context. If present, it is consumed (removed) and used instead of the node's static prompt. This allows reviewers to inject corrective instructions without modifying the workflow definition.
 
 ## Creating Custom Adapters
 
@@ -949,6 +1027,17 @@ Plan execution emits events for monitoring:
 
 Register observers via `PlanExecutor.addObserver(PlanObserver)`.
 
+### Plan Persistence and Resume
+
+Dynamic plans generated by `LlmPlanner` are non-deterministic — regenerating a plan after resume would produce different transitions and break execution. To solve this, `HensuState` carries an `activePlan` field that is persisted in snapshots alongside all other state.
+
+`PlanCreationProcessor` handles this in two paths:
+
+1. **Fresh execution** — `state.getActivePlan()` is null. The processor creates a plan via the planner, writes it to both `state.setActivePlan(plan)` and `context.setPlan(plan)`, and continues.
+2. **Resumed execution** — `state.getActivePlan()` is non-null. If the plan's `nodeId` matches the current node, the processor reuses the persisted plan without calling the planner. A `nodeId` mismatch throws `IllegalStateException` — it indicates a bug in plan lifecycle management.
+
+`TransitionPostProcessor` clears `state.setActivePlan(null)` on every transition, preventing stale plans from leaking across nodes.
+
 ## Template Resolution
 
 The `TemplateResolver` substitutes `{variable}` placeholders in prompts from workflow context:
@@ -1304,6 +1393,7 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `agent/DefaultAgentRegistry.java`                       | Thread-safe agent registry                                                                       |
 | `agent/stub/StubAgentProvider.java`                     | Testing provider (priority 1000 when enabled)                                                    |
 | `execution/WorkflowExecutor.java`                       | Main execution engine                                                                            |
+| `execution/NodeLifecycleCoordinator.java`               | Per-node lifecycle: phase dispatch, pipeline orchestration                                       |
 | `execution/executor/GenericNodeHandler.java`            | Generic node handler interface                                                                   |
 | `execution/action/ActionHandler.java`                   | Action handler interface                                                                         |
 | `execution/action/ActionExecutor.java`                  | Action dispatch interface                                                                        |
@@ -1313,6 +1403,7 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `workflow/InMemoryWorkflowRepository.java`              | In-memory workflow repository (default)                                                          |
 | `state/HensuState.java`                                 | Mutable workflow execution state; `branch(node)` creates isolated copies for concurrent branches |
 | `state/HensuSnapshot.java`                              | Immutable state snapshot for persistence                                                         |
+| `state/ExecutionPhase.java`                             | Sealed: `Initial`, `Awaiting`, `Terminal` — tracks position within a node's lifecycle            |
 | `state/WorkflowStateRepository.java`                    | Execution state persistence interface                                                            |
 | `state/InMemoryWorkflowStateRepository.java`            | In-memory state repository (default)                                                             |
 | `workflow/state/WorkflowStateSchema.java`               | Typed state variable schema (optional per-workflow declaration)                                  |
@@ -1346,6 +1437,8 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `execution/parallel/BranchExecutionConfig.java`         | Typed branch metadata on `ExecutionContext` (consensus strategy, yields list)                    |
 | `template/SimpleTemplateResolver.java`                  | `{variable}` substitution                                                                        |
 | `review/ReviewHandler.java`                             | Human review interface                                                                           |
+| `review/ReviewOutcome.java`                             | Sealed: `Decided(ReviewDecision)`, `Pending(correlationId)` — sync vs async review               |
+| `resume/ResumeInput.java`                               | Sealed: `ApplyReview`, `ApplyContextEdits`, `None` — caller-supplied resume input                |
 | `execution/pipeline/ProcessorPipeline.java`             | Orchestrates pre/post processor chains                                                           |
 | `execution/pipeline/ProcessorContext.java`              | Per-iteration context carrier (node + result + execution context)                                |
 | `execution/pipeline/PreNodeExecutionProcessor.java`     | Pre-execution processor interface                                                                |
@@ -1355,4 +1448,5 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `execution/pipeline/HistoryPostProcessor.java`          | Records execution steps for audit/backtracking                                                   |
 | `execution/pipeline/ReviewPostProcessor.java`           | Human-in-the-loop review checkpoints                                                             |
 | `execution/pipeline/RubricPostProcessor.java`           | Quality evaluation and auto-backtrack                                                            |
+| `execution/pipeline/ProcessorOutcome.java`              | Sealed: `Continue`, `Terminal`, `SuspendForExternal` — pipeline flow control                     |
 | `execution/pipeline/TransitionPostProcessor.java`       | Evaluates transition rules, sets next node                                                       |

@@ -1,6 +1,6 @@
 # Quality Assessment Rubric (Low Threshold)
 
-## Pass Threshold: 30.0
+## Pass Threshold: 70.0
 
 ## Criteria
 

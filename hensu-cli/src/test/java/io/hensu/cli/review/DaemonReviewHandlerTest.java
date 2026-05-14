@@ -12,6 +12,7 @@ import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.review.ReviewDecision;
 import io.hensu.core.review.ReviewMode;
+import io.hensu.core.review.ReviewOutcome;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowMetadata;
@@ -56,7 +57,7 @@ class DaemonReviewHandlerTest {
     void shouldRouteReviewThroughDaemonWhenRegistered() throws Exception {
         handler.registerExecution("exec-1", sentFrames::add, statusUpdates::add);
 
-        CompletableFuture<ReviewDecision> decisionFuture =
+        CompletableFuture<ReviewOutcome> outcomeFuture =
                 CompletableFuture.supplyAsync(
                         () ->
                                 handler.requestReview(
@@ -76,8 +77,10 @@ class DaemonReviewHandlerTest {
 
         handler.completeReview(reviewFrame.reviewId, new ReviewDecision.Approve(null));
 
-        ReviewDecision decision = decisionFuture.get(5, TimeUnit.SECONDS);
-        assertThat(decision).isInstanceOf(ReviewDecision.Approve.class);
+        ReviewOutcome outcome = outcomeFuture.get(5, TimeUnit.SECONDS);
+        assertThat(outcome).isInstanceOf(ReviewOutcome.Decided.class);
+        assertThat(((ReviewOutcome.Decided) outcome).decision())
+                .isInstanceOf(ReviewDecision.Approve.class);
         assertThat(statusUpdates).contains(ExecutionStatus.RUNNING);
     }
 
@@ -85,7 +88,7 @@ class DaemonReviewHandlerTest {
     void shouldCompleteReviewWithBacktrackDecision() throws Exception {
         handler.registerExecution("exec-1", sentFrames::add, statusUpdates::add);
 
-        CompletableFuture<ReviewDecision> decisionFuture =
+        CompletableFuture<ReviewOutcome> outcomeFuture =
                 CompletableFuture.supplyAsync(
                         () ->
                                 handler.requestReview(
@@ -103,7 +106,9 @@ class DaemonReviewHandlerTest {
         handler.completeReview(
                 reviewFrame.reviewId, new ReviewDecision.Backtrack("step-1", "Bad output"));
 
-        ReviewDecision decision = decisionFuture.get(5, TimeUnit.SECONDS);
+        ReviewOutcome outcome = outcomeFuture.get(5, TimeUnit.SECONDS);
+        assertThat(outcome).isInstanceOf(ReviewOutcome.Decided.class);
+        var decision = ((ReviewOutcome.Decided) outcome).decision();
         assertThat(decision).isInstanceOf(ReviewDecision.Backtrack.class);
         assertThat(((ReviewDecision.Backtrack) decision).getTargetStep()).isEqualTo("step-1");
     }
@@ -114,7 +119,7 @@ class DaemonReviewHandlerTest {
     void shouldRedeliverReviewRequestOnResume() throws Exception {
         handler.registerExecution("exec-1", sentFrames::add, statusUpdates::add);
 
-        CompletableFuture<ReviewDecision> decisionFuture =
+        CompletableFuture<ReviewOutcome> outcomeFuture =
                 CompletableFuture.supplyAsync(
                         () ->
                                 handler.requestReview(
@@ -144,8 +149,10 @@ class DaemonReviewHandlerTest {
 
         // Complete via the original reviewId
         handler.completeReview(reviewId, new ReviewDecision.Approve(null));
-        ReviewDecision decision = decisionFuture.get(5, TimeUnit.SECONDS);
-        assertThat(decision).isInstanceOf(ReviewDecision.Approve.class);
+        ReviewOutcome outcome = outcomeFuture.get(5, TimeUnit.SECONDS);
+        assertThat(outcome).isInstanceOf(ReviewOutcome.Decided.class);
+        assertThat(((ReviewOutcome.Decided) outcome).decision())
+                .isInstanceOf(ReviewDecision.Approve.class);
     }
 
     // — Cancel pending reviews ————————————————————————————————————————————————
@@ -154,7 +161,7 @@ class DaemonReviewHandlerTest {
     void shouldAutoApprovePendingReviewsOnUnregister() throws Exception {
         handler.registerExecution("exec-1", sentFrames::add, statusUpdates::add);
 
-        CompletableFuture<ReviewDecision> decisionFuture =
+        CompletableFuture<ReviewOutcome> outcomeFuture =
                 CompletableFuture.supplyAsync(
                         () ->
                                 handler.requestReview(
@@ -172,8 +179,10 @@ class DaemonReviewHandlerTest {
         // Unregister cancels pending reviews with auto-approve
         handler.unregisterExecution("exec-1");
 
-        ReviewDecision decision = decisionFuture.get(5, TimeUnit.SECONDS);
-        assertThat(decision).isInstanceOf(ReviewDecision.Approve.class);
+        ReviewOutcome outcome = outcomeFuture.get(5, TimeUnit.SECONDS);
+        assertThat(outcome).isInstanceOf(ReviewOutcome.Decided.class);
+        assertThat(((ReviewOutcome.Decided) outcome).decision())
+                .isInstanceOf(ReviewDecision.Approve.class);
     }
 
     // — Interactive state ——————————————————————————————————————————————————————

@@ -16,6 +16,9 @@ import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.review.ReviewDecision;
 import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.review.ReviewMode;
+import io.hensu.core.review.ReviewOutcome;
+import io.hensu.core.state.ExecutionPhase;
+import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.workflow.WorkflowTest;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.transition.SuccessTransition;
@@ -32,12 +35,16 @@ class WorkflowExecutorHumanReviewTest extends WorkflowExecutorTestBase {
     @BeforeEach
     void setUpReviewExecutor() {
         mockReviewHandler = mock(ReviewHandler.class);
+        var registry = new DefaultNodeExecutorRegistry();
         executor =
                 new WorkflowExecutor(
-                        new DefaultNodeExecutorRegistry(),
+                        registry,
                         agentRegistry,
                         rubricEngine,
-                        mockReviewHandler);
+                        createCoordinator(registry, mockReviewHandler, rubricEngine),
+                        null,
+                        new SimpleTemplateResolver(),
+                        null);
     }
 
     // — Review mode routing ———————————————————————————————————————————————
@@ -72,7 +79,7 @@ class WorkflowExecutorHumanReviewTest extends WorkflowExecutorTestBase {
     @Test
     void shouldAlwaysRequestReviewWhenRequired() throws Exception {
         when(mockReviewHandler.requestReview(any(), any(), any(), any(), any(), any()))
-                .thenReturn(new ReviewDecision.Approve(null));
+                .thenReturn(ReviewOutcome.decided(new ReviewDecision.Approve(null)));
         var workflow = workflowWithReview("review-required", ReviewMode.REQUIRED);
 
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
@@ -89,7 +96,8 @@ class WorkflowExecutorHumanReviewTest extends WorkflowExecutorTestBase {
     @Test
     void shouldRejectWorkflowOnReviewRejection() throws Exception {
         when(mockReviewHandler.requestReview(any(), any(), any(), any(), any(), any()))
-                .thenReturn(new ReviewDecision.Reject("Quality insufficient"));
+                .thenReturn(
+                        ReviewOutcome.decided(new ReviewDecision.Reject("Quality insufficient")));
         var workflow = workflowWithReview("review-reject", ReviewMode.REQUIRED);
 
         when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
@@ -107,8 +115,9 @@ class WorkflowExecutorHumanReviewTest extends WorkflowExecutorTestBase {
         // First review backtracks to step1; second approves. step1 executes twice → 4+ history
         // entries.
         when(mockReviewHandler.requestReview(any(), any(), any(), any(), any(), any()))
-                .thenReturn(new ReviewDecision.Backtrack("step1", "Redo step 1"))
-                .thenReturn(new ReviewDecision.Approve(null));
+                .thenReturn(
+                        ReviewOutcome.decided(new ReviewDecision.Backtrack("step1", "Redo step 1")))
+                .thenReturn(ReviewOutcome.decided(new ReviewDecision.Approve(null)));
 
         var workflow =
                 WorkflowTest.TestWorkflowBuilder.create("review-backtrack")
@@ -150,7 +159,9 @@ class WorkflowExecutorHumanReviewTest extends WorkflowExecutorTestBase {
         // workflow.getNodes().get("ghost-node") == null → IllegalStateException.
         // If someone adds silent null-handling instead of throwing, this test fails.
         when(mockReviewHandler.requestReview(any(), any(), any(), any(), any(), any()))
-                .thenReturn(new ReviewDecision.Backtrack("ghost-node", "go back"));
+                .thenReturn(
+                        ReviewOutcome.decided(
+                                new ReviewDecision.Backtrack("ghost-node", "go back")));
 
         var workflow =
                 WorkflowTest.TestWorkflowBuilder.create("backtrack-invalid")
@@ -173,6 +184,68 @@ class WorkflowExecutorHumanReviewTest extends WorkflowExecutorTestBase {
         assertThatThrownBy(() -> executor.execute(workflow, new HashMap<>()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("ghost-node");
+    }
+
+    // — Pending review (async) ——————————————————————————————————————————
+
+    @Test
+    void shouldPauseOnPendingReview() throws Exception {
+        when(mockReviewHandler.requestReview(any(), any(), any(), any(), any(), any()))
+                .thenReturn(ReviewOutcome.pending("corr-1"));
+        var workflow = workflowWithReview("review-pending", ReviewMode.REQUIRED);
+
+        when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
+        when(mockAgent.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Done"));
+
+        var result = executor.execute(workflow, new HashMap<>());
+
+        assertThat(result).isInstanceOf(ExecutionResult.Paused.class);
+        var paused = (ExecutionResult.Paused) result;
+        assertThat(paused.state().getPhase()).isInstanceOf(ExecutionPhase.Awaiting.class);
+        var phase = (ExecutionPhase.Awaiting) paused.state().getPhase();
+        assertThat(phase.processorId()).isEqualTo("ReviewPostProcessor");
+        assertThat(phase.correlationId()).isEqualTo("corr-1");
+        assertThat(phase.nodeId()).isEqualTo("step");
+    }
+
+    @Test
+    void shouldResumeAfterPendingReviewAndComplete() throws Exception {
+        when(mockReviewHandler.requestReview(any(), any(), any(), any(), any(), any()))
+                .thenReturn(ReviewOutcome.pending("corr-1"))
+                .thenReturn(ReviewOutcome.decided(new ReviewDecision.Approve(null)));
+        var workflow = workflowWithReview("review-resume", ReviewMode.REQUIRED);
+
+        when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
+        when(mockAgent.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Done"));
+
+        var pausedResult = executor.execute(workflow, new HashMap<>());
+        assertThat(pausedResult).isInstanceOf(ExecutionResult.Paused.class);
+        var pausedState = ((ExecutionResult.Paused) pausedResult).state();
+
+        var resumed = executor.executeFrom(workflow, pausedState);
+
+        assertThat(resumed).isInstanceOf(ExecutionResult.Completed.class);
+        assertThat(((ExecutionResult.Completed) resumed).getExitStatus())
+                .isEqualTo(ExitStatus.SUCCESS);
+        verify(mockAgent).execute(any(), any());
+    }
+
+    // — Constructor contract ——————————————————————————————————————————————
+
+    @Test
+    void shouldRejectNullLifecycleCoordinator() {
+        assertThatThrownBy(
+                        () ->
+                                new WorkflowExecutor(
+                                        new DefaultNodeExecutorRegistry(),
+                                        agentRegistry,
+                                        rubricEngine,
+                                        null,
+                                        null,
+                                        null,
+                                        null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("lifecycleCoordinator");
     }
 
     // — Helpers ———————————————————————————————————————————————————————————

@@ -6,12 +6,14 @@ import io.hensu.core.agent.AgentProvider;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.agent.DefaultAgentRegistry;
 import io.hensu.core.agent.stub.StubAgentProvider;
+import io.hensu.core.execution.NodeLifecycleCoordinator;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.AgenticNodeExecutor;
 import io.hensu.core.execution.executor.DefaultNodeExecutorRegistry;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
 import io.hensu.core.execution.executor.StandardNodeExecutor;
+import io.hensu.core.execution.pipeline.ProcessorPipeline;
 import io.hensu.core.plan.DefaultStepHandlerRegistry;
 import io.hensu.core.plan.LlmPlanner;
 import io.hensu.core.plan.PlanExecutor;
@@ -166,7 +168,7 @@ public final class HensuFactory {
                 config,
                 nodeExecutorRegistry,
                 agentRegistry,
-                null,
+                ReviewHandler.AUTO_APPROVE,
                 null,
                 new InMemoryWorkflowRepository(),
                 new InMemoryWorkflowStateRepository());
@@ -188,7 +190,7 @@ public final class HensuFactory {
                 config,
                 nodeExecutorRegistry,
                 agentRegistry,
-                reviewHandler,
+                reviewHandler != null ? reviewHandler : ReviewHandler.AUTO_APPROVE,
                 null,
                 new InMemoryWorkflowRepository(),
                 new InMemoryWorkflowStateRepository());
@@ -219,7 +221,7 @@ public final class HensuFactory {
                 config,
                 nodeExecutorRegistry,
                 agentRegistry,
-                reviewHandler,
+                reviewHandler != null ? reviewHandler : ReviewHandler.AUTO_APPROVE,
                 actionExecutor,
                 workflowRepository,
                 workflowStateRepository,
@@ -248,12 +250,18 @@ public final class HensuFactory {
                 new RubricEngine(rubricRepository, new ScoreExtractingEvaluator());
         TemplateResolver templateResolver = createTemplateResolver();
 
+        NodeLifecycleCoordinator lifecycleCoordinator =
+                new NodeLifecycleCoordinator(
+                        nodeExecutorRegistry,
+                        ProcessorPipeline.preExecution(),
+                        ProcessorPipeline.postExecution(reviewHandler, rubricEngine));
+
         WorkflowExecutor workflowExecutor =
                 new WorkflowExecutor(
                         nodeExecutorRegistry,
                         agentRegistry,
                         rubricEngine,
-                        reviewHandler,
+                        lifecycleCoordinator,
                         actionExecutor,
                         templateResolver,
                         workflowRepository);
@@ -690,7 +698,7 @@ public final class HensuFactory {
         ///
         /// @return the configured environment, never null
         public HensuEnvironment build() {
-            // Auto-load from environment if no explicit credentials provided
+            // Autoload from environment if no explicit credentials provided
             if (credentials.isEmpty()) {
                 credentials = HensuFactory.loadCredentialsFromEnvironment();
             }
@@ -716,15 +724,15 @@ public final class HensuFactory {
 
             // Auto-construct LlmPlanner when a parser is provided but no explicit planner
             if (planResponseParser != null && planner == null) {
-                if (!agentRegistry.hasAgent("_planning_agent")) {
-                    agentRegistry.registerAgent(
-                            "_planning_agent",
-                            AgentConfig.builder()
-                                    .id("_planning_agent")
-                                    .role("planner")
-                                    .model("gemini-2.5-pro")
-                                    .temperature(0.3)
-                                    .build());
+                var planningAgentConfig =
+                        AgentConfig.builder()
+                                .id("_planning_agent")
+                                .role("planner")
+                                .model("gemini-2.5-pro")
+                                .temperature(0.3)
+                                .build();
+                if (!agentRegistry.hasAgent("_planning_agent", planningAgentConfig)) {
+                    agentRegistry.registerAgent("_planning_agent", planningAgentConfig);
                 }
                 planner =
                         new LlmPlanner(
@@ -762,11 +770,13 @@ public final class HensuFactory {
                 builtStepHandlerRegistry = registry;
             }
 
+            ReviewHandler effectiveReviewHandler =
+                    reviewHandler != null ? reviewHandler : ReviewHandler.AUTO_APPROVE;
             return buildCoreComponents(
                     config,
                     nodeExecutorRegistry,
                     agentRegistry,
-                    reviewHandler,
+                    effectiveReviewHandler,
                     actionExecutor,
                     workflowRepository,
                     workflowStateRepository,

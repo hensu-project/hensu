@@ -5,6 +5,7 @@ import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.review.ReviewDecision;
 import io.hensu.core.review.ReviewHandler;
+import io.hensu.core.review.ReviewOutcome;
 import io.hensu.core.rubric.evaluator.RubricEvaluation;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
@@ -43,7 +44,7 @@ public class CLIReviewHandler implements ReviewHandler {
     }
 
     @Override
-    public ReviewDecision requestReview(
+    public ReviewOutcome requestReview(
             Node node,
             NodeResult result,
             HensuState state,
@@ -51,9 +52,10 @@ public class CLIReviewHandler implements ReviewHandler {
             ReviewConfig config,
             Workflow workflow) {
         if (!isInteractive()) {
-            return new ReviewDecision.Approve(null);
+            return ReviewOutcome.decided(new ReviewDecision.Approve(null));
         }
-        return terminal.runReview(toReviewData(node, result, state, history, config, workflow));
+        return ReviewOutcome.decided(
+                terminal.runReview(toReviewData(node, result, state, history, config, workflow)));
     }
 
     // — Private ———————————————————————————————————————————————————————————————

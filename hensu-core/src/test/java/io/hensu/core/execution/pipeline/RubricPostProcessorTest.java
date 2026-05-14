@@ -61,7 +61,7 @@ class RubricPostProcessorTest {
 
             var result = processor.process(ctx);
 
-            assertThat(result).isEmpty();
+            assertThat(result).isInstanceOf(ProcessorOutcome.Continue.class);
         }
     }
 
@@ -77,7 +77,7 @@ class RubricPostProcessorTest {
 
             var result = processor.process(ctx);
 
-            assertThat(result).isEmpty();
+            assertThat(result).isInstanceOf(ProcessorOutcome.Continue.class);
         }
 
         @Test
@@ -106,7 +106,7 @@ class RubricPostProcessorTest {
 
             var result = processor.process(ctx);
 
-            assertThat(result).isEmpty();
+            assertThat(result).isInstanceOf(ProcessorOutcome.Continue.class);
             assertThat(ctx.state().getCurrentNode()).isEqualTo("previous");
             assertThat(ctx.state().getHistory().getBacktracks()).hasSize(1);
         }
@@ -161,7 +161,7 @@ class RubricPostProcessorTest {
 
             var result = processor.process(ctx);
 
-            assertThat(result).isEmpty();
+            assertThat(result).isInstanceOf(ProcessorOutcome.Continue.class);
             assertThat(ctx.state().getCurrentNode()).isEqualTo("start");
             assertThat(ctx.state().getHistory().getBacktracks()).hasSize(1);
         }
@@ -174,7 +174,7 @@ class RubricPostProcessorTest {
 
             var result = processor.process(ctx);
 
-            assertThat(result).isEmpty();
+            assertThat(result).isInstanceOf(ProcessorOutcome.Continue.class);
             assertThat(ctx.state().getCurrentNode()).isEqualTo("previous");
             assertThat(ctx.state().getHistory().getBacktracks()).hasSize(1);
         }
@@ -190,7 +190,7 @@ class RubricPostProcessorTest {
 
             var result = processor.process(ctx);
 
-            assertThat(result).isEmpty();
+            assertThat(result).isInstanceOf(ProcessorOutcome.Continue.class);
             assertThat(ctx.state().getCurrentNode()).isEqualTo("current");
             assertThat(ctx.state().getContext().get("retry_attempt")).isEqualTo(1);
             assertThat(ctx.state().getHistory().getBacktracks()).hasSize(1);
@@ -204,7 +204,7 @@ class RubricPostProcessorTest {
 
             var result = processor.process(ctx);
 
-            assertThat(result).isEmpty();
+            assertThat(result).isInstanceOf(ProcessorOutcome.Continue.class);
             assertThat(ctx.state().getCurrentNode()).isEqualTo("node");
             assertThat(ctx.state().getHistory().getBacktracks()).hasSize(1);
         }
@@ -229,7 +229,7 @@ class RubricPostProcessorTest {
 
             var result = processor.process(ctx);
 
-            assertThat(result).isEmpty();
+            assertThat(result).isInstanceOf(ProcessorOutcome.Continue.class);
             assertThat(ctx.state().getHistory().getBacktracks()).isEmpty();
         }
 
@@ -253,7 +253,7 @@ class RubricPostProcessorTest {
 
             var result = processor.process(ctx);
 
-            assertThat(result).isEmpty();
+            assertThat(result).isInstanceOf(ProcessorOutcome.Continue.class);
             assertThat(ctx.state().getHistory().getBacktracks()).isEmpty();
         }
 
@@ -301,8 +301,9 @@ class RubricPostProcessorTest {
 
             var result = processor.process(ctx);
 
-            assertThat(result).isPresent();
-            assertThat(result.get()).isInstanceOf(ExecutionResult.Failure.class);
+            assertThat(result).isInstanceOf(ProcessorOutcome.Terminal.class);
+            assertThat(((ProcessorOutcome.Terminal) result).result())
+                    .isInstanceOf(ExecutionResult.Failure.class);
         }
 
         @Test

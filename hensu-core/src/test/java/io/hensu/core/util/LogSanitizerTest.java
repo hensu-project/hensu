@@ -1,4 +1,4 @@
-package io.hensu.server.validation;
+package io.hensu.core.util;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

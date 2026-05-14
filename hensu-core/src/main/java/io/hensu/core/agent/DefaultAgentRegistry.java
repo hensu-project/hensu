@@ -23,6 +23,7 @@ public class DefaultAgentRegistry implements AgentRegistry {
     private static final Logger logger = Logger.getLogger(DefaultAgentRegistry.class.getName());
 
     private final Map<String, Agent> agents = new ConcurrentHashMap<>();
+    private final Map<String, AgentConfig> configs = new ConcurrentHashMap<>();
     private final AgentFactory agentFactory;
 
     /// Creates a new registry backed by the given agent factory.
@@ -72,6 +73,7 @@ public class DefaultAgentRegistry implements AgentRegistry {
 
         Agent agent = agentFactory.createAgent(agentId, config);
         agents.put(agentId, agent);
+        configs.put(agentId, config);
 
         logger.info("Registered agent: " + agentId + " with model: " + config.getModel());
         return agent;
@@ -102,6 +104,7 @@ public class DefaultAgentRegistry implements AgentRegistry {
     /// @throws NullPointerException if agentId is null
     public boolean unregisterAgent(String agentId) {
         Agent removed = agents.remove(agentId);
+        configs.remove(agentId);
         if (removed != null) {
             logger.info("Unregistered agent: " + agentId);
             return true;
@@ -115,8 +118,8 @@ public class DefaultAgentRegistry implements AgentRegistry {
     /// @return `true` if an agent with this ID exists, `false` otherwise
     /// @throws NullPointerException if agentId is null
     @Override
-    public boolean hasAgent(String agentId) {
-        return agents.containsKey(agentId);
+    public boolean hasAgent(String agentId, AgentConfig config) {
+        return config.equals(configs.get(agentId));
     }
 
     /// Returns the IDs of all registered agents.
@@ -134,6 +137,7 @@ public class DefaultAgentRegistry implements AgentRegistry {
     public void clear() {
         int count = agents.size();
         agents.clear();
+        configs.clear();
         logger.info("Cleared " + count + " agents from registry");
     }
 

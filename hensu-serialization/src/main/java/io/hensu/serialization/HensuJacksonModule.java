@@ -8,6 +8,7 @@ import io.hensu.core.execution.result.BacktrackEvent;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.plan.PlanStepAction;
+import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.state.WorkflowStateSchema;
@@ -35,9 +36,11 @@ import java.io.Serial;
 /// - `TransitionRule` — `TransitionRuleSerializer` / `TransitionRuleDeserializer`,
 /// discriminator: `"type"`
 /// - `Action` — `ActionSerializer` / `ActionDeserializer`, discriminator: `"type"`
+/// - `ExecutionPhase` — `ExecutionPhaseSerializer` / `ExecutionPhaseDeserializer`,
+/// discriminator: `"type"`
 ///
 /// **Mixin/builder pairs** (immutable builder-pattern domain objects — Jackson uses the builder
-/// via reflection; native-image requires corresponding `NativeImageConfig` entries):
+/// via reflection; native-image requires corresponding `CoreModelNativeConfig` entries):
 /// - `Workflow` + `Workflow.Builder`
 /// - `AgentConfig` + `AgentConfig.Builder`
 /// - `ExecutionStep` + `ExecutionStep.Builder`
@@ -50,7 +53,7 @@ import java.io.Serial;
 ///   to avoid reflection on the mixin class in native image
 ///
 /// @implNote GraalVM-safe. All registrations are explicit — no classpath scanning.
-/// Builder classes registered here require companion entries in `NativeImageConfig`
+/// Builder classes registered here require companion entries in `CoreModelNativeConfig`
 /// in `hensu-server` for native-image reflection.
 /// @see WorkflowSerializer for the convenience factory API
 public class HensuJacksonModule extends SimpleModule {
@@ -76,6 +79,9 @@ public class HensuJacksonModule extends SimpleModule {
 
         addSerializer(PlanStepAction.class, new PlanStepActionSerializer());
         addDeserializer(PlanStepAction.class, new PlanStepActionDeserializer());
+
+        addSerializer(ExecutionPhase.class, new ExecutionPhaseSerializer());
+        addDeserializer(ExecutionPhase.class, new ExecutionPhaseDeserializer());
 
         addDeserializer(WorkflowStateSchema.class, new WorkflowStateSchemaDeserializer());
     }

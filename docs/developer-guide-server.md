@@ -18,6 +18,7 @@ This guide covers the architecture, patterns, and best practices for developing 
   - [Integration Testing](#integration-testing)
 - [Distributed Recovery (Leasing)](#distributed-recovery-leasing)
   - [Manual Crash-Recovery Testing](#manual-crash-recovery-testing)
+- [Pause / Resume Protocol](#pause--resume-protocol)
 - [GraalVM Native Image](#graalvm-native-image)
 - [Configuration](#configuration)
 - [Best Practices](#best-practices)
@@ -192,7 +193,10 @@ public HensuEnvironment hensuEnvironment() {
     Properties properties = extractHensuProperties();
     HensuFactory.Builder factoryBuilder = HensuFactory.builder()
             .loadCredentials(properties)
-            .actionExecutor(actionExecutor);  // ServerActionExecutor (send-action dispatcher)
+            .agentProviders(List.of(new LangChain4jProvider()))
+            .actionExecutor(actionExecutor)   // ServerActionExecutor (send-action dispatcher)
+            .planObservers(planObservers.stream().toList())
+            .planResponseParser(new JacksonPlanResponseParser(objectMapper));
 
     // Conditional persistence: JDBC when DataSource available, in-memory otherwise
     boolean dsActive = config.getOptionalValue("quarkus.datasource.active", Boolean.class)
@@ -283,7 +287,9 @@ io.hensu.server/
 │   ├── WorkflowResource        # Workflow definition management (push/pull/delete/list)
 │   ├── ExecutionResource        # Execution runtime (start/resume/status/plan)
 │   ├── ExecutionEventResource   # Execution monitoring SSE
-│   └── McpGatewayResource       # MCP split-pipe SSE/POST
+│   ├── McpGatewayResource       # MCP split-pipe SSE/POST
+│   ├── ExecutionStartRequest    # Request DTO for POST /executions
+│   └── ResumeRequest            # Request DTO for POST /executions/{id}/resume
 │
 ├── validation/            # Input validation (Bean Validation)
 │   ├── InputValidator            # Shared validation predicates (safe-ID, dangerous chars, size)
@@ -294,14 +300,16 @@ io.hensu.server/
 │   ├── ValidWorkflow             # Custom constraint for Workflow request bodies
 │   ├── ValidWorkflowValidator    # Deep-validates workflow object graph
 │   ├── LogSanitizer              # Strips CR/LF for log injection prevention
+│   ├── IllegalArgumentExceptionMapper  # Maps IllegalArgumentException → 400
 │   └── ConstraintViolationExceptionMapper  # Global 400 error mapper
 │
 ├── config/                # CDI configuration
 │   ├── HensuEnvironmentProducer        # HensuFactory → HensuEnvironment
-│   ├── NativeImageConfig               # @RegisterForReflection — Hensu domain model
+│   ├── CoreModelNativeConfig               # @RegisterForReflection — Hensu domain model
 │   ├── LangChain4jNativeConfig         # @RegisterForReflection — JDK HTTP transport
 │   ├── LangChain4jAnthropicNativeConfig # @RegisterForReflection — Anthropic DTOs
 │   ├── LangChain4jGeminiNativeConfig   # @RegisterForReflection — Gemini DTOs
+│   ├── ExecutionEventNativeConfig      # @RegisterForReflection — SSE event sealed subtypes
 │   ├── ServerBootstrap                 # Startup registrations
 │   └── ServerConfiguration             # CDI delegation + server beans
 │
@@ -351,6 +359,9 @@ io.hensu.server/
 ├── streaming/             # Execution event streaming
 │   ├── ExecutionEvent           # Event DTOs (sealed interface)
 │   └── ExecutionEventBroadcaster # PlanObserver + broadcaster
+│
+├── review/                # Server-side review handling
+│   └── InteractiveReviewHandler  # @ApplicationScoped default ReviewHandler for plan reviews
 │
 └── tenant/                # Multi-tenancy
     ├── TenantContext            # ScopedValue-based context
@@ -410,6 +421,11 @@ The REST API is split into two distinct resources:
 2. **ExecutionResource** (`/api/v1/executions`) - Execution runtime (client integration)
    - Start, resume, status, plan, result
    - Uses `WorkflowService` for business logic
+
+**Workflow deletion is a soft-delete.** `DELETE /workflows/{workflowId}` sets a `deleted_at`
+timestamp rather than removing the row – hard-delete would violate FK constraints from
+`execution_states` that reference the workflow. All queries filter on `deleted_at IS NULL`,
+so soft-deleted workflows are invisible to the application.
 
 **Do not mix** definition management with execution in the same resource.
 
@@ -579,7 +595,7 @@ consistency — cycles and dangling sub-workflow references — is a second pass
 
 ```java
 // WorkflowRegistryService.push()
-pushLock.runExclusive(tenantId, workflowId, () -> {
+pushLock.withLock(tenantId, workflowId, () -> {
     SubWorkflowGraphValidator.validate(
             workflow,
             id -> id.equals(workflow.getId())
@@ -1222,6 +1238,80 @@ on the surviving node.
 
 ---
 
+## Pause / Resume Protocol
+
+When a post-processor needs out-of-band input (e.g. human review), the execution pauses without
+re-running the agent on resume. The protocol has four moving parts:
+
+### ExecutionPhase
+
+`ExecutionPhase` (sealed, in `hensu-core`) tracks where the execution stopped:
+
+| Variant    | Meaning                                                                                                               |
+|------------|-----------------------------------------------------------------------------------------------------------------------|
+| `Initial`  | Normal forward execution – no pause in progress.                                                                      |
+| `Awaiting` | Paused inside the post-pipeline. Carries `nodeId`, `processorId`, `cachedResult`, `correlationId`, and `requestedAt`. |
+| `Terminal` | Execution reached a final state (completed / failed / rejected).                                                      |
+
+The phase is persisted as JSONB in the `phase` column (`V2__add_execution_phase.sql`).
+`JdbcWorkflowStateRepository` reads and writes it via `ExecutionPhaseSerializer` /
+`ExecutionPhaseDeserializer` (registered in `HensuJacksonModule`).
+
+### ProcessorOutcome.SuspendForExternal
+
+A post-processor signals a pause by returning `SuspendForExternal(correlationId)`. The pipeline
+saves the current position and the cached node result, then returns control to `WorkflowExecutor`,
+which sets the phase to `Awaiting` and checkpoints the state.
+
+### ResumeInput
+
+`ResumeInput` (sealed, in `hensu-core`) carries the caller's intent when resuming:
+
+| Variant             | Purpose                                                  |
+|---------------------|----------------------------------------------------------|
+| `ApplyReview`       | Wraps a `ReviewDecision` (Approve / Reject / Backtrack). |
+| `ApplyContextEdits` | Merges key-value edits into execution context.           |
+| `None`              | Plain resume with no additional input.                   |
+
+`ResumeInput` is **transient** – it lives on `HensuState` but is never persisted or snapshotted.
+
+### Server Resume Flow
+
+1. **REST layer** – `ExecutionResource` receives a `ResumeRequest` and calls `toResumeInput()` to
+   map it to the core sealed type.
+2. **Service layer** – `ExecutionStateService.resumeExecution()` restores the `HensuSnapshot`,
+   converts it to a `HensuState`, sets `state.setResumeInput(resumeInput)`, and calls
+   `executeFrom()`.
+3. **Executor** – `WorkflowExecutor.executeLoop()` reads the phase. For `Awaiting` it
+   re-enters the post-pipeline at the named processor via `ProcessorPipeline.executePostFrom()`.
+4. **Post-processor** – the processor (e.g. `ReviewPostProcessor`) checks
+   `state.getResumeInput()`. If an `ApplyReview` is present it consumes the decision directly
+   instead of calling `requestReview()` again (which would return `Pending` and loop).
+
+### SSE Stream Lifecycle on Pause
+
+The SSE stream is **closed** when an execution pauses. Paused executions may wait days or weeks
+for human review – holding an HTTP connection open is wasteful and will be killed by idle
+timeouts long before the review arrives. Clients must re-subscribe to
+`GET /executions/{executionId}/events` after submitting a `POST /executions/{executionId}/resume`
+to receive post-resume events.
+
+### REST Request Shape
+
+```json
+{
+  "decision": "approve | reject | backtrack",
+  "reason": "optional – required for reject/backtrack",
+  "targetStep": "optional – node ID for backtrack",
+  "contextEdits": { "key": "value" }
+}
+```
+
+Omitting `decision` with non-empty `contextEdits` produces `ApplyContextEdits`. An empty or null
+body produces `ResumeInput.None`.
+
+---
+
 ## GraalVM Native Image
 
 The server is deployed as a GraalVM native image via Quarkus. All server code — and any dependency it pulls in — must be native-image safe. See the [hensu-core Developer Guide](developer-guide-core.md#graalvm-native-image-constraints) for the foundational rules (no reflection, no classpath scanning, no dynamic proxies, no runtime bytecode generation). This section covers **server-specific** concerns.
@@ -1316,22 +1406,23 @@ public Object dynamicBean() {
 }
 ```
 
-### NativeImageConfig — Jackson Reflection Registration
+### CoreModelNativeConfig — Jackson Reflection Registration
 
 `hensu-core` domain classes are deliberately free of Quarkus annotations. When Jackson needs to access them reflectively at runtime (private constructors, builder setters, `build()` methods), GraalVM static analysis cannot trace the call sites. The fix lives entirely in `hensu-server`.
 
-Registrations are split across four dedicated classes to keep each concern isolated:
+Registrations are split across five dedicated classes to keep each concern isolated:
 
 | Class                              | Covers                                                                                    |
 |------------------------------------|-------------------------------------------------------------------------------------------|
-| `NativeImageConfig`                | Hensu domain model — Jackson mixin/builder targets, `treeToValue` types, embedded records |
+| `CoreModelNativeConfig`            | Hensu domain model — Jackson mixin/builder targets, `treeToValue` types, embedded records |
 | `LangChain4jNativeConfig`          | Shared JDK HTTP transport — `ServiceLoader`-instantiated client factory/builder/client    |
 | `LangChain4jAnthropicNativeConfig` | Anthropic API request/response DTOs and enums                                             |
 | `LangChain4jGeminiNativeConfig`    | Google AI Gemini API request/response DTOs and enums                                      |
+| `ExecutionEventNativeConfig`       | SSE event DTOs – `ExecutionEvent` sealed subtypes for native serialization                |
 
-#### NativeImageConfig — Hensu domain model
+#### CoreModelNativeConfig — Hensu domain model
 
-**Five patterns require registration here** (matching `NativeImageConfig` javadoc §1–§5):
+**Five patterns require registration here** (matching `CoreModelNativeConfig` javadoc §1–§5):
 
 1. **`@JsonPOJOBuilder` mixin targets** — Jackson instantiates the builder via its private no-arg constructor, calls each setter, then calls `build()`. GraalVM cannot trace these calls through the generic mixin machinery.
 
@@ -1396,10 +1487,10 @@ quarkus.native.resources.includes=stubs/**
 | Quarkus extensions                                  | Yes   | Provide native metadata                                                               |
 | Raw third-party libs                                | Maybe | Need `reflect-config.json` if reflective                                              |
 | `ObjectMapper.readTree()`                           | Yes   | No reflection — tree-model parsing                                                    |
-| `new ObjectMapper().readValue(json, MyClass.class)` | Maybe | Needs entry in `NativeImageConfig` unless Quarkus-managed                             |
+| `new ObjectMapper().readValue(json, MyClass.class)` | Maybe | Needs entry in `CoreModelNativeConfig` unless Quarkus-managed                         |
 | `mapper.treeToValue(node, SimpleRecord.class)`      | No    | Fix the deserializer — extract fields manually from `JsonNode`                        |
 | `getResourceAsStream("/path/" + dynamic + ".txt")`  | No    | Add pattern to `quarkus.native.resources.includes`                                    |
-| `@RegisterForReflection` on `hensu-core` classes    | No    | Keep Quarkus annotations out of core — register in `NativeImageConfig`                |
+| `@RegisterForReflection` on `hensu-core` classes    | No    | Keep Quarkus annotations out of core — register in `CoreModelNativeConfig`            |
 | `quarkus-jackson` for mixin-pattern types           | No    | Extension only scans direct annotations; mixins are runtime events                    |
 | LangChain4j `ChatModel` created via builder         | No    | Programmatic creation bypasses CDI scan — register DTOs in `LangChain4j*NativeConfig` |
 | Mutiny `Uni`/`Multi`                                | Yes   | Quarkus-managed                                                                       |
@@ -1433,7 +1524,7 @@ quarkus.datasource.db-kind=postgresql
 
 # Flyway schema migrations
 quarkus.flyway.migrate-at-start=true
-quarkus.flyway.schemas=hensu
+quarkus.flyway.schemas=runtime
 
 # In-memory profile (no PostgreSQL)
 %inmem.quarkus.datasource.active=false
@@ -1446,6 +1537,16 @@ hensu.lease.heartbeat-interval=30s
 hensu.lease.recovery-interval=60s
 hensu.lease.stale-threshold=90s
 %inmem.quarkus.scheduler.enabled=false
+
+# Credentials — loaded by HensuEnvironmentProducer from hensu.credentials.* prefix
+# hensu.credentials.ANTHROPIC_API_KEY=sk-ant-...
+# hensu.credentials.GOOGLE_API_KEY=AIza...
+
+# Default tenant (used when JWT tenant_id claim is absent, e.g. dev mode)
+# hensu.tenant.default=default
+
+# Verbose execution logging (enables LoggingExecutionListener)
+hensu.verbose.enabled=false
 
 # Logging
 quarkus.log.category."io.hensu".level=DEBUG

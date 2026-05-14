@@ -7,6 +7,7 @@ import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.review.ReviewDecision;
 import io.hensu.core.review.ReviewHandler;
+import io.hensu.core.review.ReviewOutcome;
 import io.hensu.core.rubric.evaluator.RubricEvaluation;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
@@ -197,21 +198,19 @@ public class DaemonReviewHandler implements ReviewHandler {
     }
 
     @Override
-    public ReviewDecision requestReview(
+    public ReviewOutcome requestReview(
             Node node,
             NodeResult result,
             HensuState state,
             ExecutionHistory history,
             ReviewConfig config,
             Workflow workflow) {
-        // Only delegate to inline CLI if this execution is not registered for daemon review.
-        // An execution may be registered but temporarily suspended (no sender) — in that case
-        // we still block and wait for a client to reattach, not fall through to stdin.
         if (!isInteractive(state.getExecutionId())) {
             return cliDelegate.requestReview(node, result, state, history, config, workflow);
         }
-        return sendReviewRequest(
-                state.getExecutionId(), node, result, state, history, config, workflow);
+        return ReviewOutcome.decided(
+                sendReviewRequest(
+                        state.getExecutionId(), node, result, state, history, config, workflow));
     }
 
     // — Private ———————————————————————————————————————————————————————————————

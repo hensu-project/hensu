@@ -5,8 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import io.hensu.core.plan.PlanSnapshot;
-import io.hensu.core.plan.PlanSnapshot.PlannedStepSnapshot;
+import io.hensu.core.plan.Plan;
+import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.WorkflowStateRepository;
 import java.time.Instant;
@@ -31,7 +31,15 @@ class ExecutionQueryServiceTest {
 
     private HensuSnapshot snapshot(String workflowId, String executionId, String currentNodeId) {
         return new HensuSnapshot(
-                workflowId, executionId, currentNodeId, Map.of(), null, null, Instant.now(), null);
+                workflowId,
+                executionId,
+                currentNodeId,
+                Map.of(),
+                null,
+                null,
+                null,
+                Instant.now(),
+                null);
     }
 
     @Nested
@@ -107,18 +115,13 @@ class ExecutionQueryServiceTest {
 
         @Test
         void shouldReturnPlanInfoWithCorrectFieldOrderWhenPlanActive() {
-            PlanSnapshot active =
-                    new PlanSnapshot(
+            Plan active =
+                    Plan.staticPlan(
                             "review-node",
                             List.of(
-                                    new PlannedStepSnapshot(
-                                            0, "tool-a", Map.of(), "first", "PENDING"),
-                                    new PlannedStepSnapshot(
-                                            1, "tool-b", Map.of(), "second", "PENDING"),
-                                    new PlannedStepSnapshot(
-                                            2, "tool-c", Map.of(), "third", "PENDING")),
-                            1,
-                            List.of());
+                                    PlannedStep.pending(0, "tool-a", Map.of(), "first"),
+                                    PlannedStep.pending(1, "tool-b", Map.of(), "second"),
+                                    PlannedStep.pending(2, "tool-c", Map.of(), "third")));
             HensuSnapshot withPlan =
                     new HensuSnapshot(
                             "wf-1",
@@ -127,6 +130,7 @@ class ExecutionQueryServiceTest {
                             Map.of(),
                             null,
                             active,
+                            null,
                             Instant.now(),
                             null);
             when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
@@ -134,9 +138,9 @@ class ExecutionQueryServiceTest {
 
             PlanInfo info = service.getPendingPlan("tenant-1", "exec-1").orElseThrow();
 
-            assertThat(info.planId()).isEqualTo("review-node");
+            assertThat(info.planId()).isEqualTo(active.id());
             assertThat(info.totalSteps()).isEqualTo(3);
-            assertThat(info.currentStep()).isEqualTo(1);
+            assertThat(info.currentStep()).isEqualTo(0);
         }
     }
 
@@ -145,7 +149,7 @@ class ExecutionQueryServiceTest {
 
         private HensuSnapshot withContext(Map<String, Object> context) {
             return new HensuSnapshot(
-                    "wf-1", "exec-1", null, context, null, null, Instant.now(), "completed");
+                    "wf-1", "exec-1", null, context, null, null, null, Instant.now(), "completed");
         }
 
         @Test

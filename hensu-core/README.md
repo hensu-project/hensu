@@ -12,6 +12,7 @@ The `hensu-core` module is the execution engine at the heart of Hensu. It provid
 - **Plan Engine** — Static or LLM-generated step-by-step plan execution within nodes
 - **Tool Registry** — Protocol-agnostic tool descriptors for plan generation and MCP integration
 - **Human Review** — Optional or required review checkpoints at any workflow step
+- **Pause / Resume** — Phase-aware suspend and resume for long-running executions with out-of-band review support
 - **Action System** — Extensible action dispatch (send, execute) with pluggable executors
 - **Template Resolution** — `{variable}` placeholder substitution in prompts
 - **State Snapshots** — Serializable execution state for persistence and time-travel debugging
@@ -273,6 +274,7 @@ hensu-core/src/main/java/io/hensu/core/
 │       └── StubResponseRegistry.java
 ├── execution/
 │   ├── WorkflowExecutor.java          # Main graph traversal engine (execute + executeFrom for resume)
+│   ├── NodeLifecycleCoordinator.java  # Per-node lifecycle: phase dispatch + pipeline orchestration
 │   ├── executor/
 │   │   ├── NodeExecutor.java              # Interface for node type executors
 │   │   ├── NodeExecutorRegistry.java      # Registry interface for node executor lookup
@@ -309,11 +311,12 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── CheckpointPreProcessor.java          # Fires listener.onCheckpoint for crash-recovery persistence
 │   │   ├── NodeStartPreProcessor.java           # Fires listener.onNodeStart for observability
 │   │   ├── OutputExtractionPostProcessor.java   # Validates then stores node output in state context
+│   │   ├── RubricPostProcessor.java             # Quality evaluation + auto-backtrack
+│   │   ├── ReviewPostProcessor.java             # Human-in-the-loop review checkpoints (sync or async)
 │   │   ├── NodeCompletePostProcessor.java       # Fires listener.onNodeComplete for observability
 │   │   ├── HistoryPostProcessor.java            # Records execution steps for audit
-│   │   ├── ReviewPostProcessor.java             # Human-in-the-loop review checkpoints
-│   │   ├── RubricPostProcessor.java             # Quality evaluation + auto-backtrack
-│   │   └── TransitionPostProcessor.java         # Evaluates transition rules, sets next node
+│   │   ├── TransitionPostProcessor.java         # Evaluates transition rules, sets next node
+│   │   └── ProcessorOutcome.java                # Sealed pipeline outcome: Continue, Terminal, SuspendForExternal
 │   ├── action/
 │   │   ├── Action.java            # Sealed interface: Send | Execute
 │   │   ├── ActionExecutor.java    # Action dispatch interface
@@ -379,13 +382,22 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── PlanObserver.java          # Event callback interface
 │   └── PlanEvent.java             # Plan lifecycle events
 ├── review/                        # Human review support
+│   ├── ReviewHandler.java         # Review callback interface
+│   ├── ReviewOutcome.java         # Sealed: Decided(ReviewDecision) | Pending(correlationId)
+│   ├── ReviewDecision.java        # Sealed: Approve | Backtrack | Reject
+│   ├── ReviewConfig.java          # Per-node review configuration
+│   └── ReviewMode.java            # DISABLED, OPTIONAL, REQUIRED
+├── resume/
+│   └── ResumeInput.java           # Sealed: ApplyReview | ApplyContextEdits | None
 ├── template/                      # {variable} placeholder resolution
 ├── util/
 │   ├── AgentOutputValidator.java  # LLM output safety checks (control chars, Unicode tricks, size)
-│   └── JsonUtil.java              # Dependency-free JSON extraction utilities
+│   ├── JsonUtil.java              # Dependency-free JSON extraction utilities
+│   └── LogSanitizer.java         # Strips CR/LF from logged values to prevent log injection
 └── state/                         # Execution state and persistence
     ├── HensuState.java            # Mutable runtime state during execution
     ├── HensuSnapshot.java         # Immutable checkpoint record for persistence
+    ├── ExecutionPhase.java        # Sealed: Initial | Awaiting(nodeId, processorId, ...) | Terminal
     ├── WorkflowStateRepository.java     # Tenant-scoped state storage interface
     └── InMemoryWorkflowStateRepository.java  # Default in-memory implementation
 ```

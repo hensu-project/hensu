@@ -34,7 +34,7 @@ import java.util.Map;
 /// - `Branch` (id, agentId, prompt, rubricId, weight)
 ///
 /// Complex types that contain `Duration` or deeply nested structures delegate to `treeToValue`
-/// and require reflection registration in `NativeImageConfig` in `hensu-server`:
+/// and require reflection registration in `CoreModelNativeConfig` in `hensu-server`:
 /// - `PlanningConfig` (contains `PlanConstraints` which contains `java.time.Duration`)
 /// - `Plan` (contains `List<PlannedStep>` and `PlanConstraints`)
 ///

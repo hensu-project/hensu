@@ -190,9 +190,33 @@ public sealed interface ExecutionEvent {
         }
     }
 
-    /// Execution paused event (awaiting review).
+    /// Execution paused event (awaiting review or external input).
+    ///
+    /// Carries the same public context as {@link ExecutionCompleted} so that clients
+    /// connected to the SSE stream do not need a follow-up query to display state.
+    /// Includes the {@code correlationId} that clients must echo back when resuming
+    /// the execution, enabling the server to validate the resume against the
+    /// correct pause point.
+    ///
+    /// @param executionId   the execution identifier, never null
+    /// @param workflowId    the workflow definition identifier, never null
+    /// @param nodeId        the node where execution paused, may be null
+    /// @param planId        the active plan identifier, may be null
+    /// @param correlationId opaque identifier for this pause point – must be sent
+    ///                      back in the resume request, may be null for plan-level pauses
+    /// @param reason        why execution paused (e.g. "review"), never null
+    /// @param output        public context variables at the point of pause, never null,
+    ///                      may be empty
+    /// @param timestamp     when the event occurred, never null
     record ExecutionPaused(
-            String executionId, String nodeId, String planId, String reason, Instant timestamp)
+            String executionId,
+            String workflowId,
+            String nodeId,
+            String planId,
+            String correlationId,
+            String reason,
+            Map<String, Object> output,
+            Instant timestamp)
             implements ExecutionEvent {
 
         @Override
@@ -200,9 +224,33 @@ public sealed interface ExecutionEvent {
             return "execution.paused";
         }
 
+        /// Creates a pause event with workflow output context.
+        ///
+        /// @param executionId   the execution identifier, not null
+        /// @param workflowId    the workflow identifier, not null
+        /// @param nodeId        the node where execution paused, may be null
+        /// @param planId        the active plan identifier, may be null
+        /// @param correlationId opaque pause-point identifier, may be null
+        /// @param reason        why execution paused, not null
+        /// @param output        public context variables, not null
+        /// @return new event, never null
         public static ExecutionPaused now(
-                String executionId, String nodeId, String planId, String reason) {
-            return new ExecutionPaused(executionId, nodeId, planId, reason, Instant.now());
+                String executionId,
+                String workflowId,
+                String nodeId,
+                String planId,
+                String correlationId,
+                String reason,
+                Map<String, Object> output) {
+            return new ExecutionPaused(
+                    executionId,
+                    workflowId,
+                    nodeId,
+                    planId,
+                    correlationId,
+                    reason,
+                    output,
+                    Instant.now());
         }
     }
 

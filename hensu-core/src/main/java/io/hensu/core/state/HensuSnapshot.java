@@ -1,7 +1,7 @@
 package io.hensu.core.state;
 
 import io.hensu.core.execution.result.ExecutionHistory;
-import io.hensu.core.plan.PlanSnapshot;
+import io.hensu.core.plan.Plan;
 import java.io.Serializable;
 import java.time.Instant;
 import java.util.Collections;
@@ -36,27 +36,38 @@ import java.util.Objects;
 /// @param context workflow variables and data, not null
 /// @param history execution history including steps and backtracks, not null
 /// @param activePlan current micro-plan state if planning is active, may be null
+/// @param phase execution phase within the current node's lifecycle, not null after construction
 /// @param createdAt when this snapshot was created, not null
 /// @param checkpointReason why this checkpoint was created, may be null
 /// @see HensuState for mutable execution state
-/// @see PlanSnapshot for plan state within a node
+/// @see Plan for active plan within a node
+/// @see ExecutionPhase for phase semantics
 public record HensuSnapshot(
         String workflowId,
         String executionId,
         String currentNodeId,
         Map<String, Object> context,
         ExecutionHistory history,
-        PlanSnapshot activePlan,
+        Plan activePlan,
+        ExecutionPhase phase,
         Instant createdAt,
         String checkpointReason)
         implements Serializable {
 
     /// Compact constructor with validation and defensive copying.
+    ///
+    /// **Implementation note – context wrapping:** uses
+    /// {@code Collections.unmodifiableMap(new HashMap<>(…))} instead of
+    /// {@code Map.copyOf()} because deserialized contexts may contain {@code null} values
+    /// (Jackson maps JSON {@code null} to Java {@code null}), which {@code Map.copyOf()}
+    /// rejects with {@link NullPointerException}.
     public HensuSnapshot {
         Objects.requireNonNull(workflowId, "workflowId must not be null");
         Objects.requireNonNull(executionId, "executionId must not be null");
+        //noinspection Java9CollectionFactory
         context = context != null ? Collections.unmodifiableMap(new HashMap<>(context)) : Map.of();
         history = history != null ? history.copy() : new ExecutionHistory();
+        phase = phase != null ? phase : ExecutionPhase.INITIAL;
         createdAt = createdAt != null ? createdAt : Instant.now();
     }
 
@@ -84,28 +95,8 @@ public record HensuSnapshot(
                 state.getCurrentNode(),
                 state.getContext(),
                 state.getHistory(),
-                null,
-                Instant.now(),
-                reason);
-    }
-
-    /// Creates a snapshot with an active plan state.
-    ///
-    /// @param state the current workflow state, not null
-    /// @param planSnapshot the active plan execution state, not null
-    /// @param reason why this checkpoint is being created, may be null
-    /// @return new snapshot with plan state, never null
-    public static HensuSnapshot from(HensuState state, PlanSnapshot planSnapshot, String reason) {
-        Objects.requireNonNull(state, "state must not be null");
-        Objects.requireNonNull(planSnapshot, "planSnapshot must not be null");
-
-        return new HensuSnapshot(
-                state.getWorkflowId(),
-                state.getExecutionId(),
-                state.getCurrentNode(),
-                state.getContext(),
-                state.getHistory(),
-                planSnapshot,
+                state.getActivePlan(),
+                state.getPhase(),
                 Instant.now(),
                 reason);
     }
@@ -120,6 +111,8 @@ public record HensuSnapshot(
                 .currentNode(currentNodeId)
                 .context(context)
                 .history(history)
+                .activePlan(activePlan)
+                .phase(phase)
                 .build();
     }
 

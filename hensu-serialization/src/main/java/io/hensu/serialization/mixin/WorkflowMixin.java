@@ -14,7 +14,7 @@ import io.hensu.core.workflow.Workflow;
 ///
 /// @implNote `Workflow.Builder` has a private constructor. Native-image deployments
 /// require `Workflow.class` and `Workflow.Builder.class` to be registered in
-/// `NativeImageConfig` in `hensu-server`.
+/// `CoreModelNativeConfig` in `hensu-server`.
 ///
 /// @see WorkflowBuilderMixin
 /// @see io.hensu.serialization.HensuJacksonModule

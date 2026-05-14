@@ -56,9 +56,13 @@ public final class ScoreExtractingEvaluator implements RubricEvaluator {
             logger.warning(
                     "No 'score' key in context for criterion '"
                             + criterion.getId()
-                            + "'. Ensure the node has a ScoreTransition so the engine extracts"
-                            + " 'score' automatically.");
+                            + "'. Ensure the node has a ScoreTransition or rubricId so the engine"
+                            + " extracts 'score' automatically.");
             return 0.0;
+        }
+
+        if (score <= 1.0 && score >= 0.0) {
+            score = score * 100.0;
         }
 
         if (score < criterion.getMinScore()) {
@@ -73,6 +77,9 @@ public final class ScoreExtractingEvaluator implements RubricEvaluator {
 
     private Double parseNumber(Object value) {
         return switch (value) {
+            // Explicit null case – kept separate from default so the compiler enforces
+            // exhaustiveness when new subtypes are added; merging with default would
+            // silently swallow unhandled types instead of producing a compile error.
             case null -> null;
             case Number n -> n.doubleValue();
             case String s -> {

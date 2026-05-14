@@ -1,8 +1,8 @@
 package io.hensu.server.workflow;
 
+import io.hensu.core.util.LogSanitizer;
 import io.hensu.server.persistence.ExecutionLeaseManager;
 import io.hensu.server.persistence.ExecutionLeaseManager.ExecutionRef;
-import io.hensu.server.validation.LogSanitizer;
 import io.quarkus.scheduler.Scheduled;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;

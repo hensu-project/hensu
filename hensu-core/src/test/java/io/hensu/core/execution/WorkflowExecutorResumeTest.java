@@ -3,14 +3,17 @@ package io.hensu.core.execution;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 import io.hensu.core.agent.AgentResponse;
+import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExitStatus;
+import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.WorkflowTest;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -77,5 +80,95 @@ class WorkflowExecutorResumeTest extends WorkflowExecutorTestBase {
         assertThatThrownBy(() -> executor.executeFrom(workflow, staleState))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Node not found");
+    }
+
+    @Test
+    void shouldSkipNodeExecutionOnResumeWithAwaitingPhase() throws Exception {
+        // Resume with Awaiting must NOT re-run the agent.
+        // The post-pipeline runs from TransitionPostProcessor (the processor that
+        // would have run after the suspending processor in a real review flow).
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("phase-resume")
+                        .agent(agentCfg())
+                        .startNode(step("step1", "end"))
+                        .node(end("end"))
+                        .build();
+
+        var cachedResult = NodeResult.success("already computed", Map.of());
+        var phase =
+                new ExecutionPhase.Awaiting(
+                        "step1", "TransitionPostProcessor", cachedResult, "corr-1", Instant.now());
+
+        var savedState =
+                new HensuState.Builder()
+                        .executionId("phase-exec")
+                        .workflowId("phase-resume")
+                        .currentNode("step1")
+                        .context(new HashMap<>())
+                        .history(new ExecutionHistory())
+                        .phase(phase)
+                        .build();
+
+        var result = executor.executeFrom(workflow, savedState);
+
+        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
+        verify(mockAgent, never()).execute(any(), any());
+    }
+
+    @Test
+    void shouldThrowOnResumeWithTerminalPhase() {
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("terminal-resume")
+                        .agent(agentCfg())
+                        .startNode(step("step1", "end"))
+                        .node(end("end"))
+                        .build();
+
+        var savedState =
+                new HensuState.Builder()
+                        .executionId("terminal-exec")
+                        .workflowId("terminal-resume")
+                        .currentNode("step1")
+                        .context(new HashMap<>())
+                        .history(new ExecutionHistory())
+                        .phase(ExecutionPhase.TERMINAL)
+                        .build();
+
+        assertThatThrownBy(() -> executor.executeFrom(workflow, savedState))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("terminal");
+    }
+
+    @Test
+    void shouldThrowWhenPhaseNodeIdMismatchesCurrentNode() {
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("mismatch-resume")
+                        .agent(agentCfg())
+                        .startNode(step("step1", "end"))
+                        .node(end("end"))
+                        .build();
+
+        var phase =
+                new ExecutionPhase.Awaiting(
+                        "wrong-node",
+                        "TransitionPostProcessor",
+                        NodeResult.success("cached", Map.of()),
+                        "corr-1",
+                        Instant.now());
+
+        var savedState =
+                new HensuState.Builder()
+                        .executionId("mismatch-exec")
+                        .workflowId("mismatch-resume")
+                        .currentNode("step1")
+                        .context(new HashMap<>())
+                        .history(new ExecutionHistory())
+                        .phase(phase)
+                        .build();
+
+        assertThatThrownBy(() -> executor.executeFrom(workflow, savedState))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("wrong-node")
+                .hasMessageContaining("step1");
     }
 }

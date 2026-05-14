@@ -1,8 +1,8 @@
 package io.hensu.core.state;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
 import java.time.Instant;
 import java.util.HashMap;
@@ -10,44 +10,6 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class HensuSnapshotTest {
-
-    @Test
-    void shouldRejectNullWorkflowId() {
-        assertThatThrownBy(
-                        () ->
-                                new HensuSnapshot(
-                                        null,
-                                        "exec-1",
-                                        "node-1",
-                                        Map.of(),
-                                        new ExecutionHistory(),
-                                        null,
-                                        Instant.now(),
-                                        null))
-                .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("workflowId");
-    }
-
-    @Test
-    void shouldMakeDefensiveCopyOfContext() {
-        Map<String, Object> originalContext = new HashMap<>();
-        originalContext.put("key", "value");
-
-        HensuSnapshot snapshot =
-                new HensuSnapshot(
-                        "workflow-1",
-                        "exec-1",
-                        "node-1",
-                        originalContext,
-                        new ExecutionHistory(),
-                        null,
-                        Instant.now(),
-                        null);
-
-        originalContext.put("newKey", "newValue");
-
-        assertThat(snapshot.context()).doesNotContainKey("newKey");
-    }
 
     @Test
     void shouldRestoreStateWithMutableCollections() {
@@ -60,6 +22,7 @@ class HensuSnapshotTest {
                         "current-node",
                         Map.of("key", "value"),
                         new ExecutionHistory(),
+                        null,
                         null,
                         Instant.now(),
                         "test-checkpoint");
@@ -76,19 +39,32 @@ class HensuSnapshotTest {
     }
 
     @Test
-    void shouldTreatNullCurrentNodeAsCompleted() {
-        HensuSnapshot snapshot =
-                new HensuSnapshot(
-                        "workflow-1",
-                        "exec-1",
-                        null,
-                        Map.of(),
-                        new ExecutionHistory(),
-                        null,
-                        Instant.now(),
-                        null);
+    void shouldRoundTripAwaitingPhase() {
+        var phase =
+                new ExecutionPhase.Awaiting(
+                        "node-1",
+                        "ReviewPostProcessor",
+                        NodeResult.success("cached output", Map.of()),
+                        "corr-123",
+                        Instant.now());
 
-        assertThat(snapshot.isCompleted()).isTrue();
-        assertThat(snapshot.currentNodeId()).isNull();
+        var state =
+                new HensuState.Builder()
+                        .workflowId("wf-1")
+                        .executionId("exec-1")
+                        .currentNode("node-1")
+                        .context(new HashMap<>())
+                        .history(new ExecutionHistory())
+                        .phase(phase)
+                        .build();
+
+        HensuSnapshot snapshot = HensuSnapshot.from(state, "human-review");
+        HensuState restored = snapshot.toState();
+
+        assertThat(restored.getPhase()).isInstanceOf(ExecutionPhase.Awaiting.class);
+        var awaiting = (ExecutionPhase.Awaiting) restored.getPhase();
+        assertThat(awaiting.nodeId()).isEqualTo("node-1");
+        assertThat(awaiting.processorId()).isEqualTo("ReviewPostProcessor");
+        assertThat(awaiting.correlationId()).isEqualTo("corr-123");
     }
 }

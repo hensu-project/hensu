@@ -1,7 +1,8 @@
 package io.hensu.server.api;
 
+import io.hensu.core.resume.ResumeInput;
+import io.hensu.core.util.LogSanitizer;
 import io.hensu.server.security.RequestTenantResolver;
-import io.hensu.server.validation.LogSanitizer;
 import io.hensu.server.validation.ValidId;
 import io.hensu.server.workflow.ExecutionNotFoundException;
 import io.hensu.server.workflow.ExecutionOutput;
@@ -9,12 +10,10 @@ import io.hensu.server.workflow.ExecutionStartResult;
 import io.hensu.server.workflow.ExecutionStatus;
 import io.hensu.server.workflow.ExecutionSummary;
 import io.hensu.server.workflow.PlanInfo;
-import io.hensu.server.workflow.ResumeDecision;
 import io.hensu.server.workflow.WorkflowNotFoundException;
 import io.hensu.server.workflow.WorkflowService;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
@@ -150,13 +149,28 @@ public class ExecutionResource {
 
     /// Resumes a paused workflow execution.
     ///
-    /// ### Request
+    /// ### Request — review decision
+    /// The `correlationId` must match the id returned in the execution status
+    /// when the workflow paused for review.
     /// ```
     /// POST /api/v1/executions/{executionId}/resume
     /// Authorization: Bearer <jwt>
     /// Content-Type: application/json
     ///
-    /// {"approved": true, "modifications": {}}
+    /// {"correlationId": "...", "decision": "approve"}
+    /// {"correlationId": "...", "decision": "reject", "reason": "Quality too low"}
+    /// {"correlationId": "...", "decision": "backtrack", "targetStep": "draft",
+    /// "reason": "Needs revision"}
+    /// ```
+    ///
+    /// ### Request — context edits only (no review)
+    /// ```json
+    /// {"contextEdits": {"key": "value"}}
+    /// ```
+    ///
+    /// ### Request — plain resume (recovery restart)
+    /// ```json
+    /// {}
     /// ```
     ///
     /// ### Response (200 OK)
@@ -175,15 +189,8 @@ public class ExecutionResource {
                 LogSanitizer.sanitize(executionId), tenantId);
 
         try {
-            ResumeDecision decision =
-                    request != null && request.approved()
-                            ? ResumeDecision.modify(
-                                    request.modifications() != null
-                                            ? request.modifications()
-                                            : Map.of())
-                            : ResumeDecision.approve();
-
-            workflowService.resumeExecution(tenantId, executionId, decision);
+            ResumeInput resumeInput = request != null ? request.toResumeInput() : ResumeInput.NONE;
+            workflowService.resumeExecution(tenantId, executionId, resumeInput);
 
             return Response.ok().entity(Map.of("status", "resumed")).build();
         } catch (ExecutionNotFoundException e) {
@@ -323,18 +330,4 @@ public class ExecutionResource {
             throw new NotFoundException(e.getMessage());
         }
     }
-
-    /// Request body for starting an execution.
-    ///
-    /// @param workflowId the workflow to execute, not null, not blank
-    /// @param context initial execution context variables, may be null
-    public record ExecutionStartRequest(
-            @NotBlank(message = "workflowId is required") @ValidId String workflowId,
-            Map<String, Object> context) {}
-
-    /// Request body for resuming a paused execution.
-    ///
-    /// @param approved whether the pending plan is approved
-    /// @param modifications optional context modifications, may be null
-    public record ResumeRequest(boolean approved, Map<String, Object> modifications) {}
 }

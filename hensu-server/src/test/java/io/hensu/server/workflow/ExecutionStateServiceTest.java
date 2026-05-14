@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -12,15 +13,19 @@ import static org.mockito.Mockito.when;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExitStatus;
+import io.hensu.core.resume.ResumeInput;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.persistence.ExecutionLeaseManager;
+import io.hensu.server.streaming.ExecutionEvent;
+import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Callable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -31,6 +36,7 @@ class ExecutionStateServiceTest {
     private WorkflowStateRepository stateRepository;
     private WorkflowRegistryService registryService;
     private ExecutionLeaseManager leaseManager;
+    private ExecutionEventBroadcaster eventBroadcaster;
     private ExecutionStateService service;
 
     @BeforeEach
@@ -39,10 +45,25 @@ class ExecutionStateServiceTest {
         stateRepository = mock(WorkflowStateRepository.class);
         registryService = mock(WorkflowRegistryService.class);
         leaseManager = mock(ExecutionLeaseManager.class);
+        eventBroadcaster = mock(ExecutionEventBroadcaster.class);
         when(leaseManager.tryClaim(any(), any())).thenReturn(true);
+
+        // Allow execution to run within runAs
+        try {
+            doAnswer(invocation -> ((Callable<?>) invocation.getArgument(1)).call())
+                    .when(eventBroadcaster)
+                    .runAs(any(), any());
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
         service =
                 new ExecutionStateService(
-                        workflowExecutor, stateRepository, registryService, leaseManager);
+                        workflowExecutor,
+                        stateRepository,
+                        registryService,
+                        leaseManager,
+                        eventBroadcaster);
     }
 
     private HensuSnapshot pausedSnapshot() {
@@ -51,6 +72,7 @@ class ExecutionStateServiceTest {
                 "exec-1",
                 "node-1",
                 new HashMap<>(Map.of("k", "v")),
+                null,
                 null,
                 null,
                 Instant.now(),
@@ -82,8 +104,9 @@ class ExecutionStateServiceTest {
         when(workflowExecutor.executeFrom(any(), any(), any()))
                 .thenReturn(new ExecutionResult.Completed(completedState(), ExitStatus.SUCCESS));
 
-        ResumeDecision decision =
-                new ResumeDecision(true, Map.of("approved", true, "reviewer_note", "looks good"));
+        ResumeInput decision =
+                new ResumeInput.ApplyContextEdits(
+                        Map.of("approved", true, "reviewer_note", "looks good"));
 
         service.resumeExecution("tenant-1", "exec-1", decision);
 
@@ -108,6 +131,10 @@ class ExecutionStateServiceTest {
         ArgumentCaptor<HensuSnapshot> savedCaptor = ArgumentCaptor.forClass(HensuSnapshot.class);
         verify(stateRepository).save(eq("tenant-1"), savedCaptor.capture());
         assertThat(savedCaptor.getValue().checkpointReason()).isEqualTo("completed");
+
+        verify(eventBroadcaster)
+                .publish(eq("exec-1"), any(ExecutionEvent.ExecutionCompleted.class));
+        verify(eventBroadcaster).complete(eq("exec-1"));
     }
 
     @Test

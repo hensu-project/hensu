@@ -20,7 +20,15 @@ class InMemoryWorkflowStateRepositoryTest {
     private HensuSnapshot createSnapshot(
             String workflowId, String executionId, String currentNodeId) {
         return new HensuSnapshot(
-                workflowId, executionId, currentNodeId, Map.of(), null, null, Instant.now(), null);
+                workflowId,
+                executionId,
+                currentNodeId,
+                Map.of(),
+                null,
+                null,
+                null,
+                Instant.now(),
+                null);
     }
 
     @Test
