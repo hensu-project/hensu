@@ -392,7 +392,8 @@ hensu-core/src/main/java/io/hensu/core/
 ├── template/                      # {variable} placeholder resolution
 ├── util/
 │   ├── AgentOutputValidator.java  # LLM output safety checks (control chars, Unicode tricks, size)
-│   └── JsonUtil.java              # Dependency-free JSON extraction utilities
+│   ├── JsonUtil.java              # Dependency-free JSON extraction utilities
+│   └── LogSanitizer.java         # Strips CR/LF from logged values to prevent log injection
 └── state/                         # Execution state and persistence
     ├── HensuState.java            # Mutable runtime state during execution
     ├── HensuSnapshot.java         # Immutable checkpoint record for persistence

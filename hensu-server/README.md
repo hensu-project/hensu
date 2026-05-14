@@ -403,7 +403,6 @@ hensu-server/
 │   │   ├── ValidMessageValidator     # Size-limit + control-character validator
 │   │   ├── ValidWorkflow.java              # Custom constraint for Workflow bodies
 │   │   ├── ValidWorkflowValidator.java     # Deep-validates workflow object graph
-│   │   ├── LogSanitizer.java               # Strips CR/LF for log injection prevention
 │   │   ├── IllegalArgumentExceptionMapper.java      # Maps IllegalArgumentException → 400
 │   │   └── ConstraintViolationExceptionMapper.java  # Global 400 error mapper
 │   ├── config/                            # CDI configuration

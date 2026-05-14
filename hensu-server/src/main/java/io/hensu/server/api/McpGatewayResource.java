@@ -1,7 +1,7 @@
 package io.hensu.server.api;
 
+import io.hensu.core.util.LogSanitizer;
 import io.hensu.server.mcp.McpSessionManager;
-import io.hensu.server.validation.LogSanitizer;
 import io.hensu.server.validation.ValidId;
 import io.hensu.server.validation.ValidMessage;
 import io.smallrye.mutiny.Multi;

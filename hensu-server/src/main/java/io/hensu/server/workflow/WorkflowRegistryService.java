@@ -1,10 +1,10 @@
 package io.hensu.server.workflow;
 
+import io.hensu.core.util.LogSanitizer;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.core.workflow.validation.SubWorkflowGraphValidator;
 import io.hensu.server.persistence.WorkflowPushLock;
-import io.hensu.server.validation.LogSanitizer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.List;

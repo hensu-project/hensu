@@ -1,8 +1,8 @@
 package io.hensu.server.api;
 
 import io.hensu.core.resume.ResumeInput;
+import io.hensu.core.util.LogSanitizer;
 import io.hensu.server.security.RequestTenantResolver;
-import io.hensu.server.validation.LogSanitizer;
 import io.hensu.server.validation.ValidId;
 import io.hensu.server.workflow.ExecutionNotFoundException;
 import io.hensu.server.workflow.ExecutionOutput;

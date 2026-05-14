@@ -11,6 +11,7 @@ import io.hensu.core.review.ReviewMode;
 import io.hensu.core.review.ReviewOutcome;
 import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuState;
+import io.hensu.core.util.LogSanitizer;
 import io.hensu.core.workflow.node.StandardNode;
 import java.util.Map;
 import java.util.logging.Logger;
@@ -101,7 +102,11 @@ public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
             case ReviewDecision.Approve approve -> handleApprove(approve, context);
             case ReviewDecision.Backtrack backtrack -> handleBacktrack(backtrack, nodeId, context);
             case ReviewDecision.Reject reject -> {
-                logger.info("Rejecting node: " + nodeId + " due to: " + reject.getReason());
+                logger.info(
+                        "Rejecting node: "
+                                + LogSanitizer.sanitize(nodeId)
+                                + " due to: "
+                                + LogSanitizer.sanitize(reject.getReason()));
                 yield ProcessorOutcome.terminal(
                         new ExecutionResult.Rejected(reject.getReason(), context.state()));
             }

@@ -1,6 +1,6 @@
 package io.hensu.server.mcp;
 
-import io.hensu.server.validation.LogSanitizer;
+import io.hensu.core.util.LogSanitizer;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.subscription.MultiEmitter;

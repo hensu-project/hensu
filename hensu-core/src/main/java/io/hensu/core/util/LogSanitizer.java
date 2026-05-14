@@ -1,4 +1,4 @@
-package io.hensu.server.validation;
+package io.hensu.core.util;
 
 /// Strips control characters from strings to prevent log injection.
 ///
@@ -7,9 +7,9 @@ package io.hensu.server.validation;
 /// allowing attackers to forge log entries.
 ///
 /// Apply to any user-derived value before passing it to a logger:
-/// ```
-/// LOG.infov("Processing: id={0}", LogSanitizer.sanitize(userInput));
-/// ```
+/// {@snippet :
+/// logger.info("Processing: id=" + LogSanitizer.sanitize(userInput));
+/// }
 public final class LogSanitizer {
 
     private LogSanitizer() {}
