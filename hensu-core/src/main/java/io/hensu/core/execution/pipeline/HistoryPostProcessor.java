@@ -1,15 +1,13 @@
 package io.hensu.core.execution.pipeline;
 
-import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExecutionStep;
 import java.time.Instant;
-import java.util.Optional;
 
 /// Appends an {@link ExecutionStep} to the execution history after each node completes.
 ///
 /// ### Contracts
 /// - **Precondition**: `context.result()` is non-null (post-execution pipeline)
-/// - **Postcondition**: Always returns empty (never short-circuits)
+/// - **Postcondition**: Always returns {@link ProcessorOutcome#CONTINUE}
 /// - **Side effects**: Appends one step to `context.state().getHistory()`
 ///
 /// @implNote Stateless. Safe to reuse across loop iterations.
@@ -18,8 +16,15 @@ import java.util.Optional;
 /// @see io.hensu.core.execution.result.ExecutionHistory for history storage
 public final class HistoryPostProcessor implements PostNodeExecutionProcessor {
 
+    public static final String PROCESSOR_ID = "HistoryPostProcessor";
+
     @Override
-    public Optional<ExecutionResult> process(ProcessorContext context) {
+    public String id() {
+        return PROCESSOR_ID;
+    }
+
+    @Override
+    public ProcessorOutcome process(ProcessorContext context) {
         context.state()
                 .getHistory()
                 .addStep(
@@ -29,6 +34,6 @@ public final class HistoryPostProcessor implements PostNodeExecutionProcessor {
                                 context.result(),
                                 Instant.now()));
 
-        return Optional.empty();
+        return ProcessorOutcome.CONTINUE;
     }
 }

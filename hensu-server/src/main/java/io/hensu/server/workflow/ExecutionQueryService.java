@@ -1,5 +1,6 @@
 package io.hensu.server.workflow;
 
+import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.WorkflowStateRepository;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -37,11 +38,14 @@ public class ExecutionQueryService {
         if (!snapshot.hasActivePlan()) {
             return Optional.empty();
         }
-        return Optional.of(
-                new PlanInfo(
-                        snapshot.activePlan().nodeId(),
-                        snapshot.activePlan().steps().size(),
-                        snapshot.activePlan().currentStepIndex()));
+        var plan = snapshot.activePlan();
+        int currentStep =
+                plan.steps().stream()
+                        .filter(s -> !s.isFinished())
+                        .mapToInt(PlannedStep::index)
+                        .findFirst()
+                        .orElse(plan.stepCount());
+        return Optional.of(new PlanInfo(plan.id(), plan.stepCount(), currentStep));
     }
 
     /// Gets execution status by ID.

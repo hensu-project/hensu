@@ -11,6 +11,7 @@ import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.review.ReviewDecision;
 import io.hensu.core.review.ReviewMode;
+import io.hensu.core.review.ReviewOutcome;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowMetadata;
@@ -57,7 +58,7 @@ class CLIReviewHandlerTest {
         System.clearProperty(CLIReviewHandler.INTERACTIVE_PROPERTY);
         CLIReviewHandler manager = new CLIReviewHandler(new Scanner(""), printStream, false);
 
-        ReviewDecision decision =
+        ReviewOutcome outcome =
                 manager.requestReview(
                         createStandardNode("test-node"),
                         createSuccessResult(),
@@ -66,6 +67,8 @@ class CLIReviewHandlerTest {
                         new ReviewConfig(ReviewMode.REQUIRED, true, false),
                         createWorkflow());
 
+        assertThat(outcome).isInstanceOf(ReviewOutcome.Decided.class);
+        var decision = ((ReviewOutcome.Decided) outcome).decision();
         assertThat(decision).isInstanceOf(ReviewDecision.Approve.class);
     }
 
@@ -78,7 +81,7 @@ class CLIReviewHandlerTest {
                 new CLIReviewHandler(
                         new Scanner("R\nOutput quality is poor\n"), printStream, false);
 
-        ReviewDecision decision =
+        ReviewOutcome outcome =
                 manager.requestReview(
                         createStandardNode("test-node"),
                         createSuccessResult(),
@@ -87,6 +90,8 @@ class CLIReviewHandlerTest {
                         new ReviewConfig(ReviewMode.REQUIRED, true, false),
                         createWorkflow());
 
+        assertThat(outcome).isInstanceOf(ReviewOutcome.Decided.class);
+        var decision = ((ReviewOutcome.Decided) outcome).decision();
         assertThat(decision).isInstanceOf(ReviewDecision.Reject.class);
         assertThat(((ReviewDecision.Reject) decision).getReason())
                 .isEqualTo("Output quality is poor");
@@ -99,7 +104,7 @@ class CLIReviewHandlerTest {
         CLIReviewHandler manager =
                 new CLIReviewHandler(new Scanner("R\n\nActual reason\n"), printStream, false);
 
-        ReviewDecision decision =
+        ReviewOutcome outcome =
                 manager.requestReview(
                         createStandardNode("test-node"),
                         createSuccessResult(),
@@ -108,6 +113,8 @@ class CLIReviewHandlerTest {
                         new ReviewConfig(ReviewMode.REQUIRED, true, false),
                         createWorkflow());
 
+        assertThat(outcome).isInstanceOf(ReviewOutcome.Decided.class);
+        var decision = ((ReviewOutcome.Decided) outcome).decision();
         assertThat(decision).isInstanceOf(ReviewDecision.Reject.class);
         assertThat(((ReviewDecision.Reject) decision).getReason()).isEqualTo("Actual reason");
     }
@@ -120,7 +127,7 @@ class CLIReviewHandlerTest {
         // B pressed but backtrack not allowed — expect the loop to continue and A to approve
         CLIReviewHandler manager = new CLIReviewHandler(new Scanner("B\nA\n"), printStream, false);
 
-        ReviewDecision decision =
+        ReviewOutcome outcome =
                 manager.requestReview(
                         createStandardNode("test-node"),
                         createSuccessResult(),
@@ -129,6 +136,8 @@ class CLIReviewHandlerTest {
                         new ReviewConfig(ReviewMode.REQUIRED, false, false),
                         createWorkflow());
 
+        assertThat(outcome).isInstanceOf(ReviewOutcome.Decided.class);
+        var decision = ((ReviewOutcome.Decided) outcome).decision();
         assertThat(decision).isInstanceOf(ReviewDecision.Approve.class);
     }
 
@@ -145,7 +154,7 @@ class CLIReviewHandlerTest {
                         .result(NodeResult.success("output", Map.of()))
                         .build());
 
-        ReviewDecision decision =
+        ReviewOutcome outcome =
                 manager.requestReview(
                         createStandardNode("only-step"),
                         createSuccessResult(),
@@ -154,6 +163,8 @@ class CLIReviewHandlerTest {
                         new ReviewConfig(ReviewMode.REQUIRED, true, false),
                         createWorkflow());
 
+        assertThat(outcome).isInstanceOf(ReviewOutcome.Decided.class);
+        var decision = ((ReviewOutcome.Decided) outcome).decision();
         assertThat(decision).isInstanceOf(ReviewDecision.Approve.class);
     }
 
@@ -177,7 +188,7 @@ class CLIReviewHandlerTest {
                         .result(NodeResult.success("output2", Map.of()))
                         .build());
 
-        ReviewDecision decision =
+        ReviewOutcome outcome =
                 manager.requestReview(
                         createStandardNode("step-2"),
                         createSuccessResult(),
@@ -186,6 +197,8 @@ class CLIReviewHandlerTest {
                         new ReviewConfig(ReviewMode.REQUIRED, true, false),
                         createWorkflow());
 
+        assertThat(outcome).isInstanceOf(ReviewOutcome.Decided.class);
+        var decision = ((ReviewOutcome.Decided) outcome).decision();
         assertThat(decision).isInstanceOf(ReviewDecision.Backtrack.class);
         ReviewDecision.Backtrack backtrack = (ReviewDecision.Backtrack) decision;
         assertThat(backtrack.getTargetStep()).isEqualTo("step-1");
@@ -210,7 +223,7 @@ class CLIReviewHandlerTest {
                         .result(NodeResult.success("output2", Map.of()))
                         .build());
 
-        ReviewDecision decision =
+        ReviewOutcome outcome =
                 manager.requestReview(
                         createStandardNode("step-2"),
                         createSuccessResult(),
@@ -219,6 +232,8 @@ class CLIReviewHandlerTest {
                         new ReviewConfig(ReviewMode.REQUIRED, true, false),
                         createWorkflow());
 
+        assertThat(outcome).isInstanceOf(ReviewOutcome.Decided.class);
+        var decision = ((ReviewOutcome.Decided) outcome).decision();
         assertThat(decision).isInstanceOf(ReviewDecision.Approve.class);
     }
 
@@ -240,7 +255,7 @@ class CLIReviewHandlerTest {
                         .result(NodeResult.success("output2", Map.of()))
                         .build());
 
-        ReviewDecision decision =
+        ReviewOutcome outcome =
                 manager.requestReview(
                         createStandardNode("step-2"),
                         createSuccessResult(),
@@ -249,6 +264,8 @@ class CLIReviewHandlerTest {
                         new ReviewConfig(ReviewMode.REQUIRED, true, false),
                         createWorkflow());
 
+        assertThat(outcome).isInstanceOf(ReviewOutcome.Decided.class);
+        var decision = ((ReviewOutcome.Decided) outcome).decision();
         assertThat(decision).isInstanceOf(ReviewDecision.Backtrack.class);
         assertThat(((ReviewDecision.Backtrack) decision).getReason())
                 .isEqualTo("Manual backtrack by reviewer");

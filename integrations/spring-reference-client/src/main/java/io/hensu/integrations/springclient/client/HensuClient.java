@@ -49,12 +49,17 @@ public class HensuClient {
     /// the `PAUSED` state — check for an `execution.paused` SSE event first.
     ///
     /// @param executionId   the execution to resume
-    /// @param approved      true to approve, false to reject the pending plan
-    /// @param modifications optional context overrides applied before resuming
-    public void resume(String executionId, boolean approved, Map<String, Object> modifications) {
+    /// @param correlationId opaque identifier from the `execution.paused` SSE event
+    /// @param decision      review decision: `"approve"`, `"reject"`, or `"backtrack"`
+    /// @param contextEdits  optional context overrides applied before resuming
+    public void resume(
+            String executionId,
+            String correlationId,
+            String decision,
+            Map<String, Object> contextEdits) {
         restClient.post()
                 .uri("/api/v1/executions/{id}/resume", executionId)
-                .body(new ResumeRequest(approved, modifications))
+                .body(new ResumeRequest(correlationId, decision, null, null, contextEdits))
                 .retrieve()
                 .toBodilessEntity();
     }
@@ -84,5 +89,17 @@ public class HensuClient {
     public record StartResult(String executionId, String workflowId) {}
 
     /// Request body for `POST /api/v1/executions/{id}/resume`.
-    public record ResumeRequest(boolean approved, Map<String, Object> modifications) {}
+    ///
+    /// Matches the server-side `ResumeRequest` DTO. Fields:
+    /// - `correlationId` — echoed from the `execution.paused` SSE event
+    /// - `decision` — `"approve"`, `"reject"`, or `"backtrack"`
+    /// - `reason` — explanation for reject/backtrack, may be null
+    /// - `targetStep` — node to backtrack to, required for `"backtrack"`
+    /// - `contextEdits` — context overrides, may be null
+    public record ResumeRequest(
+            String correlationId,
+            String decision,
+            String reason,
+            String targetStep,
+            Map<String, Object> contextEdits) {}
 }

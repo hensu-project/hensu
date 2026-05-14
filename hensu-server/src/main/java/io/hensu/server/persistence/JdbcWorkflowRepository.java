@@ -30,29 +30,29 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
 
     private static final String SQL_SAVE =
             """
-            INSERT INTO runtime.workflows (tenant_id, workflow_id, definition, created_at, updated_at)
-            VALUES (?, ?, ?::jsonb, now(), now())
+            INSERT INTO runtime.workflows (tenant_id, workflow_id, definition, created_at, updated_at, deleted_at)
+            VALUES (?, ?, ?::jsonb, now(), now(), NULL)
             ON CONFLICT (tenant_id, workflow_id)
-            DO UPDATE SET definition = EXCLUDED.definition, updated_at = now()
+            DO UPDATE SET definition = EXCLUDED.definition, updated_at = now(), deleted_at = NULL
             """;
 
     private static final String SQL_FIND_BY_ID =
-            "SELECT definition FROM runtime.workflows WHERE tenant_id = ? AND workflow_id = ?";
+            "SELECT definition FROM runtime.workflows WHERE tenant_id = ? AND workflow_id = ? AND deleted_at IS NULL";
 
     private static final String SQL_FIND_ALL =
-            "SELECT definition FROM runtime.workflows WHERE tenant_id = ? ORDER BY workflow_id";
+            "SELECT definition FROM runtime.workflows WHERE tenant_id = ? AND deleted_at IS NULL ORDER BY workflow_id";
 
     private static final String SQL_EXISTS =
-            "SELECT 1 FROM runtime.workflows WHERE tenant_id = ? AND workflow_id = ?";
+            "SELECT 1 FROM runtime.workflows WHERE tenant_id = ? AND workflow_id = ? AND deleted_at IS NULL";
 
     private static final String SQL_DELETE =
-            "DELETE FROM runtime.workflows WHERE tenant_id = ? AND workflow_id = ?";
+            "UPDATE runtime.workflows SET deleted_at = now() WHERE tenant_id = ? AND workflow_id = ? AND deleted_at IS NULL";
 
     private static final String SQL_DELETE_ALL =
-            "DELETE FROM runtime.workflows WHERE tenant_id = ?";
+            "UPDATE runtime.workflows SET deleted_at = now() WHERE tenant_id = ? AND deleted_at IS NULL";
 
     private static final String SQL_COUNT =
-            "SELECT count(*) FROM runtime.workflows WHERE tenant_id = ?";
+            "SELECT count(*) FROM runtime.workflows WHERE tenant_id = ? AND deleted_at IS NULL";
 
     // --- Fields ---
 

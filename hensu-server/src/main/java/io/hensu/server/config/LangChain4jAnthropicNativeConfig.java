@@ -25,11 +25,12 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 /// `Json.OBJECT_MAPPER` uses direct field access, not the builder pattern, for Jackson binding.
 ///
 /// @implNote Quarkus merges reflection metadata from all `@RegisterForReflection` classes at
-/// build time. This class is intentionally separate from {@link NativeImageConfig} to keep
+/// build time. This class is intentionally separate from {@link CoreModelNativeConfig} to keep
 /// third-party registrations isolated.
 /// @see LangChain4jNativeConfig for shared LangChain4j transport registrations
 /// @see LangChain4jGeminiNativeConfig for Google AI Gemini DTO registrations
-/// @see NativeImageConfig for Hensu domain model registrations
+/// @see CoreModelNativeConfig for Hensu domain model registrations
+/// @see ExecutionEventNativeConfig for SSE execution event records
 @RegisterForReflection(
         classNames = {
             // --- Request DTOs (serialization: Java → JSON → Anthropic API) ---

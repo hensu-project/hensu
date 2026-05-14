@@ -39,7 +39,7 @@ flowchart TD
         ws(["WorkflowSerializer\n(creates ObjectMapper)"])
         subgraph module["HensuJacksonModule"]
             direction LR
-            poly(["addSerializer/Deserializer\n(Node, TransitionRule,\nAction, PlanStepAction)"]) ~~~ schema(["addDeserializer\n(WorkflowStateSchema\n– no mixin)"]) ~~~ mixins(["setMixInAnnotations\n(Workflow, AgentConfig,\nExecutionStep, …)"])
+            poly(["addSerializer/Deserializer\n(Node, TransitionRule,\nAction, PlanStepAction,\nExecutionPhase)"]) ~~~ schema(["addDeserializer\n(WorkflowStateSchema\n– no mixin)"]) ~~~ mixins(["setMixInAnnotations\n(Workflow, AgentConfig,\nExecutionStep, …)"])
         end
         subgraph mixin["mixin/"]
             direction LR
@@ -49,7 +49,7 @@ flowchart TD
     end
 
     core(["hensu-core\n(zero Jackson)"])
-    server(["hensu-server\nNativeImageConfig\n(@RegisterForReflection)"])
+    server(["hensu-server\nCoreModelNativeConfig\n(@RegisterForReflection)"])
 
     ser -->|"depends on"| core
     ser -->|"reflection info"| server
@@ -101,7 +101,7 @@ At deserialization time Jackson:
 4. Calls each setter by name (via **reflection**)
 5. Calls `builder.build()` (via **reflection**)
 
-Because `hensu-core` builders have `private` constructors, all three reflection calls require native-image registration. This is handled in `NativeImageConfig` in `hensu-server` — never in `hensu-core` itself.
+Because `hensu-core` builders have `private` constructors, all three reflection calls require native-image registration. This is handled in `CoreModelNativeConfig` in `hensu-server` — never in `hensu-core` itself.
 
 **Registration in `HensuJacksonModule`:**
 
@@ -124,6 +124,7 @@ Used in two distinct cases:
 | `TransitionRule` | `TransitionRuleSerializer`  | `TransitionRuleDeserializer`  |
 | `Action`         | `ActionSerializer`          | `ActionDeserializer`          |
 | `PlanStepAction` | `PlanStepActionSerializer`  | `PlanStepActionDeserializer`  |
+| `ExecutionPhase` | `ExecutionPhaseSerializer`  | `ExecutionPhaseDeserializer`  |
 
 **Case B — Native-image performance** where the mixin/builder pattern would require registering a private constructor and builder class for reflection, but the type is a single concrete class that can be deserialized more efficiently by direct field extraction:
 
@@ -186,9 +187,9 @@ if (root.has("reviewConfig")) {
 
 ### When `treeToValue` is acceptable
 
-If the target class contains a `java.time.Duration`, deeply nested types, or other fields where manual extraction would be error-prone and brittle, `treeToValue` is acceptable. The class must then be registered in `NativeImageConfig` in `hensu-server`.
+If the target class contains a `java.time.Duration`, deeply nested types, or other fields where manual extraction would be error-prone and brittle, `treeToValue` is acceptable. The class must then be registered in `CoreModelNativeConfig` in `hensu-server`.
 
-Current exceptions (registered in `NativeImageConfig`):
+Current exceptions (registered in `CoreModelNativeConfig`):
 
 | Class             | Reason                                                  |
 |-------------------|---------------------------------------------------------|
@@ -222,7 +223,7 @@ Do **not** use `convertValue` to deserialize `hensu-core` domain objects — it 
 - [ ] Are all fields primitives/strings/enums? → extract manually instead
 - [ ] Is the target an untyped `Map` or `List`? → use `convertValue` instead (no registration needed)
 - [ ] Does the class already have a custom deserializer? → use it via `mapper` (safe)
-- [ ] Added to `NativeImageConfig` if registering? → cross-check both places
+- [ ] Added to `CoreModelNativeConfig` if registering? → cross-check both places
 
 ---
 
@@ -232,7 +233,7 @@ Java records have no inner `Builder` class — Jackson deserializes them via the
 
 ### Rule
 
-> Any record type that is a field (direct or nested) of a mixin/builder-registered class must be registered in `NativeImageConfig`.
+> Any record type that is a field (direct or nested) of a mixin/builder-registered class must be registered in `CoreModelNativeConfig`.
 
 ### Current registrations
 
@@ -273,7 +274,7 @@ Unlike the `treeToValue` pattern, these records do **not** need a custom deseria
 - [ ] Is it a `record` embedded in a mixin-registered builder type? → register it
 - [ ] Does it contain nested record fields? → register those too
 - [ ] Does it contain `Duration` or other complex JDK types? → `treeToValue` rule applies instead
-- [ ] Added to `NativeImageConfig` in `hensu-server`? → verify the entry is present
+- [ ] Added to `CoreModelNativeConfig` in `hensu-server`? → verify the entry is present
 
 ---
 
@@ -356,7 +357,7 @@ context.setMixInAnnotations(MyConfig.class, MyConfigMixin.class);
 context.setMixInAnnotations(MyConfig.Builder.class, MyConfigBuilderMixin.class);
 ```
 
-3. **Register for reflection in `NativeImageConfig`** (in `hensu-server`):
+3. **Register for reflection in `CoreModelNativeConfig`** (in `hensu-server`):
 
 ```java
 @RegisterForReflection(
@@ -365,7 +366,7 @@ context.setMixInAnnotations(MyConfig.Builder.class, MyConfigBuilderMixin.class);
             MyConfig.class,
             MyConfig.Builder.class
         })
-public class NativeImageConfig {}
+public class CoreModelNativeConfig {}
 ```
 
 All three steps are required. Missing step 3 causes a silent runtime failure in native image: Jackson finds the builder class but cannot invoke the private constructor or `build()` method.
@@ -396,8 +397,8 @@ Any boolean field on a builder-pattern type must have a corresponding `@JsonProp
 
 | What                                          | Where to fix                                                |
 |-----------------------------------------------|-------------------------------------------------------------|
-| Builder's private constructor not found       | Add class to `NativeImageConfig` in server                  |
-| `build()` method not found at runtime         | Add class to `NativeImageConfig` in server                  |
+| Builder's private constructor not found       | Add class to `CoreModelNativeConfig` in server              |
+| `build()` method not found at runtime         | Add class to `CoreModelNativeConfig` in server              |
 | `treeToValue` target fails with NPE/exception | Prefer manual extraction; if not feasible, register         |
 | New serializable type breaks native build     | Check the checklist in this guide, add mixin + registration |
 
@@ -415,6 +416,7 @@ The root rule: **`hensu-core` owns no serialization metadata. `hensu-serializati
 | `TransitionRuleSerializer` / `TransitionRuleDeserializer` | Polymorphic `TransitionRule` (discriminator: `type`)                                                       |
 | `ActionSerializer` / `ActionDeserializer`                 | Polymorphic `Action` (discriminator: `type`)                                                               |
 | `PlanStepActionSerializer` / `PlanStepActionDeserializer` | Polymorphic `PlanStepAction` (discriminator: `type`)                                                       |
+| `ExecutionPhaseSerializer` / `ExecutionPhaseDeserializer` | Polymorphic `ExecutionPhase` (discriminator: `type`)                                                       |
 | `WorkflowStateSchemaDeserializer`                         | Direct-extraction deserializer for `WorkflowStateSchema`; avoids mixin reflection overhead in native image |
 | `plan/JacksonPlanResponseParser`                          | Parses LLM JSON responses into `PlannedStep` lists; strips markdown fences                                 |
 | `mixin/*Mixin.java`                                       | `@JsonDeserialize` bridge for builder-pattern types                                                        |
@@ -422,4 +424,4 @@ The root rule: **`hensu-core` owns no serialization metadata. `hensu-serializati
 
 > **See also**:
 > - [hensu-core Developer Guide — GraalVM](developer-guide-core.md#graalvm-native-image-constraints) for foundational native-image rules
-> - [hensu-server Developer Guide — NativeImageConfig](developer-guide-server.md#nativeimageconfig--jackson-reflection-registration) for registration patterns and the resource bundling rule
+> - [hensu-server Developer Guide — CoreModelNativeConfig](developer-guide-server.md#coremodelnativeconfig--jackson-reflection-registration) for registration patterns and the resource bundling rule

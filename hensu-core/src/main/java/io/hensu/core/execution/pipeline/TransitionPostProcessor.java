@@ -1,9 +1,7 @@
 package io.hensu.core.execution.pipeline;
 
-import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.workflow.node.LoopNode;
 import io.hensu.core.workflow.transition.TransitionRule;
-import java.util.Optional;
 
 /// Evaluates transition rules to determine the next node after execution.
 ///
@@ -17,9 +15,10 @@ import java.util.Optional;
 ///
 /// ### Contracts
 /// - **Precondition**: `context.result()` is non-null (post-execution pipeline)
-/// - **Postcondition**: Always returns empty after setting the next node in state
+/// - **Postcondition**: Always returns {@link ProcessorOutcome#CONTINUE} after setting
+///   the next node in state
 /// - **Side effects**: Mutates `state.currentNode`, clears `state.loopBreakTarget`
-///   when consumed
+///   when consumed, clears `state.activePlan` when leaving the node
 ///
 /// @implNote Stateless. No constructor dependencies. Safe to reuse across
 /// loop iterations.
@@ -28,37 +27,53 @@ import java.util.Optional;
 /// @see LoopNode for loop-specific transition handling
 public final class TransitionPostProcessor implements PostNodeExecutionProcessor {
 
+    public static final String PROCESSOR_ID = "TransitionPostProcessor";
+
     @Override
-    public Optional<ExecutionResult> process(ProcessorContext context) {
+    public String id() {
+        return PROCESSOR_ID;
+    }
+
+    @Override
+    public ProcessorOutcome process(ProcessorContext context) {
+        var state = context.state();
+
+        if (state.isNodeRedirected()) {
+            state.setNodeRedirected(false);
+        } else {
+            state.setCurrentNode(resolveNextNode(context));
+        }
+
+        state.setActivePlan(null);
+
+        return ProcessorOutcome.CONTINUE;
+    }
+
+    /// Resolves the next node id according to the three transition strategies.
+    ///
+    /// @return next node id, never null
+    /// @throws IllegalStateException if no strategy yields a target
+    private String resolveNextNode(ProcessorContext context) {
         var state = context.state();
         var node = context.currentNode();
-
-        // If a prior processor (e.g. ReviewPostProcessor backtrack) already
-        // redirected execution, do not overwrite with normal transition logic.
-        if (!state.getCurrentNode().equals(node.getId())) {
-            return Optional.empty();
-        }
 
         String loopBreakTarget = state.getLoopBreakTarget();
         if (loopBreakTarget != null) {
             state.setLoopBreakTarget(null);
-            state.setCurrentNode(loopBreakTarget);
-            return Optional.empty();
+            return loopBreakTarget;
         }
 
         if (node instanceof LoopNode) {
             String loopExit = (String) state.getContext().get("loop_exit_target");
             if (loopExit != null) {
-                state.setCurrentNode(loopExit);
-                return Optional.empty();
+                return loopExit;
             }
         }
 
         for (TransitionRule rule : node.getTransitionRules()) {
             String target = rule.evaluate(state, context.result());
             if (target != null) {
-                state.setCurrentNode(target);
-                return Optional.empty();
+                return target;
             }
         }
 

@@ -44,8 +44,9 @@ public class WorkflowService {
         return executionService.startExecution(tenantId, workflowId, context);
     }
 
-    public void resumeExecution(String tenantId, String executionId, ResumeDecision decision) {
-        stateService.resumeExecution(tenantId, executionId, decision);
+    public void resumeExecution(
+            String tenantId, String executionId, io.hensu.core.resume.ResumeInput resumeInput) {
+        stateService.resumeExecution(tenantId, executionId, resumeInput);
     }
 
     public Optional<PlanInfo> getPendingPlan(String tenantId, String executionId) {

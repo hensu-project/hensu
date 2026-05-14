@@ -13,7 +13,7 @@ import com.fasterxml.jackson.annotation.JsonAutoDetect;
 /// mixin companion is needed — Jackson reads and writes fields directly.
 ///
 /// @implNote This mixin does **not** require builder constructor registration in
-/// `NativeImageConfig`. Jackson's field-access mechanism resolves fields via the class
+/// `CoreModelNativeConfig`. Jackson's field-access mechanism resolves fields via the class
 /// itself, not via builder reflection calls.
 ///
 /// @see io.hensu.serialization.HensuJacksonModule

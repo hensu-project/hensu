@@ -1,0 +1,12 @@
+[
+  {
+    "name": "io.quarkiverse.langchain4j.jaxrsclient.JaxRsHttpClientBuilderFactory",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "io.quarkiverse.langchain4j.jaxrsclient.JaxRsHttpClientBuilder",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  }
+]

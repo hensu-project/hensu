@@ -35,7 +35,7 @@ class OutputExtractionPostProcessorTest {
 
         var result = processor.process(ctx);
 
-        assertThat(result).isEmpty();
+        assertThat(result).isInstanceOf(ProcessorOutcome.Continue.class);
         assertThat(ctx.state().getContext())
                 .containsEntry("article", "Improved article text.")
                 .doesNotContainKey("improve-node");
@@ -63,7 +63,7 @@ class OutputExtractionPostProcessorTest {
 
         var result = processor.process(ctx);
 
-        assertThat(result).isEmpty();
+        assertThat(result).isInstanceOf(ProcessorOutcome.Continue.class);
         assertThat(ctx.state().getContext()).containsEntry("escalate-node", "Summary of issues.");
     }
 
@@ -87,7 +87,7 @@ class OutputExtractionPostProcessorTest {
 
         var result = processor.process(ctx);
 
-        assertThat(result).isPresent().get().isInstanceOf(ExecutionResult.Failure.class);
+        assertThat(unwrapTerminal(result)).isInstanceOf(ExecutionResult.Failure.class);
         assertThat(ctx.state().getContext()).doesNotContainKey("article");
     }
 
@@ -98,7 +98,7 @@ class OutputExtractionPostProcessorTest {
 
         var result = processor.process(ctx);
 
-        assertThat(result).isPresent().get().isInstanceOf(ExecutionResult.Failure.class);
+        assertThat(unwrapTerminal(result)).isInstanceOf(ExecutionResult.Failure.class);
         assertThat(ctx.state().getContext()).doesNotContainKey("article");
     }
 
@@ -110,7 +110,7 @@ class OutputExtractionPostProcessorTest {
 
         var result = processor.process(ctx);
 
-        assertThat(result).isPresent().get().isInstanceOf(ExecutionResult.Failure.class);
+        assertThat(unwrapTerminal(result)).isInstanceOf(ExecutionResult.Failure.class);
     }
 
     @Test
@@ -120,11 +120,16 @@ class OutputExtractionPostProcessorTest {
 
         var result = processor.process(ctx);
 
-        var failure = (ExecutionResult.Failure) result.orElseThrow();
+        var failure = (ExecutionResult.Failure) unwrapTerminal(result);
         assertThat(failure.e().getMessage()).contains("my-node");
     }
 
     // — Helpers —————————————————————————————————————————————————————————————
+
+    private static ExecutionResult unwrapTerminal(ProcessorOutcome outcome) {
+        assertThat(outcome).isInstanceOf(ProcessorOutcome.Terminal.class);
+        return ((ProcessorOutcome.Terminal) outcome).result();
+    }
 
     private ProcessorContext contextWith(String nodeId, String output, List<String> writes) {
         var node =

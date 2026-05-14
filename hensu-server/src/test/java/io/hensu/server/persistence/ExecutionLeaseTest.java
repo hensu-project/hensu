@@ -42,8 +42,8 @@ class ExecutionLeaseTest extends JdbcRepositoryTestBase {
     /// Orphaned execution (NODE_A crashed, heartbeat is 120 s old) is claimed by NODE_B.
     @Test
     void claimStaleExecutions_claimsOrphanedRow() throws SQLException {
-        nodeARepo.save(TENANT, checkpoint("exec-orphan", "wf-test", "step-1"));
-        rewindHeartbeat(TENANT, "exec-orphan", 120);
+        nodeARepo.save(TENANT, checkpoint("exec-orphan"));
+        rewindHeartbeat("exec-orphan");
 
         Instant threshold = Instant.now().minus(90, ChronoUnit.SECONDS);
         List<ExecutionLeaseManager.ExecutionRef> claimed =
@@ -53,14 +53,14 @@ class ExecutionLeaseTest extends JdbcRepositoryTestBase {
         assertThat(claimed.getFirst().tenantId()).isEqualTo(TENANT);
         assertThat(claimed.getFirst().executionId()).isEqualTo("exec-orphan");
         // Verify DB row is now owned by NODE_B
-        assertThat(readServerNodeId(TENANT, "exec-orphan")).isEqualTo(NODE_B);
+        assertThat(readServerNodeId()).isEqualTo(NODE_B);
     }
 
     /// Active execution (heartbeat just set by save()) must never be claimed.
     /// Catches an inverted threshold condition — a bug here would kill live executions.
     @Test
     void claimStaleExecutions_skipsRowWithFreshHeartbeat() {
-        nodeARepo.save(TENANT, checkpoint("exec-active", "wf-test", "step-1"));
+        nodeARepo.save(TENANT, checkpoint("exec-active"));
 
         Instant threshold = Instant.now().minus(90, ChronoUnit.SECONDS);
         List<ExecutionLeaseManager.ExecutionRef> claimed =
@@ -77,10 +77,10 @@ class ExecutionLeaseTest extends JdbcRepositoryTestBase {
         // NODE_A owns exec-a; NODE_B owns exec-b — rewind both to simulate stale
         JdbcWorkflowStateRepository nodeBRepo =
                 new JdbcWorkflowStateRepository(dataSource, objectMapper, NODE_B);
-        nodeARepo.save(TENANT, checkpoint("exec-a", "wf-test", "step-1"));
-        nodeBRepo.save(TENANT, checkpoint("exec-b", "wf-test", "step-1"));
-        rewindHeartbeat(TENANT, "exec-a", 120);
-        rewindHeartbeat(TENANT, "exec-b", 120);
+        nodeARepo.save(TENANT, checkpoint("exec-a"));
+        nodeBRepo.save(TENANT, checkpoint("exec-b"));
+        rewindHeartbeat("exec-a");
+        rewindHeartbeat("exec-b");
 
         // NODE_B bumps its own rows
         nodeBManager.updateHeartbeats();
@@ -88,30 +88,29 @@ class ExecutionLeaseTest extends JdbcRepositoryTestBase {
         Instant fresh = Instant.now().minus(30, ChronoUnit.SECONDS);
 
         // exec-b (NODE_B) must be bumped — heartbeat should be recent
-        assertThat(readLastHeartbeat(TENANT, "exec-b")).isAfter(fresh);
+        assertThat(readLastHeartbeat("exec-b")).isAfter(fresh);
 
         // exec-a (NODE_A) must remain stale — not touched by NODE_B
-        assertThat(readLastHeartbeat(TENANT, "exec-a")).isBefore(fresh);
+        assertThat(readLastHeartbeat("exec-a")).isBefore(fresh);
     }
 
     // --- Helpers ---
 
-    private static HensuSnapshot checkpoint(
-            String executionId, String workflowId, String currentNodeId) {
+    private static HensuSnapshot checkpoint(String executionId) {
         return new HensuSnapshot(
-                workflowId,
+                "wf-test",
                 executionId,
-                currentNodeId,
+                "step-1",
                 Map.of(),
                 new ExecutionHistory(),
+                null,
                 null,
                 Instant.now(),
                 "checkpoint");
     }
 
     /// Rewinds `last_heartbeat_at` by the given number of seconds to simulate a crashed node.
-    private void rewindHeartbeat(String tenantId, String executionId, int seconds)
-            throws SQLException {
+    private void rewindHeartbeat(String executionId) throws SQLException {
         try (Connection conn = dataSource.getConnection();
                 PreparedStatement ps =
                         conn.prepareStatement(
@@ -119,21 +118,21 @@ class ExecutionLeaseTest extends JdbcRepositoryTestBase {
                                         + " SET last_heartbeat_at ="
                                         + "     last_heartbeat_at - (? * INTERVAL '1 second')"
                                         + " WHERE tenant_id = ? AND execution_id = ?")) {
-            ps.setInt(1, seconds);
-            ps.setString(2, tenantId);
+            ps.setInt(1, 120);
+            ps.setString(2, JdbcRepositoryTestBase.TENANT);
             ps.setString(3, executionId);
             ps.executeUpdate();
         }
     }
 
-    private String readServerNodeId(String tenantId, String executionId) throws SQLException {
+    private String readServerNodeId() throws SQLException {
         try (Connection conn = dataSource.getConnection();
                 PreparedStatement ps =
                         conn.prepareStatement(
                                 "SELECT server_node_id FROM runtime.execution_states"
                                         + " WHERE tenant_id = ? AND execution_id = ?")) {
-            ps.setString(1, tenantId);
-            ps.setString(2, executionId);
+            ps.setString(1, JdbcRepositoryTestBase.TENANT);
+            ps.setString(2, "exec-orphan");
             try (var rs = ps.executeQuery()) {
                 assertThat(rs.next()).isTrue();
                 return rs.getString("server_node_id");
@@ -141,13 +140,13 @@ class ExecutionLeaseTest extends JdbcRepositoryTestBase {
         }
     }
 
-    private Instant readLastHeartbeat(String tenantId, String executionId) throws SQLException {
+    private Instant readLastHeartbeat(String executionId) throws SQLException {
         try (Connection conn = dataSource.getConnection();
                 PreparedStatement ps =
                         conn.prepareStatement(
                                 "SELECT last_heartbeat_at FROM runtime.execution_states"
                                         + " WHERE tenant_id = ? AND execution_id = ?")) {
-            ps.setString(1, tenantId);
+            ps.setString(1, JdbcRepositoryTestBase.TENANT);
             ps.setString(2, executionId);
             try (var rs = ps.executeQuery()) {
                 assertThat(rs.next()).isTrue();

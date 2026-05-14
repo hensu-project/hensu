@@ -37,6 +37,8 @@ and re-attach at any time without interrupting execution.
 - [Configuration](#configuration)
 - [Development](#development)
 - [Testing — Stub Agent System](#testing--stub-agent-system)
+- [Mid-Workflow Actions](#mid-workflow-actions)
+- [Exit Codes](#exit-codes)
 - [Dependencies](#dependencies)
 
 ## Installation
@@ -129,8 +131,16 @@ options:
       --no-daemon          Force inline execution even if the daemon is running
 ```
 
-**Ctrl+C behavior:** pressing Ctrl+C *detaches* the client — execution keeps running in the daemon.
-The terminal prints the execution ID and re-attach instructions.
+**Ctrl+C behavior:** pressing Ctrl+C *detaches* the client – execution keeps running in the daemon.
+A JVM shutdown hook sends a `detach` frame, then prints the execution ID and re-attach instructions.
+
+**Capacity limit:** if the daemon is already running the maximum number of concurrent
+executions, `run` receives a `daemon_full` frame and exits with a warning. Retry shortly or
+increase the limit.
+
+**Context seeding:** `-c` context is merged with an automatic `_tenant_id` (set to
+`SubWorkflowLoader.CLI_TENANT`) so sub-workflow nodes resolve children from the same
+repository slot the loader populated.
 
 **Interactive review (`-i`):** When a workflow node has `review = true`, the daemon pauses
 execution and sends a `review_request` frame to the attached client. The terminal displays the
@@ -169,8 +179,9 @@ options:
 
 ### `hensu build`
 
-Compile the Kotlin DSL to JSON. Output is written to `{working-dir}/build/{workflow-id}.json`
-and is required by `hensu push`.
+Compile the Kotlin DSL to JSON. The Kotlin compiler runs client-side – the server cannot
+execute it – so every workflow must pass through `hensu build` before `hensu push`.
+Output is written to `{working-dir}/build/{workflow-id}.json`.
 
 ```
 hensu build [<workflow-name>] [-d <working-dir>]
@@ -178,7 +189,8 @@ hensu build [<workflow-name>] [-d <working-dir>]
 
 `build` does not accept `--with`. Sub-workflows are compiled and pushed independently;
 the server resolves references at runtime via its own registry and rejects dangling refs
-at push time.
+at push time. If a root workflow contains `subWorkflow` nodes, each referenced child must
+be built and pushed separately or the server will reject the push due to dangling references.
 
 ---
 
@@ -218,10 +230,15 @@ It mirrors the role `hensu-server` plays for remote deployments.
 hensu daemon <subcommand>
 
 subcommands:
-  start    Start the daemon in the background; polls until the socket appears
+  start    Start the daemon in the background; waits up to 10 s for the socket (WatchService + poll)
   stop     Graceful shutdown (finishes in-flight executions, then exits)
   status   Show socket path, running execution count, and total tracked executions
 ```
+
+`start` delegates to the platform service manager when installed (systemd on Linux, launchd
+on macOS), falling back to a detached background child process. After launching, a
+`WatchService` + `DaemonClient.isAlive()` poll loop waits up to 10 seconds for the Unix
+socket to appear before returning.
 
 ### `hensu ps`
 
@@ -271,13 +288,16 @@ arguments:
 ### Detach (Ctrl+C)
 
 There is no `hensu detach` command. Detach is triggered by pressing **Ctrl+C** inside
-`hensu run` or `hensu attach`. It sends a `detach` frame to the daemon — the execution
-keeps running; only the client terminal disconnects.
+`hensu run` or `hensu attach`. Both commands install a JVM shutdown hook that sends a
+`detach` frame to the daemon – the execution keeps running; only the client terminal
+disconnects.
 
 ```
-Ctrl+C during `hensu run`     →  detaches; prints exec ID and re-attach hint
+Ctrl+C during `hensu run`     →  shutdown hook fires → detach frame → prints exec ID and re-attach hint
 Ctrl+C during `hensu attach`  →  same
 ```
+
+The daemon itself does not handle SIGINT – the detach logic lives entirely in the client.
 
 ---
 
@@ -435,7 +455,7 @@ hensu attach <exec-id>                         # reconnect after Ctrl+C
 ### Build and push to server
 
 ```bash
-# 1. Compile DSL to JSON on your machine (server cannot run the Kotlin compiler)
+# 1. Compile Kotlin DSL to JSON (server cannot run the Kotlin compiler)
 hensu build my-workflow -d ./my-project
 
 # 2. Push compiled JSON to server
@@ -538,6 +558,38 @@ java -Dhensu.stub.enabled=true -jar ~/.hensu/lib/hensu.jar run my-workflow
 > See [Stub Agent System](../docs/developer-guide-core.md#stub-agent-system) in the Core
 > Developer Guide for response resolution order, programmatic registration, and scenario-based
 > stubs.
+
+## Mid-Workflow Actions
+
+The CLI supports two action types that nodes can trigger during execution, implemented by
+`CLIActionExecutor`:
+
+- **Send** – delegates to a registered `ActionHandler`. Each handler has a unique ID
+  (e.g. `"slack"`, `"github-dispatch"`). Register handlers programmatically:
+
+  ```java
+  CLIActionExecutor executor = new CLIActionExecutor();
+  executor.registerHandler(new SlackHandler(webhookUrl));
+  executor.registerHandler(new GitHubDispatchHandler(token));
+  ```
+
+- **Execute** – runs shell commands defined in `commands.yaml` (loaded from the working
+  directory). Commands are looked up by ID from a `CommandRegistry` – the DSL never
+  specifies raw shell strings, keeping credentials out of workflow files.
+
+All action parameters support `{variable}` template syntax, resolved from the current
+workflow context at execution time.
+
+---
+
+## Exit Codes
+
+| Code | Meaning                                                                   |
+|------|---------------------------------------------------------------------------|
+| `0`  | Workflow completed successfully                                           |
+| `1`  | General failure (workflow error, daemon not reachable, invalid arguments) |
+
+---
 
 ## Dependencies
 

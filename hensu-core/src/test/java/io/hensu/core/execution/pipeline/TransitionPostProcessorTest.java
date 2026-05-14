@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.hensu.core.execution.executor.ExecutionContext;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
+import io.hensu.core.plan.Plan;
+import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.LoopNode;
@@ -122,16 +124,46 @@ class TransitionPostProcessorTest {
     // — Backtrack skip ————————————————————————————————————————————————————
 
     @Test
-    @DisplayName("skips transition when currentNode already changed by a prior processor")
+    @DisplayName("skips transition when nodeRedirected flag is set by a prior processor")
     void shouldSkipWhenPriorProcessorAlreadyRedirected() {
-        // ReviewPostProcessor or RubricPostProcessor may mutate currentNode before
-        // this processor runs. TransitionPostProcessor must not overwrite that redirect.
         var ctx = contextWithTransitions("original", List.of(new SuccessTransition("normal-next")));
         ctx.state().setCurrentNode("already-redirected");
+        ctx.state().setNodeRedirected(true);
 
         processor.process(ctx);
 
         assertThat(ctx.state().getCurrentNode()).isEqualTo("already-redirected");
+        assertThat(ctx.state().isNodeRedirected()).isFalse();
+    }
+
+    // — Active plan clearing ————————————————————————————————————————————
+
+    @Test
+    @DisplayName("clears activePlan when transitioning to a different node")
+    void shouldClearActivePlanOnTransitionToDifferentNode() {
+        var ctx = contextWithTransitions("node-a", List.of(new SuccessTransition("node-b")));
+        Plan plan =
+                Plan.staticPlan(
+                        "node-a", List.of(PlannedStep.pending(0, "tool", Map.of(), "step")));
+        ctx.state().setActivePlan(plan);
+
+        processor.process(ctx);
+
+        assertThat(ctx.state().getActivePlan()).isNull();
+    }
+
+    @Test
+    @DisplayName("clears activePlan on self-transition to prevent exhausted plan reuse")
+    void shouldClearActivePlanOnSelfTransition() {
+        var ctx = contextWithTransitions("node-a", List.of(new SuccessTransition("node-a")));
+        Plan plan =
+                Plan.staticPlan(
+                        "node-a", List.of(PlannedStep.pending(0, "tool", Map.of(), "step")));
+        ctx.state().setActivePlan(plan);
+
+        processor.process(ctx);
+
+        assertThat(ctx.state().getActivePlan()).isNull();
     }
 
     // — Helpers ———————————————————————————————————————————————————————————

@@ -134,15 +134,7 @@ class InMemoryWorkflowRepositoryTest {
     class Delete {
 
         @Test
-        void shouldDeleteExisting() {
-            repository.save("tenant-1", createWorkflow("wf-1"));
-
-            assertThat(repository.delete("tenant-1", "wf-1")).isTrue();
-            assertThat(repository.findById("tenant-1", "wf-1")).isEmpty();
-        }
-
-        @Test
-        void shouldReturnFalseForMissing() {
+        void shouldReturnFalseForNeverSaved() {
             assertThat(repository.delete("tenant-1", "wf-1")).isFalse();
         }
     }
@@ -179,6 +171,54 @@ class InMemoryWorkflowRepositoryTest {
         @Test
         void shouldReturnZeroForUnknownTenant() {
             assertThat(repository.count("unknown")).isEqualTo(0);
+        }
+    }
+
+    @Nested
+    class SoftDelete {
+
+        @Test
+        void shouldSoftDeleteAndHideFromQueries() {
+            repository.save("tenant-1", createWorkflow("wf-1"));
+
+            assertThat(repository.delete("tenant-1", "wf-1")).isTrue();
+
+            assertThat(repository.findById("tenant-1", "wf-1")).isEmpty();
+            assertThat(repository.exists("tenant-1", "wf-1")).isFalse();
+            assertThat(repository.count("tenant-1")).isZero();
+            assertThat(repository.findAll("tenant-1")).isEmpty();
+        }
+
+        @Test
+        void shouldReactivateOnSave() {
+            repository.save("tenant-1", createWorkflow("wf-1"));
+            repository.delete("tenant-1", "wf-1");
+
+            repository.save("tenant-1", createWorkflow("wf-1"));
+
+            assertThat(repository.findById("tenant-1", "wf-1")).isPresent();
+            assertThat(repository.exists("tenant-1", "wf-1")).isTrue();
+            assertThat(repository.count("tenant-1")).isEqualTo(1);
+        }
+
+        @Test
+        void shouldReturnFalseForAlreadyDeleted() {
+            repository.save("tenant-1", createWorkflow("wf-1"));
+
+            assertThat(repository.delete("tenant-1", "wf-1")).isTrue();
+            assertThat(repository.delete("tenant-1", "wf-1")).isFalse();
+        }
+
+        @Test
+        void deleteAllShouldSoftDeleteAndReturnActiveCount() {
+            repository.save("tenant-1", createWorkflow("wf-1"));
+            repository.save("tenant-1", createWorkflow("wf-2"));
+            repository.delete("tenant-1", "wf-1");
+
+            // Only wf-2 is active, so deleteAll returns 1
+            assertThat(repository.deleteAllForTenant("tenant-1")).isEqualTo(1);
+            assertThat(repository.count("tenant-1")).isZero();
+            assertThat(repository.findAll("tenant-1")).isEmpty();
         }
     }
 

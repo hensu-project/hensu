@@ -25,8 +25,10 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 /// @implNote Quarkus merges reflection metadata from all `@RegisterForReflection` classes at
 /// build time. This class covers only the shared transport layer. Provider-specific DTO
 /// registrations live in dedicated classes (e.g., {@link LangChain4jGeminiNativeConfig}).
+/// @see LangChain4jNativeConfig for shared LangChain4j transport registrations
 /// @see LangChain4jGeminiNativeConfig for Google AI Gemini DTO registrations
-/// @see NativeImageConfig for Hensu domain model registrations
+/// @see CoreModelNativeConfig for Hensu domain model registrations
+/// @see ExecutionEventNativeConfig for SSE execution event records
 @RegisterForReflection(
         classNames = {
             // JDK HTTP client — ServiceLoader instantiates these via reflection.

@@ -223,7 +223,8 @@ public class ExecutionEventBroadcaster implements PlanObserver {
             case PlanEvent.PlanRevised e -> ExecutionEvent.PlanRevised.from(executionId, e);
             case PlanEvent.PlanCompleted e -> ExecutionEvent.PlanCompleted.from(executionId, e);
             case PlanEvent.PlanPaused e ->
-                    ExecutionEvent.ExecutionPaused.now(executionId, null, e.planId(), e.reason());
+                    ExecutionEvent.ExecutionPaused.now(
+                            executionId, null, null, e.planId(), null, e.reason(), Map.of());
         };
     }
 }

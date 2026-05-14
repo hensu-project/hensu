@@ -1,8 +1,5 @@
 package io.hensu.core.execution.pipeline;
 
-import io.hensu.core.execution.result.ExecutionResult;
-import java.util.Optional;
-
 /// Fires the {@link io.hensu.core.execution.ExecutionListener#onCheckpoint} callback
 /// before each node executes.
 ///
@@ -12,7 +9,7 @@ import java.util.Optional;
 ///
 /// ### Contracts
 /// - **Precondition**: `context.result()` is {@code null} (pre-execution pipeline)
-/// - **Postcondition**: Always returns empty (never short-circuits)
+/// - **Postcondition**: Always returns {@link ProcessorOutcome#CONTINUE}
 /// - **Side effects**: Delegates to the registered
 /// {@link io.hensu.core.execution.ExecutionListener}
 ///
@@ -22,9 +19,16 @@ import java.util.Optional;
 /// @see NodeStartPreProcessor for the subsequent pre-execution processor
 public final class CheckpointPreProcessor implements PreNodeExecutionProcessor {
 
+    public static final String PROCESSOR_ID = "CheckpointPreProcessor";
+
     @Override
-    public Optional<ExecutionResult> process(ProcessorContext context) {
+    public String id() {
+        return PROCESSOR_ID;
+    }
+
+    @Override
+    public ProcessorOutcome process(ProcessorContext context) {
         context.executionContext().getListener().onCheckpoint(context.state());
-        return Optional.empty();
+        return ProcessorOutcome.CONTINUE;
     }
 }

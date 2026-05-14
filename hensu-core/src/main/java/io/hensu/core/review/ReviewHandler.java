@@ -40,8 +40,8 @@ public interface ReviewHandler {
     /// @param history  execution history for backtrack selection, not null
     /// @param config   review behavior settings (allowBacktrack, etc.), not null
     /// @param workflow the workflow for retrieving node metadata for editing purposes, not null
-    /// @return review decision (Approve, Backtrack, or Reject), never null
-    ReviewDecision requestReview(
+    /// @return review outcome (Decided or Pending), never null
+    ReviewOutcome requestReview(
             Node node,
             NodeResult result,
             HensuState state,
@@ -51,7 +51,8 @@ public interface ReviewHandler {
 
     /// Auto-approve handler for automated pipelines without human review.
     ///
-    /// Always returns {@link ReviewDecision.Approve} without user interaction.
-    /// Use when reviews are disabled or in test environments.
-    ReviewHandler AUTO_APPROVE = (_, _, _, _, _, _) -> new ReviewDecision.Approve(null);
+    /// Always returns {@link ReviewOutcome.Decided} wrapping {@link ReviewDecision.Approve}
+    /// without user interaction. Use when reviews are disabled or in test environments.
+    ReviewHandler AUTO_APPROVE =
+            (_, _, _, _, _, _) -> ReviewOutcome.decided(new ReviewDecision.Approve(null));
 }

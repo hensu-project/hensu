@@ -29,13 +29,16 @@ class WorkflowExecutorActionNodeTest extends WorkflowExecutorTestBase {
     @BeforeEach
     void setUpActionExecutor() {
         mockActionExecutor = mock(ActionExecutor.class);
+        var registry = new DefaultNodeExecutorRegistry();
         executor =
                 new WorkflowExecutor(
-                        new DefaultNodeExecutorRegistry(),
+                        registry,
                         agentRegistry,
                         rubricEngine,
-                        ReviewHandler.AUTO_APPROVE,
-                        mockActionExecutor);
+                        createCoordinator(registry, ReviewHandler.AUTO_APPROVE, rubricEngine),
+                        mockActionExecutor,
+                        null,
+                        null);
     }
 
     @Test

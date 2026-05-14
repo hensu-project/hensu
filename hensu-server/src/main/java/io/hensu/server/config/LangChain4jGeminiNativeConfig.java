@@ -42,9 +42,12 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 /// Jackson binding.
 ///
 /// @implNote Quarkus merges reflection metadata from all `@RegisterForReflection` classes at
-/// build time. This class is intentionally separate from {@link NativeImageConfig} to keep
+/// build time. This class is intentionally separate from {@link CoreModelNativeConfig} to keep
 /// third-party registrations isolated and to prevent that file from growing unbounded.
-/// @see NativeImageConfig for Hensu domain model and JDK HTTP client registrations
+/// @see LangChain4jNativeConfig for shared LangChain4j transport registrations
+/// @see LangChain4jGeminiNativeConfig for Google AI Gemini DTO registrations
+/// @see CoreModelNativeConfig for Hensu domain model registrations
+/// @see ExecutionEventNativeConfig for SSE execution event records
 @RegisterForReflection(
         classNames = {
             // --- Request DTOs (serialization: Java → JSON → Gemini API) ---

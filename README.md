@@ -189,8 +189,9 @@ fork/join, and sub-workflows.
   mid-execution, it resumes from the last checkpoint automatically.
 - **Tenant isolation.** Java 25 `ScopedValues` enforce strict context boundaries between concurrent
   workflows.
-- **Local daemon.** `hensu run` starts a warm resident process. Detach with `Ctrl+C`, re-attach
-  with `hensu attach` — output is never lost.
+- **Local daemon.** `hensu daemon start` launches a warm background process that eliminates JVM
+  cold-start. `hensu run` delegates to it automatically when running. Detach with `Ctrl+C`,
+  re-attach with `hensu attach` — output is never lost.
 - **Native binary.** The server ships as a GraalVM native image. No JVM to manage, no classpath to
   debug.
 
@@ -263,13 +264,14 @@ flowchart LR
 
 ### Modules
 
-| Module                                                   | Role                                                                                                              |
-|:---------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------|
-| **[hensu-core](hensu-core/README.md)**                   | Pure Java execution engine. State transitions, rubric evaluation, agent interactions. Zero external dependencies. |
-| **[hensu-dsl](hensu-dsl/README.md)**                     | Kotlin DSL that compiles `.kt` files into versioned Workflow Definitions (JSON).                                  |
-| **[hensu-cli](hensu-cli/README.md)**                     | Local execution via `hensu run`. Server lifecycle: `build`, `push`, `pull`, `delete`, `list`.                     |
-| **[hensu-server](hensu-server/README.md)**               | Multi-tenant GraalVM native server. SSE split-pipe for MCP tool routing.                                          |
-| **[hensu-serialization](hensu-serialization/README.md)** | Jackson-based JSON serialization shared by the CLI and server.                                                    |
+| Module                                                     | Role                                                                                                              |
+|:-----------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------|
+| **[hensu-core](hensu-core/README.md)**                     | Pure Java execution engine. State transitions, rubric evaluation, agent interactions. Zero external dependencies. |
+| **[hensu-dsl](hensu-dsl/README.md)**                       | Kotlin DSL that compiles `.kt` files into versioned Workflow Definitions (JSON).                                  |
+| **[hensu-cli](hensu-cli/README.md)**                       | `run`, `validate`, `visualize`, `build`, `push`/`pull`/`delete`/`list`. Background daemon for warm starts.        |
+| **[hensu-server](hensu-server/README.md)**                 | Multi-tenant GraalVM native server. SSE split-pipe for MCP tool routing. SSE execution event streaming.           |
+| **[hensu-serialization](hensu-serialization/README.md)**   | Jackson-based JSON serialization shared by the CLI and server.                                                    |
+| **[hensu-langchain4j-adapter](hensu-langchain4j-adapter)** | Bridges `hensu-core` Agent abstraction with LangChain4j `ChatModel` implementations.                              |
 
 ---
 

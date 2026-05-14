@@ -4,7 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hensu.core.execution.result.ExecutionHistory;
-import io.hensu.core.plan.PlanSnapshot;
+import io.hensu.core.plan.Plan;
+import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.WorkflowStateRepository;
 import java.sql.ResultSet;
@@ -49,15 +50,16 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
             """
             INSERT INTO runtime.execution_states
                 (tenant_id, execution_id, workflow_id, current_node_id,
-                 context, history, active_plan, checkpoint_reason, created_at,
+                 context, history, active_plan, phase, checkpoint_reason, created_at,
                  server_node_id, last_heartbeat_at)
-            VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?, ?)
             ON CONFLICT (tenant_id, execution_id)
             DO UPDATE SET
                 current_node_id   = EXCLUDED.current_node_id,
                 context           = EXCLUDED.context,
                 history           = EXCLUDED.history,
                 active_plan       = EXCLUDED.active_plan,
+                phase             = EXCLUDED.phase,
                 checkpoint_reason = EXCLUDED.checkpoint_reason,
                 server_node_id    = EXCLUDED.server_node_id,
                 last_heartbeat_at = EXCLUDED.last_heartbeat_at
@@ -66,7 +68,7 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
     private static final String SQL_FIND_BY_EXECUTION_ID =
             """
             SELECT workflow_id, current_node_id, context, history,
-                   active_plan, checkpoint_reason, created_at
+                   active_plan, phase, checkpoint_reason, created_at
             FROM runtime.execution_states
             WHERE tenant_id = ? AND execution_id = ?
             """;
@@ -76,7 +78,7 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
     private static final String SQL_FIND_PAUSED =
             """
             SELECT execution_id, workflow_id, current_node_id, context, history,
-                   active_plan, checkpoint_reason, created_at
+                   active_plan, phase, checkpoint_reason, created_at
             FROM runtime.execution_states
             WHERE tenant_id = ? AND current_node_id IS NOT NULL AND server_node_id IS NULL
             ORDER BY created_at
@@ -85,7 +87,7 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
     private static final String SQL_FIND_BY_WORKFLOW_ID =
             """
             SELECT execution_id, workflow_id, current_node_id, context, history,
-                   active_plan, checkpoint_reason, created_at
+                   active_plan, phase, checkpoint_reason, created_at
             FROM runtime.execution_states
             WHERE tenant_id = ? AND workflow_id = ?
             ORDER BY created_at
@@ -142,10 +144,12 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
                             snapshot.activePlan() != null
                                     ? writeJson(snapshot.activePlan())
                                     : null);
-                    ps.setString(8, snapshot.checkpointReason());
-                    ps.setObject(9, OffsetDateTime.ofInstant(snapshot.createdAt(), ZoneOffset.UTC));
-                    ps.setString(10, leaseNodeId);
-                    ps.setObject(11, heartbeatAt);
+                    ps.setString(8, writeJson(snapshot.phase()));
+                    ps.setString(9, snapshot.checkpointReason());
+                    ps.setObject(
+                            10, OffsetDateTime.ofInstant(snapshot.createdAt(), ZoneOffset.UTC));
+                    ps.setString(11, leaseNodeId);
+                    ps.setObject(12, heartbeatAt);
                 },
                 "Failed to save execution state: " + snapshot.executionId());
     }
@@ -222,8 +226,8 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
         Map<String, Object> context = readJson(rs.getString("context"), MAP_TYPE);
         ExecutionHistory history = readJson(rs.getString("history"), ExecutionHistory.class);
         String activePlanJson = rs.getString("active_plan");
-        PlanSnapshot activePlan =
-                activePlanJson != null ? readJson(activePlanJson, PlanSnapshot.class) : null;
+        Plan activePlan = activePlanJson != null ? readJson(activePlanJson, Plan.class) : null;
+        ExecutionPhase phase = readJson(rs.getString("phase"), ExecutionPhase.class);
         OffsetDateTime createdOdt = rs.getObject("created_at", OffsetDateTime.class);
         Instant createdAt = createdOdt != null ? createdOdt.toInstant() : Instant.now();
 
@@ -238,6 +242,7 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
                 new HashMap<>(context),
                 history,
                 activePlan,
+                phase,
                 createdAt,
                 rs.getString("checkpoint_reason"));
     }

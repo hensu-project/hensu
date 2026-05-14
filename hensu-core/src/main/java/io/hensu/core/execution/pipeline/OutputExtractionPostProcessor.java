@@ -36,7 +36,8 @@ import java.util.logging.Logger;
 ///
 /// ### Contracts
 /// - **Precondition**: `context.result()` is non-null (post-execution pipeline)
-/// - **Postcondition**: Returns empty on success; returns `Failure` if output fails validation
+/// - **Postcondition**: Returns CONTINUE on success; returns Terminal(Failure) if output fails
+///   validation
 /// - **Side effects**: Mutates `context.state().getContext()` map only on success
 ///
 /// ### Validation
@@ -52,17 +53,24 @@ import java.util.logging.Logger;
 /// @see JsonUtil#extractOutputParams for JSON parameter extraction
 public final class OutputExtractionPostProcessor implements PostNodeExecutionProcessor {
 
+    public static final String PROCESSOR_ID = "OutputExtractionPostProcessor";
+
     private static final Logger logger =
             Logger.getLogger(OutputExtractionPostProcessor.class.getName());
 
     @Override
-    public Optional<ExecutionResult> process(ProcessorContext context) {
+    public String id() {
+        return PROCESSOR_ID;
+    }
+
+    @Override
+    public ProcessorOutcome process(ProcessorContext context) {
         var result = context.result();
         var state = context.state();
         var node = context.currentNode();
 
         if (result.getOutput() == null) {
-            return Optional.empty();
+            return ProcessorOutcome.CONTINUE;
         }
 
         String output = result.getOutput().toString();
@@ -106,29 +114,26 @@ public final class OutputExtractionPostProcessor implements PostNodeExecutionPro
             state.getContext().put(node.getId(), output);
         }
 
-        return Optional.empty();
+        return ProcessorOutcome.CONTINUE;
     }
 
     private List<String> engineVarsFor(StandardNode node) {
         List<String> vars = new ArrayList<>();
-        boolean hasScore = false;
+        boolean hasScore = node.getRubricId() != null;
         boolean hasApproval = false;
         for (var rule : node.getTransitionRules()) {
-            if (rule instanceof ScoreTransition) {
-                vars.add(EngineVariables.SCORE);
-                hasScore = true;
-            } else if (rule instanceof ApprovalTransition) {
-                vars.add(EngineVariables.APPROVED);
-                hasApproval = true;
-            }
+            if (rule instanceof ScoreTransition) hasScore = true;
+            else if (rule instanceof ApprovalTransition) hasApproval = true;
         }
+        if (hasScore) vars.add(EngineVariables.SCORE);
+        if (hasApproval) vars.add(EngineVariables.APPROVED);
         if (hasScore || hasApproval) vars.add(EngineVariables.RECOMMENDATION);
         return vars;
     }
 
-    private Optional<ExecutionResult> rejectOutput(HensuState state, String nodeId, String reason) {
+    private ProcessorOutcome rejectOutput(HensuState state, String nodeId, String reason) {
         logger.warning("Rejecting output from node [" + nodeId + "]: " + reason);
-        return Optional.of(
+        return ProcessorOutcome.terminal(
                 new ExecutionResult.Failure(
                         state,
                         new IllegalStateException("Node [" + nodeId + "] output " + reason)));

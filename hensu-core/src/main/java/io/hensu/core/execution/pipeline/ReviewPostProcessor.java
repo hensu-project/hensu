@@ -3,27 +3,29 @@ package io.hensu.core.execution.pipeline;
 import io.hensu.core.execution.result.BacktrackEvent;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ResultStatus;
+import io.hensu.core.resume.ResumeInput;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.review.ReviewDecision;
 import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.review.ReviewMode;
+import io.hensu.core.review.ReviewOutcome;
+import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.node.StandardNode;
 import java.util.Map;
-import java.util.Optional;
 import java.util.logging.Logger;
 
 /// Handles human review checkpoints for nodes with review configuration.
 ///
 /// Invokes the {@link ReviewHandler} when a {@link StandardNode} has a non-null
 /// {@link ReviewConfig}, then maps the {@link ReviewDecision} to a pipeline outcome:
-/// - {@link ReviewDecision.Approve} — merges context edits, returns empty (continue)
-/// - {@link ReviewDecision.Backtrack} — merges context edits, resets position, returns empty
-/// - {@link ReviewDecision.Reject} — returns terminal {@link ExecutionResult.Rejected}
+/// - {@link ReviewDecision.Approve} — merges context edits, returns CONTINUE
+/// - {@link ReviewDecision.Backtrack} — merges context edits, resets position, returns CONTINUE
+/// - {@link ReviewDecision.Reject} — returns Terminal(Rejected)
 ///
 /// ### Contracts
 /// - **Precondition**: `context.result()` is non-null (post-execution pipeline)
-/// - **Postcondition**: Returns empty or terminal result
+/// - **Postcondition**: Returns CONTINUE or Terminal
 /// - **Side effects**: May merge context edits from reviewer, appends
 ///   backtrack events to history on Backtrack decisions
 ///
@@ -34,7 +36,14 @@ import java.util.logging.Logger;
 /// @see ReviewDecision for possible review outcomes
 public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
 
+    public static final String PROCESSOR_ID = "ReviewPostProcessor";
+
     private static final Logger logger = Logger.getLogger(ReviewPostProcessor.class.getName());
+
+    @Override
+    public String id() {
+        return PROCESSOR_ID;
+    }
 
     private final ReviewHandler reviewHandler;
 
@@ -46,38 +55,69 @@ public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
     }
 
     @Override
-    public Optional<ExecutionResult> process(ProcessorContext context) {
+    public ProcessorOutcome process(ProcessorContext context) {
         var node = context.currentNode();
         if (!(node instanceof StandardNode standardNode)) {
-            return Optional.empty();
+            return ProcessorOutcome.CONTINUE;
         }
 
         ReviewConfig reviewConfig = standardNode.getReviewConfig();
         if (reviewConfig == null) {
-            return Optional.empty();
+            return ProcessorOutcome.CONTINUE;
         }
 
-        ReviewDecision decision = requestReview(standardNode, context);
+        HensuState state = context.state();
 
-        return switch (decision) {
-            case ReviewDecision.Approve approve -> handleApprove(approve, context);
-            case ReviewDecision.Backtrack backtrack ->
-                    handleBacktrack(backtrack, node.getId(), context);
-            case ReviewDecision.Reject reject ->
-                    Optional.of(new ExecutionResult.Rejected(reject.getReason(), context.state()));
+        // Skip review when a prior processor (e.g. Rubric) already backtracked
+        if (state.isNodeRedirected()) {
+            return ProcessorOutcome.CONTINUE;
+        }
+        if (state.getResumeInput() instanceof ResumeInput.ApplyContextEdits) {
+            throw new IllegalStateException(
+                    "ApplyContextEdits must be handled before reaching the core pipeline");
+        }
+
+        if (state.getResumeInput() instanceof ResumeInput.ApplyReview applyReview) {
+            ExecutionPhase.validateCorrelation(state.getPhase(), applyReview);
+            state.setResumeInput(null);
+            logger.info("Applying delivered review decision for node: " + node.getId());
+            return handleDecision(applyReview.decision(), node.getId(), context);
+        }
+
+        ReviewOutcome outcome = requestReview(standardNode, context);
+
+        return switch (outcome) {
+            case ReviewOutcome.Decided(var decision) ->
+                    handleDecision(decision, node.getId(), context);
+            case ReviewOutcome.Pending(var correlationId) ->
+                    new ProcessorOutcome.SuspendForExternal(
+                            "ReviewPostProcessor", context.result(), correlationId);
         };
     }
 
-    private ReviewDecision requestReview(StandardNode node, ProcessorContext context) {
+    private ProcessorOutcome handleDecision(
+            ReviewDecision decision, String nodeId, ProcessorContext context) {
+        return switch (decision) {
+            case ReviewDecision.Approve approve -> handleApprove(approve, context);
+            case ReviewDecision.Backtrack backtrack -> handleBacktrack(backtrack, nodeId, context);
+            case ReviewDecision.Reject reject -> {
+                logger.info("Rejecting node: " + nodeId + " due to: " + reject.getReason());
+                yield ProcessorOutcome.terminal(
+                        new ExecutionResult.Rejected(reject.getReason(), context.state()));
+            }
+        };
+    }
+
+    private ReviewOutcome requestReview(StandardNode node, ProcessorContext context) {
         ReviewConfig config = node.getReviewConfig();
 
         if (config.getMode() == ReviewMode.DISABLED) {
-            return new ReviewDecision.Approve();
+            return ReviewOutcome.decided(new ReviewDecision.Approve());
         }
 
         if (config.getMode() == ReviewMode.OPTIONAL
                 && context.result().getStatus() == ResultStatus.SUCCESS) {
-            return new ReviewDecision.Approve();
+            return ReviewOutcome.decided(new ReviewDecision.Approve());
         }
 
         logger.info("Requesting human review for node: " + node.getId());
@@ -90,15 +130,15 @@ public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
                 context.workflow());
     }
 
-    private Optional<ExecutionResult> handleApprove(
+    private ProcessorOutcome handleApprove(
             ReviewDecision.Approve approve, ProcessorContext context) {
         if (approve.hasContextEdits()) {
             mergeContextEdits(approve.contextEdits(), context.state());
         }
-        return Optional.empty();
+        return ProcessorOutcome.CONTINUE;
     }
 
-    private Optional<ExecutionResult> handleBacktrack(
+    private ProcessorOutcome handleBacktrack(
             ReviewDecision.Backtrack backtrack, String fromNodeId, ProcessorContext context) {
 
         HensuState state = context.state();
@@ -109,6 +149,7 @@ public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
 
         String targetStep = backtrack.getTargetStep();
         state.setCurrentNode(targetStep);
+        state.setNodeRedirected(true);
 
         state.getHistory()
                 .addBacktrack(
@@ -118,7 +159,7 @@ public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
                                 .reason(backtrack.getReason())
                                 .build());
 
-        return Optional.empty();
+        return ProcessorOutcome.CONTINUE;
     }
 
     /// Merges reviewer-provided context edits into the current execution state.

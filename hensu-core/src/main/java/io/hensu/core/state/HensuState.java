@@ -3,6 +3,8 @@ package io.hensu.core.state;
 import io.hensu.core.execution.result.BacktrackEvent;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionStep;
+import io.hensu.core.plan.Plan;
+import io.hensu.core.resume.ResumeInput;
 import io.hensu.core.rubric.evaluator.RubricEvaluation;
 import java.util.HashMap;
 import java.util.Map;
@@ -39,10 +41,19 @@ public final class HensuState {
     private final String executionId;
 
     // Mutable execution state (modified during workflow execution)
+    private Plan activePlan;
     private RubricEvaluation rubricEvaluation;
     private String currentNode;
     private int retryCount;
     private String loopBreakTarget;
+    private ExecutionPhase phase = ExecutionPhase.INITIAL;
+
+    // Transient — set before executeFrom(), consumed by post-processors, never persisted.
+    private ResumeInput resumeInput;
+
+    // Transient — set by backtrack processors, consumed by TransitionPostProcessor, never
+    // persisted.
+    private boolean nodeRedirected;
 
     public HensuState(Builder builder) {
         this.executionId = Objects.requireNonNull(builder.executionId);
@@ -50,8 +61,10 @@ public final class HensuState {
         this.currentNode = Objects.requireNonNull(builder.currentNode);
         this.context = new HashMap<>(builder.context);
         this.history = builder.history;
+        this.activePlan = builder.activePlan;
         this.rubricEvaluation = builder.rubricEvaluation;
         this.retryCount = builder.retryCount;
+        this.phase = builder.phase != null ? builder.phase : ExecutionPhase.INITIAL;
     }
 
     public HensuState(
@@ -81,6 +94,14 @@ public final class HensuState {
 
     public ExecutionHistory getHistory() {
         return history;
+    }
+
+    public Plan getActivePlan() {
+        return activePlan;
+    }
+
+    public void setActivePlan(Plan activePlan) {
+        this.activePlan = activePlan;
     }
 
     public RubricEvaluation getRubricEvaluation() {
@@ -113,6 +134,50 @@ public final class HensuState {
 
     public void setLoopBreakTarget(String loopBreakTarget) {
         this.loopBreakTarget = loopBreakTarget;
+    }
+
+    /// Returns the current execution phase, never null.
+    ///
+    /// Defaults to {@link ExecutionPhase#INITIAL} for newly constructed states.
+    public ExecutionPhase getPhase() {
+        return phase;
+    }
+
+    /// Sets the current execution phase. Passing null resets to
+    /// {@link ExecutionPhase#INITIAL}.
+    public void setPhase(ExecutionPhase phase) {
+        this.phase = phase != null ? phase : ExecutionPhase.INITIAL;
+    }
+
+    /// Returns the resume input set by the caller before {@code executeFrom()},
+    /// or null if this is a fresh execution (not a resume).
+    ///
+    /// Transient — never persisted or included in snapshots.
+    public ResumeInput getResumeInput() {
+        return resumeInput;
+    }
+
+    /// Sets the resume input to deliver to post-processors on resume.
+    ///
+    /// @param resumeInput the input from the resume caller, may be null
+    public void setResumeInput(ResumeInput resumeInput) {
+        this.resumeInput = resumeInput;
+    }
+
+    /// Returns whether a backtrack processor redirected execution during this
+    /// pipeline iteration.
+    ///
+    /// Transient — never persisted or included in snapshots. Reset at the
+    /// start of each node lifecycle by
+    /// {@link io.hensu.core.execution.NodeLifecycleCoordinator}.
+    public boolean isNodeRedirected() {
+        return nodeRedirected;
+    }
+
+    /// Marks that a backtrack processor has redirected execution to a different
+    /// (or same) node.
+    public void setNodeRedirected(boolean nodeRedirected) {
+        this.nodeRedirected = nodeRedirected;
     }
 
     /// Create initial state.
@@ -196,8 +261,10 @@ public final class HensuState {
                 .workflowId(workflowId)
                 .context(context)
                 .history(history)
+                .activePlan(activePlan)
                 .rubricEvaluation(rubricEvaluation)
-                .retryCount(retryCount);
+                .retryCount(retryCount)
+                .phase(phase);
     }
 
     public static final class Builder {
@@ -206,8 +273,10 @@ public final class HensuState {
         public String currentNode;
         private Map<String, Object> context = Map.of();
         private ExecutionHistory history = new ExecutionHistory();
+        private Plan activePlan;
         private RubricEvaluation rubricEvaluation;
         private int retryCount = 0;
+        private ExecutionPhase phase = ExecutionPhase.INITIAL;
 
         public Builder() {}
 
@@ -236,6 +305,11 @@ public final class HensuState {
             return this;
         }
 
+        public Builder activePlan(Plan activePlan) {
+            this.activePlan = activePlan;
+            return this;
+        }
+
         public Builder rubricEvaluation(RubricEvaluation evaluation) {
             this.rubricEvaluation = evaluation;
             return this;
@@ -243,6 +317,11 @@ public final class HensuState {
 
         public Builder retryCount(int retryCount) {
             this.retryCount = retryCount;
+            return this;
+        }
+
+        public Builder phase(ExecutionPhase phase) {
+            this.phase = phase != null ? phase : ExecutionPhase.INITIAL;
             return this;
         }
 

@@ -29,7 +29,7 @@ public class LangChain4jProvider implements AgentProvider {
     private static final Logger logger = Logger.getLogger(LangChain4jProvider.class.getName());
 
     private static final int DEFAULT_MAX_TOKENS = 4096;
-    private static final long DEFAULT_TIMEOUT_SECONDS = 60;
+    private static final long DEFAULT_TIMEOUT_SECONDS = 120;
     private static final double DEFAULT_TEMPERATURE = 0.7;
 
     @Override

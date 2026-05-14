@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.workflow.ExecutionStartResult;
-import io.hensu.server.workflow.ResumeDecision;
 import io.hensu.server.workflow.WorkflowService;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -56,7 +55,7 @@ class StatePersistenceIntegrationTest extends IntegrationTestBase {
         // Phase 2: Resume — simulates a different server instance by using the
         // persisted snapshot. The TestPauseHandler returns SUCCESS on second call.
         workflowService.resumeExecution(
-                TEST_TENANT, pausedSnapshot.executionId(), ResumeDecision.approve());
+                TEST_TENANT, pausedSnapshot.executionId(), io.hensu.core.resume.ResumeInput.NONE);
 
         // Verify final snapshot shows completion with both step outputs.
         // The repository stores one snapshot per execution ID — the completed
@@ -85,7 +84,7 @@ class StatePersistenceIntegrationTest extends IntegrationTestBase {
 
         // Resume
         workflowService.resumeExecution(
-                TEST_TENANT, result.executionId(), ResumeDecision.approve());
+                TEST_TENANT, result.executionId(), io.hensu.core.resume.ResumeInput.NONE);
 
         // The completed snapshot should preserve the same workflow ID
         List<HensuSnapshot> snapshots =
@@ -107,7 +106,8 @@ class StatePersistenceIntegrationTest extends IntegrationTestBase {
         workflowService.resumeExecution(
                 TEST_TENANT,
                 result.executionId(),
-                ResumeDecision.modify(Map.of("extra", "injected-value")));
+                new io.hensu.core.resume.ResumeInput.ApplyContextEdits(
+                        Map.of("extra", "injected-value")));
 
         // Verify the injected key is present in the final state
         List<HensuSnapshot> snapshots =

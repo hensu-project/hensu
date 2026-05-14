@@ -14,7 +14,7 @@ import io.hensu.core.agent.AgentConfig;
 ///
 /// @implNote `AgentConfig.Builder` has a private constructor. Native-image deployments
 /// require `AgentConfig.class` and `AgentConfig.Builder.class` to be registered in
-/// `NativeImageConfig` in `hensu-server`.
+/// `CoreModelNativeConfig` in `hensu-server`.
 ///
 /// @see AgentConfigBuilderMixin
 /// @see io.hensu.serialization.HensuJacksonModule

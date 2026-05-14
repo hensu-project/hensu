@@ -3,6 +3,8 @@ package io.hensu.server.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.hensu.core.workflow.Workflow;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -83,11 +85,23 @@ class JdbcWorkflowRepositoryTest extends JdbcRepositoryTestBase {
     }
 
     @Test
-    void delete_returnsTrueWhenDeleted() {
+    void delete_softDeletesRowButKeepsItInTable() throws Exception {
         repo.save(TENANT, buildWorkflow("wf-del"));
 
         assertThat(repo.delete(TENANT, "wf-del")).isTrue();
         assertThat(repo.findById(TENANT, "wf-del")).isEmpty();
+
+        // Row physically exists with non-null deleted_at
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps =
+                        conn.prepareStatement(
+                                "SELECT deleted_at FROM runtime.workflows WHERE tenant_id = ? AND workflow_id = ?")) {
+            ps.setString(1, TENANT);
+            ps.setString(2, "wf-del");
+            var rs = ps.executeQuery();
+            assertThat(rs.next()).isTrue();
+            assertThat(rs.getTimestamp("deleted_at")).isNotNull();
+        }
     }
 
     @Test
@@ -118,6 +132,69 @@ class JdbcWorkflowRepositoryTest extends JdbcRepositoryTestBase {
 
         repo.delete(TENANT, "wf-1");
         assertThat(repo.count(TENANT)).isEqualTo(1);
+    }
+
+    @Test
+    void delete_softDeletesButPreservesRowForFK() throws Exception {
+        Workflow workflow = buildWorkflow("wf-fk");
+        repo.save(TENANT, workflow);
+
+        // Insert an execution_states row referencing this workflow (simulates a past execution)
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps =
+                        conn.prepareStatement(
+                                """
+                     INSERT INTO runtime.execution_states
+                         (tenant_id, execution_id, workflow_id, context, history)
+                     VALUES (?, ?, ?, '{}'::jsonb, '{}'::jsonb)
+                     """)) {
+            ps.setString(1, TENANT);
+            ps.setString(2, "exec-1");
+            ps.setString(3, "wf-fk");
+            ps.executeUpdate();
+        }
+
+        // Soft-delete succeeds (hard delete would have thrown FK violation)
+        assertThat(repo.delete(TENANT, "wf-fk")).isTrue();
+
+        // Invisible to queries
+        assertThat(repo.findById(TENANT, "wf-fk")).isEmpty();
+        assertThat(repo.exists(TENANT, "wf-fk")).isFalse();
+        assertThat(repo.count(TENANT)).isZero();
+        assertThat(repo.findAll(TENANT)).isEmpty();
+
+        // Execution state row is intact
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps =
+                        conn.prepareStatement(
+                                "SELECT 1 FROM runtime.execution_states WHERE tenant_id = ? AND execution_id = ?")) {
+            ps.setString(1, TENANT);
+            ps.setString(2, "exec-1");
+            assertThat(ps.executeQuery().next()).isTrue();
+        }
+    }
+
+    @Test
+    void save_reactivatesSoftDeletedWorkflow() {
+        Workflow workflow = buildWorkflow("wf-reactivate");
+        repo.save(TENANT, workflow);
+
+        repo.delete(TENANT, "wf-reactivate");
+        assertThat(repo.findById(TENANT, "wf-reactivate")).isEmpty();
+
+        // Re-push reactivates
+        repo.save(TENANT, workflow);
+        assertThat(repo.findById(TENANT, "wf-reactivate")).isPresent();
+        assertThat(repo.exists(TENANT, "wf-reactivate")).isTrue();
+        assertThat(repo.count(TENANT)).isEqualTo(1);
+    }
+
+    @Test
+    void delete_returnsFalseForAlreadyDeletedWorkflow() {
+        repo.save(TENANT, buildWorkflow("wf-double-del"));
+
+        assertThat(repo.delete(TENANT, "wf-double-del")).isTrue();
+        assertThat(repo.delete(TENANT, "wf-double-del")).isFalse();
     }
 
     @Test

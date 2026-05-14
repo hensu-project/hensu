@@ -289,12 +289,35 @@ public final class AgentConfig {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (!(o instanceof AgentConfig that)) return false;
-        return Objects.equals(id, that.id);
+        return Double.compare(temperature, that.temperature) == 0
+                && isMaintainContext == that.isMaintainContext
+                && Objects.equals(id, that.id)
+                && Objects.equals(role, that.role)
+                && Objects.equals(model, that.model)
+                && Objects.equals(maxTokens, that.maxTokens)
+                && Objects.equals(tools, that.tools)
+                && Objects.equals(instructions, that.instructions)
+                && Objects.equals(topP, that.topP)
+                && Objects.equals(frequencyPenalty, that.frequencyPenalty)
+                && Objects.equals(presencePenalty, that.presencePenalty)
+                && Objects.equals(timeout, that.timeout);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id);
+        return Objects.hash(
+                id,
+                role,
+                model,
+                temperature,
+                maxTokens,
+                tools,
+                isMaintainContext,
+                instructions,
+                topP,
+                frequencyPenalty,
+                presencePenalty,
+                timeout);
     }
 
     @Override

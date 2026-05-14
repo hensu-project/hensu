@@ -15,7 +15,6 @@ import io.hensu.server.workflow.ExecutionOutput;
 import io.hensu.server.workflow.ExecutionStartResult;
 import io.hensu.server.workflow.ExecutionStatus;
 import io.hensu.server.workflow.ExecutionSummary;
-import io.hensu.server.workflow.ResumeDecision;
 import io.hensu.server.workflow.WorkflowNotFoundException;
 import io.hensu.server.workflow.WorkflowService;
 import jakarta.ws.rs.NotFoundException;
@@ -49,8 +48,7 @@ class ExecutionResourceTest {
             when(workflowService.startExecution(eq("tenant-1"), eq("wf-1"), any()))
                     .thenReturn(new ExecutionStartResult("exec-123", "wf-1"));
 
-            var request =
-                    new ExecutionResource.ExecutionStartRequest("wf-1", Map.of("key", "value"));
+            var request = new ExecutionStartRequest("wf-1", Map.of("key", "value"));
             Map<String, Object> entity;
             try (Response response = resource.startExecution(request)) {
 
@@ -66,7 +64,7 @@ class ExecutionResourceTest {
             when(workflowService.startExecution(any(), any(), any()))
                     .thenThrow(new WorkflowNotFoundException("Not found"));
 
-            var request = new ExecutionResource.ExecutionStartRequest("wf-1", Map.of());
+            var request = new ExecutionStartRequest("wf-1", Map.of());
             assertThatThrownBy(
                             () -> {
                                 try (var _ = resource.startExecution(request)) {
@@ -82,18 +80,48 @@ class ExecutionResourceTest {
     class Resume {
 
         @Test
-        void shouldResumeExecutionAndReturn200() {
+        void shouldResumeWithApproveDecision() {
             try (Response response =
                     resource.resume(
-                            "exec-1", new ExecutionResource.ResumeRequest(true, Map.of()))) {
+                            "exec-1", new ResumeRequest("corr-1", "approve", null, null, null))) {
 
                 assertThat(response.getStatus()).isEqualTo(200);
             }
 
-            ArgumentCaptor<ResumeDecision> captor = ArgumentCaptor.forClass(ResumeDecision.class);
+            ArgumentCaptor<io.hensu.core.resume.ResumeInput> captor =
+                    ArgumentCaptor.forClass(io.hensu.core.resume.ResumeInput.class);
             verify(workflowService).resumeExecution(eq("tenant-1"), eq("exec-1"), captor.capture());
-            assertThat(captor.getValue().approved()).isTrue();
-            assertThat(captor.getValue().modifications()).isEmpty();
+            assertThat(captor.getValue())
+                    .isInstanceOf(io.hensu.core.resume.ResumeInput.ApplyReview.class);
+        }
+
+        @Test
+        void shouldResumeWithContextEdits() {
+            try (Response response =
+                    resource.resume(
+                            "exec-1",
+                            new ResumeRequest(null, null, null, null, Map.of("key", "val")))) {
+
+                assertThat(response.getStatus()).isEqualTo(200);
+            }
+
+            ArgumentCaptor<io.hensu.core.resume.ResumeInput> captor =
+                    ArgumentCaptor.forClass(io.hensu.core.resume.ResumeInput.class);
+            verify(workflowService).resumeExecution(eq("tenant-1"), eq("exec-1"), captor.capture());
+            assertThat(captor.getValue())
+                    .isInstanceOf(io.hensu.core.resume.ResumeInput.ApplyContextEdits.class);
+        }
+
+        @Test
+        void shouldResumeWithNullRequestAsNone() {
+            try (Response response = resource.resume("exec-1", null)) {
+                assertThat(response.getStatus()).isEqualTo(200);
+            }
+
+            ArgumentCaptor<io.hensu.core.resume.ResumeInput> captor =
+                    ArgumentCaptor.forClass(io.hensu.core.resume.ResumeInput.class);
+            verify(workflowService).resumeExecution(eq("tenant-1"), eq("exec-1"), captor.capture());
+            assertThat(captor.getValue()).isInstanceOf(io.hensu.core.resume.ResumeInput.None.class);
         }
 
         @Test

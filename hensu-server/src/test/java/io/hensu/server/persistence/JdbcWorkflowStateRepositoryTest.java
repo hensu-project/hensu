@@ -47,7 +47,7 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
 
     @Test
     void saveAndFindByExecutionId_roundTrip() {
-        HensuSnapshot snapshot = makeSnapshot("exec-1", "wf-parent", "process");
+        HensuSnapshot snapshot = makeSnapshot("exec-1", "process");
 
         stateRepo.save(TENANT, snapshot);
 
@@ -64,7 +64,7 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
 
     @Test
     void save_upsertOverwritesCheckpoint() {
-        stateRepo.save(TENANT, makeSnapshot("exec-u", "wf-parent", "process"));
+        stateRepo.save(TENANT, makeSnapshot("exec-u", "process"));
 
         HensuSnapshot updated =
                 new HensuSnapshot(
@@ -73,6 +73,7 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         "done",
                         Map.of("topic", "ML"),
                         new ExecutionHistory(),
+                        null,
                         null,
                         Instant.now(),
                         "completed");
@@ -88,16 +89,16 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
 
     @Test
     void save_activeCheckpoint_setsLease() throws SQLException {
-        stateRepo.save(TENANT, makeSnapshot("exec-lease", "wf-parent", "process"));
+        stateRepo.save(TENANT, makeSnapshot("exec-lease", "process"));
 
-        LeaseColumns lease = readLeaseColumns(TENANT, "exec-lease");
+        LeaseColumns lease = readLeaseColumns("exec-lease");
         assertThat(lease.serverNodeId()).isEqualTo(NODE_ID);
         assertThat(lease.lastHeartbeatAt()).isNotNull();
     }
 
     @Test
     void save_completed_clearsLease() throws SQLException {
-        stateRepo.save(TENANT, makeSnapshot("exec-done", "wf-parent", "process"));
+        stateRepo.save(TENANT, makeSnapshot("exec-done", "process"));
 
         HensuSnapshot completed =
                 new HensuSnapshot(
@@ -107,18 +108,19 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         Map.of(),
                         new ExecutionHistory(),
                         null,
+                        null,
                         Instant.now(),
                         "completed");
         stateRepo.save(TENANT, completed);
 
-        LeaseColumns lease = readLeaseColumns(TENANT, "exec-done");
+        LeaseColumns lease = readLeaseColumns("exec-done");
         assertThat(lease.serverNodeId()).isNull();
         assertThat(lease.lastHeartbeatAt()).isNull();
     }
 
     @Test
     void save_paused_clearsLease() throws SQLException {
-        stateRepo.save(TENANT, makeSnapshot("exec-paused", "wf-parent", "process"));
+        stateRepo.save(TENANT, makeSnapshot("exec-paused", "process"));
 
         HensuSnapshot paused =
                 new HensuSnapshot(
@@ -128,11 +130,12 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         Map.of(),
                         new ExecutionHistory(),
                         null,
+                        null,
                         Instant.now(),
                         "paused");
         stateRepo.save(TENANT, paused);
 
-        LeaseColumns lease = readLeaseColumns(TENANT, "exec-paused");
+        LeaseColumns lease = readLeaseColumns("exec-paused");
         assertThat(lease.serverNodeId()).isNull();
         assertThat(lease.lastHeartbeatAt()).isNull();
     }
@@ -153,12 +156,13 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         Map.of(),
                         new ExecutionHistory(),
                         null,
+                        null,
                         Instant.now(),
                         "paused");
         stateRepo.save(TENANT, paused);
 
         // Active checkpoint: server_node_id is set — must NOT appear in findPaused()
-        stateRepo.save(TENANT, makeSnapshot("exec-running", "wf-parent", "process"));
+        stateRepo.save(TENANT, makeSnapshot("exec-running", "process"));
 
         // Completed: currentNodeId is null — excluded by current_node_id IS NOT NULL
         HensuSnapshot completed =
@@ -168,6 +172,7 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         null,
                         Map.of(),
                         new ExecutionHistory(),
+                        null,
                         null,
                         Instant.now(),
                         "completed");
@@ -180,8 +185,8 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
 
     @Test
     void findByWorkflowId_returnsMatchingSnapshots() {
-        stateRepo.save(TENANT, makeSnapshot("exec-a", "wf-parent", "process"));
-        stateRepo.save(TENANT, makeSnapshot("exec-b", "wf-parent", "done"));
+        stateRepo.save(TENANT, makeSnapshot("exec-a", "process"));
+        stateRepo.save(TENANT, makeSnapshot("exec-b", "done"));
 
         List<HensuSnapshot> found = stateRepo.findByWorkflowId(TENANT, "wf-parent");
         assertThat(found).hasSize(2);
@@ -192,7 +197,7 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
 
     @Test
     void delete_returnsTrueWhenDeleted() {
-        stateRepo.save(TENANT, makeSnapshot("exec-del", "wf-parent", "process"));
+        stateRepo.save(TENANT, makeSnapshot("exec-del", "process"));
 
         assertThat(stateRepo.delete(TENANT, "exec-del")).isTrue();
         assertThat(stateRepo.findByExecutionId(TENANT, "exec-del")).isEmpty();
@@ -205,8 +210,8 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
 
     @Test
     void deleteAllForTenant_removesAllAndReturnsCount() {
-        stateRepo.save(TENANT, makeSnapshot("exec-1", "wf-parent", "process"));
-        stateRepo.save(TENANT, makeSnapshot("exec-2", "wf-parent", "done"));
+        stateRepo.save(TENANT, makeSnapshot("exec-1", "process"));
+        stateRepo.save(TENANT, makeSnapshot("exec-2", "done"));
 
         int deleted = stateRepo.deleteAllForTenant(TENANT);
         assertThat(deleted).isEqualTo(2);
@@ -215,8 +220,8 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
 
     @Test
     void tenantIsolation_dataNotVisibleAcrossTenants() {
-        stateRepo.save(TENANT, makeSnapshot("exec-shared", "wf-parent", "process"));
-        stateRepo.save(OTHER_TENANT, makeSnapshot("exec-shared", "wf-parent", "done"));
+        stateRepo.save(TENANT, makeSnapshot("exec-shared", "process"));
+        stateRepo.save(OTHER_TENANT, makeSnapshot("exec-shared", "done"));
 
         assertThat(stateRepo.findByExecutionId(TENANT, "exec-shared").orElseThrow().currentNodeId())
                 .isEqualTo("process");
@@ -249,6 +254,7 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         Map.of("topic", "history"),
                         history,
                         null,
+                        null,
                         Instant.now(),
                         "checkpoint");
 
@@ -265,32 +271,31 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
 
     /// Creates a minimal snapshot with default context and empty history.
     ///
-    /// @param executionId unique execution identifier, not null
-    /// @param workflowId parent workflow identifier (must exist in DB), not null
+    /// @param executionId   unique execution identifier, not null
     /// @param currentNodeId the node where execution is paused, not null
     /// @return a valid snapshot with {@code checkpoint_reason = "checkpoint"}, never null
-    private static HensuSnapshot makeSnapshot(
-            String executionId, String workflowId, String currentNodeId) {
+    private static HensuSnapshot makeSnapshot(String executionId, String currentNodeId) {
         return new HensuSnapshot(
-                workflowId,
+                "wf-parent",
                 executionId,
                 currentNodeId,
                 Map.of("topic", "AI"),
                 new ExecutionHistory(),
+                null,
                 null,
                 Instant.now(),
                 "checkpoint");
     }
 
     /// Reads the raw lease columns directly from the DB for assertion.
-    private LeaseColumns readLeaseColumns(String tenantId, String executionId) throws SQLException {
+    private LeaseColumns readLeaseColumns(String executionId) throws SQLException {
         try (Connection conn = dataSource.getConnection();
                 PreparedStatement ps =
                         conn.prepareStatement(
                                 "SELECT server_node_id, last_heartbeat_at"
                                         + " FROM runtime.execution_states"
                                         + " WHERE tenant_id = ? AND execution_id = ?")) {
-            ps.setString(1, tenantId);
+            ps.setString(1, JdbcRepositoryTestBase.TENANT);
             ps.setString(2, executionId);
             try (ResultSet rs = ps.executeQuery()) {
                 assertThat(rs.next()).isTrue();

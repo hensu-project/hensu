@@ -12,7 +12,7 @@ import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
 /// knows to use the builder at all.
 ///
 /// @implNote Requires `BacktrackEvent.Builder.class` to be registered for reflection in
-/// `NativeImageConfig` in `hensu-server` (all-declared constructors + all public methods).
+/// `CoreModelNativeConfig` in `hensu-server` (all-declared constructors + all public methods).
 ///
 /// @see BacktrackEventMixin
 /// @see io.hensu.serialization.HensuJacksonModule

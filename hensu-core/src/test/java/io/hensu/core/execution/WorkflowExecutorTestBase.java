@@ -4,9 +4,12 @@ import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.execution.executor.DefaultNodeExecutorRegistry;
+import io.hensu.core.execution.executor.NodeExecutorRegistry;
+import io.hensu.core.execution.pipeline.ProcessorPipeline;
 import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.rubric.RubricEngine;
+import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.workflow.node.EndNode;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
@@ -39,12 +42,24 @@ abstract class WorkflowExecutorTestBase {
 
     @BeforeEach
     void setUpBase() {
+        var registry = new DefaultNodeExecutorRegistry();
         executor =
                 new WorkflowExecutor(
-                        new DefaultNodeExecutorRegistry(),
+                        registry,
                         agentRegistry,
                         rubricEngine,
-                        ReviewHandler.AUTO_APPROVE);
+                        createCoordinator(registry, ReviewHandler.AUTO_APPROVE, rubricEngine),
+                        null,
+                        new SimpleTemplateResolver(),
+                        null);
+    }
+
+    protected static NodeLifecycleCoordinator createCoordinator(
+            NodeExecutorRegistry registry, ReviewHandler reviewHandler, RubricEngine rubricEngine) {
+        return new NodeLifecycleCoordinator(
+                registry,
+                ProcessorPipeline.preExecution(),
+                ProcessorPipeline.postExecution(reviewHandler, rubricEngine));
     }
 
     /// Creates an {@link AgentConfig} for the default {@code "test-agent"}.

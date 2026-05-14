@@ -1,8 +1,5 @@
 package io.hensu.core.execution.pipeline;
 
-import io.hensu.core.execution.result.ExecutionResult;
-import java.util.Optional;
-
 /// Fires the {@link io.hensu.core.execution.ExecutionListener#onNodeComplete} callback
 /// after a node's output has been extracted and validated.
 ///
@@ -12,7 +9,7 @@ import java.util.Optional;
 ///
 /// ### Contracts
 /// - **Precondition**: `context.result()` is non-null (post-execution pipeline)
-/// - **Postcondition**: Always returns empty (never short-circuits)
+/// - **Postcondition**: Always returns {@link ProcessorOutcome#CONTINUE}
 /// - **Side effects**: Delegates to the registered
 /// {@link io.hensu.core.execution.ExecutionListener}
 ///
@@ -29,11 +26,18 @@ import java.util.Optional;
 /// @see OutputExtractionPostProcessor for the preceding post-execution processor
 public final class NodeCompletePostProcessor implements PostNodeExecutionProcessor {
 
+    public static final String PROCESSOR_ID = "NodeCompletePostProcessor";
+
     @Override
-    public Optional<ExecutionResult> process(ProcessorContext context) {
+    public String id() {
+        return PROCESSOR_ID;
+    }
+
+    @Override
+    public ProcessorOutcome process(ProcessorContext context) {
         context.executionContext()
                 .getListener()
                 .onNodeComplete(context.currentNode(), context.result());
-        return Optional.empty();
+        return ProcessorOutcome.CONTINUE;
     }
 }

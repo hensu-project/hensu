@@ -18,7 +18,7 @@ import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
 /// knows to use the builder at all.
 ///
 /// @implNote Requires `NodeResult.Builder.class` to be registered for reflection in
-/// `NativeImageConfig` in `hensu-server` (all-declared constructors + all public methods).
+/// `CoreModelNativeConfig` in `hensu-server` (all-declared constructors + all public methods).
 ///
 /// @see NodeResultMixin
 /// @see io.hensu.serialization.HensuJacksonModule

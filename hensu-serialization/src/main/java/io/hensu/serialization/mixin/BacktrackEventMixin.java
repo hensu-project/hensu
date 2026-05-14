@@ -14,7 +14,7 @@ import io.hensu.core.execution.result.BacktrackEvent;
 ///
 /// @implNote `BacktrackEvent.Builder` has a private constructor. Native-image deployments
 /// require `BacktrackEvent.class` and `BacktrackEvent.Builder.class` to be registered in
-/// `NativeImageConfig` in `hensu-server`.
+/// `CoreModelNativeConfig` in `hensu-server`.
 ///
 /// @see BacktrackEventBuilderMixin
 /// @see io.hensu.serialization.HensuJacksonModule
