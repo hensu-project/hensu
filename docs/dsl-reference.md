@@ -948,7 +948,7 @@ Models.GPT_4_TURBO              // gpt-4-turbo
 Models.GPT_4O                   // gpt-4o
 
 // Google Gemini
-Models.GEMINI_3_1_FLASH_LITE    // gemini-3.1-flash-lite-preview
+Models.GEMINI_3_1_FLASH_LITE    // gemini-3.1-flash-lite
 Models.GEMINI_3_1_PRO           // gemini-3.1-pro-preview
 Models.GEMINI_2_5_FLASH         // gemini-2.5-flash
 Models.GEMINI_2_5_PRO           // gemini-2.5-pro
