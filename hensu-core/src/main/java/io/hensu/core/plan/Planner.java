@@ -53,11 +53,14 @@ public interface Planner {
 
     /// Request for plan creation.
     ///
+    /// @param agentId identifier of the agent to use for plan generation; nullable
+    ///               for non-LLM planners (e.g. {@link StaticPlanner})
     /// @param prompt the resolved node prompt driving this plan, not null
     /// @param availableTools tools that can be used in the plan, not null
     /// @param context workflow variables for template resolution, not null
     /// @param constraints limits on plan generation, not null
     record PlanRequest(
+            String agentId,
             String prompt,
             List<ToolDefinition> availableTools,
             Map<String, Object> context,
@@ -75,7 +78,7 @@ public interface Planner {
         /// @param prompt the resolved node prompt
         /// @return new request, never null
         public static PlanRequest simple(String prompt) {
-            return new PlanRequest(prompt, List.of(), Map.of(), PlanConstraints.defaults());
+            return new PlanRequest(null, prompt, List.of(), Map.of(), PlanConstraints.defaults());
         }
     }
 
@@ -89,12 +92,15 @@ public interface Planner {
     /// @param revisionReason explanation for why revision is needed, not null
     /// @param prompt the resolved node prompt that drove the original plan, not null
     /// @param availableTools tools available for the revised plan, not null
+    /// @param agentId identifier of the agent to use for replanning; nullable
+    ///               for non-LLM planners
     record RevisionContext(
             int failedAtStep,
             StepResult failureResult,
             String revisionReason,
             String prompt,
-            List<ToolDefinition> availableTools) {
+            List<ToolDefinition> availableTools,
+            String agentId) {
 
         /// Compact constructor with defaults.
         public RevisionContext {
@@ -107,15 +113,20 @@ public interface Planner {
         /// @param stepResult the failed step result, not null
         /// @param prompt the resolved node prompt that drove the original plan, not null
         /// @param availableTools tools available for replanning, not null
+        /// @param agentId identifier of the agent to use for replanning
         /// @return revision context, never null
         public static RevisionContext fromFailure(
-                StepResult stepResult, String prompt, List<ToolDefinition> availableTools) {
+                StepResult stepResult,
+                String prompt,
+                List<ToolDefinition> availableTools,
+                String agentId) {
             return new RevisionContext(
                     stepResult.stepIndex(),
                     stepResult,
                     "Step " + stepResult.stepIndex() + " failed: " + stepResult.error(),
                     prompt,
-                    availableTools);
+                    availableTools,
+                    agentId);
         }
     }
 }

@@ -107,6 +107,13 @@ public final class PlanCreationProcessor implements PlanProcessor {
             }
 
             case DYNAMIC -> {
+                String agentId = config.resolveAgentId(node.getAgentId());
+                if (agentId == null || agentId.isBlank()) {
+                    throw new PlanCreationException(
+                            "No planner agent configured for dynamic planning on node: "
+                                    + node.getId());
+                }
+
                 List<ToolDefinition> tools = toolRegistry.all();
                 String prompt = resolvePrompt(node.getPrompt(), executionContext);
 
@@ -114,6 +121,7 @@ public final class PlanCreationProcessor implements PlanProcessor {
                 Plan created =
                         planner.createPlan(
                                 new PlanRequest(
+                                        agentId,
                                         prompt,
                                         tools,
                                         executionContext.getState().getContext(),

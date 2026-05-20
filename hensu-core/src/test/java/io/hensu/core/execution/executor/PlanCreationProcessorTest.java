@@ -112,6 +112,7 @@ class PlanCreationProcessorTest {
         StandardNode node =
                 StandardNode.builder()
                         .id("planning-node")
+                        .agentId("test-agent")
                         .prompt("test prompt")
                         .planningConfig(PlanningConfig.forDynamic())
                         .transitionRules(List.of())

@@ -1,6 +1,8 @@
 package io.hensu.core.plan;
 
 import io.hensu.core.agent.Agent;
+import io.hensu.core.agent.AgentNotFoundException;
+import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.tool.ToolDefinition;
 import io.hensu.core.tool.ToolDefinition.ParameterDef;
@@ -16,7 +18,7 @@ import java.util.logging.Logger;
 /// Uses a planning agent to create step-by-step plans based on the goal,
 /// available tools, and workflow context. Supports both tool-call steps and
 /// synthesize steps, enabling the agent to express "call this tool, then
-/// summarise the results" within a single plan.
+/// summarize the results" within a single plan.
 ///
 /// ### Plan Generation
 /// The planner prompts the LLM with structured instructions and parses the
@@ -114,16 +116,16 @@ public class LlmPlanner implements Planner {
             ```
             """;
 
-    private final Agent planningAgent;
+    private final AgentRegistry agentRegistry;
     private final PlanResponseParser responseParser;
 
-    /// Creates an LLM planner.
+    /// Creates an LLM planner that resolves the planning agent per-request.
     ///
-    /// @param planningAgent the agent to use for plan generation, not null
+    /// @param agentRegistry registry used to look up the planning agent by ID, not null
     /// @param responseParser parser that converts the agent's text to steps, not null
-    public LlmPlanner(Agent planningAgent, PlanResponseParser responseParser) {
-        this.planningAgent =
-                Objects.requireNonNull(planningAgent, "planningAgent must not be null");
+    public LlmPlanner(AgentRegistry agentRegistry, PlanResponseParser responseParser) {
+        this.agentRegistry =
+                Objects.requireNonNull(agentRegistry, "agentRegistry must not be null");
         this.responseParser =
                 Objects.requireNonNull(responseParser, "responseParser must not be null");
     }
@@ -131,7 +133,17 @@ public class LlmPlanner implements Planner {
     @Override
     public Plan createPlan(PlanRequest request) throws PlanCreationException {
         Objects.requireNonNull(request, "request must not be null");
+        if (request.agentId() == null || request.agentId().isBlank()) {
+            throw new PlanCreationException("PlanRequest.agentId must not be null or blank");
+        }
 
+        Agent planningAgent;
+        try {
+            planningAgent = agentRegistry.getAgentOrThrow(request.agentId());
+        } catch (AgentNotFoundException e) {
+            throw new PlanCreationException(
+                    "Planning agent '" + request.agentId() + "' not found", e);
+        }
         String prompt = buildPlanningPrompt(request);
         AgentResponse response = planningAgent.execute(prompt, request.context());
 
@@ -165,7 +177,17 @@ public class LlmPlanner implements Planner {
     public Plan revisePlan(Plan currentPlan, RevisionContext context) throws PlanRevisionException {
         Objects.requireNonNull(currentPlan, "currentPlan must not be null");
         Objects.requireNonNull(context, "context must not be null");
+        if (context.agentId() == null || context.agentId().isBlank()) {
+            throw new PlanRevisionException("RevisionContext.agentId must not be null or blank");
+        }
 
+        Agent planningAgent;
+        try {
+            planningAgent = agentRegistry.getAgentOrThrow(context.agentId());
+        } catch (AgentNotFoundException e) {
+            throw new PlanRevisionException(
+                    "Planning agent '" + context.agentId() + "' not found for revision", e);
+        }
         String prompt = buildRevisionPrompt(currentPlan, context);
         AgentResponse response = planningAgent.execute(prompt, Map.of());
 

@@ -10,6 +10,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.hensu.core.agent.Agent;
+import io.hensu.core.agent.AgentNotFoundException;
+import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.plan.Planner.PlanRequest;
 import io.hensu.core.tool.ToolDefinition;
@@ -23,15 +25,20 @@ import org.junit.jupiter.api.Test;
 
 class LlmPlannerTest {
 
+    private static final String TEST_AGENT_ID = "test-agent";
+
     private Agent planningAgent;
+    private AgentRegistry agentRegistry;
     private PlanResponseParser responseParser;
     private LlmPlanner planner;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws AgentNotFoundException {
         planningAgent = mock(Agent.class);
+        agentRegistry = mock(AgentRegistry.class);
+        when(agentRegistry.getAgentOrThrow(anyString())).thenReturn(planningAgent);
         responseParser = mock(PlanResponseParser.class);
-        planner = new LlmPlanner(planningAgent, responseParser);
+        planner = new LlmPlanner(agentRegistry, responseParser);
     }
 
     @Nested
@@ -50,6 +57,7 @@ class LlmPlannerTest {
 
             PlanRequest request =
                     new PlanRequest(
+                            "test-agent",
                             "Find and process data",
                             List.of(ToolDefinition.simple("search", "Search tool")),
                             Map.of(),
@@ -76,7 +84,14 @@ class LlmPlannerTest {
                     .thenReturn(AgentResponse.TextResponse.of(rawText));
             when(responseParser.parse(rawText)).thenReturn(parsedSteps);
 
-            Plan plan = planner.createPlan(PlanRequest.simple("Fetch and save data"));
+            Plan plan =
+                    planner.createPlan(
+                            new PlanRequest(
+                                    TEST_AGENT_ID,
+                                    "Fetch and save data",
+                                    List.of(),
+                                    Map.of(),
+                                    PlanConstraints.defaults()));
 
             verify(responseParser).parse(rawText);
             assertThat(plan.stepCount()).isEqualTo(2);
@@ -100,6 +115,7 @@ class LlmPlannerTest {
             Plan plan =
                     planner.createPlan(
                             new PlanRequest(
+                                    "test-agent",
                                     "Multi-step task",
                                     List.of(),
                                     Map.of(),
@@ -114,7 +130,15 @@ class LlmPlannerTest {
                     .thenReturn(AgentResponse.TextResponse.of("[]"));
             when(responseParser.parse("[]")).thenReturn(List.of());
 
-            assertThatThrownBy(() -> planner.createPlan(PlanRequest.simple("Goal")))
+            assertThatThrownBy(
+                            () ->
+                                    planner.createPlan(
+                                            new PlanRequest(
+                                                    TEST_AGENT_ID,
+                                                    "Goal",
+                                                    List.of(),
+                                                    Map.of(),
+                                                    PlanConstraints.defaults())))
                     .isInstanceOf(PlanCreationException.class)
                     .hasMessageContaining("empty plan");
         }
@@ -124,7 +148,15 @@ class LlmPlannerTest {
             when(planningAgent.execute(anyString(), any()))
                     .thenReturn(AgentResponse.Error.of("Model unavailable"));
 
-            assertThatThrownBy(() -> planner.createPlan(PlanRequest.simple("Goal")))
+            assertThatThrownBy(
+                            () ->
+                                    planner.createPlan(
+                                            new PlanRequest(
+                                                    TEST_AGENT_ID,
+                                                    "Goal",
+                                                    List.of(),
+                                                    Map.of(),
+                                                    PlanConstraints.defaults())))
                     .isInstanceOf(PlanCreationException.class)
                     .hasMessageContaining("Planning agent failed");
         }
@@ -134,7 +166,15 @@ class LlmPlannerTest {
             when(planningAgent.execute(anyString(), any()))
                     .thenReturn(AgentResponse.ToolRequest.of("unexpected_tool", Map.of()));
 
-            assertThatThrownBy(() -> planner.createPlan(PlanRequest.simple("Goal")))
+            assertThatThrownBy(
+                            () ->
+                                    planner.createPlan(
+                                            new PlanRequest(
+                                                    TEST_AGENT_ID,
+                                                    "Goal",
+                                                    List.of(),
+                                                    Map.of(),
+                                                    PlanConstraints.defaults())))
                     .isInstanceOf(PlanCreationException.class)
                     .hasMessageContaining("Unexpected tool request");
         }
@@ -147,6 +187,7 @@ class LlmPlannerTest {
 
             planner.createPlan(
                     new PlanRequest(
+                            "test-agent",
                             "Search goal",
                             List.of(
                                     ToolDefinition.of(
@@ -196,7 +237,7 @@ class LlmPlannerTest {
                     StepResult.failure(0, "fetch", "Connection timeout", Duration.ZERO);
             Planner.RevisionContext context =
                     Planner.RevisionContext.fromFailure(
-                            failedResult, "Fetch and process data", List.of());
+                            failedResult, "Fetch and process data", List.of(), "test-agent");
 
             Plan revisedPlan = planner.revisePlan(originalPlan, context);
 
@@ -217,7 +258,8 @@ class LlmPlannerTest {
 
             StepResult failedResult = StepResult.failure(0, "tool", "Error", Duration.ZERO);
             Planner.RevisionContext context =
-                    Planner.RevisionContext.fromFailure(failedResult, "Process data", List.of());
+                    Planner.RevisionContext.fromFailure(
+                            failedResult, "Process data", List.of(), "test-agent");
 
             assertThatThrownBy(() -> planner.revisePlan(originalPlan, context))
                     .isInstanceOf(PlanRevisionException.class)
@@ -236,7 +278,8 @@ class LlmPlannerTest {
 
             StepResult failedResult = StepResult.failure(0, "tool", "Error", Duration.ZERO);
             Planner.RevisionContext context =
-                    Planner.RevisionContext.fromFailure(failedResult, "Process data", List.of());
+                    Planner.RevisionContext.fromFailure(
+                            failedResult, "Process data", List.of(), "test-agent");
 
             assertThatThrownBy(() -> planner.revisePlan(originalPlan, context))
                     .isInstanceOf(PlanRevisionException.class)
@@ -256,7 +299,8 @@ class LlmPlannerTest {
             StepResult failedResult =
                     StepResult.failure(2, "api_call", "Connection timeout", Duration.ZERO);
             Planner.RevisionContext context =
-                    Planner.RevisionContext.fromFailure(failedResult, "Fetch user data", List.of());
+                    Planner.RevisionContext.fromFailure(
+                            failedResult, "Fetch user data", List.of(), "test-agent");
 
             planner.revisePlan(originalPlan, context);
 
@@ -275,15 +319,15 @@ class LlmPlannerTest {
     class ConstructorValidation {
 
         @Test
-        void shouldRejectNullAgent() {
+        void shouldRejectNullAgentRegistry() {
             assertThatThrownBy(() -> new LlmPlanner(null, responseParser))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessageContaining("planningAgent");
+                    .hasMessageContaining("agentRegistry");
         }
 
         @Test
         void shouldRejectNullResponseParser() {
-            assertThatThrownBy(() -> new LlmPlanner(planningAgent, null))
+            assertThatThrownBy(() -> new LlmPlanner(agentRegistry, null))
                     .isInstanceOf(NullPointerException.class)
                     .hasMessageContaining("responseParser");
         }

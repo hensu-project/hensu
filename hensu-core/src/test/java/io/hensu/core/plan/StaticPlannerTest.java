@@ -54,7 +54,8 @@ class StaticPlannerTest {
             StaticPlanner planner = new StaticPlanner(predefined);
             Plan result =
                     planner.createPlan(
-                            new PlanRequest("Goal", List.of(), Map.of("orderId", "12345"), null));
+                            new PlanRequest(
+                                    null, "Goal", List.of(), Map.of("orderId", "12345"), null));
 
             assertThat(result.getStep(0).arguments()).containsEntry("id", "12345");
         }
@@ -71,7 +72,8 @@ class StaticPlannerTest {
             StaticPlanner planner = new StaticPlanner(predefined);
             Plan result =
                     planner.createPlan(
-                            new PlanRequest("Goal", List.of(), Map.of("orderId", "ABC"), null));
+                            new PlanRequest(
+                                    null, "Goal", List.of(), Map.of("orderId", "ABC"), null));
 
             assertThat(result.getStep(0).description()).isEqualTo("Process order ABC");
         }
@@ -92,6 +94,7 @@ class StaticPlannerTest {
             Plan result =
                     planner.createPlan(
                             new PlanRequest(
+                                    null,
                                     "Goal",
                                     List.of(),
                                     Map.of("orderId", "123", "customer", "John"),
@@ -111,7 +114,8 @@ class StaticPlannerTest {
                                             0, "tool", Map.of("key", "{unknown}"), "Desc")));
 
             StaticPlanner planner = new StaticPlanner(predefined);
-            Plan result = planner.createPlan(new PlanRequest("Goal", List.of(), Map.of(), null));
+            Plan result =
+                    planner.createPlan(new PlanRequest(null, "Goal", List.of(), Map.of(), null));
 
             assertThat(result.getStep(0).arguments()).containsEntry("key", "{unknown}");
         }
@@ -133,7 +137,8 @@ class StaticPlannerTest {
             StaticPlanner planner = new StaticPlanner(predefined);
             Plan result =
                     planner.createPlan(
-                            new PlanRequest("Goal", List.of(), Map.of("userId", "U789"), null));
+                            new PlanRequest(
+                                    null, "Goal", List.of(), Map.of("userId", "U789"), null));
 
             Map<String, Object> payload =
                     (Map<String, Object>) result.getStep(0).arguments().get("payload");
@@ -156,7 +161,11 @@ class StaticPlannerTest {
             Plan result =
                     planner.createPlan(
                             new PlanRequest(
-                                    "Goal", List.of(), Map.of("item1", "A", "item2", "B"), null));
+                                    null,
+                                    "Goal",
+                                    List.of(),
+                                    Map.of("item1", "A", "item2", "B"),
+                                    null));
 
             List<String> items = (List<String>) result.getStep(0).arguments().get("items");
             assertThat(items).containsExactly("A", "B");
@@ -176,7 +185,8 @@ class StaticPlannerTest {
             StaticPlanner planner = new StaticPlanner(predefined);
             Plan result =
                     planner.createPlan(
-                            new PlanRequest("Goal", List.of(), Map.of("itemCount", 42), null));
+                            new PlanRequest(
+                                    null, "Goal", List.of(), Map.of("itemCount", 42), null));
 
             assertThat(result.getStep(0).arguments()).containsEntry("count", "42");
         }
@@ -191,7 +201,8 @@ class StaticPlannerTest {
             StaticPlanner planner = new StaticPlanner(predefined);
 
             StepResult failedResult = StepResult.failure(0, "tool", "error", Duration.ZERO);
-            RevisionContext context = RevisionContext.fromFailure(failedResult, "", List.of());
+            RevisionContext context =
+                    RevisionContext.fromFailure(failedResult, "", List.of(), null);
 
             assertThatThrownBy(() -> planner.revisePlan(predefined, context))
                     .isInstanceOf(PlanRevisionException.class)
@@ -204,7 +215,7 @@ class StaticPlannerTest {
 
         @Test
         void shouldDefaultNullValues() {
-            PlanRequest request = new PlanRequest(null, null, null, null);
+            PlanRequest request = new PlanRequest(null, null, null, null, null);
 
             assertThat(request.prompt()).isEmpty();
             assertThat(request.availableTools()).isEmpty();
@@ -221,7 +232,7 @@ class StaticPlannerTest {
             StepResult failure =
                     StepResult.failure(2, "api_call", "Timeout", Duration.ofSeconds(5));
 
-            RevisionContext context = RevisionContext.fromFailure(failure, "", List.of());
+            RevisionContext context = RevisionContext.fromFailure(failure, "", List.of(), null);
 
             assertThat(context.failedAtStep()).isEqualTo(2);
             assertThat(context.failureResult()).isSameAs(failure);

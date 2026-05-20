@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 ///
 /// Covers static plan step dispatch via {@link io.hensu.core.plan.PlanExecutor}
 /// and dynamic plan generation via {@link io.hensu.core.plan.LlmPlanner} with
-/// the auto-registered `_planning_agent`.
+/// the workflow's declared planner agent.
 ///
 /// ### Contracts
 /// - **Precondition**: Stub mode enabled (`hensu.stub.enabled=true`)
@@ -69,19 +69,19 @@ class PlanExecutionIntegrationTest extends IntegrationTestBase {
         assertThat(payloads.get(1)).containsEntry("action", "process");
     }
 
-    /// Verifies that dynamic planning generates a plan via the `_planning_agent`
+    /// Verifies that dynamic planning generates a plan via the node's planner agent
     /// and executes the resulting steps through the action handler.
     ///
-    /// The `plan-dynamic.json` workflow uses `planningConfig(mode=DYNAMIC)`.
-    /// The stub for `_planning_agent` returns a JSON array with one-step targeting
-    /// `"test-tool"`. The test confirms that at least one payload is dispatched
+    /// The `plan-dynamic.json` workflow uses `planningConfig(mode=DYNAMIC)` with
+    /// `agentId=planner`. The stub for `planner` returns a JSON array with one-step
+    /// targeting `"test-tool"`. The test confirms that the payload is dispatched
     /// to {@link TestActionHandler}.
     @Test
     void shouldExecuteDynamicPlan() {
         Workflow workflow = loadWorkflow("plan-dynamic.json");
         registerStub("execute", "Dynamic execution complete");
         registerStub(
-                "_planning_agent",
+                "planner",
                 "[{\"tool\":\"test-tool\",\"arguments\":{\"action\":\"fetch\"},\"description\":\"Fetch"
                         + " data\"}]");
 
@@ -132,7 +132,7 @@ class PlanExecutionIntegrationTest extends IntegrationTestBase {
     void shouldReplanAndCompleteAfterToolFailure() {
         Workflow workflow = loadWorkflow("plan-dynamic.json");
         registerStub(
-                "_planning_agent",
+                "planner",
                 "[{\"tool\":\"test-tool\",\"arguments\":{\"action\":\"fetch\"},\"description\":\"Fetch"
                         + " data\"}]");
         testActionHandler.enqueueResult(ActionResult.failure("first attempt failed"));

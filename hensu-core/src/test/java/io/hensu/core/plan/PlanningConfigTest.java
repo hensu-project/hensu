@@ -70,14 +70,14 @@ class PlanningConfigTest {
 
         @Test
         void shouldDefaultToDisabledModeWhenNull() {
-            PlanningConfig config = new PlanningConfig(null, null, false);
+            PlanningConfig config = new PlanningConfig(null, null, false, null);
 
             assertThat(config.mode()).isEqualTo(PlanningMode.DISABLED);
         }
 
         @Test
         void shouldDefaultConstraintsWhenNull() {
-            PlanningConfig config = new PlanningConfig(PlanningMode.DYNAMIC, null, false);
+            PlanningConfig config = new PlanningConfig(PlanningMode.DYNAMIC, null, false, null);
 
             assertThat(config.constraints()).isNotNull();
             assertThat(config.constraints().maxSteps()).isEqualTo(10);

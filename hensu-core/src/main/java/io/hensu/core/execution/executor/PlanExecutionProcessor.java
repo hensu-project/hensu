@@ -12,6 +12,7 @@ import io.hensu.core.plan.PlanRevisionException;
 import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.plan.Planner;
 import io.hensu.core.plan.Planner.RevisionContext;
+import io.hensu.core.plan.PlanningConfig;
 import io.hensu.core.plan.StepResult;
 import io.hensu.core.tool.ToolDefinition;
 import io.hensu.core.tool.ToolRegistry;
@@ -120,12 +121,14 @@ public final class PlanExecutionProcessor implements PlanProcessor {
                                         Duration.ZERO);
                 String prompt = resolvePrompt(node.getPrompt(), executionContext);
                 List<ToolDefinition> tools = toolRegistry.all();
+                PlanningConfig config = node.getPlanningConfig();
+                String agentId = config.resolveAgentId(node.getAgentId());
 
                 executionContext.getListener().onPlannerStart(node.getId(), prompt);
                 Plan revisedPlan =
                         planner.revisePlan(
                                 currentPlan,
-                                RevisionContext.fromFailure(failedStep, prompt, tools));
+                                RevisionContext.fromFailure(failedStep, prompt, tools, agentId));
                 executionContext.getListener().onPlannerComplete(node.getId(), revisedPlan.steps());
 
                 revisedPlan = enrichSynthesizeSteps(revisedPlan, node.getAgentId());
