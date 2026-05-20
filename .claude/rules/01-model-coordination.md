@@ -14,7 +14,7 @@ Ping `mcp__gemini__ping` at session start.
 
 ## Model Routing
 
-- **Discovery / Indexing:** `gemini-3.1-flash-lite-preview`
+- **Discovery / Indexing:** `gemini-3.1-flash-lite`
 - **Logic / Refactoring:** `gemini-3.1-pro-preview`
 
 ## Discovery Rule (Dual-Model)

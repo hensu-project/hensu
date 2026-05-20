@@ -173,22 +173,22 @@ working-dir/
 
 The `Models` object provides constants for supported AI models:
 
-| Constant                       | Model ID                          |
-|--------------------------------|-----------------------------------|
-| `Models.CLAUDE_OPUS_4_6`       | `claude-opus-4-6`                 |
-| `Models.CLAUDE_OPUS_4_5`       | `claude-opus-4-5`                 |
-| `Models.CLAUDE_SONNET_4_6`     | `claude-sonnet-4-6`               |
-| `Models.CLAUDE_SONNET_4_5`     | `claude-sonnet-4-5`               |
-| `Models.CLAUDE_HAIKU_4_5`      | `claude-haiku-4-5`                |
-| `Models.GPT_4`                 | `gpt-4`                           |
-| `Models.GPT_4_TURBO`           | `gpt-4-turbo`                     |
-| `Models.GPT_4O`                | `gpt-4o`                          |
-| `Models.GEMINI_3_1_FLASH_LITE` | `gemini-3.1-flash-lite-preview`   |
-| `Models.GEMINI_3_1_PRO`        | `gemini-3.1-pro-preview`          |
-| `Models.GEMINI_2_5_FLASH`      | `gemini-2.5-flash`                |
-| `Models.GEMINI_2_5_PRO`        | `gemini-2.5-pro`                  |
-| `Models.DEEPSEEK_CHAT`         | `deepseek-chat`                   |
-| `Models.DEEPSEEK_CODER`        | `deepseek-coder`                  |
+| Constant                       | Model ID                 |
+|--------------------------------|--------------------------|
+| `Models.CLAUDE_OPUS_4_6`       | `claude-opus-4-6`        |
+| `Models.CLAUDE_OPUS_4_5`       | `claude-opus-4-5`        |
+| `Models.CLAUDE_SONNET_4_6`     | `claude-sonnet-4-6`      |
+| `Models.CLAUDE_SONNET_4_5`     | `claude-sonnet-4-5`      |
+| `Models.CLAUDE_HAIKU_4_5`      | `claude-haiku-4-5`       |
+| `Models.GPT_4`                 | `gpt-4`                  |
+| `Models.GPT_4_TURBO`           | `gpt-4-turbo`            |
+| `Models.GPT_4O`                | `gpt-4o`                 |
+| `Models.GEMINI_3_1_FLASH_LITE` | `gemini-3.1-flash-lite`  |
+| `Models.GEMINI_3_1_PRO`        | `gemini-3.1-pro-preview` |
+| `Models.GEMINI_2_5_FLASH`      | `gemini-2.5-flash`       |
+| `Models.GEMINI_2_5_PRO`        | `gemini-2.5-pro`         |
+| `Models.DEEPSEEK_CHAT`         | `deepseek-chat`          |
+| `Models.DEEPSEEK_CODER`        | `deepseek-coder`         |
 
 ## Documentation
 
