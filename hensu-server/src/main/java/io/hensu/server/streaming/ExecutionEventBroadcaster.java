@@ -2,6 +2,7 @@ package io.hensu.server.streaming;
 
 import io.hensu.core.plan.PlanEvent;
 import io.hensu.core.plan.PlanObserver;
+import io.hensu.core.util.LogSanitizer;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.operators.multi.processors.BroadcastProcessor;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -93,12 +94,14 @@ public class ExecutionEventBroadcaster implements PlanObserver {
 
         BroadcastProcessor<ExecutionEvent> processor = processors.get(executionId);
         if (processor != null) {
-            LOG.debugv("Publishing {0} to execution {1}", event.type(), executionId);
+            LOG.debugv(
+                    "Publishing {0} to execution {1}",
+                    event.type(), LogSanitizer.sanitize(executionId));
             processor.onNext(event);
         } else {
             LOG.tracev(
                     "No subscribers for execution {0}, event {1} dropped",
-                    executionId, event.type());
+                    LogSanitizer.sanitize(executionId), event.type());
         }
     }
 
@@ -139,7 +142,8 @@ public class ExecutionEventBroadcaster implements PlanObserver {
 
         BroadcastProcessor<ExecutionEvent> processor = processors.remove(executionId);
         if (processor != null) {
-            LOG.debugv("Completing broadcast for execution: {0}", executionId);
+            LOG.debugv(
+                    "Completing broadcast for execution: {0}", LogSanitizer.sanitize(executionId));
             processor.onComplete();
         }
 

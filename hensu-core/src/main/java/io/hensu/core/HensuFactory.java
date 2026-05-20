@@ -1,6 +1,5 @@
 package io.hensu.core;
 
-import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentFactory;
 import io.hensu.core.agent.AgentProvider;
 import io.hensu.core.agent.AgentRegistry;
@@ -626,11 +625,10 @@ public final class HensuFactory {
         /// Configures the plan response parser and enables auto-wiring of {@link LlmPlanner}.
         ///
         /// When set and no explicit {@link #planner(Planner)} is configured, {@link #build()}
-        /// auto-constructs an {@link LlmPlanner} using the built {@link AgentRegistry}.
-        /// A default {@code _planning_agent} is registered if absent.
+        /// auto-constructs an {@link LlmPlanner} backed by the {@link AgentRegistry}. The
+        /// planner resolves its agent per-request using the {@code agentId} from
+        /// {@link io.hensu.core.plan.PlanningConfig}.
         ///
-        /// When only {@code planResponseParser} is set (no explicit planner), the default
-        /// {@link LlmPlanner} is constructed automatically with a {@code _planning_agent}.
         /// Use {@link #planner(Planner)} to supply a custom implementation instead.
         ///
         /// @param parser the parser that converts LLM text responses to step lists, not null
@@ -722,27 +720,11 @@ public final class HensuFactory {
                 workflowStateRepository = new InMemoryWorkflowStateRepository();
             }
 
-            // Auto-construct LlmPlanner when a parser is provided but no explicit planner
+            // Auto-construct LlmPlanner when a parser is provided but no explicit planner.
+            // The planner resolves its agent per-request from the AgentRegistry using the
+            // agentId carried in PlanRequest / RevisionContext (see PlanningConfig.agentId).
             if (planResponseParser != null && planner == null) {
-                var planningAgentConfig =
-                        AgentConfig.builder()
-                                .id("_planning_agent")
-                                .role("planner")
-                                .model("gemini-2.5-pro")
-                                .temperature(0.3)
-                                .build();
-                if (!agentRegistry.hasAgent("_planning_agent", planningAgentConfig)) {
-                    agentRegistry.registerAgent("_planning_agent", planningAgentConfig);
-                }
-                planner =
-                        new LlmPlanner(
-                                agentRegistry
-                                        .getAgent("_planning_agent")
-                                        .orElseThrow(
-                                                () ->
-                                                        new IllegalStateException(
-                                                                "_planning_agent not found after registration")),
-                                planResponseParser);
+                planner = new LlmPlanner(agentRegistry, planResponseParser);
             }
 
             // Wire planning if a planner was configured

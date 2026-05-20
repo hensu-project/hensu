@@ -34,9 +34,14 @@ import java.time.Duration;
 /// @param review whether to enable review gates before and after plan execution;
 ///              when {@code true} both the pre-execution gate (review the plan structure)
 ///              and the post-execution gate (review the plan results) are activated
+/// @param agentId identifier of the agent to use for plan generation; nullable —
+///               required for {@link PlanningMode#DYNAMIC}, ignored for STATIC and DISABLED.
+///               When {@code null} in DYNAMIC mode, the processor falls back to
+///               the node's own agent.
 /// @see PlanningMode for mode options
 /// @see PlanConstraints for constraint details
-public record PlanningConfig(PlanningMode mode, PlanConstraints constraints, boolean review) {
+public record PlanningConfig(
+        PlanningMode mode, PlanConstraints constraints, boolean review, String agentId) {
 
     /// Compact constructor with validation.
     public PlanningConfig {
@@ -48,35 +53,52 @@ public record PlanningConfig(PlanningMode mode, PlanConstraints constraints, boo
     ///
     /// @return disabled planning config, never null
     public static PlanningConfig disabled() {
-        return new PlanningConfig(PlanningMode.DISABLED, PlanConstraints.defaults(), false);
+        return new PlanningConfig(PlanningMode.DISABLED, PlanConstraints.defaults(), false, null);
     }
 
     /// Returns configuration for static (DSL-defined) plans.
     ///
     /// @return static planning config, never null
     public static PlanningConfig forStatic() {
-        return new PlanningConfig(PlanningMode.STATIC, PlanConstraints.forStaticPlan(), false);
+        return new PlanningConfig(
+                PlanningMode.STATIC, PlanConstraints.forStaticPlan(), false, null);
     }
 
     /// Returns configuration for static plans with review.
     ///
     /// @return static planning config with review, never null
     public static PlanningConfig forStaticWithReview() {
-        return new PlanningConfig(PlanningMode.STATIC, PlanConstraints.forStaticPlan(), true);
+        return new PlanningConfig(PlanningMode.STATIC, PlanConstraints.forStaticPlan(), true, null);
     }
 
     /// Returns configuration for dynamic (LLM-generated) plans.
     ///
     /// @return dynamic planning config, never null
     public static PlanningConfig forDynamic() {
-        return new PlanningConfig(PlanningMode.DYNAMIC, PlanConstraints.defaults(), false);
+        return new PlanningConfig(PlanningMode.DYNAMIC, PlanConstraints.defaults(), false, null);
+    }
+
+    /// Returns configuration for dynamic plans with a specific planner agent.
+    ///
+    /// @param agentId identifier of the agent to use for plan generation, not null
+    /// @return dynamic planning config, never null
+    public static PlanningConfig forDynamic(String agentId) {
+        return new PlanningConfig(PlanningMode.DYNAMIC, PlanConstraints.defaults(), false, agentId);
     }
 
     /// Returns configuration for dynamic plans with review gates enabled.
     ///
     /// @return dynamic planning config with review, never null
     public static PlanningConfig forDynamicWithReview() {
-        return new PlanningConfig(PlanningMode.DYNAMIC, PlanConstraints.defaults(), true);
+        return new PlanningConfig(PlanningMode.DYNAMIC, PlanConstraints.defaults(), true, null);
+    }
+
+    /// Returns configuration for dynamic plans with review and a specific planner agent.
+    ///
+    /// @param agentId identifier of the agent to use for plan generation, not null
+    /// @return dynamic planning config with review, never null
+    public static PlanningConfig forDynamicWithReview(String agentId) {
+        return new PlanningConfig(PlanningMode.DYNAMIC, PlanConstraints.defaults(), true, agentId);
     }
 
     /// Returns whether planning is enabled.
@@ -100,26 +122,34 @@ public record PlanningConfig(PlanningMode mode, PlanConstraints constraints, boo
         return mode == PlanningMode.DYNAMIC;
     }
 
+    /// Resolves the effective planner agent ID, falling back to the given node agent.
+    ///
+    /// @param nodeAgentId the node's own agent ID used as fallback, may be null
+    /// @return the resolved agent ID, or null if neither is set
+    public String resolveAgentId(String nodeAgentId) {
+        return agentId != null ? agentId : nodeAgentId;
+    }
+
     /// Returns a copy with updated constraints.
     ///
     /// @param newConstraints the new constraints, not null
     /// @return new config with updated constraints, never null
     public PlanningConfig withConstraints(PlanConstraints newConstraints) {
-        return new PlanningConfig(mode, newConstraints, review);
+        return new PlanningConfig(mode, newConstraints, review, agentId);
     }
 
     /// Returns a copy with review gates enabled (both pre- and post-execution).
     ///
     /// @return new config with review enabled, never null
     public PlanningConfig withReview() {
-        return new PlanningConfig(mode, constraints, true);
+        return new PlanningConfig(mode, constraints, true, agentId);
     }
 
     /// Returns a copy with review gates disabled.
     ///
     /// @return new config with review disabled, never null
     public PlanningConfig withoutReview() {
-        return new PlanningConfig(mode, constraints, false);
+        return new PlanningConfig(mode, constraints, false, agentId);
     }
 
     /// Returns a copy with updated max duration.
@@ -127,7 +157,7 @@ public record PlanningConfig(PlanningMode mode, PlanConstraints constraints, boo
     /// @param duration the new max duration, not null
     /// @return new config with updated duration, never null
     public PlanningConfig withMaxDuration(Duration duration) {
-        return new PlanningConfig(mode, constraints.withMaxDuration(duration), review);
+        return new PlanningConfig(mode, constraints.withMaxDuration(duration), review, agentId);
     }
 
     /// Returns a copy with updated max steps.
@@ -135,6 +165,14 @@ public record PlanningConfig(PlanningMode mode, PlanConstraints constraints, boo
     /// @param maxSteps the new max steps
     /// @return new config with updated steps, never null
     public PlanningConfig withMaxSteps(int maxSteps) {
-        return new PlanningConfig(mode, constraints.withMaxSteps(maxSteps), review);
+        return new PlanningConfig(mode, constraints.withMaxSteps(maxSteps), review, agentId);
+    }
+
+    /// Returns a copy with updated planner agent.
+    ///
+    /// @param agentId identifier of the agent to use for plan generation
+    /// @return new config with updated agent, never null
+    public PlanningConfig withAgentId(String agentId) {
+        return new PlanningConfig(mode, constraints, review, agentId);
     }
 }
