@@ -875,11 +875,52 @@ node("research") {
 }
 ```
 
+#### Planner Agent
+
+Dynamic planning requires an agent to generate the plan. By default the node's own agent handles both planning and execution. To use a dedicated planner agent, pass its ID to `dynamic()`:
+
+```kotlin
+agents {
+    agent("planner") {
+        role = "Plan generation specialist"
+        model = Models.GEMINI_3_1_FLASH_LITE
+        temperature = 0.2
+    }
+    agent("researcher") {
+        role = "Deep research analyst"
+        model = Models.GEMINI_3_1_PRO
+        temperature = 0.7
+    }
+}
+
+graph {
+    node("research") {
+        agent = "researcher"
+        planning {
+            dynamic("planner")   // explicit planner agent
+            maxSteps = 15
+            review = true
+        }
+        prompt = "Research and analyze topic X"
+        onSuccess goto "synthesize"
+    }
+}
+```
+
+Resolution order:
+1. **Explicit** – the `agent` property set in the `planning { }` block (or passed to `dynamic()`).
+2. **Fallback** – the node's own `agent`.
+
+If neither is set, execution fails fast before the first node runs.
+
+#### Convenience Methods
+
 Convenience methods simplify common configurations:
 
 ```kotlin
 planning {
     dynamic()          // Sets DYNAMIC mode with sensible defaults
+    dynamic("planner") // Sets DYNAMIC mode with explicit planner agent
     withReview()       // Pause for human review before execution
     noReplan()         // Disable automatic replanning on failure
 }
@@ -891,15 +932,16 @@ planning {
 
 ### Planning Properties
 
-| Property         | Type         | Default   | Description                                     |
-|------------------|--------------|-----------|-------------------------------------------------|
-| `mode`           | PlanningMode | DISABLED  | DISABLED, STATIC, or DYNAMIC                    |
-| `maxSteps`       | Int          | 10        | Maximum steps allowed in a plan                 |
-| `maxReplans`     | Int          | 3         | Maximum plan revisions on failure               |
-| `allowReplan`    | Boolean      | true      | Whether plan revision is allowed                |
-| `review`         | Boolean      | false     | Pause for human review before execution         |
-| `maxDuration`    | Duration     | 5 minutes | Maximum total execution time                    |
-| `maxTokenBudget` | Int          | 10000     | Maximum LLM tokens for planning (0 = unlimited) |
+| Property         | Type         | Default   | Description                                                 |
+|------------------|--------------|-----------|-------------------------------------------------------------|
+| `mode`           | PlanningMode | DISABLED  | DISABLED, STATIC, or DYNAMIC                                |
+| `maxSteps`       | Int          | 10        | Maximum steps allowed in a plan                             |
+| `maxReplans`     | Int          | 3         | Maximum plan revisions on failure                           |
+| `allowReplan`    | Boolean      | true      | Whether plan revision is allowed                            |
+| `review`         | Boolean      | false     | Pause for human review before execution                     |
+| `agent`          | String?      | null      | Planner agent ID; `null` falls back to the node's own agent |
+| `maxDuration`    | Duration     | 5 minutes | Maximum total execution time                                |
+| `maxTokenBudget` | Int          | 10000     | Maximum LLM tokens for planning (0 = unlimited)             |
 
 ### Plan Failure Routing
 
