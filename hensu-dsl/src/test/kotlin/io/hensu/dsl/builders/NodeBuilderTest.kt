@@ -53,7 +53,7 @@ class NodeBuilderTest {
         assertThat(node.id).isEqualTo("test-node")
         assertThat(node.agentId).isEqualTo("test-agent")
         assertThat(node.prompt).isEqualTo("Test prompt with {variable}")
-        assertThat(node.rubricId).isEqualTo("test-rubric")
+        assertThat(node.rubric?.rawContent).isEqualTo("test-rubric")
         assertThat(node.transitionRules).hasSize(1)
     }
 

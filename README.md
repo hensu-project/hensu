@@ -112,8 +112,6 @@ fun contentPipeline() = workflow("content-pipeline") {
         agent("reviewer") { role = "Content Reviewer"; model = Models.GEMINI_3_1_PRO }
     }
 
-    rubrics { rubric("content-quality", "content-quality.md") }
-
     state {
         input("topic", VarType.STRING)
         variable("draft", VarType.STRING, "the full written article text")
@@ -126,7 +124,7 @@ fun contentPipeline() = workflow("content-pipeline") {
             agent  = "writer"
             prompt = "Write a short article about {topic}. {recommendation}"
             writes("draft")
-            rubric = "content-quality"
+            rubric = "content-quality.md"
             onScore {
                 whenScore lessThan 70.0 goto "write"  // score too low – retry
             }

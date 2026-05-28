@@ -25,7 +25,7 @@ import java.util.Map;
 /// @see ValidWorkflow
 /// @see ValidId for the identifier pattern definition
 /// @see InputValidator for shared validation predicates
-/// @see LogSanitizer for defense-in-depth at log call sites
+/// @see io.hensu.core.util.LogSanitizer for defense-in-depth at log call sites
 public class ValidWorkflowValidator implements ConstraintValidator<ValidWorkflow, Workflow> {
 
     @Override
@@ -42,7 +42,6 @@ public class ValidWorkflowValidator implements ConstraintValidator<ValidWorkflow
 
         validateAgents(errors, workflow.getAgents());
         validateNodes(errors, workflow.getNodes());
-        validateRubrics(errors, workflow.getRubrics());
 
         var meta = workflow.getMetadata();
         if (meta != null) {
@@ -102,7 +101,9 @@ public class ValidWorkflowValidator implements ConstraintValidator<ValidWorkflow
             case StandardNode sn -> {
                 optionalSafeId(errors, p + ".agentId", sn.getAgentId());
                 rejectDangerousChars(errors, p + ".prompt", sn.getPrompt());
-                optionalSafeId(errors, p + ".rubricId", sn.getRubricId());
+                if (sn.getRubric() != null) {
+                    rejectDangerousChars(errors, p + ".rubric", sn.getRubric().getRawContent());
+                }
                 optionalSafeId(errors, p + ".planFailureTarget", sn.getPlanFailureTarget());
                 sn.getWrites().forEach(w -> requireSafeId(errors, p + ".writes[]", w));
             }
@@ -131,7 +132,9 @@ public class ValidWorkflowValidator implements ConstraintValidator<ValidWorkflow
             }
             case GenericNode gn -> {
                 requireSafeId(errors, p + ".executorType", gn.getExecutorType());
-                optionalSafeId(errors, p + ".rubricId", gn.getRubricId());
+                if (gn.getRubric() != null) {
+                    rejectDangerousChars(errors, p + ".rubric", gn.getRubric().getRawContent());
+                }
             }
             case EndNode _ -> {
                 /* enum status only — no string fields */
@@ -146,18 +149,10 @@ public class ValidWorkflowValidator implements ConstraintValidator<ValidWorkflow
         requireSafeId(errors, prefix + ".branch.id", branch.id());
         requireSafeId(errors, prefix + ".branch.agentId", branch.agentId());
         rejectDangerousChars(errors, prefix + ".branch.prompt", branch.prompt());
-        optionalSafeId(errors, prefix + ".branch.rubricId", branch.rubricId());
-    }
-
-    // ———————————————— Rubrics ————————————————
-
-    private static void validateRubrics(List<String> errors, Map<String, String> rubrics) {
-        if (rubrics == null) return;
-        rubrics.forEach(
-                (key, value) -> {
-                    requireSafeId(errors, "rubrics[key]", key);
-                    rejectDangerousChars(errors, "rubrics." + key, value);
-                });
+        if (branch.rubric() != null) {
+            rejectDangerousChars(
+                    errors, prefix + ".branch.rubric", branch.rubric().getRawContent());
+        }
     }
 
     // ———————————————— Metadata ————————————————

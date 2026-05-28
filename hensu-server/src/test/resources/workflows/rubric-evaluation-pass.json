@@ -17,16 +17,13 @@
       "temperature" : 0.7
     }
   },
-  "rubrics" : {
-    "quality" : "quality-high"
-  },
   "nodes" : {
     "draft" : {
       "id" : "draft",
       "nodeType" : "STANDARD",
       "agentId" : "writer",
       "prompt" : "Write a comprehensive article about {topic}",
-      "rubricId" : "quality",
+      "rubric" : "# Rubric: quality\n## Metadata\n- pass_threshold: 80.0\n## Criteria\n### Accuracy (weight: 3)\n- All facts and claims must be verifiable and correct\n### Clarity (weight: 2)\n- Clear and logical structure\n### Completeness (weight: 1)\n- All required topics covered",
       "transitionRules" : [ {
         "type" : "success",
         "targetNode" : "done"

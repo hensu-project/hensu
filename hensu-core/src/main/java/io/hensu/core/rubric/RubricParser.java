@@ -31,17 +31,15 @@ public class RubricParser {
         }
     }
 
-    private static Rubric parseContent(String filename, String content) {
-        ParseState state = new ParseState(filename);
+    public static Rubric parseContent(String nodeId, String content) {
+        ParseState state = new ParseState(nodeId);
 
-        for (String line : content.split("\n")) {
-            parseLine(line.trim(), state);
-        }
+        content.lines().forEach(line -> parseLine(line.trim(), state));
 
         state.saveCurrentSubcriterion();
         state.ensureDefaultCriterion();
 
-        return state.buildRubric();
+        return state.buildRubric(content);
     }
 
     private static void parseLine(String line, ParseState state) {
@@ -159,8 +157,8 @@ public class RubricParser {
 
         final List<Criterion> criteria = new ArrayList<>();
 
-        ParseState(String filename) {
-            this.id = filename.replace(".md", "");
+        ParseState(String nodeId) {
+            this.id = nodeId.replace(".md", "");
             this.name = this.id;
         }
 
@@ -194,7 +192,7 @@ public class RubricParser {
             }
         }
 
-        Rubric buildRubric() {
+        Rubric buildRubric(String rawContent) {
             return Rubric.builder()
                     .id(id)
                     .name(name)
@@ -202,6 +200,7 @@ public class RubricParser {
                     .type(type)
                     .passThreshold(passThreshold)
                     .criteria(criteria)
+                    .rawContent(rawContent)
                     .build();
         }
     }

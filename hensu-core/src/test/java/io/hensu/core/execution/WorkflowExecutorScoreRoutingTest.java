@@ -3,13 +3,11 @@ package io.hensu.core.execution;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExitStatus;
-import io.hensu.core.rubric.RubricNotFoundException;
 import io.hensu.core.rubric.evaluator.RubricEvaluation;
 import io.hensu.core.rubric.model.ComparisonOperator;
 import io.hensu.core.rubric.model.Criterion;
@@ -35,8 +33,7 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
     @MethodSource("scoreRoutingCases")
     void shouldRouteBySimpleScoreThreshold(double score, boolean passed, ExitStatus expected)
             throws Exception {
-        when(rubricEngine.getRubric("quality")).thenReturn(Optional.of(qualityRubric()));
-        when(rubricEngine.evaluate(eq("quality"), any(), any()))
+        when(rubricEngine.evaluate(any(Rubric.class), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()
                                 .rubricId("quality")
@@ -49,7 +46,7 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
                         .id("review")
                         .agentId("test-agent")
                         .prompt("Review this")
-                        .rubricId("quality")
+                        .rubric(qualityRubric())
                         .transitionRules(
                                 List.of(
                                         new ScoreTransition(
@@ -68,7 +65,6 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
         var workflow =
                 WorkflowTest.TestWorkflowBuilder.create("score-route")
                         .agent(agentCfg())
-                        .rubric("quality", "test-path")
                         .startNode(review)
                         .node(end("excellent"))
                         .node(failEnd("poor"))
@@ -95,8 +91,7 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
     void shouldRouteByScoreRange() throws Exception {
         // Score 75 matches RANGE 70..89 → routes to "good".
         // Tests the RANGE operator — not covered by the simple threshold cases above.
-        when(rubricEngine.getRubric("quality")).thenReturn(Optional.of(qualityRubric()));
-        when(rubricEngine.evaluate(eq("quality"), any(), any()))
+        when(rubricEngine.evaluate(any(Rubric.class), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()
                                 .rubricId("quality")
@@ -109,7 +104,7 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
                         .id("review")
                         .agentId("test-agent")
                         .prompt("Review this")
-                        .rubricId("quality")
+                        .rubric(qualityRubric())
                         .transitionRules(
                                 List.of(
                                         new ScoreTransition(
@@ -133,7 +128,6 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
         var workflow =
                 WorkflowTest.TestWorkflowBuilder.create("score-range")
                         .agent(agentCfg())
-                        .rubric("quality", "test-path")
                         .startNode(review)
                         .node(end("excellent"))
                         .node(end("good"))
@@ -154,8 +148,7 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
     @Test
     void shouldAutoApproveWhenRubricPasses() throws Exception {
         // rubric.passed=true with a single GTE-80 condition that is satisfied → SUCCESS.
-        when(rubricEngine.getRubric("quality")).thenReturn(Optional.of(qualityRubric()));
-        when(rubricEngine.evaluate(eq("quality"), any(), any()))
+        when(rubricEngine.evaluate(any(Rubric.class), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()
                                 .rubricId("quality")
@@ -168,7 +161,7 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
                         .id("review")
                         .agentId("test-agent")
                         .prompt("Review this")
-                        .rubricId("quality")
+                        .rubric(qualityRubric())
                         .transitionRules(
                                 List.of(
                                         new ScoreTransition(
@@ -183,7 +176,6 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
         var workflow =
                 WorkflowTest.TestWorkflowBuilder.create("score-pass")
                         .agent(agentCfg())
-                        .rubric("quality", "test-path")
                         .startNode(review)
                         .node(end("end"))
                         .build();
@@ -200,11 +192,10 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
     }
 
     @Test
-    void shouldThrowWhenNoScoreConditionMatches() throws RubricNotFoundException {
+    void shouldThrowWhenNoScoreConditionMatches() {
         // Score 85 with a single GTE-90 condition → no match → IllegalStateException.
         // rubric.passed=true prevents auto-backtrack from kicking in.
-        when(rubricEngine.getRubric("quality")).thenReturn(Optional.of(qualityRubric()));
-        when(rubricEngine.evaluate(eq("quality"), any(), any()))
+        when(rubricEngine.evaluate(any(Rubric.class), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()
                                 .rubricId("quality")
@@ -217,7 +208,7 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
                         .id("review")
                         .agentId("test-agent")
                         .prompt("Review this")
-                        .rubricId("quality")
+                        .rubric(qualityRubric())
                         .transitionRules(
                                 List.of(
                                         new ScoreTransition(
@@ -231,7 +222,6 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
         var workflow =
                 WorkflowTest.TestWorkflowBuilder.create("score-nomatch")
                         .agent(agentCfg())
-                        .rubric("quality", "test-path")
                         .startNode(review)
                         .node(end("excellent"))
                         .build();
@@ -244,8 +234,6 @@ class WorkflowExecutorScoreRoutingTest extends WorkflowExecutorTestBase {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("No valid transition");
     }
-
-    // — Helpers ——————————————————————————————————————————————————————————————
 
     private static Rubric qualityRubric() {
         return Rubric.builder()

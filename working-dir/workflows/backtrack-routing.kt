@@ -36,10 +36,6 @@ fun backtrackRoutingWorkflow() = workflow("backtrack-routing") {
         }
     }
 
-    rubrics {
-        rubric("content-quality", "content-quality.md")
-    }
-
     graph {
         start at "draft"
 
@@ -54,7 +50,7 @@ fun backtrackRoutingWorkflow() = workflow("backtrack-routing") {
         node("review") {
             agent = "critic"
             prompt = "Review the following draft and evaluate its quality.\n\n{article}"
-            rubric = "content-quality"
+            rubric = "content-quality.md"
 
             onScore {
                 whenScore greaterThanOrEqual 70.0 goto "refine"
@@ -74,7 +70,7 @@ fun backtrackRoutingWorkflow() = workflow("backtrack-routing") {
         node("final_check") {
             agent = "critic"
             prompt = "Final quality check on the refined content.\n\n{article}"
-            rubric = "content-quality"
+            rubric = "content-quality.md"
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "approve"

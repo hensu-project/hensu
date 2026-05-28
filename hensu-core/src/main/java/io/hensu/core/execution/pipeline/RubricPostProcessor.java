@@ -1,12 +1,11 @@
 package io.hensu.core.execution.pipeline;
 
 import io.hensu.core.execution.result.AutoBacktrack;
-import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.rubric.RubricEngine;
-import io.hensu.core.rubric.RubricNotFoundException;
 import io.hensu.core.rubric.evaluator.RubricEvaluation;
 import io.hensu.core.rubric.evaluator.ScoreExtractingEvaluator;
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
@@ -15,15 +14,13 @@ import io.hensu.core.workflow.transition.TransitionRule;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.logging.Logger;
 
 /// Evaluates rubric quality criteria and triggers auto-backtracking on failure.
 ///
-/// When a node has a `rubricId`, this processor:
-/// 1. Evaluates the node output against the rubric (registered by
-///    {@link io.hensu.core.execution.enricher.RubricPromptInjector} during prompt enrichment)
+/// When a node carries a parsed {@link Rubric}, this processor:
+/// 1. Evaluates the node output against the rubric directly (no repository lookup)
 /// 2. Stores the evaluation in state for {@link ScoreTransition} rules
 /// 3. If evaluation fails and no user-defined score transition matches,
 ///    determines an auto-backtrack target based on score severity
@@ -35,7 +32,6 @@ import java.util.logging.Logger;
 ///
 /// ### Contracts
 /// - **Precondition**: `context.result()` is non-null (post-execution pipeline)
-/// - **Precondition**: Rubric is already registered in the engine (done during prompt enrichment)
 /// - **Postcondition**: Returns empty or terminal result
 /// - **Side effects**: Mutates `state.rubricEvaluation`, may mutate context map
 ///   and history on auto-backtrack
@@ -73,22 +69,13 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
     @Override
     public ProcessorOutcome process(ProcessorContext context) {
         var node = context.currentNode();
-        if (node.getRubricId() == null) {
+        Rubric rubric = node.getRubric();
+        if (rubric == null) {
             return ProcessorOutcome.CONTINUE;
         }
 
-        RubricEvaluation evaluation;
-        try {
-            evaluation =
-                    rubricEngine.evaluate(
-                            node.getRubricId(), context.result(), context.state().getContext());
-        } catch (RubricNotFoundException e) {
-            logger.severe(
-                    "Rubric evaluation failed for node " + node.getId() + ": " + e.getMessage());
-            return ProcessorOutcome.terminal(
-                    new ExecutionResult.Failure(
-                            context.state(), new IllegalStateException(e.getMessage(), e)));
-        }
+        RubricEvaluation evaluation =
+                rubricEngine.evaluate(rubric, context.result(), context.state().getContext());
 
         context.state().setRubricEvaluation(evaluation);
 
@@ -224,9 +211,7 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
                         .filter(
                                 step -> {
                                     Node node = workflow.getNodes().get(step.getNodeId());
-                                    return node != null
-                                            && node.getRubricId() != null
-                                            && !node.getRubricId().isEmpty();
+                                    return node != null && node.getRubric() != null;
                                 })
                         .findFirst();
 
@@ -235,16 +220,15 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
 
     private String findPreviousPhase(String currentNodeId, HensuState state, Workflow workflow) {
         Node currentNode = workflow.getNodes().get(currentNodeId);
-        String currentRubric = currentNode != null ? currentNode.getRubricId() : null;
+        Rubric currentRubric = currentNode != null ? currentNode.getRubric() : null;
 
         List<ExecutionStep> steps = state.getHistory().getSteps();
         for (int i = steps.size() - 1; i >= 0; i--) {
             ExecutionStep step = steps.get(i);
             Node stepNode = workflow.getNodes().get(step.getNodeId());
             if (stepNode != null
-                    && stepNode.getRubricId() != null
-                    && !stepNode.getRubricId().isEmpty()
-                    && !Objects.equals(stepNode.getRubricId(), currentRubric)) {
+                    && stepNode.getRubric() != null
+                    && stepNode.getRubric() != currentRubric) {
                 return step.getNodeId();
             }
         }

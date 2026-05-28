@@ -23,9 +23,6 @@
       "temperature" : 0.7
     }
   },
-  "rubrics" : {
-    "quality" : "quality-low"
-  },
   "nodes" : {
     "research" : {
       "id" : "research",
@@ -42,7 +39,7 @@
       "nodeType" : "STANDARD",
       "agentId" : "writer",
       "prompt" : "Write an article based on the research",
-      "rubricId" : "quality",
+      "rubric" : "# Rubric: quality\n## Metadata\n- pass_threshold: 70.0\n## Criteria\n### Quality (weight: 1)\n- Content must be well-structured and comprehensive",
       "transitionRules" : [ {
         "type" : "success",
         "targetNode" : "done"

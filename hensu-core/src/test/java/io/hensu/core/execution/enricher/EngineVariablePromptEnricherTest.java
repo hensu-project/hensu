@@ -3,7 +3,6 @@ package io.hensu.core.execution.enricher;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -21,7 +20,7 @@ class EngineVariablePromptEnricherTest extends EnricherTestBase {
                                 (prompt, _, _) -> prompt + "[A]",
                                 (prompt, _, _) -> prompt + "[B]"));
 
-        String result = enricher.enrich("base", minimalNode(), ctx(Map.of(), null, null));
+        String result = enricher.enrich("base", minimalNode(), ctx(null, null));
 
         assertThat(result).isEqualTo("base[A][B]");
     }

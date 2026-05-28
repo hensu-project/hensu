@@ -3,13 +3,10 @@ package io.hensu.server.integration;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.hensu.core.execution.result.BacktrackEvent;
-import io.hensu.core.rubric.RubricParser;
-import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.workflow.ExecutionStartResult;
 import io.quarkus.test.junit.QuarkusTest;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -17,17 +14,9 @@ import org.junit.jupiter.api.Test;
 /// Integration tests for rubric-based quality evaluation during workflow execution.
 ///
 /// Covers rubric pass/fail evaluation and automatic backtracking triggered by
-/// rubric score thresholds. Rubrics are pre-registered in the repository before
-/// execution so that `WorkflowExecutor.registerRubricIfAbsent()` finds them
-/// already present, avoiding filesystem path resolution in tests.
-///
-/// ### Rubric Pre-Registration Strategy
-/// The workflow JSON fixtures map `rubricId` to a definition identifier
-/// (e.g., `"quality" -> "quality-high"`). At runtime, the executor would treat
-/// the definition value as a filesystem path. In tests, we resolve the classpath
-/// rubric file to a temp path, parse it with [RubricParser], and register the
-/// resulting [Rubric] under the `rubricId` key used by the workflow. This lets
-/// `registerRubricIfAbsent()` skip file parsing entirely.
+/// rubric score thresholds. Workflow JSON fixtures carry inline rubric content
+/// on the node, which the deserializer parses into typed [Rubric] objects at
+/// load time — no separate registration step needed.
 ///
 /// ### Score Normalization
 /// The [ScoreExtractingEvaluator][io.hensu.core.rubric.evaluator.ScoreExtractingEvaluator]
@@ -59,7 +48,6 @@ class RubricEvaluationIntegrationTest extends IntegrationTestBase {
     /// directly to the end node.
     @Test
     void shouldCompleteWhenRubricPasses() {
-        parseAndRegisterRubric("quality-high.md");
         Workflow workflow = loadWorkflow("rubric-evaluation-pass.json");
 
         registerStub(
@@ -97,7 +85,6 @@ class RubricEvaluationIntegrationTest extends IntegrationTestBase {
     /// execution history, confirming the retry mechanism was triggered.
     @Test
     void shouldRetryAndCompleteOnMinorRubricFailure() {
-        parseAndRegisterRubric("quality-low.md");
         Workflow workflow = loadWorkflow("rubric-backtrack-critical.json");
 
         registerStub("research", "Research findings about quantum computing.");
@@ -125,31 +112,5 @@ class RubricEvaluationIntegrationTest extends IntegrationTestBase {
                 .isNotEmpty();
         assertThat(backtracks.getFirst().getFrom()).isEqualTo("draft");
         assertThat(backtracks.getFirst().getTo()).isEqualTo("draft");
-    }
-
-    /// Parses a rubric from the classpath and registers it in the rubric
-    /// repository under the specified `rubricId`.
-    ///
-    /// The parsed rubric's internal ID (derived from the temp file name)
-    /// is replaced by building a new rubric with the desired `rubricId`,
-    /// preserving all criteria and thresholds from the original file.
-    ///
-    /// @param resourceName rubric file under `/rubrics/` (e.g. `"quality-high.md"`), not null
-    private void parseAndRegisterRubric(String resourceName) {
-        String rubricPath = resolveRubricPath(resourceName);
-        Rubric parsed = RubricParser.parse(Path.of(rubricPath));
-
-        // Rebuild with the rubricId the workflow expects
-        Rubric rubric =
-                Rubric.builder()
-                        .id("quality")
-                        .name(parsed.getName())
-                        .version(parsed.getVersion())
-                        .type(parsed.getType())
-                        .passThreshold(parsed.getPassThreshold())
-                        .criteria(parsed.getCriteria())
-                        .build();
-
-        hensuEnvironment.getRubricRepository().save(rubric);
     }
 }

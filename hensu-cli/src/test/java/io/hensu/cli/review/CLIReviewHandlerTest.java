@@ -144,15 +144,10 @@ class CLIReviewHandlerTest {
     @Test
     void shouldContinueWhenNoPreviousStepsToBacktrackTo() {
         System.setProperty(CLIReviewHandler.INTERACTIVE_PROPERTY, "true");
-        // Only one step in history (the current node itself) — nothing to go back to
+        // Empty history — current node not yet recorded, nothing to go back to
         CLIReviewHandler manager = new CLIReviewHandler(new Scanner("B\nA\n"), printStream, false);
 
         ExecutionHistory history = new ExecutionHistory();
-        history.addStep(
-                ExecutionStep.builder()
-                        .nodeId("only-step")
-                        .result(NodeResult.success("output", Map.of()))
-                        .build());
 
         ReviewOutcome outcome =
                 manager.requestReview(
@@ -181,11 +176,6 @@ class CLIReviewHandlerTest {
                 ExecutionStep.builder()
                         .nodeId("step-1")
                         .result(NodeResult.success("output1", Map.of()))
-                        .build());
-        history.addStep(
-                ExecutionStep.builder()
-                        .nodeId("step-2")
-                        .result(NodeResult.success("output2", Map.of()))
                         .build());
 
         ReviewOutcome outcome =
@@ -217,11 +207,6 @@ class CLIReviewHandlerTest {
                         .nodeId("step-1")
                         .result(NodeResult.success("output1", Map.of()))
                         .build());
-        history.addStep(
-                ExecutionStep.builder()
-                        .nodeId("step-2")
-                        .result(NodeResult.success("output2", Map.of()))
-                        .build());
 
         ReviewOutcome outcome =
                 manager.requestReview(
@@ -248,11 +233,6 @@ class CLIReviewHandlerTest {
                 ExecutionStep.builder()
                         .nodeId("step-1")
                         .result(NodeResult.success("output1", Map.of()))
-                        .build());
-        history.addStep(
-                ExecutionStep.builder()
-                        .nodeId("step-2")
-                        .result(NodeResult.success("output2", Map.of()))
                         .build());
 
         ReviewOutcome outcome =

@@ -98,7 +98,7 @@ class ParallelNodeBuilderTest {
             val node = builder.build()
 
             // Then
-            assertThat(node.branches[0].rubricId()).isEqualTo("code-quality")
+            assertThat(node.branches[0].rubric()?.rawContent).isEqualTo("code-quality")
         }
 
         @Test

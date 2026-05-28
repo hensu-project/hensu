@@ -5,6 +5,7 @@ import static org.mockito.Mockito.*;
 
 import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.execution.result.ExitStatus;
+import io.hensu.core.rubric.RubricParser;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.EndNode;
 import io.hensu.core.workflow.node.StandardNode;
@@ -56,11 +57,11 @@ class ValidWorkflowValidatorTest {
                 .build();
     }
 
-    private Workflow workflowWithStandardNode(String nodeKey, StandardNode node) {
+    private Workflow workflowWithStandardNode(StandardNode node) {
         return Workflow.builder()
                 .id("wf-1")
                 .version("1.0.0")
-                .startNode(nodeKey)
+                .startNode("step1")
                 .agents(
                         Map.of(
                                 "agent-1",
@@ -71,7 +72,7 @@ class ValidWorkflowValidatorTest {
                                         .build()))
                 .nodes(
                         Map.of(
-                                nodeKey,
+                                "step1",
                                 node,
                                 "end",
                                 EndNode.builder().id("end").status(ExitStatus.SUCCESS).build()))
@@ -108,7 +109,7 @@ class ValidWorkflowValidatorTest {
                             .build();
 
             assertThat(validator.isValid(wf, ctx)).isFalse();
-            verify(ctx).buildConstraintViolationWithTemplate(contains("id"));
+            verify(ctx).buildConstraintViolationWithTemplate(contains());
         }
 
         @Test
@@ -255,7 +256,7 @@ class ValidWorkflowValidatorTest {
                             .transitionRules(List.of(new SuccessTransition("end")))
                             .build();
 
-            var wf = workflowWithStandardNode("step1", node);
+            var wf = workflowWithStandardNode(node);
 
             assertThat(validator.isValid(wf, ctx)).isFalse();
         }
@@ -270,24 +271,9 @@ class ValidWorkflowValidatorTest {
                             .transitionRules(List.of(new SuccessTransition("end")))
                             .build();
 
-            var wf = workflowWithStandardNode("step1", node);
+            var wf = workflowWithStandardNode(node);
 
             assertThat(validator.isValid(wf, ctx)).isTrue();
-        }
-
-        @Test
-        void shouldRejectStandardNodeWithNullByteInPrompt() {
-            var node =
-                    StandardNode.builder()
-                            .id("step1")
-                            .agentId("agent-1")
-                            .prompt("Normal prompt\u0000hidden instructions")
-                            .transitionRules(List.of(new SuccessTransition("end")))
-                            .build();
-
-            var wf = workflowWithStandardNode("step1", node);
-
-            assertThat(validator.isValid(wf, ctx)).isFalse();
         }
     }
 
@@ -295,41 +281,16 @@ class ValidWorkflowValidatorTest {
     class RubricValidation {
 
         @Test
-        void shouldRejectRubricKeyWithSpecialChars() {
-            var wf =
-                    Workflow.builder()
-                            .id("wf-1")
-                            .version("1.0.0")
-                            .startNode("start")
-                            .nodes(
-                                    Map.of(
-                                            "start",
-                                            EndNode.builder()
-                                                    .id("start")
-                                                    .status(ExitStatus.SUCCESS)
-                                                    .build()))
-                            .rubrics(Map.of("rubric<script>", "Evaluate quality"))
+        void shouldRejectNodeRubricWithNullByte() {
+            var node =
+                    StandardNode.builder()
+                            .id("step1")
+                            .agentId("agent-1")
+                            .rubric(RubricParser.parseContent("step1", "Rate from 1-5\u0000hidden"))
+                            .transitionRules(List.of(new SuccessTransition("end")))
                             .build();
 
-            assertThat(validator.isValid(wf, ctx)).isFalse();
-        }
-
-        @Test
-        void shouldRejectRubricContentWithNullByte() {
-            var wf =
-                    Workflow.builder()
-                            .id("wf-1")
-                            .version("1.0.0")
-                            .startNode("start")
-                            .nodes(
-                                    Map.of(
-                                            "start",
-                                            EndNode.builder()
-                                                    .id("start")
-                                                    .status(ExitStatus.SUCCESS)
-                                                    .build()))
-                            .rubrics(Map.of("quality", "Rate from 1-5\u0000hidden"))
-                            .build();
+            var wf = workflowWithStandardNode(node);
 
             assertThat(validator.isValid(wf, ctx)).isFalse();
         }
@@ -361,7 +322,7 @@ class ValidWorkflowValidatorTest {
         }
     }
 
-    private static String contains(String substring) {
-        return argThat(s -> s != null && s.contains(substring));
+    private static String contains() {
+        return argThat(s -> s != null && s.contains("id"));
     }
 }

@@ -1,5 +1,6 @@
 package io.hensu.core.workflow.node;
 
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.workflow.transition.TransitionRule;
 import java.util.List;
 import java.util.Map;
@@ -98,7 +99,7 @@ public final class SubWorkflowNode extends Node {
     ///
     /// @return null, sub-workflow nodes do not support rubric evaluation
     @Override
-    public String getRubricId() {
+    public Rubric getRubric() {
         return null;
     }
 

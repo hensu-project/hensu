@@ -29,9 +29,6 @@
       "temperature" : 0.3
     }
   },
-  "rubrics" : {
-    "quality" : "quality-moderate"
-  },
   "nodes" : {
     "research" : {
       "id" : "research",
@@ -58,7 +55,7 @@
       "nodeType" : "STANDARD",
       "agentId" : "editor",
       "prompt" : "Edit and finalize the article",
-      "rubricId" : "quality",
+      "rubric" : "# Rubric: quality\n## Metadata\n- pass_threshold: 75.0\n## Criteria\n### Quality (weight: 1)\n- Content must be polished and publication-ready",
       "transitionRules" : [ {
         "type" : "success",
         "targetNode" : "done"

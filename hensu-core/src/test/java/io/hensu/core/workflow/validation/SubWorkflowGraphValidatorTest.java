@@ -61,17 +61,6 @@ class SubWorkflowGraphValidatorTest {
     }
 
     @Test
-    void twoNodeCycleIsRejected() {
-        Workflow a = wf("a", List.of("b"));
-        Workflow b = wf("b", List.of("a"));
-        assertThatThrownBy(() -> SubWorkflowGraphValidator.validate(List.of(a, b)))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("cycle")
-                .hasMessageContaining("a")
-                .hasMessageContaining("b");
-    }
-
-    @Test
     void disconnectedCycleIsRejected() {
         // Root 'main' is clean; an isolated 'x' ↔ 'y' cycle still blocks the load.
         Workflow main = wf("main", List.of());
@@ -135,7 +124,10 @@ class SubWorkflowGraphValidatorTest {
         repo.put("a", wf("a", List.of("b")));
         repo.put("b", staleB);
         assertThatThrownBy(() -> SubWorkflowGraphValidator.validate(newB, repo::get))
-                .isInstanceOf(IllegalStateException.class);
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("cycle")
+                .hasMessageContaining("a")
+                .hasMessageContaining("b");
     }
 
     @Test

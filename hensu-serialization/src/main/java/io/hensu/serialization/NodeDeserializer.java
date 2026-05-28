@@ -15,6 +15,8 @@ import io.hensu.core.plan.Plan;
 import io.hensu.core.plan.PlanningConfig;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.review.ReviewMode;
+import io.hensu.core.rubric.RubricParser;
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.workflow.node.*;
 import io.hensu.core.workflow.transition.TransitionRule;
 import java.io.IOException;
@@ -31,7 +33,7 @@ import java.util.Map;
 /// from the `JsonNode` tree to avoid POJO reflection:
 /// - `ReviewConfig` (mode + two booleans)
 /// - `ConsensusConfig` (judgeAgentId, strategy, threshold)
-/// - `Branch` (id, agentId, prompt, rubricId, weight)
+/// - `Branch` (id, agentId, prompt, rubric, weight)
 ///
 /// Complex types that contain `Duration` or deeply nested structures delegate to `treeToValue`
 /// and require reflection registration in `CoreModelNativeConfig` in `hensu-server`:
@@ -59,11 +61,11 @@ class NodeDeserializer extends StdDeserializer<Node> {
     /// appropriate subtype builder.
     ///
     /// @param p the JSON parser positioned at the start of the node object, not null
-    /// @param ctxt the deserialization context, not null
+    /// @param ctx the deserialization context, not null
     /// @return the constructed `Node`, never null
     /// @throws IOException if a required field is absent or the `"nodeType"` value is unrecognized
     @Override
-    public Node deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
+    public Node deserialize(JsonParser p, DeserializationContext ctx) throws IOException {
         ObjectMapper mapper = (ObjectMapper) p.getCodec();
         JsonNode root = mapper.readTree(p);
 
@@ -90,7 +92,7 @@ class NodeDeserializer extends StdDeserializer<Node> {
                         .id(id)
                         .agentId(textOrNull(root, "agentId"))
                         .prompt(textOrNull(root, "prompt"))
-                        .rubricId(textOrNull(root, "rubricId"))
+                        .rubric(parseRubric(id, textOrNull(root, "rubric")))
                         .transitionRules(
                                 readValue(mapper, root, "transitionRules", TRANSITION_LIST))
                         .planFailureTarget(textOrNull(root, "planFailureTarget"));
@@ -139,7 +141,7 @@ class NodeDeserializer extends StdDeserializer<Node> {
                         .executorType(root.get("executorType").asText())
                         .transitionRules(
                                 readValue(mapper, root, "transitionRules", TRANSITION_LIST))
-                        .rubricId(textOrNull(root, "rubricId"));
+                        .rubric(parseRubric(id, textOrNull(root, "rubric")));
 
         if (root.has("config")) {
             b.config(mapper.convertValue(root.get("config"), OBJECT_MAP));
@@ -243,16 +245,17 @@ class NodeDeserializer extends StdDeserializer<Node> {
                     b.has("yields") && b.get("yields").isArray()
                             ? readStringList(b.get("yields"))
                             : List.of();
+            String branchId = b.get("id").asText();
+            String rubricText =
+                    b.has("rubric") && !b.get("rubric").isNull() ? b.get("rubric").asText() : null;
             branches.add(
                     new Branch(
-                            b.get("id").asText(),
+                            branchId,
                             b.get("agentId").asText(),
                             b.has("prompt") && !b.get("prompt").isNull()
                                     ? b.get("prompt").asText()
                                     : null,
-                            b.has("rubricId") && !b.get("rubricId").isNull()
-                                    ? b.get("rubricId").asText()
-                                    : null,
+                            parseRubric(branchId, rubricText),
                             b.has("weight") ? b.get("weight").doubleValue() : 1.0,
                             yields));
         }
@@ -265,6 +268,10 @@ class NodeDeserializer extends StdDeserializer<Node> {
             result.add(item.asText());
         }
         return result;
+    }
+
+    private Rubric parseRubric(String nodeId, String rawContent) {
+        return rawContent != null ? RubricParser.parseContent(nodeId, rawContent) : null;
     }
 
     private String textOrNull(JsonNode root, String field) {

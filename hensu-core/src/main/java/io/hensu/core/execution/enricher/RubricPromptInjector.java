@@ -1,22 +1,16 @@
 package io.hensu.core.execution.enricher;
 
 import io.hensu.core.execution.executor.ExecutionContext;
-import io.hensu.core.rubric.RubricEngine;
-import io.hensu.core.rubric.RubricParser;
 import io.hensu.core.rubric.model.Criterion;
 import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
-import java.nio.file.Path;
-import java.util.Map;
-import java.util.Optional;
 
 /// Injects rubric criteria into the node prompt.
 ///
-/// Applied when the node declares a `rubricId`. This injector loads the rubric
-/// (from the engine cache or from disk), appends a horizontal rule to create a
-/// clear cognitive boundary between the content under review and the evaluator
-/// instructions, then appends the criteria list.
+/// Applied when the node carries a parsed {@link Rubric}. Appends a horizontal rule
+/// to create a clear cognitive boundary between the content under review and the
+/// evaluator instructions, then appends the criteria list.
 ///
 /// ### Example output appended to prompt
 ///
@@ -47,19 +41,18 @@ import java.util.Optional;
 /// Virtual Threads.
 ///
 /// @see EngineVariableInjector
-/// @see io.hensu.core.rubric.model.Rubric
+/// @see Rubric
 public class RubricPromptInjector implements EngineVariableInjector {
 
     @Override
     public String inject(String prompt, Node node, ExecutionContext ctx) {
-        if (!(node instanceof StandardNode sn) || sn.getRubricId() == null) {
+        if (!(node instanceof StandardNode sn) || sn.getRubric() == null) {
             return prompt;
         }
-        Rubric rubric = loadRubric(sn.getRubricId(), ctx);
-        return inject(prompt, rubric);
+        return buildCriteriaSection(prompt, sn.getRubric());
     }
 
-    /// Injects rubric criteria directly from a `Rubric` object.
+    /// Injects rubric criteria directly from a {@link Rubric} object.
     ///
     /// @param prompt the base prompt text, not null
     /// @param rubric the rubric whose criteria are injected, not null
@@ -88,22 +81,5 @@ public class RubricPromptInjector implements EngineVariableInjector {
             sb.append("\n");
         }
         return sb.toString().stripTrailing();
-    }
-
-    private Rubric loadRubric(String rubricId, ExecutionContext ctx) {
-        RubricEngine engine = ctx.getRubricEngine();
-        Optional<Rubric> cached = engine.getRubric(rubricId);
-        if (cached.isPresent()) {
-            return cached.get();
-        }
-        Map<String, String> rubricPaths = ctx.getWorkflow().getRubrics();
-        String path = rubricPaths.get(rubricId);
-        if (path == null) {
-            throw new IllegalStateException(
-                    "No path configured for rubric '" + rubricId + "' in workflow definition");
-        }
-        Rubric rubric = RubricParser.parse(Path.of(path));
-        engine.registerRubric(rubric);
-        return rubric;
     }
 }

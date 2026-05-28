@@ -5,9 +5,11 @@ import io.hensu.core.plan.Plan
 import io.hensu.core.plan.PlanningConfig
 import io.hensu.core.review.ReviewConfig
 import io.hensu.core.review.ReviewMode
+import io.hensu.core.rubric.RubricParser
 import io.hensu.core.workflow.node.StandardNode
 import io.hensu.dsl.WorkingDirectory
 import io.hensu.dsl.extensions.resolveAsPrompt
+import io.hensu.dsl.extensions.resolveAsRubric
 
 /**
  * DSL builder for standard workflow nodes.
@@ -216,7 +218,9 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
             .id(id)
             .agentId(agent)
             .prompt(prompt.resolveAsPrompt(workingDirectory))
-            .rubricId(rubric)
+            .rubric(
+                rubric.resolveAsRubric(workingDirectory)?.let { RubricParser.parseContent(id, it) }
+            )
             .reviewConfig(reviewConfig)
             .transitionRules(transitionBuilder.build())
             .writes(writes)

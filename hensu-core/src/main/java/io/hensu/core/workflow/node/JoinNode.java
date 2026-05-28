@@ -1,5 +1,6 @@
 package io.hensu.core.workflow.node;
 
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.workflow.transition.TransitionRule;
 import java.util.List;
 
@@ -55,7 +56,7 @@ public final class JoinNode extends Node {
     }
 
     @Override
-    public String getRubricId() {
+    public Rubric getRubric() {
         return null;
     }
 

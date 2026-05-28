@@ -190,20 +190,18 @@ class ReviewTerminal {
     private ReviewDecision handleBacktrack(ReviewData data) {
         List<ReviewData.StepInfo> steps = data.historySteps();
 
-        if (steps == null || steps.size() <= 1) {
+        if (steps == null || steps.isEmpty()) {
             println(styles.warn("No previous steps available to backtrack to."));
             return null;
         }
-
-        List<ReviewData.StepInfo> validSteps = steps.subList(0, steps.size() - 1);
 
         println("");
         println(styles.boxTopWithLabel(styles.dim("backtrack target")));
         println("");
 
-        for (int i = validSteps.size() - 1; i >= 0; i--) {
-            ReviewData.StepInfo step = validSteps.get(i);
-            int displayNum = validSteps.size() - i;
+        for (int i = steps.size() - 1; i >= 0; i--) {
+            ReviewData.StepInfo step = steps.get(i);
+            int displayNum = steps.size() - i;
             boolean ok = "SUCCESS".equals(step.status());
             String status = styles.successOrError(ok ? "OK" : "FAIL", ok);
             println(String.format("  [%d] %s (%s)", displayNum, step.nodeId(), status));
@@ -217,12 +215,12 @@ class ReviewTerminal {
         try {
             int choice = Integer.parseInt(input);
             if (choice == 0) return null;
-            if (choice < 1 || choice > validSteps.size()) {
+            if (choice < 1 || choice > steps.size()) {
                 println(styles.error("Invalid choice. Please select a number from the list."));
                 return null;
             }
 
-            ReviewData.StepInfo targetStep = validSteps.get(validSteps.size() - choice);
+            ReviewData.StepInfo targetStep = steps.get(steps.size() - choice);
 
             print("Reason for backtracking (optional): ");
             String reason = readInput();

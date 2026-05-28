@@ -1,5 +1,6 @@
 package io.hensu.core.workflow.node;
 
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.workflow.transition.TransitionRule;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +46,7 @@ public final class ForkNode extends Node {
     }
 
     @Override
-    public String getRubricId() {
+    public Rubric getRubric() {
         return null;
     }
 

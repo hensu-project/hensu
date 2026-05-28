@@ -56,7 +56,7 @@ public final class ScoreExtractingEvaluator implements RubricEvaluator {
             logger.warning(
                     "No 'score' key in context for criterion '"
                             + criterion.getId()
-                            + "'. Ensure the node has a ScoreTransition or rubricId so the engine"
+                            + "'. Ensure the node has a ScoreTransition or rubric so the engine"
                             + " extracts 'score' automatically.");
             return 0.0;
         }

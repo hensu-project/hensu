@@ -18,15 +18,14 @@ import java.time.Instant
 /**
  * DSL builder for constructing [Workflow] instances.
  *
- * Provides a fluent API for defining workflow components including agents, rubrics, and the
- * execution graph. The builder compiles to an immutable Java [Workflow] instance.
+ * Provides a fluent API for defining workflow components including agents and the execution graph.
+ * The builder compiles to an immutable Java [Workflow] instance.
  *
  * Usage:
  * ```kotlin
  * WorkflowBuilder("my-workflow", workingDir).apply {
  *     description = "My workflow description"
  *     agents { ... }
- *     rubrics { ... }
  *     graph { ... }
  * }.build()
  * ```
@@ -40,8 +39,6 @@ class WorkflowBuilder(private val name: String, private val workingDirectory: Wo
     var description: String? = null
     var version: String = "1.0.0"
     private val agentConfigs = mutableMapOf<String, AgentConfig>()
-
-    private val rubricPaths = mutableMapOf<String, String>()
     private var graphBuilder: GraphBuilder? = null
     private var configBuilder: WorkflowConfigBuilder? = null
     private var stateSchema: WorkflowStateSchema? = null
@@ -54,19 +51,6 @@ class WorkflowBuilder(private val name: String, private val workingDirectory: Wo
      */
     fun agents(block: AgentRegistryBuilder.() -> Unit) {
         val registry = AgentRegistryBuilder(agentConfigs)
-        registry.apply(block)
-    }
-
-    /**
-     * Defines rubrics for quality evaluation.
-     *
-     * Rubrics are resolved from `workingDirectory/rubrics/`.
-     *
-     * @param block rubric registration block
-     * @see RubricRegistryBuilder for rubric definition syntax
-     */
-    fun rubrics(block: RubricRegistryBuilder.() -> Unit) {
-        val registry = RubricRegistryBuilder(rubricPaths, workingDirectory)
         registry.apply(block)
     }
 
@@ -129,7 +113,6 @@ class WorkflowBuilder(private val name: String, private val workingDirectory: Wo
                 .id(name.sanitizeId())
                 .version(version)
                 .agents(agentConfigs)
-                .rubrics(rubricPaths)
                 .nodes(graph.nodes)
                 .startNode(graph.startNode)
                 .config(config)

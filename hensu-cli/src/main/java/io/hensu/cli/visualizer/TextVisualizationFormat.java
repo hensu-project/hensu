@@ -120,11 +120,14 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                     "agent",
                                     styles.bold(standardNode.getAgentId())));
                 }
-                if (standardNode.getRubricId() != null) {
+                if (standardNode.getRubric() != null) {
                     sb.append(
                             String.format(
                                     "%s%s  %-9s %s%n",
-                                    indent, styles.boxMid(), "rubric", standardNode.getRubricId()));
+                                    indent,
+                                    styles.boxMid(),
+                                    "rubric",
+                                    standardNode.getRubric().getCriteria().size() + " criteria"));
                 }
                 if (standardNode.getReviewConfig() != null) {
                     sb.append(
@@ -271,11 +274,14 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                     styles.accent(String.valueOf(genericNode.getConfig().size()))
                                             + " entries"));
                 }
-                if (genericNode.getRubricId() != null) {
+                if (genericNode.getRubric() != null) {
                     sb.append(
                             String.format(
                                     "%s%s  %-9s %s%n",
-                                    indent, styles.boxMid(), "rubric", genericNode.getRubricId()));
+                                    indent,
+                                    styles.boxMid(),
+                                    "rubric",
+                                    genericNode.getRubric().getCriteria().size() + " criteria"));
                 }
                 appendTransitions(sb, indent, genericNode.getTransitionRules(), styles);
             }

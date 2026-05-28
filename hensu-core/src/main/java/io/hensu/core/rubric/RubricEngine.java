@@ -13,17 +13,25 @@ import java.util.Optional;
 
 /// Quality evaluation engine for rubric-based output assessment.
 ///
-/// Evaluates workflow node outputs against configurable rubrics to determine
+/// Evaluates workflow node outputs against parsed {@link Rubric} objects to determine
 /// quality scores and pass/fail status. Supports weighted criteria evaluation
 /// and provides detailed per-criterion feedback.
 ///
+/// ### Repository placeholder
+///
+/// The {@link RubricRepository} field and its accessor methods ({@link #registerRubric},
+/// {@link #exists}, {@link #getRubric}) are not used by the current execution pipeline.
+/// Rubrics are parsed at build time and stored directly on the node — the engine
+/// receives them as typed {@link Rubric} arguments via {@link #evaluate}. The repository
+/// is retained as a placeholder for a future DB-backed rubric store where rubrics are
+/// managed independently of workflow definitions.
+///
 /// ### Contracts
-/// - **Precondition**: Rubric must be registered before evaluation
 /// - **Postcondition**: Returns complete evaluation with all criteria scores
 /// - **Invariant**: Rubric scores are normalized to 0-100 scale
 ///
 /// @implNote Thread-safe if the underlying repository and evaluator are thread-safe.
-/// The engine itself maintains no mutable state.
+/// The engine itself maintains no mutable state beyond the repository delegate.
 ///
 /// @see RubricEvaluator for criterion evaluation logic
 /// @see Rubric for rubric definition structure
@@ -42,7 +50,7 @@ public final class RubricEngine {
         this.evaluator = evaluator;
     }
 
-    /// Registers a rubric in the repository for later evaluation.
+    /// Registers a rubric in the repository for later retrieval.
     ///
     /// @apiNote **Side effects**: Modifies the rubric repository
     ///
@@ -67,31 +75,17 @@ public final class RubricEngine {
         return repository.findById(rubricId);
     }
 
-    /// Evaluates a node result against a registered rubric.
+    /// Evaluates a node result against the given rubric.
     ///
     /// Calculates weighted scores for each criterion and produces an overall
     /// score normalized to 0-100. The evaluation passes if the score meets
     /// the rubric's pass threshold.
     ///
-    /// @param rubricId identifier of the registered rubric, not null
+    /// @param rubric the parsed rubric to evaluate against, not null
     /// @param result node execution result to evaluate, not null
     /// @param context execution context for evaluation, not null
     /// @return evaluation result with score and criterion details, never null
-    /// @throws RubricNotFoundException if rubricId is not registered
     public RubricEvaluation evaluate(
-            String rubricId, NodeResult result, Map<String, Object> context)
-            throws RubricNotFoundException {
-
-        Rubric rubric =
-                repository
-                        .findById(rubricId)
-                        .orElseThrow(
-                                () -> new RubricNotFoundException("Rubric not found: " + rubricId));
-
-        return evaluateRubric(rubric, result, context);
-    }
-
-    private RubricEvaluation evaluateRubric(
             Rubric rubric, NodeResult result, Map<String, Object> context) {
 
         List<CriterionEvaluation> criterionEvaluations = new ArrayList<>();

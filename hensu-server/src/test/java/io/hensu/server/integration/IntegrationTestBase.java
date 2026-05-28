@@ -2,8 +2,6 @@ package io.hensu.server.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.hensu.core.HensuEnvironment;
-import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.agent.stub.StubResponseRegistry;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.WorkflowStateRepository;
@@ -21,8 +19,6 @@ import jakarta.inject.Inject;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
@@ -73,8 +69,6 @@ abstract class IntegrationTestBase {
     @Inject WorkflowRepository workflowRepository;
     @Inject WorkflowStateRepository workflowStateRepository;
     @Inject WorkflowService workflowService;
-    @Inject AgentRegistry agentRegistry;
-    @Inject HensuEnvironment hensuEnvironment;
 
     /// Resets all mutable test state before each test method.
     ///
@@ -201,27 +195,6 @@ abstract class IntegrationTestBase {
     /// @param response the response content, not null
     void registerStub(String scenario, String key, String response) {
         StubResponseRegistry.getInstance().registerResponse(scenario, key, response);
-    }
-
-    /// Resolves a classpath rubric resource to a filesystem path.
-    ///
-    /// {@link io.hensu.core.rubric.RubricParser#parse} requires real filesystem
-    /// paths, so this method copies `/rubrics/{resourceName}` to a temporary file
-    /// and returns its absolute path.
-    ///
-    /// @param resourceName rubric file name (e.g. `quality-high.md`), not null
-    /// @return absolute filesystem path to the temporary copy, never null
-    /// @throws RuntimeException if the resource cannot be found or copied
-    String resolveRubricPath(String resourceName) {
-        try {
-            String content = loadClasspathResource("/rubrics/" + resourceName);
-            Path tempFile = Files.createTempFile("rubric-", "-" + resourceName);
-            Files.writeString(tempFile, content);
-            tempFile.toFile().deleteOnExit();
-            return tempFile.toAbsolutePath().toString();
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to resolve rubric: " + resourceName, e);
-        }
     }
 
     /// Loads a classpath resource as a UTF-8 string.

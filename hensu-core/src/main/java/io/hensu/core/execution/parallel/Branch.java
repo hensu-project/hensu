@@ -1,6 +1,7 @@
 package io.hensu.core.execution.parallel;
 
 import io.hensu.core.execution.EngineVariables;
+import io.hensu.core.rubric.model.Rubric;
 import java.util.List;
 
 /// Represents a single execution branch within a parallel node.
@@ -12,7 +13,7 @@ import java.util.List;
 /// @param id unique identifier for this branch within the parallel node, not null
 /// @param agentId identifier of the agent to execute this branch, not null
 /// @param prompt the prompt template to send to the agent, may be null
-/// @param rubricId optional rubric identifier for evaluating branch output, may be null
+/// @param rubric optional parsed rubric for evaluating branch output, may be null
 /// @param weight vote weight for weighted consensus strategies (default 1.0), positive
 /// @param yields ordered list of state variable names this branch produces, never null
 ///
@@ -23,7 +24,7 @@ public record Branch(
         String id,
         String agentId,
         String prompt,
-        String rubricId,
+        Rubric rubric,
         double weight,
         List<String> yields) {
 
@@ -32,9 +33,9 @@ public record Branch(
     /// @param id unique identifier for this branch, not null
     /// @param agentId identifier of the agent to execute this branch, not null
     /// @param prompt the prompt template, may be null
-    /// @param rubricId optional rubric identifier, may be null
-    public Branch(String id, String agentId, String prompt, String rubricId) {
-        this(id, agentId, prompt, rubricId, 1.0, List.of());
+    /// @param rubric optional parsed rubric, may be null
+    public Branch(String id, String agentId, String prompt, Rubric rubric) {
+        this(id, agentId, prompt, rubric, 1.0, List.of());
     }
 
     /// Creates a branch with specified weight and no yields.
@@ -42,10 +43,10 @@ public record Branch(
     /// @param id unique identifier for this branch, not null
     /// @param agentId identifier of the agent to execute this branch, not null
     /// @param prompt the prompt template, may be null
-    /// @param rubricId optional rubric identifier, may be null
+    /// @param rubric optional parsed rubric, may be null
     /// @param weight vote weight, positive
-    public Branch(String id, String agentId, String prompt, String rubricId, double weight) {
-        this(id, agentId, prompt, rubricId, weight, List.of());
+    public Branch(String id, String agentId, String prompt, Rubric rubric, double weight) {
+        this(id, agentId, prompt, rubric, weight, List.of());
     }
 
     /// Canonical constructor – defensively copies yields list and validates

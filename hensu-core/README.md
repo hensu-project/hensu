@@ -113,10 +113,6 @@ rubrics to determine quality scores and pass/fail status.
 flowchart LR
     subgraph engine["RubricEngine"]
         direction LR
-        subgraph repo["RubricRepository"]
-            direction TB
-            inmem(["InMemoryRubricRepository"])
-        end
         subgraph eval["RubricEvaluator"]
             direction TB
             score(["ScoreExtractingEvaluator\n(reads score from ctx)"])
@@ -128,10 +124,8 @@ flowchart LR
     end
 
     style engine fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
-    style repo fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style eval fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style model fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style inmem fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style score fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
     style rubric fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style criterion fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
@@ -144,8 +138,7 @@ flowchart LR
 
 | Type               | Description                                                       |
 |--------------------|-------------------------------------------------------------------|
-| `RubricEngine`     | Orchestrates evaluation using repository and evaluator            |
-| `RubricRepository` | Stores rubric definitions (in-memory by default)                  |
+| `RubricEngine`     | Orchestrates evaluation using evaluator                           |
 | `RubricEvaluator`  | Evaluates output against criteria (self-eval or external LLM)     |
 | `Rubric`           | Immutable rubric definition with pass threshold and criteria list |
 | `Criterion`        | Single evaluation dimension with weight and minimum score         |
@@ -296,7 +289,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── enricher/
 │   │   ├── EngineVariableInjector.java        # Single-injector interface
 │   │   ├── EngineVariablePromptEnricher.java  # Composite enricher — runs injector chain before each agent call
-│   │   ├── RubricPromptInjector.java          # Injects rubric criteria when node.rubricId is set
+│   │   ├── RubricPromptInjector.java          # Injects rubric criteria when node has a parsed Rubric
 │   │   ├── ScoreVariableInjector.java         # Injects `score` requirement on ScoreTransition nodes or consensus branches
 │   │   ├── ApprovalVariableInjector.java      # Injects `approved` requirement on ApprovalTransition nodes or consensus branches
 │   │   ├── RecommendationVariableInjector.java # Injects `recommendation` on score/approval nodes or consensus branches
@@ -350,8 +343,6 @@ hensu-core/src/main/java/io/hensu/core/
 │       └── WorkflowValidator.java        # Load-time validator for writes + prompt {variable} refs
 ├── rubric/                        # Quality evaluation engine
 │   ├── RubricEngine.java          # Evaluation orchestrator
-│   ├── RubricRepository.java      # Rubric storage interface
-│   ├── RubricParser.java          # Markdown rubric file parser
 │   ├── model/                     # Rubric, Criterion, ScoreCondition, etc.
 │   └── evaluator/
 │       ├── RubricEvaluator.java          # Evaluator interface
