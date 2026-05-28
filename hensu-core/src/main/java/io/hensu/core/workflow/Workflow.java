@@ -1,9 +1,7 @@
 package io.hensu.core.workflow;
 
 import io.hensu.core.agent.AgentConfig;
-import io.hensu.core.execution.parallel.Branch;
 import io.hensu.core.workflow.node.Node;
-import io.hensu.core.workflow.node.ParallelNode;
 import io.hensu.core.workflow.state.WorkflowStateSchema;
 import java.util.Collections;
 import java.util.Map;
@@ -12,12 +10,11 @@ import java.util.Objects;
 /// Immutable workflow definition representing a complete execution graph.
 ///
 /// A workflow is a pure data structure containing agent configurations,
-/// rubric mappings, node definitions, and execution metadata. Workflows
-/// are constructed via the builder pattern and validated on build.
+/// node definitions, and execution metadata. Workflows are constructed
+/// via the builder pattern and validated on build.
 ///
 /// ### Structure
 /// - **Agents**: Named agent configurations for node execution
-/// - **Rubrics**: Mapping of rubric names to definition IDs
 /// - **Nodes**: Graph of execution nodes with transitions
 /// - **Config**: Execution behavior settings (timeouts, retries)
 /// - **Metadata**: Descriptive information (author, description)
@@ -38,7 +35,6 @@ public final class Workflow {
     private final String id;
     private final String version;
     private final Map<String, AgentConfig> agents;
-    private final Map<String, String> rubrics;
     private final Map<String, Node> nodes;
     private final String startNode;
     private final WorkflowConfig config;
@@ -49,7 +45,6 @@ public final class Workflow {
         this.id = Objects.requireNonNull(builder.id, "Workflow ID required");
         this.version = builder.version;
         this.agents = Collections.unmodifiableMap(builder.agents);
-        this.rubrics = Collections.unmodifiableMap(builder.rubrics);
         this.nodes = Collections.unmodifiableMap(builder.nodes);
         this.startNode = Objects.requireNonNull(builder.startNode, "Start node required");
         this.config = builder.config;
@@ -63,35 +58,6 @@ public final class Workflow {
         if (!nodes.containsKey(startNode)) {
             throw new IllegalStateException(
                     "Start node '" + startNode + "' not found in workflow nodes");
-        }
-
-        for (Map.Entry<String, Node> entry : nodes.entrySet()) {
-            String rubricId = entry.getValue().getRubricId();
-            if (rubricId != null && !rubricId.isEmpty() && !rubrics.containsKey(rubricId)) {
-                throw new IllegalStateException(
-                        "Node '"
-                                + entry.getKey()
-                                + "' references rubric '"
-                                + rubricId
-                                + "' which is not declared in workflow rubrics");
-            }
-
-            if (entry.getValue() instanceof ParallelNode pn) {
-                for (Branch branch : pn.getBranches()) {
-                    if (branch.rubricId() != null
-                            && !branch.rubricId().isEmpty()
-                            && !rubrics.containsKey(branch.rubricId())) {
-                        throw new IllegalStateException(
-                                "Branch '"
-                                        + branch.id()
-                                        + "' in parallel node '"
-                                        + entry.getKey()
-                                        + "' references rubric '"
-                                        + branch.rubricId()
-                                        + "' which is not declared in workflow rubrics");
-                    }
-                }
-            }
         }
     }
 
@@ -114,13 +80,6 @@ public final class Workflow {
     /// @return unmodifiable map of agent name to config, never null
     public Map<String, AgentConfig> getAgents() {
         return agents;
-    }
-
-    /// Returns the rubric name to ID mappings.
-    ///
-    /// @return unmodifiable map of rubric name to definition ID, never null
-    public Map<String, String> getRubrics() {
-        return rubrics;
     }
 
     /// Returns all workflow nodes by ID.
@@ -180,7 +139,6 @@ public final class Workflow {
         private String id;
         private String version = "1.0.0";
         private Map<String, AgentConfig> agents = Map.of();
-        private Map<String, String> rubrics = Map.of();
         private Map<String, Node> nodes = Map.of();
         private String startNode;
         private WorkflowConfig config;
@@ -213,15 +171,6 @@ public final class Workflow {
         /// @return this builder for chaining
         public Builder agents(Map<String, AgentConfig> agents) {
             this.agents = Map.copyOf(agents);
-            return this;
-        }
-
-        /// Sets the rubric name mappings.
-        ///
-        /// @param rubrics map of rubric name to definition ID, not null
-        /// @return this builder for chaining
-        public Builder rubrics(Map<String, String> rubrics) {
-            this.rubrics = Map.copyOf(rubrics);
             return this;
         }
 

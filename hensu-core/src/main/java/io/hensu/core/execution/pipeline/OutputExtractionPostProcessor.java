@@ -119,7 +119,7 @@ public final class OutputExtractionPostProcessor implements PostNodeExecutionPro
 
     private List<String> engineVarsFor(StandardNode node) {
         List<String> vars = new ArrayList<>();
-        boolean hasScore = node.getRubricId() != null;
+        boolean hasScore = node.getRubric() != null;
         boolean hasApproval = false;
         for (var rule : node.getTransitionRules()) {
             if (rule instanceof ScoreTransition) hasScore = true;

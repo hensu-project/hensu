@@ -12,7 +12,7 @@ import java.util.List;
 ///
 /// ### Default pipeline
 /// {@link #DEFAULT} runs in this order:
-/// 1. {@link RubricPromptInjector} — injects rubric criteria when `node.getRubricId()` is set
+/// 1. {@link RubricPromptInjector} — injects rubric criteria when `node.getRubric()` is set
 /// 2. {@link ScoreVariableInjector} — injects `score` requirement when a
 ///    {@link io.hensu.core.workflow.transition.ScoreTransition} exists or consensus branch
 ///    needs self-scoring

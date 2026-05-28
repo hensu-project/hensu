@@ -3,6 +3,7 @@ package io.hensu.core.workflow.node;
 import io.hensu.core.execution.action.Action;
 import io.hensu.core.execution.executor.EndNodeExecutor;
 import io.hensu.core.execution.result.ExitStatus;
+import io.hensu.core.rubric.model.Rubric;
 import java.util.Objects;
 
 /// End workflow node representing an end state.
@@ -43,7 +44,7 @@ public final class EndNode extends Node {
     ///
     /// @return null, end nodes do not support rubric evaluation
     @Override
-    public String getRubricId() {
+    public Rubric getRubric() {
         return null;
     }
 

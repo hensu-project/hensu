@@ -51,10 +51,6 @@ fun myWorkflow() = workflow("WorkflowName") {
         // Agent definitions
     }
 
-    rubrics {
-        // Rubric references (optional)
-    }
-
     config {
         // Execution settings (optional)
     }
@@ -78,7 +74,6 @@ fun myWorkflow() = workflow("WorkflowName") {
 |---------------|--------------------------------------------------------------------------------------------------------------------------|
 | `state { }`   | Optional typed state schema. When declared, enables load-time validation of `writes` and `{variable}` prompt references. |
 | `agents { }`  | Agent definitions (models, roles, temperatures)                                                                          |
-| `rubrics { }` | Rubric file references for quality evaluation                                                                            |
 | `config { }`  | Workflow execution settings                                                                                              |
 | `graph { }`   | Node graph (required)                                                                                                    |
 
@@ -155,7 +150,7 @@ Standard nodes execute an agent with a prompt and transition based on the result
 node("node-id") {
     agent = "agent-id"
     prompt = "Your prompt with {placeholders}"
-    rubric = "rubric-id"         // Optional
+    rubric = "rubric-id.md"      // Optional
     writes("param1", "param2")   // Optional — declare state variables this node produces
 
     review(ReviewMode.OPTIONAL)  // Optional
@@ -169,11 +164,11 @@ node("node-id") {
 
 #### Standard Node Properties
 
-| Property    | Type    | Required | Description                             |
-|-------------|---------|----------|-----------------------------------------|
-| `agent`     | String? | Yes      | ID of the agent to execute              |
-| `prompt`    | String? | Yes      | Prompt template or `.md` file reference |
-| `rubric`    | String? | No       | ID of rubric to evaluate output quality |
+| Property | Type    | Required | Description                                                    |
+|----------|---------|----------|----------------------------------------------------------------|
+| `agent`  | String? | Yes      | ID of the agent to execute                                     |
+| `prompt` | String? | Yes      | Inline prompt template or `.md` file reference from `prompts/` |
+| `rubric` | String? | No       | Inline rubric content or `.md` file reference from `rubrics/`  |
 
 #### Standard Node Functions
 
@@ -219,13 +214,13 @@ parallel("review-committee") {
 
 #### Branch Properties
 
-| Property   | Type          | Required | Description                                                                                                                                                                         |
-|------------|---------------|----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `agent`    | String        | Yes      | ID of the agent to execute                                                                                                                                                          |
-| `prompt`   | String?       | No       | Prompt template or `.md` file reference                                                                                                                                             |
-| `rubric`   | String?       | No       | ID of rubric for branch evaluation. When set, the rubric's pass/fail result determines the branch's consensus vote (APPROVE/REJECT), overriding text-based heuristics               |
-| `weight`   | Double        | No       | Vote weight for `WEIGHTED_VOTE` consensus strategy. Higher values give more influence to the branch score (default: 1.0)                                                            |
-| `yields()` | vararg String | No       | State variable names this branch produces as structured domain output. The agent's JSON response must include these fields; the engine extracts and merges them into workflow state |
+| Property   | Type          | Required | Description                                                                                                                                                                                      |
+|------------|---------------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `agent`    | String        | Yes      | ID of the agent to execute                                                                                                                                                                       |
+| `prompt`   | String?       | No       | Inline prompt template or `.md` file reference from `prompts/`                                                                                                                                   |
+| `rubric`   | String?       | No       | Inline rubric content or `.md` file reference from `rubrics/`. When set, the rubric's pass/fail result determines the branch's consensus vote (APPROVE/REJECT), overriding text-based heuristics |
+| `weight`   | Double        | No       | Vote weight for `WEIGHTED_VOTE` consensus strategy. Higher values give more influence to the branch score (default: 1.0)                                                                         |
+| `yields()` | vararg String | No       | State variable names this branch produces as structured domain output. The agent's JSON response must include these fields; the engine extracts and merges them into workflow state              |
 
 #### Rubric-Based Consensus
 
@@ -335,7 +330,7 @@ generic("validate-input") {
         "required" to true
     }
 
-    rubric = "validation-rubric"  // Optional
+    rubric = "validation-rubric.md"  // Optional
 
     onSuccess goto "process"
     onFailure retry 2 otherwise "error"
@@ -725,7 +720,7 @@ Because `recommendation` is an engine variable, you reference it as a `{placehol
 node("score-content") {
     agent = "reviewer"
     prompt = "Review the article: {article}\nOutput a score and feedback."
-    rubric = "content-quality"
+    rubric = "content-quality.md"
 
     onScore {
         whenScore greaterThanOrEqual 80.0 goto "publish"
@@ -746,24 +741,15 @@ node("revise") {
 ```
 
 ## Rubrics
+Rubrics define quality evaluation criteria for node outputs. Rubric files should be placed in the `rubrics/` directory of your working directory.
 
-Rubrics define quality evaluation criteria for node outputs.
-
-```kotlin
-rubrics {
-    rubric("quality-check", "quality.md")           // rubrics/quality.md
-    rubric("pr-review", "templates/pr.md")          // rubrics/templates/pr.md
-    rubric("docs") { file = "documentation.md" }    // Alternative syntax
-}
-```
-
-Reference rubrics in nodes:
+To use a rubric, specify the filename in the node's `rubric` property:
 
 ```kotlin
 node("review") {
     agent = "reviewer"
     prompt = "Review this code"
-    rubric = "quality-check"
+    rubric = "content-quality.md"  // References rubrics/content-quality.md
 
     onScore {
         whenScore greaterThanOrEqual 80.0 goto "approve"
@@ -1092,10 +1078,6 @@ fun contentPipeline() = workflow("ContentPipeline") {
             model = Models.GPT_4O
             temperature = 0.5
         }
-    }
-
-    rubrics {
-        rubric("content-quality", "content-quality.md")
     }
 
     graph {

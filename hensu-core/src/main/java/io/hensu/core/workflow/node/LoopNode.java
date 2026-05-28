@@ -1,5 +1,6 @@
 package io.hensu.core.workflow.node;
 
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.workflow.transition.BreakRule;
 import io.hensu.core.workflow.transition.LoopCondition;
 
@@ -12,7 +13,7 @@ public final class LoopNode extends Node {
     }
 
     @Override
-    public String getRubricId() {
+    public Rubric getRubric() {
         return null;
     }
 

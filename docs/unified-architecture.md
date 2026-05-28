@@ -760,7 +760,7 @@ CDI wiring, `WorkflowExecutor`, `TenantContext` — against in-memory repositori
 profile disables PostgreSQL, Flyway, and the scheduler (no Docker required).
 
 All integration tests extend `IntegrationTestBase`, which provides CDI injection, per-test
-state cleanup, and helpers (`registerStub`, `pushAndExecute`, `resolveRubricPath`).
+state cleanup, and helpers (`registerStub`, `pushAndExecute`).
 
 ### Repository Tests (Testcontainers PostgreSQL)
 

@@ -3,6 +3,7 @@ package io.hensu.core.workflow.node;
 import io.hensu.core.execution.parallel.Branch;
 import io.hensu.core.execution.parallel.ConsensusConfig;
 import io.hensu.core.execution.parallel.ConsensusStrategy;
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.workflow.transition.TransitionRule;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,7 +33,7 @@ public final class ParallelNode extends Node {
     }
 
     @Override
-    public String getRubricId() {
+    public Rubric getRubric() {
         return null; // Parallel nodes don't have a direct rubric; each branch may have one
     }
 
@@ -85,8 +86,8 @@ public final class ParallelNode extends Node {
             return this;
         }
 
-        public Builder branch(String branchId, String agentId, String prompt, String rubricId) {
-            this.branches.add(new Branch(branchId, agentId, prompt, rubricId));
+        public Builder branch(String branchId, String agentId, String prompt, Rubric rubric) {
+            this.branches.add(new Branch(branchId, agentId, prompt, rubric));
             return this;
         }
 

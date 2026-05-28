@@ -4,9 +4,11 @@ import io.hensu.core.execution.EngineVariables
 import io.hensu.core.execution.parallel.Branch
 import io.hensu.core.execution.parallel.ConsensusConfig
 import io.hensu.core.execution.parallel.ConsensusStrategy
+import io.hensu.core.rubric.RubricParser
 import io.hensu.core.workflow.node.ParallelNode
 import io.hensu.dsl.WorkingDirectory
 import io.hensu.dsl.extensions.resolveAsPrompt
+import io.hensu.dsl.extensions.resolveAsRubric
 import java.util.logging.Logger
 
 /**
@@ -220,7 +222,7 @@ class BranchBuilder(private val id: String, private val workingDirectory: Workin
             id,
             agent ?: throw IllegalStateException("Branch '$id' must have an agent"),
             prompt.resolveAsPrompt(workingDirectory) ?: "",
-            rubric,
+            rubric.resolveAsRubric(workingDirectory)?.let { RubricParser.parseContent(id, it) },
             weight,
             yieldFields,
         )

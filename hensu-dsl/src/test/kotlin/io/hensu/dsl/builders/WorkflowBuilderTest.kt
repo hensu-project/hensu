@@ -113,25 +113,19 @@ class WorkflowBuilderTest {
     }
 
     @Test
-    fun `should build workflow with rubrics`() {
-        // Create rubric files
+    fun `should build workflow with rubric on node`() {
+        // Create rubric file
         Files.writeString(tempDir.resolve("rubrics/quality.md"), "# Quality Rubric")
-        Files.writeString(tempDir.resolve("rubrics/security.md"), "# Security Rubric")
 
         // When
         val workflow =
             workflow("WithRubrics", workingDir) {
-                rubrics {
-                    rubric("quality", "quality.md")
-                    rubric("security", "security.md")
-                }
-
                 graph {
                     start at "step1"
 
                     node("step1") {
                         agent = "test"
-                        rubric = "quality"
+                        rubric = "quality.md"
                         onSuccess goto "end"
                     }
 
@@ -140,9 +134,8 @@ class WorkflowBuilderTest {
             }
 
         // Then
-        assertThat(workflow.rubrics).hasSize(2)
-        assertThat(workflow.rubrics["quality"]).endsWith("rubrics/quality.md")
-        assertThat(workflow.rubrics["security"]).endsWith("rubrics/security.md")
+        val step1 = workflow.nodes["step1"] as StandardNode
+        assertThat(step1.rubric?.rawContent).isEqualTo("# Quality Rubric")
     }
 
     @Test
@@ -393,15 +386,13 @@ class WorkflowBuilderTest {
                     }
                 }
 
-                rubrics { rubric("quality", "quality.md") }
-
                 graph {
                     start at "step1"
 
                     node("step1") {
                         agent = "agent1"
                         prompt = "Step 1"
-                        rubric = "quality"
+                        rubric = "quality.md"
 
                         review(ReviewMode.OPTIONAL)
 
@@ -425,7 +416,7 @@ class WorkflowBuilderTest {
         val step1 = workflow.nodes["step1"] as StandardNode
         assertThat(step1.agentId).isEqualTo("agent1")
         assertThat(step1.prompt).isEqualTo("Step 1")
-        assertThat(step1.rubricId).isEqualTo("quality")
+        assertThat(step1.rubric?.rawContent).isEqualTo("# Quality Rubric")
         assertThat(step1.reviewConfig?.mode).isEqualTo(ReviewMode.OPTIONAL)
     }
 }

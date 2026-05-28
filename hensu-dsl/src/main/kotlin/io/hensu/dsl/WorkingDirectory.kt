@@ -126,20 +126,20 @@ class WorkingDirectory(private val root: Path) {
     }
 
     /**
-     * Resolves a rubric file path from the rubrics directory.
+     * Resolves a rubric file and returns its content.
      *
      * Automatically appends `.md` extension if not present. Supports relative paths within the
      * rubrics directory (e.g., `templates/code-quality.md`).
      *
      * @param name rubric name or relative path (with or without .md extension), not null
-     * @return absolute path to the rubric file, never null
+     * @return content of the rubric file as a string, never null
      * @throws IllegalArgumentException if the rubric file does not exist
      */
-    fun resolveRubric(name: String): Path {
+    fun resolveRubric(name: String): String {
         val fileName = if (name.endsWith(".md")) name else "$name.md"
         val path = rubricsDir.resolve(fileName)
         require(path.exists()) { "Rubric not found: $path" }
-        return path
+        return path.readText()
     }
 
     /**

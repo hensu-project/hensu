@@ -1,5 +1,6 @@
 package io.hensu.dsl.builders
 
+import io.hensu.core.rubric.RubricParser
 import io.hensu.core.workflow.node.GenericNode
 import io.hensu.core.workflow.node.Node
 
@@ -116,7 +117,7 @@ class GenericNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMa
             .id(id)
             .executorType(executorType)
             .config(configMap)
-            .rubricId(rubric)
+            .rubric(rubric?.let { RubricParser.parseContent(id, it) })
             .transitionRules(transitionBuilder.build())
             .build()
     }

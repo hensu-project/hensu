@@ -182,7 +182,7 @@ map keyed by node ID. For `StandardNode`s with `writes` declared, it routes the 
 - **Single write**: attempts to parse the response as JSON and extract the declared key; falls back to the full raw text if the key is absent or the output is not valid JSON.
 - **Multiple writes**: the response is parsed as JSON and each declared key is extracted into context.
 
-**`RubricPostProcessor`** — If a node has a `rubricId`, this processor evaluates the output against the rubric's
+**`RubricPostProcessor`** — If a node has a `Rubric`, this processor evaluates the output against the rubric's
 criteria using the `RubricEngine`. It stores the evaluation result in the state for use by `ScoreTransition` rules. If
 the evaluation fails and no explicit transition handles the low score, it can trigger an **auto-backtrack** to a prior
 step, enabling self-correcting loops. On auto-backtrack, sets `state.nodeRedirected = true` — downstream processors
@@ -710,14 +710,15 @@ The rubric engine evaluates output quality against defined criteria with score-b
 
 | Component                  | Description                                                                                                                                  |
 |----------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
-| `RubricEngine`             | Orchestrates evaluation using repository and evaluator                                                                                       |
-| `RubricRepository`         | Stores rubric definitions (in-memory by default)                                                                                             |
+| `RubricEngine`             | Orchestrates evaluation using evaluator                                                                                                      |
 | `RubricEvaluator`          | Evaluates output against criteria                                                                                                            |
 | `ScoreExtractingEvaluator` | Reads the `score` engine variable from context; accumulates `recommendation` feedback for failing criteria into `_rubric_criterion_feedback` |
 | `Rubric`                   | Immutable definition with pass threshold and weighted criteria                                                                               |
 | `Criterion`                | Single evaluation dimension with weight and minimum score                                                                                    |
 
 ### How Evaluation Works
+
+Rubrics are parsed at build time and stored directly on the node as typed `Rubric` objects.
 
 `ScoreExtractingEvaluator` reads the `score` engine variable directly from the execution context. The score is extracted automatically by `OutputExtractionPostProcessor` whenever the node has a `ScoreTransition` — no JSON parsing is needed in the evaluator itself.
 
@@ -861,7 +862,7 @@ Each injector fires when **either** of two conditions is met:
 
 ```mermaid
 flowchart LR
-    r(["RubricPromptInjector\n· rubricId != null"]) --> s(["ScoreVariableInjector\n· ScoreTransition or\nconsensus branch"])
+    r(["RubricPromptInjector\n· rubric != null"]) --> s(["ScoreVariableInjector\n· ScoreTransition or\nconsensus branch"])
     s --> a(["ApprovalVariableInjector\n· ApprovalTransition or\nconsensus branch"])
     a --> rec(["RecommendationVariable\nInjector\n· Score/Approval or\nconsensus branch"])
     rec --> w(["WritesVariableInjector\n· has writes()"])

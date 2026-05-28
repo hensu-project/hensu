@@ -10,7 +10,6 @@ import io.hensu.core.workflow.state.VarType;
 import io.hensu.core.workflow.state.WorkflowStateSchema;
 import io.hensu.core.workflow.transition.SuccessTransition;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -35,7 +34,7 @@ class WritesVariableInjectorTest extends EnricherTestBase {
         void shouldSkipNonStandardNode() {
             var end = EndNode.builder().id("end").status(ExitStatus.SUCCESS).build();
 
-            assertThat(injector.inject("base", end, ctx(Map.of(), null, null))).isEqualTo("base");
+            assertThat(injector.inject("base", end, ctx(null, null))).isEqualTo("base");
         }
 
         @Test
@@ -48,7 +47,7 @@ class WritesVariableInjectorTest extends EnricherTestBase {
                             .transitionRules(List.of(new SuccessTransition("next")))
                             .build();
 
-            assertThat(injector.inject("base", node, ctx(Map.of(), null, null))).isEqualTo("base");
+            assertThat(injector.inject("base", node, ctx(null, null))).isEqualTo("base");
         }
     }
 
@@ -59,7 +58,7 @@ class WritesVariableInjectorTest extends EnricherTestBase {
         @Test
         @DisplayName("emits field name only when workflow has no state schema")
         void shouldEmitNameOnlyWithoutSchema() {
-            String result = injector.inject("base", nodeWithWrites(), ctx(Map.of(), null, null));
+            String result = injector.inject("base", nodeWithWrites(), ctx(null, null));
 
             assertThat(result).contains("\"article\"");
             assertThat(result).doesNotContain(" — ");
@@ -77,7 +76,7 @@ class WritesVariableInjectorTest extends EnricherTestBase {
                                             false,
                                             "the full article text")));
 
-            String result = injector.inject("base", nodeWithWrites(), ctx(Map.of(), schema, null));
+            String result = injector.inject("base", nodeWithWrites(), ctx(schema, null));
 
             assertThat(result).contains("\"article\" — the full article text");
         }
@@ -93,7 +92,7 @@ class WritesVariableInjectorTest extends EnricherTestBase {
                                     new StateVariableDeclaration(
                                             "article", VarType.STRING, false)));
 
-            String result = injector.inject("base", nodeWithWrites(), ctx(Map.of(), schema, null));
+            String result = injector.inject("base", nodeWithWrites(), ctx(schema, null));
 
             assertThat(result).contains("\"article\"");
             assertThat(result).doesNotContain(" — ");
@@ -110,7 +109,7 @@ class WritesVariableInjectorTest extends EnricherTestBase {
                                     new StateVariableDeclaration(
                                             "summary", VarType.STRING, false)));
 
-            String result = injector.inject("base", nodeWithWrites(), ctx(Map.of(), schema, null));
+            String result = injector.inject("base", nodeWithWrites(), ctx(schema, null));
 
             assertThat(result).contains("\"article\"");
             assertThat(result).doesNotContain(" — ");

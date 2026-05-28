@@ -15,6 +15,7 @@ import io.hensu.core.plan.PlannedStep.StepStatus;
 import io.hensu.core.plan.PlanningConfig;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.review.ReviewMode;
+import io.hensu.core.rubric.RubricParser;
 import io.hensu.core.rubric.model.ComparisonOperator;
 import io.hensu.core.rubric.model.DoubleRange;
 import io.hensu.core.rubric.model.ScoreCondition;
@@ -61,7 +62,7 @@ class WorkflowSerializerTest {
         StandardNode sn = (StandardNode) node;
         assertThat(sn.getAgentId()).isEqualTo("writer");
         assertThat(sn.getPrompt()).isEqualTo("Write something");
-        assertThat(sn.getRubricId()).isEqualTo("quality");
+        assertThat(sn.getRubric().getRawContent()).isEqualTo("quality");
         assertThat(sn.getWrites()).containsExactly("sentiment", "score");
         assertThat(sn.getTransitionRules()).hasSize(2);
     }
@@ -130,7 +131,7 @@ class WorkflowSerializerTest {
                         .executorType("validator")
                         .config(Map.of("minLength", 10, "maxLength", 1000))
                         .transitionRules(List.of(new SuccessTransition("done")))
-                        .rubricId("validation-rubric")
+                        .rubric(RubricParser.parseContent("validate", "validation-rubric"))
                         .build();
         EndNode end = EndNode.builder().id("done").status(ExitStatus.SUCCESS).build();
 
@@ -139,7 +140,6 @@ class WorkflowSerializerTest {
                         .id("test")
                         .startNode("validate")
                         .nodes(Map.of("validate", generic, "done", end))
-                        .rubrics(Map.of("validation-rubric", "test-rubric-path"))
                         .build();
 
         Workflow restored = WorkflowSerializer.fromJson(WorkflowSerializer.toJson(workflow));
@@ -147,7 +147,7 @@ class WorkflowSerializerTest {
         GenericNode restoredGeneric = (GenericNode) restored.getNodes().get("validate");
         assertThat(restoredGeneric.getExecutorType()).isEqualTo("validator");
         assertThat(restoredGeneric.getConfig()).containsEntry("minLength", 10);
-        assertThat(restoredGeneric.getRubricId()).isEqualTo("validation-rubric");
+        assertThat(restoredGeneric.getRubric().getRawContent()).isEqualTo("validation-rubric");
     }
 
     @Test
@@ -160,7 +160,7 @@ class WorkflowSerializerTest {
                                         "b2",
                                         "reviewer",
                                         "prompt2",
-                                        "rubric1",
+                                        RubricParser.parseContent("b2", "rubric1"),
                                         2.0,
                                         List.of("api_schema", "confidence")))
                         .consensus(
@@ -174,7 +174,6 @@ class WorkflowSerializerTest {
                         .id("test")
                         .startNode("parallel")
                         .nodes(Map.of("parallel", parallel, "done", end))
-                        .rubrics(Map.of("rubric1", "test-rubric-path"))
                         .build();
 
         Workflow restored = WorkflowSerializer.fromJson(WorkflowSerializer.toJson(workflow));
@@ -416,7 +415,7 @@ class WorkflowSerializerTest {
     @Test
     void roundTrip_planStep_synthesize() {
         // Synthesize with null agentId (as stored before executor enrichment)
-        // and a ToolCall step — verifies multi-step plan order and action type dispatch.
+        // and a ToolCall step — verifies multistep plan order and action type dispatch.
         StandardNode start =
                 StandardNode.builder()
                         .id("start")
@@ -609,7 +608,6 @@ class WorkflowSerializerTest {
                                         .role("writer")
                                         .model("claude-sonnet-4")
                                         .build()))
-                .rubrics(Map.of("quality", "rubric-001"))
                 .nodes(
                         Map.of(
                                 "start",
@@ -624,7 +622,7 @@ class WorkflowSerializerTest {
                 .id("start")
                 .agentId("writer")
                 .prompt("Write something")
-                .rubricId("quality")
+                .rubric(RubricParser.parseContent("start", "quality"))
                 .writes(List.of("sentiment", "score"))
                 .transitionRules(
                         List.of(new SuccessTransition("done"), new FailureTransition(3, "done")))
@@ -639,12 +637,6 @@ class WorkflowSerializerTest {
                         ? Map.of("start", node)
                         : Map.of("start", node, "done", end);
 
-        var builder = Workflow.builder().id("test").startNode("start").nodes(nodes);
-
-        if (node.getRubricId() != null && !node.getRubricId().isEmpty()) {
-            builder.rubrics(Map.of(node.getRubricId(), "test-rubric-path"));
-        }
-
-        return builder.build();
+        return Workflow.builder().id("test").startNode("start").nodes(nodes).build();
     }
 }

@@ -125,15 +125,13 @@ class TransitionBuilderTest {
                     }
                 }
 
-                rubrics { rubric("quality", "quality.md") }
-
                 graph {
                     start at "step1"
 
                     node("step1") {
                         agent = "agent1"
                         prompt = "Test"
-                        rubric = "quality"
+                        rubric = "quality.md"
 
                         onScore {
                             whenScore greaterThanOrEqual 90.0 goto "excellent"
@@ -224,15 +222,13 @@ class TransitionBuilderTest {
                     }
                 }
 
-                rubrics { rubric("quality", "quality.md") }
-
                 graph {
                     start at "step1"
 
                     node("step1") {
                         agent = "agent1"
                         prompt = "Test"
-                        rubric = "quality"
+                        rubric = "quality.md"
 
                         // All three types of transitions
                         onSuccess goto "default-success"

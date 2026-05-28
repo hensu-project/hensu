@@ -970,7 +970,6 @@ Every integration test extends `IntegrationTestBase`, which provides:
 | `pushAndExecuteWithMcp(workflow, ctx, endpoint)` | Executes with MCP-enabled tenant context                |
 | `registerStub(key, response)`                    | Programmatic stub registration by node ID or agent ID   |
 | `registerStub(scenario, key, response)`          | Scenario-specific stub registration                     |
-| `resolveRubricPath(resourceName)`                | Copies classpath rubric to temp file for `RubricParser` |
 
 #### Writing an Integration Test
 
@@ -1098,28 +1097,10 @@ Place workflow definitions in `src/test/resources/workflows/`. Use `model: "stub
 
 #### Rubric Testing
 
-Pre-register parsed rubrics so the executor skips filesystem path resolution:
-
-```java
-private Rubric parseAndRegisterRubric(String rubricId, String resourceName) {
-    String rubricPath = resolveRubricPath(resourceName);
-    Rubric parsed = RubricParser.parse(Path.of(rubricPath));
-
-    Rubric rubric = Rubric.builder()
-            .id(rubricId)
-            .name(parsed.getName())
-            .version(parsed.getVersion())
-            .type(parsed.getType())
-            .passThreshold(parsed.getPassThreshold())
-            .criteria(parsed.getCriteria())
-            .build();
-
-    hensuEnvironment.getRubricRepository().save(rubric);
-    return rubric;
-}
-```
-
-Place rubric markdown files in `src/test/resources/rubrics/`.
+Rubrics are parsed at build time and stored directly on workflow nodes. Workflow JSON fixtures
+include inline rubric content in the `"rubric"` field, which the deserializer parses into typed
+`Rubric` objects at load time. No separate registration step is needed — just call
+`loadWorkflow("fixture.json")` and the rubric is ready.
 
 #### Repository Tests (Testcontainers)
 

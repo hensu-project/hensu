@@ -3,6 +3,7 @@ package io.hensu.core.workflow.node;
 import io.hensu.core.plan.Plan;
 import io.hensu.core.plan.PlanningConfig;
 import io.hensu.core.review.ReviewConfig;
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.workflow.transition.TransitionRule;
 import java.util.List;
 import java.util.Objects;
@@ -32,7 +33,7 @@ public final class StandardNode extends Node {
     private final NodeType nodeType = NodeType.STANDARD;
     private final String agentId;
     private final String prompt;
-    private final String rubricId;
+    private final Rubric rubric;
     private final ReviewConfig reviewConfig;
     private final List<TransitionRule> transitionRules;
     private final List<String> writes;
@@ -47,7 +48,7 @@ public final class StandardNode extends Node {
         // agentId and prompt can be null for nodes that use other execution strategies
         this.agentId = builder.agentId;
         this.prompt = builder.prompt;
-        this.rubricId = builder.rubricId;
+        this.rubric = builder.rubric;
         this.reviewConfig = builder.reviewConfig;
         this.transitionRules = List.copyOf(builder.transitionRules);
         this.writes = builder.writes != null ? List.copyOf(builder.writes) : List.of();
@@ -81,12 +82,12 @@ public final class StandardNode extends Node {
         return prompt;
     }
 
-    /// Returns the rubric ID for quality evaluation.
+    /// Returns the parsed rubric for quality evaluation.
     ///
-    /// @return rubric identifier, or null if no evaluation required
+    /// @return parsed rubric object, or null if no evaluation required
     @Override
-    public String getRubricId() {
-        return rubricId;
+    public Rubric getRubric() {
+        return rubric;
     }
 
     /// Returns the node type for executor dispatch.
@@ -162,7 +163,7 @@ public final class StandardNode extends Node {
         private String id;
         private String agentId;
         private String prompt;
-        private String rubricId;
+        private Rubric rubric;
         private ReviewConfig reviewConfig;
         private List<TransitionRule> transitionRules;
         private List<String> writes;
@@ -199,12 +200,12 @@ public final class StandardNode extends Node {
             return this;
         }
 
-        /// Sets the rubric for quality evaluation.
+        /// Sets the parsed rubric for quality evaluation.
         ///
-        /// @param rubricId rubric identifier, may be null
+        /// @param rubric parsed rubric object, may be null
         /// @return this builder for chaining
-        public Builder rubricId(String rubricId) {
-            this.rubricId = rubricId;
+        public Builder rubric(Rubric rubric) {
+            this.rubric = rubric;
             return this;
         }
 

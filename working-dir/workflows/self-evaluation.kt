@@ -50,10 +50,6 @@ fun selfEvaluationWorkflow() = workflow("self-evaluation") {
         }
     }
 
-    rubrics {
-        rubric("content-quality", "content-quality.md")
-    }
-
     graph {
         start at "draft"
 
@@ -74,7 +70,7 @@ fun selfEvaluationWorkflow() = workflow("self-evaluation") {
         node("review") {
             agent = "reviewer"
             prompt = "Review this content: {article}. Evaluate quality, accuracy, and completeness."
-            rubric = "content-quality"
+            rubric = "content-quality.md"
 
             // Critical failure overrides approval: score below 60 means restart draft
             onScore { whenScore lessThan 60.0 goto "draft" }

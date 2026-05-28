@@ -45,7 +45,7 @@ class GenericNodeBuilderTest {
             val node = builder.build() as GenericNode
 
             // Then
-            assertThat(node.rubricId).isEqualTo("validation-quality")
+            assertThat(node.rubric?.rawContent).isEqualTo("validation-quality")
         }
 
         @Test

@@ -1,5 +1,6 @@
 package io.hensu.core.workflow.node;
 
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.workflow.transition.TransitionRule;
 import java.util.List;
 
@@ -41,10 +42,10 @@ public abstract class Node {
         return id;
     }
 
-    /// Returns the rubric ID for quality evaluation, if configured.
+    /// Returns the parsed rubric for quality evaluation, if configured.
     ///
-    /// @return rubric identifier, or null if no rubric evaluation
-    public abstract String getRubricId();
+    /// @return parsed rubric object, or null if no rubric evaluation
+    public abstract Rubric getRubric();
 
     /// Returns the node type for executor dispatch.
     ///

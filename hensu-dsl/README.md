@@ -46,7 +46,7 @@ fun myWorkflow() = workflow("ContentPipeline") {
         node("review") {
             agent = "reviewer"
             prompt = "Review this article: {article}"
-            rubric = "content-quality"
+            rubric = "content-quality.md"
             writes("article")
 
             onScore {

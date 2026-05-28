@@ -38,19 +38,13 @@ abstract class EnricherTestBase {
                 .build();
     }
 
-    /// Builds an {@link ExecutionContext} with configurable rubric paths and state schema.
+    /// Builds an {@link ExecutionContext} with configurable state schema and rubric engine.
     ///
-    /// @param rubricPaths rubric ID to file path map; pass empty map for no rubric paths
     /// @param schema      optional state schema; pass null for no schema
     /// @param engine      optional rubric engine; pass null if not needed
-    protected ExecutionContext ctx(
-            Map<String, String> rubricPaths, WorkflowStateSchema schema, RubricEngine engine) {
+    protected ExecutionContext ctx(WorkflowStateSchema schema, RubricEngine engine) {
         var workflowBuilder =
-                Workflow.builder()
-                        .id("wf")
-                        .startNode("node")
-                        .nodes(Map.of("node", minimalNode()))
-                        .rubrics(rubricPaths);
+                Workflow.builder().id("wf").startNode("node").nodes(Map.of("node", minimalNode()));
         if (schema != null) {
             workflowBuilder.stateSchema(schema);
         }

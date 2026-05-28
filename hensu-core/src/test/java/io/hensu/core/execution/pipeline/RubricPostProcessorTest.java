@@ -3,24 +3,24 @@ package io.hensu.core.execution.pipeline;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.executor.ExecutionContext;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
-import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.rubric.RubricEngine;
-import io.hensu.core.rubric.RubricNotFoundException;
+import io.hensu.core.rubric.RubricParser;
 import io.hensu.core.rubric.evaluator.RubricEvaluation;
 import io.hensu.core.rubric.evaluator.ScoreExtractingEvaluator;
 import io.hensu.core.rubric.model.ComparisonOperator;
 import io.hensu.core.rubric.model.DoubleRange;
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
+import io.hensu.core.workflow.WorkflowTest;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.transition.ScoreTransition;
@@ -55,7 +55,7 @@ class RubricPostProcessorTest {
     class SkipConditions {
 
         @Test
-        @DisplayName("returns empty when node has no rubricId")
+        @DisplayName("returns empty when node has no rubric")
         void shouldSkipWhenNoRubric() {
             var ctx = contextWithRubric(null);
 
@@ -71,8 +71,8 @@ class RubricPostProcessorTest {
 
         @Test
         @DisplayName("returns empty when rubric passes")
-        void shouldContinueOnPass() throws RubricNotFoundException {
-            var ctx = contextWithRubric("quality");
+        void shouldContinueOnPass() {
+            var ctx = contextWithRubric(RUBRIC_CONTENT);
             mockRubricEvaluation(90.0, true);
 
             var result = processor.process(ctx);
@@ -82,8 +82,8 @@ class RubricPostProcessorTest {
 
         @Test
         @DisplayName("stores evaluation in state")
-        void shouldStoreEvaluation() throws RubricNotFoundException {
-            var ctx = contextWithRubric("quality");
+        void shouldStoreEvaluation() {
+            var ctx = contextWithRubric(RUBRIC_CONTENT);
             mockRubricEvaluation(90.0, true);
 
             processor.process(ctx);
@@ -100,7 +100,7 @@ class RubricPostProcessorTest {
         @Test
         @DisplayName(
                 "backtracks to earliest rubric node in history on critical failure (score < 30)")
-        void shouldBacktrackOnCriticalFailure() throws RubricNotFoundException {
+        void shouldBacktrackOnCriticalFailure() {
             var ctx = contextWithRubricAndHistory();
             mockRubricEvaluation(15.0, false);
 
@@ -114,8 +114,7 @@ class RubricPostProcessorTest {
         @Test
         @DisplayName(
                 "backtracks to workflow start node on critical failure when history has no rubric steps")
-        void shouldBacktrackToStartNodeOnCriticalFailureWithEmptyHistory()
-                throws RubricNotFoundException {
+        void shouldBacktrackToStartNodeOnCriticalFailureWithEmptyHistory() {
             // Node "review" is current; workflow start is "start" — history is empty.
             // findEarliestLogicalStep must fall back to workflow.getStartNode().
             Node startNode =
@@ -127,7 +126,7 @@ class RubricPostProcessorTest {
             Node reviewNode =
                     StandardNode.builder()
                             .id("review")
-                            .rubricId("quality")
+                            .rubric(RubricParser.parseContent("review", RUBRIC_CONTENT))
                             .transitionRules(List.of(new SuccessTransition("next")))
                             .build();
 
@@ -145,7 +144,6 @@ class RubricPostProcessorTest {
                             .id("test-wf")
                             .startNode("start")
                             .nodes(Map.of("start", startNode, "review", reviewNode))
-                            .rubrics(Map.of("quality", "/tmp/rubric.yaml"))
                             .build();
 
             var execCtx =
@@ -168,7 +166,7 @@ class RubricPostProcessorTest {
 
         @Test
         @DisplayName("backtracks to previous rubric-bearing node on moderate failure (score < 60)")
-        void shouldBacktrackOnModerateFailure() throws RubricNotFoundException {
+        void shouldBacktrackOnModerateFailure() {
             var ctx = contextWithRubricAndHistory();
             mockRubricEvaluation(45.0, false);
 
@@ -181,7 +179,7 @@ class RubricPostProcessorTest {
 
         @Test
         @DisplayName("falls through to retry when no prior rubric phase found on moderate failure")
-        void shouldRetryWhenNoPhaseFoundOnModerateFailure() throws RubricNotFoundException {
+        void shouldRetryWhenNoPhaseFoundOnModerateFailure() {
             // Score 45.0 satisfies < 60 (moderate) AND < 80 (minor).
             // When findPreviousPhase returns null the moderate block does not return —
             // execution falls through to the minor retry block.
@@ -198,8 +196,8 @@ class RubricPostProcessorTest {
 
         @Test
         @DisplayName("retries current node on minor failure (score < 80)")
-        void shouldRetryOnMinorFailure() throws RubricNotFoundException {
-            var ctx = contextWithRubric("quality");
+        void shouldRetryOnMinorFailure() {
+            var ctx = contextWithRubric(RUBRIC_CONTENT);
             mockRubricEvaluation(70.0, false);
 
             var result = processor.process(ctx);
@@ -211,8 +209,8 @@ class RubricPostProcessorTest {
 
         @Test
         @DisplayName("increments retry counter on minor failure")
-        void shouldIncrementRetryCounter() throws RubricNotFoundException {
-            var ctx = contextWithRubric("quality");
+        void shouldIncrementRetryCounter() {
+            var ctx = contextWithRubric(RUBRIC_CONTENT);
             mockRubricEvaluation(70.0, false);
 
             processor.process(ctx);
@@ -222,8 +220,8 @@ class RubricPostProcessorTest {
 
         @Test
         @DisplayName("does not backtrack and records no history entry after max retry attempts")
-        void shouldStopAfterMaxRetries() throws RubricNotFoundException {
-            var ctx = contextWithRubric("quality");
+        void shouldStopAfterMaxRetries() {
+            var ctx = contextWithRubric(RUBRIC_CONTENT);
             ctx.state().getContext().put("retry_attempt", 3);
             mockRubricEvaluation(70.0, false);
 
@@ -235,7 +233,7 @@ class RubricPostProcessorTest {
 
         @Test
         @DisplayName("does not auto-backtrack when a matching ScoreTransition handles the failure")
-        void shouldNotAutoBacktrackWhenScoreTransitionExists() throws RubricNotFoundException {
+        void shouldNotAutoBacktrackWhenScoreTransitionExists() {
             // A ScoreTransition that matches score 45.0 — processor must defer to it.
             var condition =
                     new ScoreCondition(
@@ -243,7 +241,7 @@ class RubricPostProcessorTest {
             var node =
                     StandardNode.builder()
                             .id("current")
-                            .rubricId("quality")
+                            .rubric(RubricParser.parseContent("current", RUBRIC_CONTENT))
                             .transitionRules(List.of(new ScoreTransition(List.of(condition))))
                             .build();
 
@@ -260,8 +258,8 @@ class RubricPostProcessorTest {
         @Test
         @DisplayName(
                 "injects backtrack_reason and failed_criteria into context on critical failure")
-        void shouldInjectContextKeysOnCriticalFailure() throws RubricNotFoundException {
-            var ctx = contextWithRubric("quality");
+        void shouldInjectContextKeysOnCriticalFailure() {
+            var ctx = contextWithRubric(RUBRIC_CONTENT);
             mockRubricEvaluation(15.0, false);
 
             processor.process(ctx);
@@ -275,7 +273,7 @@ class RubricPostProcessorTest {
         @Test
         @DisplayName(
                 "injects backtrack_reason and improvement_suggestions into context on moderate failure")
-        void shouldInjectContextKeysOnModerateFailure() throws RubricNotFoundException {
+        void shouldInjectContextKeysOnModerateFailure() {
             var ctx = contextWithRubricAndHistory();
             mockRubricEvaluation(45.0, false);
 
@@ -293,26 +291,9 @@ class RubricPostProcessorTest {
     class ErrorHandling {
 
         @Test
-        @DisplayName("returns Failure on RubricNotFoundException")
-        void shouldTerminateOnMissingRubric() throws RubricNotFoundException {
-            var ctx = contextWithRubric("missing-rubric");
-            when(rubricEngine.evaluate(eq("missing-rubric"), any(), any()))
-                    .thenThrow(new RubricNotFoundException("Rubric not found: missing-rubric"));
-
-            var result = processor.process(ctx);
-
-            assertThat(result).isInstanceOf(ProcessorOutcome.Terminal.class);
-            assertThat(((ProcessorOutcome.Terminal) result).result())
-                    .isInstanceOf(ExecutionResult.Failure.class);
-        }
-
-        @Test
         @DisplayName("handles plain String in _rubric_criterion_feedback without throwing")
-        void shouldHandleStringRecommendationsGracefully() throws RubricNotFoundException {
-            // Regression: OutputExtractionPostProcessor may store a plain String under this key
-            // when an agent produces a single-value JSON. The safe instanceof List<?> cast must
-            // silently skip it — backtrack logic must still execute normally.
-            var ctx = contextWithRubric("quality");
+        void shouldHandleStringRecommendationsGracefully() {
+            var ctx = contextWithRubric(RUBRIC_CONTENT);
             ctx.state()
                     .getContext()
                     .put(ScoreExtractingEvaluator.RECOMMENDATIONS_KEY, "just a plain string");
@@ -325,8 +306,8 @@ class RubricPostProcessorTest {
 
     // — Helpers —————————————————————————————————————————————————————————————
 
-    private void mockRubricEvaluation(double score, boolean passed) throws RubricNotFoundException {
-        when(rubricEngine.evaluate(eq("quality"), any(), any()))
+    private void mockRubricEvaluation(double score, boolean passed) {
+        when(rubricEngine.evaluate(any(Rubric.class), any(), any()))
                 .thenReturn(
                         RubricEvaluation.builder()
                                 .rubricId("quality")
@@ -335,13 +316,14 @@ class RubricPostProcessorTest {
                                 .build());
     }
 
-    private ProcessorContext contextWithRubric(String rubricId) {
-        Node node =
-                StandardNode.builder()
-                        .id("node")
-                        .rubricId(rubricId)
-                        .transitionRules(List.of(new SuccessTransition("next")))
-                        .build();
+    private static final String RUBRIC_CONTENT = WorkflowTest.TestWorkflowBuilder.RUBRIC_CONTENT;
+
+    private ProcessorContext contextWithRubric(String rubricContent) {
+        var builder = StandardNode.builder().id("node");
+        if (rubricContent != null) {
+            builder.rubric(RubricParser.parseContent("node", rubricContent));
+        }
+        Node node = builder.transitionRules(List.of(new SuccessTransition("next"))).build();
 
         var state =
                 new HensuState.Builder()
@@ -357,7 +339,6 @@ class RubricPostProcessorTest {
                         .id("test-wf")
                         .startNode("node")
                         .nodes(Map.of("node", node))
-                        .rubrics(rubricId != null ? Map.of(rubricId, "/tmp/rubric.yaml") : Map.of())
                         .build();
 
         var execCtx =
@@ -386,7 +367,6 @@ class RubricPostProcessorTest {
                         .id("test-wf")
                         .startNode(node.getId())
                         .nodes(Map.of(node.getId(), node))
-                        .rubrics(Map.of("quality", "/tmp/rubric.yaml"))
                         .build();
 
         var execCtx =
@@ -401,18 +381,29 @@ class RubricPostProcessorTest {
 
     /// Builds a context where "previous" node (with a different rubric) precedes the current node.
     /// Enables testing of `findEarliestLogicalStep` and `findPreviousPhase`.
+    private static final String OTHER_RUBRIC_CONTENT =
+            """
+            # Rubric: other-rubric
+            ## Metadata
+            - pass_threshold: 60
+            ### Other
+            #### Completeness
+            - points: 10
+            - evaluation: Is it complete
+            """;
+
     private ProcessorContext contextWithRubricAndHistory() {
         Node previousNode =
                 StandardNode.builder()
                         .id("previous")
-                        .rubricId("other-rubric")
+                        .rubric(RubricParser.parseContent("previous", OTHER_RUBRIC_CONTENT))
                         .transitionRules(List.of(new SuccessTransition("current")))
                         .build();
 
         Node currentNode =
                 StandardNode.builder()
                         .id("current")
-                        .rubricId("quality")
+                        .rubric(RubricParser.parseContent("current", RUBRIC_CONTENT))
                         .transitionRules(List.of(new SuccessTransition("next")))
                         .build();
 
@@ -438,12 +429,6 @@ class RubricPostProcessorTest {
                         .id("test-wf")
                         .startNode("previous")
                         .nodes(Map.of("previous", previousNode, "current", currentNode))
-                        .rubrics(
-                                Map.of(
-                                        "quality",
-                                        "/tmp/rubric.yaml",
-                                        "other-rubric",
-                                        "/tmp/other.yaml"))
                         .build();
 
         var execCtx =
@@ -468,7 +453,7 @@ class RubricPostProcessorTest {
         Node currentNode =
                 StandardNode.builder()
                         .id("current")
-                        .rubricId("quality")
+                        .rubric(RubricParser.parseContent("current", RUBRIC_CONTENT))
                         .transitionRules(List.of(new SuccessTransition("next")))
                         .build();
 
@@ -494,7 +479,6 @@ class RubricPostProcessorTest {
                         .id("test-wf")
                         .startNode("previous")
                         .nodes(Map.of("previous", previousNode, "current", currentNode))
-                        .rubrics(Map.of("quality", "/tmp/rubric.yaml"))
                         .build();
 
         var execCtx =

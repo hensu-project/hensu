@@ -21,10 +21,6 @@ fun workflow() = workflow("demo") {
         variable("review",  VarType.STRING, "the publication readiness review")
     }
 
-    rubrics {
-        rubric("content-quality", "content-quality.md")
-    }
-
     graph {
         start at "write"
 
@@ -36,7 +32,7 @@ fun workflow() = workflow("demo") {
                 If feedback was provided, incorporate it: {recommendation}
             """.trimIndent()
             writes("article")
-            rubric = "content-quality"
+            rubric = "content-quality.md"
 
             onScore {
                 whenScore greaterThanOrEqual 70.0 goto "review"

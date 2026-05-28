@@ -1,6 +1,5 @@
 package io.hensu.core.rubric.model;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -28,6 +27,7 @@ public final class Rubric {
     private final RubricType type;
     private final double passThreshold;
     private final List<Criterion> criteria;
+    private final String rawContent;
 
     private Rubric(Builder builder) {
         this.id = Objects.requireNonNull(builder.id, "Rubric ID required");
@@ -35,7 +35,8 @@ public final class Rubric {
         this.version = builder.version;
         this.type = builder.type;
         this.passThreshold = builder.passThreshold;
-        this.criteria = Collections.unmodifiableList(builder.criteria);
+        this.criteria = builder.criteria;
+        this.rawContent = builder.rawContent;
 
         validate();
     }
@@ -91,6 +92,17 @@ public final class Rubric {
         return criteria;
     }
 
+    /// Returns the original markdown source used to construct this rubric.
+    ///
+    /// Preserves author prose, examples, and edge-case guidance that the parser
+    /// discards when extracting structured fields. Used by prompt injection to
+    /// present the full rubric to the LLM.
+    ///
+    /// @return source markdown, or null for programmatically-constructed rubrics
+    public String getRawContent() {
+        return rawContent;
+    }
+
     /// Creates a new rubric builder.
     ///
     /// @return new builder instance, never null
@@ -108,6 +120,7 @@ public final class Rubric {
         private RubricType type = RubricType.STANDARD;
         private double passThreshold = 70.0;
         private List<Criterion> criteria = List.of();
+        private String rawContent;
 
         private Builder() {}
 
@@ -162,6 +175,15 @@ public final class Rubric {
         /// @return this builder for chaining
         public Builder criteria(List<Criterion> criteria) {
             this.criteria = List.copyOf(criteria);
+            return this;
+        }
+
+        /// Sets the original markdown source.
+        ///
+        /// @param rawContent source markdown, nullable
+        /// @return this builder for chaining
+        public Builder rawContent(String rawContent) {
+            this.rawContent = rawContent;
             return this;
         }
 

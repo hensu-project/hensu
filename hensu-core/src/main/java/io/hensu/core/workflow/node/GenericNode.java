@@ -1,5 +1,6 @@
 package io.hensu.core.workflow.node;
 
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.workflow.transition.TransitionRule;
 import java.util.HashMap;
 import java.util.List;
@@ -47,7 +48,7 @@ public class GenericNode extends Node {
     private final String executorType;
     private final Map<String, Object> config;
     private final List<TransitionRule> transitionRules;
-    private final String rubricId;
+    private final Rubric rubric;
 
     private GenericNode(Builder builder) {
         super(builder.id);
@@ -55,7 +56,7 @@ public class GenericNode extends Node {
         this.config = Map.copyOf(builder.config);
         this.transitionRules =
                 builder.transitionRules != null ? List.copyOf(builder.transitionRules) : List.of();
-        this.rubricId = builder.rubricId;
+        this.rubric = builder.rubric;
     }
 
     /// The executor type identifier used to look up the appropriate executor. Multiple nodes can
@@ -75,8 +76,8 @@ public class GenericNode extends Node {
     }
 
     @Override
-    public String getRubricId() {
-        return rubricId;
+    public Rubric getRubric() {
+        return rubric;
     }
 
     @Override
@@ -93,7 +94,7 @@ public class GenericNode extends Node {
         private String executorType;
         private Map<String, Object> config = new HashMap<>();
         private List<TransitionRule> transitionRules;
-        private String rubricId;
+        private Rubric rubric;
 
         private Builder() {}
 
@@ -122,8 +123,8 @@ public class GenericNode extends Node {
             return this;
         }
 
-        public Builder rubricId(String rubricId) {
-            this.rubricId = rubricId;
+        public Builder rubric(Rubric rubric) {
+            this.rubric = rubric;
             return this;
         }
 

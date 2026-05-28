@@ -44,6 +44,25 @@ fun String?.resolveAsPrompt(workingDirectory: WorkingDirectory): String? {
     }
 }
 
+/**
+ * Resolves a rubric value from the working directory if it's a file reference.
+ *
+ * If the string ends with `.md`, resolves it from the rubrics directory. Otherwise, returns the
+ * string as-is (inline rubric content).
+ *
+ * @param workingDirectory base directory for rubric file resolution
+ * @return resolved rubric content, or null if receiver is null
+ * @throws IllegalArgumentException if the rubric file does not exist
+ */
+fun String?.resolveAsRubric(workingDirectory: WorkingDirectory): String? {
+    if (this == null) return null
+    return if (isMarkdownFile()) {
+        workingDirectory.resolveRubric(this)
+    } else {
+        this
+    }
+}
+
 // Duration extensions for readable syntax
 
 /** Converts this integer to a [Duration] of seconds. */
@@ -114,10 +133,6 @@ val Workflow.nodeCount: Int
 val Workflow.agentCount: Int
     get() = agents.size
 
-/** Returns true if this workflow has any rubrics defined. */
-val Workflow.hasRubrics: Boolean
-    get() = rubrics.isNotEmpty()
-
 // Node extensions
 
 /** Returns true if this node has an agent assigned. */
@@ -126,7 +141,7 @@ val StandardNode.hasAgent: Boolean
 
 /** Returns true if this node has a rubric for quality evaluation. */
 val StandardNode.hasRubric: Boolean
-    get() = rubricId != null
+    get() = rubric != null
 
 /** Returns true if this node has human review configured. */
 val StandardNode.hasReview: Boolean

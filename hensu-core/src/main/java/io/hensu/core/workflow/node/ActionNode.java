@@ -1,6 +1,7 @@
 package io.hensu.core.workflow.node;
 
 import io.hensu.core.execution.action.Action;
+import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.workflow.transition.TransitionRule;
 import java.util.List;
 import java.util.Objects;
@@ -45,7 +46,7 @@ public final class ActionNode extends Node {
     ///
     /// @return null, action nodes do not support rubric evaluation
     @Override
-    public String getRubricId() {
+    public Rubric getRubric() {
         return null;
     }
 

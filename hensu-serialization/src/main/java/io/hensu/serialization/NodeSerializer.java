@@ -15,11 +15,11 @@ import java.io.Serial;
 /// ```
 /// NodeType       Additional fields
 /// ———————————————+————————————————————————————————————————————————————————————————————————
-/// STANDARD       │ agentId, prompt, rubricId, reviewConfig, transitionRules,
+/// STANDARD       │ agentId, prompt, rubric, reviewConfig, transitionRules,
 ///                │ writes, planningConfig, staticPlan, planFailureTarget
 /// END            │ status
 /// ACTION         │ actions, transitionRules
-/// GENERIC        │ executorType, config, transitionRules, rubricId
+/// GENERIC        │ executorType, config, transitionRules, rubric
 /// PARALLEL       │ branches, consensusConfig, transitionRules
 /// FORK           │ targets, targetConfigs, transitionRules, waitForAll
 /// JOIN           │ awaitTargets, mergeStrategy, writes, exports,
@@ -72,7 +72,7 @@ class NodeSerializer extends StdSerializer<Node> {
             throws IOException {
         writeIfNotNull(gen, "agentId", n.getAgentId());
         writeIfNotNull(gen, "prompt", n.getPrompt());
-        writeIfNotNull(gen, "rubricId", n.getRubricId());
+        writeRubric(gen, n.getRubric());
         if (n.getReviewConfig() != null) {
             gen.writeObjectField("reviewConfig", n.getReviewConfig());
         }
@@ -106,7 +106,7 @@ class NodeSerializer extends StdSerializer<Node> {
             provider.defaultSerializeField("config", n.getConfig(), gen);
         }
         provider.defaultSerializeField("transitionRules", n.getTransitionRules(), gen);
-        writeIfNotNull(gen, "rubricId", n.getRubricId());
+        writeRubric(gen, n.getRubric());
     }
 
     private void writeParallelNode(ParallelNode n, JsonGenerator gen, SerializerProvider provider)
@@ -156,6 +156,13 @@ class NodeSerializer extends StdSerializer<Node> {
         provider.defaultSerializeField("inputMapping", n.getInputMapping(), gen);
         provider.defaultSerializeField("outputMapping", n.getOutputMapping(), gen);
         provider.defaultSerializeField("transitionRules", n.getTransitionRules(), gen);
+    }
+
+    private void writeRubric(JsonGenerator gen, io.hensu.core.rubric.model.Rubric rubric)
+            throws IOException {
+        if (rubric != null && rubric.getRawContent() != null) {
+            gen.writeStringField("rubric", rubric.getRawContent());
+        }
     }
 
     private void writeIfNotNull(JsonGenerator gen, String field, String value) throws IOException {
