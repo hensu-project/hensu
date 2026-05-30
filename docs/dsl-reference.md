@@ -542,7 +542,7 @@ Retries up to 3 times before transitioning to the fallback node.
 
 ### Score-Based Transitions
 
-Route based on rubric evaluation scores:
+Route based on rubric evaluation scores. Conditions are evaluated in declaration order – the first match wins. When using overlapping ranges (e.g., `greaterThanOrEqual 80.0` before `greaterThanOrEqual 50.0`), place the most specific condition first:
 
 ```kotlin
 onScore {

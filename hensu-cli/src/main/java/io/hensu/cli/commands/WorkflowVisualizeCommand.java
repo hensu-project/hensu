@@ -4,6 +4,8 @@ import io.hensu.cli.visualizer.WorkflowVisualizer;
 import io.hensu.core.workflow.Workflow;
 import jakarta.inject.Inject;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import picocli.CommandLine;
 
 /// CLI command for rendering workflow graphs in various formats.
@@ -49,7 +51,9 @@ class WorkflowVisualizeCommand extends WorkflowCommand {
     protected void execute() {
         try {
             Workflow workflow = getWorkflow(workflowName, withNames);
-            String output = visualizer.visualize(workflow, format);
+            Map<String, Workflow> subMap =
+                    loadedSubWorkflows.stream().collect(Collectors.toMap(Workflow::getId, w -> w));
+            String output = visualizer.visualize(workflow, subMap, format);
             System.out.println(output);
         } catch (Exception e) {
             System.err.println(" [FAIL] Visualization failed: " + e.getMessage());
