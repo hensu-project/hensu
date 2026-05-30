@@ -31,13 +31,15 @@ public class WorkflowVisualizer {
                         .collect(Collectors.toMap(VisualizationFormat::getName, format -> format));
     }
 
-    /// Renders workflow using the specified format.
+    /// Renders workflow with sub-workflows available for inlining.
     ///
-    /// @param workflow   the workflow to visualize, not null
-    /// @param formatName the format name (e.g., "text", "mermaid"), not null
+    /// @param workflow     the root workflow to visualize, not null
+    /// @param subWorkflows loaded sub-workflows keyed by workflow ID, not null
+    /// @param formatName   the format name (e.g., "text", "mermaid"), not null
     /// @return formatted visualization string, never null
     /// @throws IllegalArgumentException if format is not registered
-    public String visualize(Workflow workflow, String formatName) {
+    public String visualize(
+            Workflow workflow, Map<String, Workflow> subWorkflows, String formatName) {
         VisualizationFormat format = formats.get(formatName);
         if (format == null) {
             throw new IllegalArgumentException(
@@ -46,23 +48,6 @@ public class WorkflowVisualizer {
                             + ". Available: "
                             + String.join(", ", formats.keySet()));
         }
-        return format.render(workflow);
-    }
-
-    /// Renders workflow using the default text format.
-    ///
-    /// Equivalent to calling `visualize(workflow, "text")`.
-    ///
-    /// @param workflow the workflow to visualize, not null
-    /// @return ASCII text visualization with ANSI colors, never null
-    public String visualize(Workflow workflow) {
-        return visualize(workflow, "text");
-    }
-
-    /// Returns the names of all registered visualization formats.
-    ///
-    /// @return iterable of format names (e.g., "text", "mermaid"), never null
-    public Iterable<String> getAvailableFormats() {
-        return formats.keySet();
+        return format.render(workflow, subWorkflows);
     }
 }

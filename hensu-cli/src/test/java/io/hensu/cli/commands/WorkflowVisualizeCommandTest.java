@@ -11,6 +11,7 @@ import io.hensu.dsl.WorkingDirectory;
 import io.hensu.dsl.parsers.KotlinScriptParser;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -65,7 +66,8 @@ class WorkflowVisualizeCommandTest extends BaseWorkflowCommandTest {
 
         when(kotlinParser.parse(any(WorkingDirectory.class), eq(workflowName)))
                 .thenReturn(workflow);
-        when(visualizer.visualize(workflow, "text")).thenReturn(expectedOutput);
+        when(visualizer.visualize(eq(workflow), any(Map.class), eq("text")))
+                .thenReturn(expectedOutput);
 
         // When
         command.run();
@@ -88,7 +90,8 @@ class WorkflowVisualizeCommandTest extends BaseWorkflowCommandTest {
 
         when(kotlinParser.parse(any(WorkingDirectory.class), eq(workflowName)))
                 .thenReturn(workflow);
-        when(visualizer.visualize(workflow, "mermaid")).thenReturn(mermaidOutput);
+        when(visualizer.visualize(eq(workflow), any(Map.class), eq("mermaid")))
+                .thenReturn(mermaidOutput);
 
         // When
         command.run();
@@ -109,7 +112,7 @@ class WorkflowVisualizeCommandTest extends BaseWorkflowCommandTest {
 
         when(kotlinParser.parse(any(WorkingDirectory.class), eq(workflowName)))
                 .thenReturn(workflow);
-        when(visualizer.visualize(workflow, "unknown"))
+        when(visualizer.visualize(eq(workflow), any(Map.class), eq("unknown")))
                 .thenThrow(new IllegalArgumentException("Unsupported format: unknown"));
 
         // When
@@ -131,7 +134,8 @@ class WorkflowVisualizeCommandTest extends BaseWorkflowCommandTest {
 
         when(kotlinParser.parse(any(WorkingDirectory.class), eq(workflowName)))
                 .thenReturn(workflow);
-        when(visualizer.visualize(workflow, "text")).thenReturn("Workflow: kts-workflow");
+        when(visualizer.visualize(eq(workflow), any(Map.class), eq("text")))
+                .thenReturn("Workflow: kts-workflow");
 
         // When
         command.run();

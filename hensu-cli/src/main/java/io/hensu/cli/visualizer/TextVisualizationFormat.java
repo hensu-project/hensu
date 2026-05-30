@@ -11,6 +11,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /// ASCII text visualization format for workflows with ANSI color support.
@@ -29,6 +31,8 @@ import java.util.Set;
 @ApplicationScoped
 public class TextVisualizationFormat implements VisualizationFormat {
 
+    private static final int SUB_WORKFLOW_BORDER_WIDTH = 46;
+
     @Override
     public String getName() {
         return "text";
@@ -37,6 +41,11 @@ public class TextVisualizationFormat implements VisualizationFormat {
     @Override
     public String render(Workflow workflow) {
         return render(workflow, true);
+    }
+
+    @Override
+    public String render(Workflow workflow, Map<String, Workflow> subWorkflows) {
+        return render(workflow, subWorkflows, true);
     }
 
     /// Renders workflow graph with configurable color support.
@@ -48,6 +57,16 @@ public class TextVisualizationFormat implements VisualizationFormat {
     /// @param useColor whether to apply ANSI color codes
     /// @return formatted text representation, never null
     public String render(Workflow workflow, boolean useColor) {
+        return render(workflow, Map.of(), useColor);
+    }
+
+    /// Renders workflow graph with sub-workflows and configurable color support.
+    ///
+    /// @param workflow     the workflow to visualize, not null
+    /// @param subWorkflows loaded sub-workflows keyed by workflow ID, not null
+    /// @param useColor     whether to apply ANSI color codes
+    /// @return formatted text representation, never null
+    public String render(Workflow workflow, Map<String, Workflow> subWorkflows, boolean useColor) {
         AnsiStyles styles = AnsiStyles.of(useColor);
         StringBuilder sb = new StringBuilder();
         sb.append(
@@ -57,9 +76,31 @@ public class TextVisualizationFormat implements VisualizationFormat {
         sb.append(styles.gray("─".repeat(50))).append(System.lineSeparator());
         sb.append(System.lineSeparator());
 
+        renderWorkflowNodes(sb, workflow, subWorkflows, 0, styles);
+
+        return sb.toString();
+    }
+
+    /// Renders workflow graph with configurable color support (public
+    /// for VerboseExecutionListener).
+    ///
+    /// @param node     the node to render, not null
+    /// @param nodeId   the node identifier for display, not null
+    /// @param useColor whether to apply ANSI color codes
+    /// @return formatted node box, never null
+    public String renderNode(Node node, String nodeId, boolean useColor) {
+        return renderNode(node, nodeId, "", AnsiStyles.of(useColor));
+    }
+
+    private void renderWorkflowNodes(
+            StringBuilder sb,
+            Workflow workflow,
+            Map<String, Workflow> subWorkflows,
+            int baseLevel,
+            AnsiStyles styles) {
         Set<String> visited = new HashSet<>();
         Deque<NodeLevel> queue = new ArrayDeque<>();
-        queue.add(new NodeLevel(workflow.getStartNode(), 0));
+        queue.add(new NodeLevel(workflow.getStartNode(), baseLevel));
 
         while (!queue.isEmpty()) {
             NodeLevel current = queue.removeFirst();
@@ -69,31 +110,62 @@ public class TextVisualizationFormat implements VisualizationFormat {
             if (visited.contains(nodeId)) continue;
             visited.add(nodeId);
 
-            String indent = "  ".repeat(level);
             Node node = workflow.getNodes().get(nodeId);
             if (node == null) continue;
 
+            String indent = "  ".repeat(level);
             sb.append(renderNode(node, nodeId, indent, styles));
             sb.append(System.lineSeparator());
 
+            if (node instanceof SubWorkflowNode swn) {
+                Workflow sub = subWorkflows.get(swn.getWorkflowId());
+                if (sub != null) {
+                    renderSubWorkflowBlock(sb, sub, subWorkflows, level + 1, styles);
+                    sb.append(System.lineSeparator());
+                }
+            }
+
             collectNextNodes(node, level, queue);
         }
-
-        return sb.toString();
     }
 
-    /// Renders a single workflow node as a styled box.
-    ///
-    /// Used by {@link io.hensu.cli.execution.VerboseExecutionListener}
-    /// to display node details during execution.
-    /// Output includes node type, agent/executor info, and transition rules.
-    ///
-    /// @param node     the node to render, not null
-    /// @param nodeId   the node identifier for display, not null
-    /// @param useColor whether to apply ANSI color codes
-    /// @return formatted node box, never null
-    public String renderNode(Node node, String nodeId, boolean useColor) {
-        return renderNode(node, nodeId, "", AnsiStyles.of(useColor));
+    private void renderSubWorkflowBlock(
+            StringBuilder sb,
+            Workflow subWorkflow,
+            Map<String, Workflow> subWorkflows,
+            int level,
+            AnsiStyles styles) {
+        String indent = "  ".repeat(level);
+
+        // Render sub-workflow content into a buffer
+        StringBuilder content = new StringBuilder();
+        renderWorkflowNodes(content, subWorkflow, subWorkflows, 0, styles);
+        String contentStr = content.toString().stripTrailing();
+
+        // Top border with label
+        String label = styles.gray(subWorkflow.getMetadata().getName());
+        sb.append(indent)
+                .append(styles.boxTopWithLabel(label, SUB_WORKFLOW_BORDER_WIDTH))
+                .append(System.lineSeparator());
+        sb.append(indent).append(styles.boxMid()).append(System.lineSeparator());
+
+        // Prefix each content line with border
+        for (String line : contentStr.split("\n", -1)) {
+            if (line.trim().isEmpty()) {
+                sb.append(indent).append(styles.boxMid()).append(System.lineSeparator());
+            } else {
+                sb.append(indent)
+                        .append(styles.boxMid())
+                        .append(" ")
+                        .append(line)
+                        .append(System.lineSeparator());
+            }
+        }
+
+        // Bottom border
+        sb.append(indent)
+                .append(styles.separatorBottom(SUB_WORKFLOW_BORDER_WIDTH))
+                .append(System.lineSeparator());
     }
 
     private String renderNode(Node node, String nodeId, String indent, AnsiStyles styles) {
@@ -128,6 +200,15 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                     styles.boxMid(),
                                     "rubric",
                                     standardNode.getRubric().getCriteria().size() + " criteria"));
+                }
+                if (standardNode.hasPlanningEnabled()) {
+                    sb.append(
+                            String.format(
+                                    "%s%s  %-9s %s%n",
+                                    indent,
+                                    styles.boxMid(),
+                                    "planning",
+                                    standardNode.getPlanningConfig().mode()));
                 }
                 if (standardNode.getReviewConfig() != null) {
                     sb.append(
@@ -305,6 +386,22 @@ public class TextVisualizationFormat implements VisualizationFormat {
                 }
                 appendTransitions(sb, indent, actionNode.getTransitionRules(), styles);
             }
+            case SubWorkflowNode swn -> {
+                sb.append(
+                        String.format(
+                                "%s%s  %-9s %s%n",
+                                indent,
+                                styles.boxMid(),
+                                "workflow",
+                                styles.bold(swn.getWorkflowId())));
+                if (swn.getTargetVersion() != null) {
+                    sb.append(
+                            String.format(
+                                    "%s%s  %-9s %s%n",
+                                    indent, styles.boxMid(), "version", swn.getTargetVersion()));
+                }
+                appendTransitions(sb, indent, swn.getTransitionRules(), styles);
+            }
             case EndNode endNode -> {
                 boolean isSuccess = endNode.getExitStatus().toString().equals("SUCCESS");
                 sb.append(
@@ -365,11 +462,20 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                     styles.bold(cond.getTargetNode()),
                                     styles.dim("score " + cond.getOperator() + " " + condValue)));
                 }
+            } else if (rule instanceof ApprovalTransition(boolean expected, String targetNode)) {
+                String label = expected ? "on approval" : "on rejection";
+                sb.append(
+                        String.format(
+                                "%s%s  %s %-14s %s%n",
+                                indent,
+                                styles.boxMid(),
+                                styles.arrow(),
+                                styles.bold(targetNode),
+                                styles.dim(label)));
             }
         }
     }
 
-    /// Colors text based on node type using semantic color methods.
     private String colorByNodeType(String text, NodeType type, AnsiStyles styles) {
         return switch (type) {
             case STANDARD, GENERIC, PARALLEL, FORK, JOIN -> styles.accent(text);
@@ -381,19 +487,6 @@ public class TextVisualizationFormat implements VisualizationFormat {
 
     private void collectNextNodes(Node node, int level, Deque<NodeLevel> queue) {
         switch (node) {
-            case StandardNode standardNode -> {
-                for (TransitionRule rule : standardNode.getTransitionRules()) {
-                    if (rule instanceof SuccessTransition success) {
-                        queue.add(new NodeLevel(success.getTargetNode(), level + 1));
-                    } else if (rule instanceof FailureTransition failure) {
-                        queue.add(new NodeLevel(failure.getThenTargetNode(), level + 1));
-                    } else if (rule instanceof ScoreTransition score) {
-                        for (ScoreCondition cond : score.getConditions()) {
-                            queue.add(new NodeLevel(cond.getTargetNode(), level + 1));
-                        }
-                    }
-                }
-            }
             case LoopNode loopNode -> {
                 if (loopNode.getBreakRules() != null) {
                     for (BreakRule rule : loopNode.getBreakRules()) {
@@ -405,44 +498,26 @@ public class TextVisualizationFormat implements VisualizationFormat {
                 for (String target : forkNode.getTargets()) {
                     queue.add(new NodeLevel(target, level + 1));
                 }
-                for (TransitionRule rule : forkNode.getTransitionRules()) {
-                    if (rule instanceof SuccessTransition success) {
-                        queue.add(new NodeLevel(success.getTargetNode(), level + 1));
-                    }
-                }
+                collectTransitionTargets(forkNode.getTransitionRules(), level, queue);
             }
-            case JoinNode joinNode -> {
-                for (TransitionRule rule : joinNode.getTransitionRules()) {
-                    if (rule instanceof SuccessTransition success) {
-                        queue.add(new NodeLevel(success.getTargetNode(), level + 1));
-                    } else if (rule instanceof FailureTransition failure) {
-                        queue.add(new NodeLevel(failure.getThenTargetNode(), level + 1));
-                    }
+            default -> collectTransitionTargets(node.getTransitionRules(), level, queue);
+        }
+    }
+
+    private void collectTransitionTargets(
+            List<TransitionRule> rules, int level, Deque<NodeLevel> queue) {
+        for (TransitionRule rule : rules) {
+            if (rule instanceof SuccessTransition success) {
+                queue.add(new NodeLevel(success.getTargetNode(), level + 1));
+            } else if (rule instanceof FailureTransition failure) {
+                queue.add(new NodeLevel(failure.getThenTargetNode(), level + 1));
+            } else if (rule instanceof ScoreTransition score) {
+                for (ScoreCondition cond : score.getConditions()) {
+                    queue.add(new NodeLevel(cond.getTargetNode(), level + 1));
                 }
+            } else if (rule instanceof ApprovalTransition approval) {
+                queue.add(new NodeLevel(approval.targetNode(), level + 1));
             }
-            case GenericNode genericNode -> {
-                for (TransitionRule rule : genericNode.getTransitionRules()) {
-                    if (rule instanceof SuccessTransition success) {
-                        queue.add(new NodeLevel(success.getTargetNode(), level + 1));
-                    } else if (rule instanceof FailureTransition failure) {
-                        queue.add(new NodeLevel(failure.getThenTargetNode(), level + 1));
-                    } else if (rule instanceof ScoreTransition score) {
-                        for (ScoreCondition cond : score.getConditions()) {
-                            queue.add(new NodeLevel(cond.getTargetNode(), level + 1));
-                        }
-                    }
-                }
-            }
-            case ActionNode actionNode -> {
-                for (TransitionRule rule : actionNode.getTransitionRules()) {
-                    if (rule instanceof SuccessTransition success) {
-                        queue.add(new NodeLevel(success.getTargetNode(), level + 1));
-                    } else if (rule instanceof FailureTransition failure) {
-                        queue.add(new NodeLevel(failure.getThenTargetNode(), level + 1));
-                    }
-                }
-            }
-            default -> {}
         }
     }
 
