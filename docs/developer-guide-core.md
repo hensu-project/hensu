@@ -826,10 +826,11 @@ WorkflowValidator.validate(workflow); // throws IllegalStateException on violati
 
 ### `WorkflowValidator` checks
 
-| Check                        | Error example                                                                   |
-|------------------------------|---------------------------------------------------------------------------------|
-| `writes` name not in schema  | `Node 'write' writes 'draft' which is not declared in state schema`             |
-| Prompt `{var}` not in schema | `Node 'write' prompt references '{tone}' which is not declared in state schema` |
+| Check                           | Error example                                                                   |
+|---------------------------------|---------------------------------------------------------------------------------|
+| Transition target doesn't exist | `Node 'write' has transition to 'revieww' which does not exist in the workflow` |
+| `writes` name not in schema     | `Node 'write' writes 'draft' which is not declared in state schema`             |
+| Prompt `{var}` not in schema    | `Node 'write' prompt references '{tone}' which is not declared in state schema` |
 
 Validation is a no-op when no schema is declared. Legacy workflows always pass through unchanged.
 
@@ -1412,7 +1413,7 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `workflow/state/VarType.java`                           | Variable type enum: STRING, NUMBER, BOOLEAN, LIST_STRING                                         |
 | `workflow/transition/ApprovalTransition.java`           | Boolean approval routing via the `approved` engine variable                                      |
 | `workflow/validation/SubWorkflowGraphValidator.java`    | Load-time cycle + dangling-reference detector for sub-workflow graphs                            |
-| `workflow/validation/WorkflowValidator.java`            | Load-time validator for `writes` and prompt `{variable}` references                              |
+| `workflow/validation/WorkflowValidator.java`            | Load-time validator for transition targets, `writes`, and prompt `{variable}` references         |
 | `rubric/RubricEngine.java`                              | Quality evaluation engine                                                                        |
 | `rubric/model/Rubric.java`                              | Rubric definition model                                                                          |
 | `tool/ToolDefinition.java`                              | Protocol-agnostic tool descriptor                                                                |

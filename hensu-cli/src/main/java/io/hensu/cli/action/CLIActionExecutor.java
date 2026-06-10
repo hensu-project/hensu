@@ -7,15 +7,20 @@ import io.hensu.core.execution.action.CommandRegistry;
 import io.hensu.core.execution.action.CommandRegistry.CommandDefinition;
 import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.template.TemplateResolver;
+import io.hensu.core.util.ShellEscaper;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
@@ -53,7 +58,7 @@ public class CLIActionExecutor implements ActionExecutor {
 
     private final TemplateResolver templateResolver = new SimpleTemplateResolver();
     private final Map<String, ActionHandler> handlers = new ConcurrentHashMap<>();
-    private CommandRegistry commandRegistry;
+    private volatile CommandRegistry commandRegistry;
 
     public CLIActionExecutor() {
         this.commandRegistry = new CommandRegistry();
@@ -128,7 +133,6 @@ public class CLIActionExecutor implements ActionExecutor {
     private ActionResult executeCommand(Action.Execute exec, Map<String, Object> context) {
         String commandId = exec.getCommandId();
 
-        // Resolve command from registry
         if (!commandRegistry.hasCommand(commandId)) {
             String msg =
                     "Command not found in registry: '"
@@ -141,7 +145,8 @@ public class CLIActionExecutor implements ActionExecutor {
         }
 
         CommandDefinition cmdDef = commandRegistry.getCommand(commandId);
-        String command = templateResolver.resolve(cmdDef.command(), context);
+        Map<String, Object> shellSafeContext = shellEscapeContext(context);
+        String command = templateResolver.resolve(cmdDef.command(), shellSafeContext);
 
         logger.info("Executing command [" + commandId + "]: " + command);
 
@@ -153,26 +158,36 @@ public class CLIActionExecutor implements ActionExecutor {
 
             Process process = pb.start();
 
-            StringBuilder output = new StringBuilder();
-            try (BufferedReader reader =
-                    new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line).append("\n");
-                    logger.info("[CMD] " + line);
-                }
-            }
+            // Drain output asynchronously to prevent pipe-buffer deadlock with timeout
+            Future<String> outputFuture =
+                    PROCESS_IO_EXECUTOR.submit(
+                            () -> {
+                                StringBuilder output = new StringBuilder();
+                                try (BufferedReader reader =
+                                        new BufferedReader(
+                                                new InputStreamReader(
+                                                        process.getInputStream(),
+                                                        StandardCharsets.UTF_8))) {
+                                    String line;
+                                    while ((line = reader.readLine()) != null) {
+                                        output.append(line).append("\n");
+                                        logger.info("[CMD] " + line);
+                                    }
+                                }
+                                return output.toString().trim();
+                            });
 
             boolean finished = process.waitFor(cmdDef.timeoutMs(), TimeUnit.MILLISECONDS);
             if (!finished) {
                 process.destroyForcibly();
+                outputFuture.cancel(true);
                 return ActionResult.failure("Command timed out after " + cmdDef.timeoutMs() + "ms");
             }
 
+            String output = outputFuture.get(5, TimeUnit.SECONDS);
             int exitCode = process.exitValue();
             if (exitCode == 0) {
-                return ActionResult.success(
-                        "Command completed successfully", output.toString().trim());
+                return ActionResult.success("Command completed successfully", output);
             } else {
                 return ActionResult.failure("Command failed with exit code: " + exitCode);
             }
@@ -181,6 +196,22 @@ public class CLIActionExecutor implements ActionExecutor {
             logger.severe("Command execution failed: " + e.getMessage());
             return ActionResult.failure("Command execution failed: " + e.getMessage(), e);
         }
+    }
+
+    private static final ExecutorService PROCESS_IO_EXECUTOR =
+            Executors.newVirtualThreadPerTaskExecutor();
+
+    private Map<String, Object> shellEscapeContext(Map<String, Object> context) {
+        Map<String, Object> escaped = new HashMap<>(context.size());
+        for (Map.Entry<String, Object> entry : context.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof String s) {
+                escaped.put(entry.getKey(), ShellEscaper.escape(s));
+            } else if (value != null) {
+                escaped.put(entry.getKey(), ShellEscaper.escape(value.toString()));
+            }
+        }
+        return escaped;
     }
 
     /// Resolves template variables in payload string values.

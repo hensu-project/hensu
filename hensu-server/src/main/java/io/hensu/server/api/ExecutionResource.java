@@ -35,7 +35,11 @@ import org.jboss.logging.Logger;
 /// - Resuming paused executions
 /// - Querying execution status, plans, and final output
 ///
-/// Tenant identity is resolved from the JWT `tenant_id` claim via
+/// Response bodies are typed records serialized by Jackson. Nullable fields
+/// ({@code currentNodeId}, {@code correlationId}) are omitted from JSON
+/// when not applicable rather than serialized as empty strings.
+///
+/// Tenant identity is resolved from the JWT {@code tenant_id} claim via
 /// {@link RequestTenantResolver}. In dev/test mode, a default tenant is used.
 ///
 /// @see WorkflowService for business logic
@@ -88,12 +92,7 @@ public class ExecutionResource {
                             request.workflowId(),
                             request.context() != null ? request.context() : Map.of());
 
-            return Response.accepted()
-                    .entity(
-                            Map.of(
-                                    "executionId", result.executionId(),
-                                    "workflowId", result.workflowId()))
-                    .build();
+            return Response.accepted().entity(result).build();
         } catch (WorkflowNotFoundException e) {
             LOG.warnv("Workflow not found: {0}", request.workflowId());
             throw new NotFoundException(e.getMessage());
@@ -127,20 +126,7 @@ public class ExecutionResource {
         try {
             ExecutionStatus status = workflowService.getExecutionStatus(tenantId, executionId);
 
-            return Response.ok()
-                    .entity(
-                            Map.of(
-                                    "executionId",
-                                    status.executionId(),
-                                    "workflowId",
-                                    status.workflowId(),
-                                    "status",
-                                    status.status(),
-                                    "currentNodeId",
-                                    status.currentNodeId() != null ? status.currentNodeId() : "",
-                                    "hasPendingPlan",
-                                    status.hasPendingPlan()))
-                    .build();
+            return Response.ok().entity(status).build();
         } catch (ExecutionNotFoundException e) {
             LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());
@@ -192,7 +178,7 @@ public class ExecutionResource {
             ResumeInput resumeInput = request != null ? request.toResumeInput() : ResumeInput.NONE;
             workflowService.resumeExecution(tenantId, executionId, resumeInput);
 
-            return Response.ok().entity(Map.of("status", "resumed")).build();
+            return Response.ok().entity(ResumeResponse.RESUMED).build();
         } catch (ExecutionNotFoundException e) {
             LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());
@@ -227,13 +213,7 @@ public class ExecutionResource {
                                                     "No pending plan for execution: "
                                                             + executionId));
 
-            return Response.ok()
-                    .entity(
-                            Map.of(
-                                    "planId", planInfo.planId(),
-                                    "totalSteps", planInfo.totalSteps(),
-                                    "currentStep", planInfo.currentStep()))
-                    .build();
+            return Response.ok().entity(planInfo).build();
         } catch (ExecutionNotFoundException e) {
             LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());
@@ -265,22 +245,7 @@ public class ExecutionResource {
 
         List<ExecutionSummary> paused = workflowService.listPausedExecutions(tenantId);
 
-        List<Map<String, Object>> response =
-                paused.stream()
-                        .map(
-                                s ->
-                                        Map.<String, Object>of(
-                                                "executionId",
-                                                s.executionId(),
-                                                "workflowId",
-                                                s.workflowId(),
-                                                "currentNodeId",
-                                                s.currentNodeId() != null ? s.currentNodeId() : "",
-                                                "createdAt",
-                                                s.createdAt().toString()))
-                        .toList();
-
-        return Response.ok().entity(response).build();
+        return Response.ok().entity(paused).build();
     }
 
     /// Gets the final output of a completed or paused execution.
@@ -317,14 +282,7 @@ public class ExecutionResource {
         try {
             ExecutionOutput output = workflowService.getExecutionResult(tenantId, executionId);
 
-            return Response.ok()
-                    .entity(
-                            Map.of(
-                                    "executionId", output.executionId(),
-                                    "workflowId", output.workflowId(),
-                                    "status", output.status(),
-                                    "output", output.output()))
-                    .build();
+            return Response.ok().entity(output).build();
         } catch (ExecutionNotFoundException e) {
             LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());

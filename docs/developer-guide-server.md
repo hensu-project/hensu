@@ -289,7 +289,12 @@ io.hensu.server/
 │   ├── ExecutionEventResource   # Execution monitoring SSE
 │   ├── McpGatewayResource       # MCP split-pipe SSE/POST
 │   ├── ExecutionStartRequest    # Request DTO for POST /executions
-│   └── ResumeRequest            # Request DTO for POST /executions/{id}/resume
+│   ├── ResumeRequest            # Request DTO for POST /executions/{id}/resume
+│   ├── ResumeResponse           # Response DTO for POST /executions/{id}/resume
+│   ├── PushWorkflowResponse     # Response DTO for POST /workflows
+│   ├── WorkflowSummary          # Response DTO for GET /workflows list entries
+│   ├── GatewayStatusResponse    # Response DTO for GET /mcp/status
+│   └── ClientStatusResponse     # Response DTO for GET /mcp/clients/{id}/status
 │
 ├── validation/            # Input validation (Bean Validation)
 │   ├── InputValidator            # Shared validation predicates (safe-ID, dangerous chars, size)
@@ -350,10 +355,12 @@ io.hensu.server/
 │   ├── WorkflowExecutionService     # Start/resume orchestration
 │   ├── ExecutionQueryService        # Read-side: status, plan, output, paused list
 │   ├── ExecutionStateService        # Snapshot load/save with split-brain guard
+│   ├── ExecutionResultHandler       # Shared ExecutionResult → snapshot + SSE dispatch
+│   ├── WorkflowContextUtil          # Filters internal (_-prefixed) keys from context
 │   ├── ExecutionHeartbeatJob        # Periodic heartbeat emission (@Scheduled)
 │   ├── WorkflowRecoveryJob          # Orphaned execution sweeper (@Scheduled)
-│   ├── ExecutionStartResult / ExecutionOutput / ExecutionSummary / PlanInfo / ResumeDecision   # DTOs
-│   ├── ExecutionStatus              # Enum: COMPLETED / PAUSED / RUNNING
+│   ├── ExecutionStartResult / ExecutionOutput / ExecutionSummary / PlanInfo   # DTOs
+│   ├── ExecutionStatus              # DTO for execution status (with correlationId)
 │   └── {Execution,Workflow}{NotFound,Execution}Exception   # Domain exceptions
 │
 ├── streaming/             # Execution event streaming

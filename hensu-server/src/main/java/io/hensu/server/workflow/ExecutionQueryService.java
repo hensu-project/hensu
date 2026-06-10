@@ -1,15 +1,14 @@
 package io.hensu.server.workflow;
 
 import io.hensu.core.plan.PlannedStep;
+import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.WorkflowStateRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 /// Read-only service for querying execution state.
 ///
@@ -62,7 +61,8 @@ public class ExecutionQueryService {
                 snapshot.workflowId(),
                 status,
                 snapshot.currentNodeId(),
-                snapshot.hasActivePlan());
+                snapshot.hasActivePlan(),
+                extractCorrelationId(snapshot));
     }
 
     /// Gets the public output of a completed or paused execution.
@@ -78,7 +78,10 @@ public class ExecutionQueryService {
         HensuSnapshot snapshot = loadSnapshot(tenantId, executionId);
         String status = snapshot.isCompleted() ? "COMPLETED" : "PAUSED";
         return new ExecutionOutput(
-                executionId, snapshot.workflowId(), status, publicContext(snapshot.context()));
+                executionId,
+                snapshot.workflowId(),
+                status,
+                WorkflowContextUtil.publicContext(snapshot.context()));
     }
 
     /// Lists all paused executions for a tenant.
@@ -94,8 +97,15 @@ public class ExecutionQueryService {
                                         s.executionId(),
                                         s.workflowId(),
                                         s.currentNodeId(),
-                                        s.createdAt()))
+                                        s.createdAt(),
+                                        extractCorrelationId(s)))
                 .toList();
+    }
+
+    private static String extractCorrelationId(HensuSnapshot snapshot) {
+        return snapshot.phase() instanceof ExecutionPhase.Awaiting awaiting
+                ? awaiting.correlationId()
+                : null;
     }
 
     private HensuSnapshot loadSnapshot(String tenantId, String executionId) {
@@ -107,11 +117,5 @@ public class ExecutionQueryService {
                         () ->
                                 new ExecutionNotFoundException(
                                         "Execution not found: " + executionId));
-    }
-
-    private static Map<String, Object> publicContext(Map<String, Object> context) {
-        return context.entrySet().stream()
-                .filter(e -> !e.getKey().startsWith("_"))
-                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 }

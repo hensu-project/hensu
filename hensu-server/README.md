@@ -394,7 +394,12 @@ hensu-server/
 │   │   ├── ExecutionEventResource.java    # SSE endpoint for execution events
 │   │   ├── McpGatewayResource.java        # MCP SSE/POST endpoints
 │   │   ├── ExecutionStartRequest.java     # Request DTO for POST /executions
-│   │   └── ResumeRequest.java             # Request DTO for POST /executions/{id}/resume
+│   │   ├── ResumeRequest.java             # Request DTO for POST /executions/{id}/resume
+│   │   ├── ResumeResponse.java            # Response DTO for POST /executions/{id}/resume
+│   │   ├── PushWorkflowResponse.java      # Response DTO for POST /workflows
+│   │   ├── WorkflowSummary.java           # Response DTO for GET /workflows list entries
+│   │   ├── GatewayStatusResponse.java     # Response DTO for GET /mcp/status
+│   │   └── ClientStatusResponse.java      # Response DTO for GET /mcp/clients/{id}/status
 │   ├── validation/                        # Input validation (Bean Validation)
 │   │   ├── InputValidator                  # Shared validation predicates (safe-ID, dangerous chars, size)
 │   │   ├── ValidId.java                    # Custom identifier constraint
@@ -446,14 +451,15 @@ hensu-server/
 │   │   ├── WorkflowExecutionService.java        # Start/resume orchestration
 │   │   ├── ExecutionQueryService.java           # Read-side: status, plan, output, paused list
 │   │   ├── ExecutionStateService.java           # Snapshot load/save with split-brain guard
+│   │   ├── ExecutionResultHandler.java          # Shared ExecutionResult → snapshot + SSE dispatch
+│   │   ├── WorkflowContextUtil.java             # Filters internal (_-prefixed) keys from context
 │   │   ├── ExecutionHeartbeatJob.java           # Periodic heartbeat emission (@Scheduled)
 │   │   ├── WorkflowRecoveryJob.java             # Orphaned execution sweeper (@Scheduled)
 │   │   ├── ExecutionStartResult.java            # DTO
 │   │   ├── ExecutionOutput.java                 # DTO
-│   │   ├── ExecutionStatus.java                 # Enum: COMPLETED / PAUSED / RUNNING
-│   │   ├── ExecutionSummary.java                # DTO for paused-list
+│   │   ├── ExecutionStatus.java                 # DTO for execution status (with correlationId)
+│   │   ├── ExecutionSummary.java                # DTO for paused-list (with correlationId)
 │   │   ├── PlanInfo.java                        # DTO for plan review
-│   │   ├── ResumeDecision.java                  # DTO
 │   │   ├── ExecutionNotFoundException.java
 │   │   ├── WorkflowNotFoundException.java
 │   │   └── WorkflowExecutionException.java

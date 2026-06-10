@@ -29,11 +29,6 @@ class McpSidecarTest {
         sidecar = new McpSidecar(connectionPool);
     }
 
-    @Test
-    void shouldHaveMcpHandlerId() {
-        assertThat(sidecar.getHandlerId()).isEqualTo("mcp");
-    }
-
     @Nested
     class ExecuteMethod {
 

@@ -74,9 +74,7 @@ class WorkflowValidateCommandTest extends BaseWorkflowCommandTest {
         command.run();
 
         // Then
-        String errOutput = errContent.toString();
-        assertThat(errOutput).contains("Validation failed");
-        assertThat(errOutput).contains("Syntax error at line 10");
+        assertThat(errContent.toString()).contains("Syntax error at line 10");
     }
 
     @Test

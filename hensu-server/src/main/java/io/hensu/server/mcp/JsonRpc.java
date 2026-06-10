@@ -155,7 +155,7 @@ public class JsonRpc {
         try {
             JsonNode node = mapper.readTree(json);
             JsonNode paramsNode = node.get("params");
-            if (paramsNode == null || paramsNode.isNull()) {
+            if (paramsNode == null || paramsNode.isNull() || !paramsNode.isObject()) {
                 return Map.of();
             }
             return mapper.convertValue(paramsNode, Map.class);

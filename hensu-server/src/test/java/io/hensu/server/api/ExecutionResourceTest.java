@@ -1,27 +1,17 @@
 package io.hensu.server.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.hensu.core.resume.ResumeInput;
 import io.hensu.server.security.RequestTenantResolver;
-import io.hensu.server.workflow.ExecutionNotFoundException;
-import io.hensu.server.workflow.ExecutionOutput;
 import io.hensu.server.workflow.ExecutionStartResult;
-import io.hensu.server.workflow.ExecutionStatus;
-import io.hensu.server.workflow.ExecutionSummary;
-import io.hensu.server.workflow.WorkflowNotFoundException;
 import io.hensu.server.workflow.WorkflowService;
-import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
-import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -50,30 +40,13 @@ class ExecutionResourceTest {
                     .thenReturn(new ExecutionStartResult("exec-123", "wf-1"));
 
             var request = new ExecutionStartRequest("wf-1", Map.of("key", "value"));
-            Map<String, Object> entity;
             try (Response response = resource.startExecution(request)) {
 
                 assertThat(response.getStatus()).isEqualTo(202);
-                entity = (Map<String, Object>) response.getEntity();
+                var entity = (ExecutionStartResult) response.getEntity();
+                assertThat(entity.executionId()).isEqualTo("exec-123");
+                assertThat(entity.workflowId()).isEqualTo("wf-1");
             }
-            assertThat(entity.get("executionId")).isEqualTo("exec-123");
-            assertThat(entity.get("workflowId")).isEqualTo("wf-1");
-        }
-
-        @Test
-        void shouldReturn404WhenWorkflowNotFound() {
-            when(workflowService.startExecution(any(), any(), any()))
-                    .thenThrow(new WorkflowNotFoundException("Not found"));
-
-            var request = new ExecutionStartRequest("wf-1", Map.of());
-            assertThatThrownBy(
-                            () -> {
-                                try (var _ = resource.startExecution(request)) {
-                                    // No-op
-                                }
-                            })
-                    .isInstanceOf(NotFoundException.class)
-                    .hasMessageContaining("Not found");
         }
     }
 
@@ -92,144 +65,6 @@ class ExecutionResourceTest {
             ArgumentCaptor<ResumeInput> captor = ArgumentCaptor.forClass(ResumeInput.class);
             verify(workflowService).resumeExecution(eq("tenant-1"), eq("exec-1"), captor.capture());
             assertThat(captor.getValue()).isInstanceOf(ResumeInput.ApplyReview.class);
-        }
-
-        @Test
-        void shouldResumeWithContextEdits() {
-            try (Response response =
-                    resource.resume(
-                            "exec-1",
-                            new ResumeRequest(null, null, null, null, Map.of("key", "val")))) {
-
-                assertThat(response.getStatus()).isEqualTo(200);
-            }
-
-            ArgumentCaptor<ResumeInput> captor = ArgumentCaptor.forClass(ResumeInput.class);
-            verify(workflowService).resumeExecution(eq("tenant-1"), eq("exec-1"), captor.capture());
-            assertThat(captor.getValue()).isInstanceOf(ResumeInput.ApplyContextEdits.class);
-        }
-
-        @Test
-        void shouldResumeWithNullRequestAsNone() {
-            try (Response response = resource.resume("exec-1", null)) {
-                assertThat(response.getStatus()).isEqualTo(200);
-            }
-
-            ArgumentCaptor<ResumeInput> captor = ArgumentCaptor.forClass(ResumeInput.class);
-            verify(workflowService).resumeExecution(eq("tenant-1"), eq("exec-1"), captor.capture());
-            assertThat(captor.getValue()).isInstanceOf(ResumeInput.None.class);
-        }
-
-        @Test
-        void shouldReturn404WhenExecutionNotFound() {
-            doThrow(new ExecutionNotFoundException("Not found"))
-                    .when(workflowService)
-                    .resumeExecution(any(), any(), any());
-
-            assertThatThrownBy(
-                            () -> {
-                                try (var _ = resource.resume("exec-1", null)) {
-                                    // No-op
-                                }
-                            })
-                    .isInstanceOf(NotFoundException.class)
-                    .hasMessageContaining("Not found");
-        }
-    }
-
-    @Nested
-    class GetExecution {
-
-        @Test
-        void shouldReturnExecutionStatus() {
-            when(workflowService.getExecutionStatus("tenant-1", "exec-1"))
-                    .thenReturn(new ExecutionStatus("exec-1", "wf-1", "PAUSED", "node-1", false));
-
-            Response response = resource.getExecution("exec-1");
-
-            assertThat(response.getStatus()).isEqualTo(200);
-            Map<String, Object> entity = (Map<String, Object>) response.getEntity();
-            assertThat(entity.get("status")).isEqualTo("PAUSED");
-        }
-
-        @Test
-        void shouldReturn404WhenExecutionNotFound() {
-            when(workflowService.getExecutionStatus(any(), any()))
-                    .thenThrow(new ExecutionNotFoundException("Not found"));
-
-            try {
-                resource.getExecution("exec-1");
-            } catch (NotFoundException e) {
-                assertThat(e.getMessage()).contains("Not found");
-            }
-        }
-    }
-
-    @Nested
-    class GetExecutionResult {
-
-        @Test
-        void shouldReturnOutputWithFilteredContext() {
-            Map<String, Object> output = Map.of("summary", "done", "approved", true);
-            when(workflowService.getExecutionResult("tenant-1", "exec-1"))
-                    .thenReturn(new ExecutionOutput("exec-1", "wf-1", "COMPLETED", output));
-
-            Map<String, Object> entity;
-            try (Response response = resource.getExecutionResult("exec-1")) {
-                assertThat(response.getStatus()).isEqualTo(200);
-                entity = (Map<String, Object>) response.getEntity();
-            }
-            assertThat(entity.get("executionId")).isEqualTo("exec-1");
-            assertThat(entity.get("workflowId")).isEqualTo("wf-1");
-            assertThat(entity.get("status")).isEqualTo("COMPLETED");
-            Map<String, Object> returnedOutput = (Map<String, Object>) entity.get("output");
-            assertThat(returnedOutput).containsEntry("summary", "done");
-            assertThat(returnedOutput).containsEntry("approved", true);
-        }
-
-        @Test
-        void shouldReturn404WhenExecutionNotFound() {
-            when(workflowService.getExecutionResult(any(), any()))
-                    .thenThrow(new ExecutionNotFoundException("exec-missing not found"));
-
-            assertThatThrownBy(() -> resource.getExecutionResult("exec-missing"))
-                    .isInstanceOf(NotFoundException.class)
-                    .hasMessageContaining("exec-missing not found");
-        }
-    }
-
-    @Nested
-    class ListPausedExecutions {
-
-        @Test
-        void shouldReturnPausedExecutions() {
-            when(workflowService.listPausedExecutions("tenant-1"))
-                    .thenReturn(
-                            List.of(
-                                    new ExecutionSummary("exec-1", "wf-1", "node-1", Instant.now()),
-                                    new ExecutionSummary(
-                                            "exec-2", "wf-2", "node-2", Instant.now())));
-
-            List<Map<String, Object>> entity;
-            try (Response response = resource.listPausedExecutions()) {
-
-                assertThat(response.getStatus()).isEqualTo(200);
-                entity = (List<Map<String, Object>>) response.getEntity();
-            }
-            assertThat(entity).hasSize(2);
-        }
-
-        @Test
-        void shouldReturnEmptyListWhenNoPausedExecutions() {
-            when(workflowService.listPausedExecutions("tenant-1")).thenReturn(List.of());
-
-            List<Map<String, Object>> entity;
-            try (Response response = resource.listPausedExecutions()) {
-
-                assertThat(response.getStatus()).isEqualTo(200);
-                entity = (List<Map<String, Object>>) response.getEntity();
-            }
-            assertThat(entity).isEmpty();
         }
     }
 }

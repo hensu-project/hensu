@@ -45,7 +45,11 @@ class ReviewTerminal {
 
         while (true) {
             displayMenu(data.allowBacktrack());
-            String input = readInput().toUpperCase();
+            String raw = readInput();
+            if (raw == null) {
+                return new ReviewDecision.Reject("Session terminated (EOF)");
+            }
+            String input = raw.toUpperCase();
 
             switch (input) {
                 case "A" -> {
@@ -212,6 +216,7 @@ class ReviewTerminal {
         print("\nSelect step number: ");
 
         String input = readInput();
+        if (input == null) return null;
         try {
             int choice = Integer.parseInt(input);
             if (choice == 0) return null;
@@ -224,12 +229,13 @@ class ReviewTerminal {
 
             print("Reason for backtracking (optional): ");
             String reason = readInput();
-            if (reason.isBlank()) reason = "Manual backtrack by reviewer";
+            if (reason == null || reason.isBlank()) reason = "Manual backtrack by reviewer";
 
             Map<String, Object> editedContext = null;
             if (data.contextVariables() != null) {
                 print("Edit prompt before re-execution? [y/N]: ");
-                String editChoice = readInput().toLowerCase();
+                String editRaw = readInput();
+                String editChoice = editRaw != null ? editRaw.toLowerCase() : "n";
                 if (editChoice.equals("y") || editChoice.equals("yes")) {
                     editedContext =
                             contextEditor.edit(
@@ -261,10 +267,12 @@ class ReviewTerminal {
         print("Reason for rejection (required): ");
 
         String reason = readInput();
+        if (reason == null) return new ReviewDecision.Reject("Session terminated (EOF)");
         while (reason.isBlank()) {
             println(styles.warn("Reason is required for rejection."));
             print("Reason for rejection: ");
             reason = readInput();
+            if (reason == null) return new ReviewDecision.Reject("Session terminated (EOF)");
         }
         return new ReviewDecision.Reject(reason);
     }
@@ -291,6 +299,9 @@ class ReviewTerminal {
     }
 
     private String readInput() {
+        if (!scanner.hasNextLine()) {
+            return null;
+        }
         return scanner.nextLine().trim();
     }
 }

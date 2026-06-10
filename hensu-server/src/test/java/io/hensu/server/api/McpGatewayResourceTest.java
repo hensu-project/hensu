@@ -10,7 +10,6 @@ import io.hensu.server.mcp.McpSessionManager.ClientInfo;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.helpers.test.AssertSubscriber;
 import jakarta.ws.rs.core.Response;
-import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -70,14 +69,13 @@ class McpGatewayResourceTest {
             when(sessionManager.connectedClientCount()).thenReturn(5);
             when(sessionManager.pendingRequestCount()).thenReturn(12);
 
-            Map<String, Object> entity;
             try (Response response = resource.status()) {
 
                 assertThat(response.getStatus()).isEqualTo(200);
-                entity = (Map<String, Object>) response.getEntity();
+                var entity = (GatewayStatusResponse) response.getEntity();
+                assertThat(entity.connectedClients()).isEqualTo(5);
+                assertThat(entity.pendingRequests()).isEqualTo(12);
             }
-            assertThat(entity.get("connectedClients")).isEqualTo(5);
-            assertThat(entity.get("pendingRequests")).isEqualTo(12);
         }
     }
 
@@ -90,15 +88,14 @@ class McpGatewayResourceTest {
             when(sessionManager.getClientInfo("client-1"))
                     .thenReturn(new ClientInfo("client-1", System.currentTimeMillis() - 5000));
 
-            Map<String, Object> entity;
             try (Response response = resource.clientStatus("client-1")) {
 
                 assertThat(response.getStatus()).isEqualTo(200);
-                entity = (Map<String, Object>) response.getEntity();
+                var entity = (ClientStatusResponse) response.getEntity();
+                assertThat(entity.clientId()).isEqualTo("client-1");
+                assertThat(entity.connected()).isTrue();
+                assertThat(entity.connectedDurationMs()).isGreaterThanOrEqualTo(5000L);
             }
-            assertThat(entity.get("clientId")).isEqualTo("client-1");
-            assertThat(entity.get("connected")).isEqualTo(true);
-            assertThat((Long) entity.get("connectedDurationMs")).isGreaterThanOrEqualTo(5000L);
         }
 
         @Test
@@ -106,14 +103,14 @@ class McpGatewayResourceTest {
             when(sessionManager.isConnected("client-2")).thenReturn(false);
             when(sessionManager.getClientInfo("client-2")).thenReturn(null);
 
-            Map<String, Object> entity;
             try (Response response = resource.clientStatus("client-2")) {
 
                 assertThat(response.getStatus()).isEqualTo(200);
-                entity = (Map<String, Object>) response.getEntity();
+                var entity = (ClientStatusResponse) response.getEntity();
+                assertThat(entity.clientId()).isEqualTo("client-2");
+                assertThat(entity.connected()).isFalse();
+                assertThat(entity.connectedDurationMs()).isNull();
             }
-            assertThat(entity.get("clientId")).isEqualTo("client-2");
-            assertThat(entity.get("connected")).isEqualTo(false);
         }
     }
 }

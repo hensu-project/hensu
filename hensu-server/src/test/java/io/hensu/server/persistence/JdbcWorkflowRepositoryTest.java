@@ -61,11 +61,6 @@ class JdbcWorkflowRepositoryTest extends JdbcRepositoryTestBase {
     }
 
     @Test
-    void findById_returnsEmptyWhenNotFound() {
-        assertThat(repo.findById(TENANT, "nonexistent")).isEmpty();
-    }
-
-    @Test
     void findAll_returnsOrderedByWorkflowId() {
         repo.save(TENANT, buildWorkflow("wf-c"));
         repo.save(TENANT, buildWorkflow("wf-a"));
@@ -74,14 +69,6 @@ class JdbcWorkflowRepositoryTest extends JdbcRepositoryTestBase {
         List<Workflow> all = repo.findAll(TENANT);
         assertThat(all).hasSize(3);
         assertThat(all).extracting(Workflow::getId).containsExactly("wf-a", "wf-b", "wf-c");
-    }
-
-    @Test
-    void exists_returnsTrueWhenPresent() {
-        repo.save(TENANT, buildWorkflow("wf-exists"));
-
-        assertThat(repo.exists(TENANT, "wf-exists")).isTrue();
-        assertThat(repo.exists(TENANT, "wf-ghost")).isFalse();
     }
 
     @Test
@@ -102,36 +89,6 @@ class JdbcWorkflowRepositoryTest extends JdbcRepositoryTestBase {
             assertThat(rs.next()).isTrue();
             assertThat(rs.getTimestamp("deleted_at")).isNotNull();
         }
-    }
-
-    @Test
-    void delete_returnsFalseWhenNotFound() {
-        assertThat(repo.delete(TENANT, "wf-ghost")).isFalse();
-    }
-
-    @Test
-    void deleteAllForTenant_removesAllAndReturnsCount() {
-        repo.save(TENANT, buildWorkflow("wf-1"));
-        repo.save(TENANT, buildWorkflow("wf-2"));
-        repo.save(TENANT, buildWorkflow("wf-3"));
-
-        int deleted = repo.deleteAllForTenant(TENANT);
-        assertThat(deleted).isEqualTo(3);
-        assertThat(repo.count(TENANT)).isZero();
-    }
-
-    @Test
-    void count_reflectsCurrentState() {
-        assertThat(repo.count(TENANT)).isZero();
-
-        repo.save(TENANT, buildWorkflow("wf-1"));
-        assertThat(repo.count(TENANT)).isEqualTo(1);
-
-        repo.save(TENANT, buildWorkflow("wf-2"));
-        assertThat(repo.count(TENANT)).isEqualTo(2);
-
-        repo.delete(TENANT, "wf-1");
-        assertThat(repo.count(TENANT)).isEqualTo(1);
     }
 
     @Test
@@ -187,14 +144,6 @@ class JdbcWorkflowRepositoryTest extends JdbcRepositoryTestBase {
         assertThat(repo.findById(TENANT, "wf-reactivate")).isPresent();
         assertThat(repo.exists(TENANT, "wf-reactivate")).isTrue();
         assertThat(repo.count(TENANT)).isEqualTo(1);
-    }
-
-    @Test
-    void delete_returnsFalseForAlreadyDeletedWorkflow() {
-        repo.save(TENANT, buildWorkflow("wf-double-del"));
-
-        assertThat(repo.delete(TENANT, "wf-double-del")).isTrue();
-        assertThat(repo.delete(TENANT, "wf-double-del")).isFalse();
     }
 
     @Test

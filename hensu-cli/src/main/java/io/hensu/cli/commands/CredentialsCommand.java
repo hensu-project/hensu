@@ -1,5 +1,6 @@
 package io.hensu.cli.commands;
 
+import io.hensu.cli.daemon.CredentialsStore;
 import io.hensu.cli.daemon.DaemonClient;
 import io.hensu.cli.daemon.DaemonPaths;
 import io.hensu.cli.ui.AnsiStyles;
@@ -7,10 +8,6 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
-import java.util.ArrayList;
 import java.util.List;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -83,8 +80,8 @@ public class CredentialsCommand extends HensuCommand {
                 description = "Read value from stdin instead of an interactive prompt")
         private boolean stdin = false;
 
-        // Package-private for testing; null falls back to DaemonPaths.credentials()
-        Path credentialsPath;
+        // Package-private for testing; null falls back to CredentialsStore.ofDefaults()
+        CredentialsStore store;
 
         @Override
         protected void execute() {
@@ -93,7 +90,7 @@ public class CredentialsCommand extends HensuCommand {
             if (value == null) return;
 
             try {
-                writeCredential(key.strip(), value);
+                resolveStore().set(key.strip(), value);
                 System.out.println(
                         styles.checkmark()
                                 + " "
@@ -140,33 +137,8 @@ public class CredentialsCommand extends HensuCommand {
             return new String(chars).strip();
         }
 
-        private void writeCredential(String key, String value) throws IOException {
-            Path file = credentialsPath != null ? credentialsPath : DaemonPaths.credentials();
-            Files.createDirectories(file.getParent());
-
-            List<String> lines =
-                    Files.exists(file)
-                            ? new ArrayList<>(Files.readAllLines(file, StandardCharsets.UTF_8))
-                            : new ArrayList<>();
-
-            boolean found = false;
-            for (int i = 0; i < lines.size(); i++) {
-                String line = lines.get(i);
-                if (!line.startsWith("#") && !line.isBlank()) {
-                    int eq = line.indexOf('=');
-                    if (eq > 0 && line.substring(0, eq).strip().equals(key)) {
-                        lines.set(i, key + "=" + value);
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            if (!found) {
-                lines.add(key + "=" + value);
-            }
-
-            Files.write(file, lines, StandardCharsets.UTF_8);
-            applyRestrictedPermissions(file);
+        private CredentialsStore resolveStore() {
+            return store != null ? store : CredentialsStore.ofDefaults();
         }
     }
 
@@ -186,32 +158,16 @@ public class CredentialsCommand extends HensuCommand {
     @Command(name = "list", description = "List configured credential keys (values masked)")
     static class Keys extends HensuCommand {
 
-        // Package-private for testing; null falls back to DaemonPaths.credentials()
-        Path credentialsPath;
+        // Package-private for testing; null falls back to CredentialsStore.ofDefaults()
+        CredentialsStore store;
 
         @Override
         protected void execute() {
             AnsiStyles styles = AnsiStyles.of(true);
-            Path file = credentialsPath != null ? credentialsPath : DaemonPaths.credentials();
-
-            if (!Files.exists(file)) {
-                System.out.println(styles.gray("No credentials file at " + file));
-                System.out.println(
-                        styles.gray("Use `hensu credentials set <KEY>` to add credentials."));
-                return;
-            }
+            CredentialsStore resolved = resolveStore();
 
             try {
-                List<String> keys =
-                        Files.readAllLines(file, StandardCharsets.UTF_8).stream()
-                                .filter(line -> !line.isBlank() && !line.startsWith("#"))
-                                .filter(line -> line.indexOf('=') > 0)
-                                .map(
-                                        line -> {
-                                            int eq = line.indexOf('=');
-                                            return line.substring(0, eq).strip();
-                                        })
-                                .toList();
+                List<String> keys = resolved.keys();
 
                 if (keys.isEmpty()) {
                     System.out.println(styles.gray("No credentials configured."));
@@ -221,13 +177,17 @@ public class CredentialsCommand extends HensuCommand {
                 System.out.println(
                         styles.bold("Configured credentials")
                                 + "  "
-                                + styles.gray(file.toString()));
+                                + styles.gray(resolved.path().toString()));
                 for (String k : keys) {
                     System.out.println("  " + styles.accent(k) + "  " + styles.gray("***"));
                 }
             } catch (IOException e) {
                 System.err.println(styles.error("Failed to read credentials: " + e.getMessage()));
             }
+        }
+
+        private CredentialsStore resolveStore() {
+            return store != null ? store : CredentialsStore.ofDefaults();
         }
     }
 
@@ -250,46 +210,31 @@ public class CredentialsCommand extends HensuCommand {
         @Parameters(index = "0", description = "Credential key name to remove")
         private String key;
 
-        // Package-private for testing; null falls back to DaemonPaths.credentials()
-        Path credentialsPath;
+        // Package-private for testing; null falls back to CredentialsStore.ofDefaults()
+        CredentialsStore store;
 
         @Override
         protected void execute() {
             AnsiStyles styles = AnsiStyles.of(true);
-            Path file = credentialsPath != null ? credentialsPath : DaemonPaths.credentials();
-
-            if (!Files.exists(file)) {
-                System.out.println(styles.gray("No credentials file found — nothing to remove."));
-                return;
-            }
 
             try {
-                List<String> original = Files.readAllLines(file, StandardCharsets.UTF_8);
-                List<String> filtered =
-                        original.stream()
-                                .filter(
-                                        line -> {
-                                            if (line.isBlank() || line.startsWith("#")) return true;
-                                            int eq = line.indexOf('=');
-                                            return eq <= 0
-                                                    || !line.substring(0, eq)
-                                                            .strip()
-                                                            .equals(key.strip());
-                                        })
-                                .toList();
+                boolean removed = resolveStore().unset(key);
 
-                if (filtered.size() == original.size()) {
+                if (!removed) {
                     System.out.println(
                             styles.warn("Key " + styles.bold(key) + " not found in credentials."));
                     return;
                 }
 
-                Files.write(file, filtered, StandardCharsets.UTF_8);
                 System.out.println(styles.checkmark() + " " + styles.bold(key) + " removed.");
                 printDaemonRestartHint(styles);
             } catch (IOException e) {
                 System.err.println(styles.error("Failed to update credentials: " + e.getMessage()));
             }
+        }
+
+        private CredentialsStore resolveStore() {
+            return store != null ? store : CredentialsStore.ofDefaults();
         }
     }
 
@@ -305,21 +250,6 @@ public class CredentialsCommand extends HensuCommand {
         if (DaemonClient.isAlive()) {
             System.out.println(styles.warn("  Daemon is running — restart to apply changes:"));
             System.out.println(styles.gray("  hensu daemon stop && hensu daemon start"));
-        }
-    }
-
-    /// Sets file permissions to {@code 0600} (owner read/write only) when the
-    /// filesystem supports POSIX attributes.
-    ///
-    /// Silently skipped on non-POSIX filesystems (e.g. Windows NTFS).
-    ///
-    /// @param file path to the credentials file, not null; must already exist
-    static void applyRestrictedPermissions(Path file) {
-        try {
-            if (file.getFileSystem().supportedFileAttributeViews().contains("posix")) {
-                Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
-            }
-        } catch (Exception ignored) {
         }
     }
 }

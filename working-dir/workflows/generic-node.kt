@@ -14,7 +14,7 @@ fun workflow() = workflow("generic-node-demo") {
 
     agents {
         agent("writer") {
-            model = "stub"
+            model = Models.GEMINI_3_1_FLASH_LITE
             role = "Content writer"
         }
     }

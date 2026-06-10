@@ -1,8 +1,6 @@
 package io.hensu.cli.daemon;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.Properties;
 import java.util.logging.Logger;
 
@@ -21,7 +19,7 @@ import java.util.logging.Logger;
 /// ### Why not Quarkus Config?
 /// SmallRye Config resolves env-var placeholders once at startup into a frozen snapshot.
 /// A long-running daemon started before an env var is exported will never see it. This
-/// loader performs a direct {@link Files#readAllLines} at CDI producer time — predictable,
+/// loader performs a direct file read at CDI producer time — predictable,
 /// synchronous, and daemon-restart-proof.
 ///
 /// @see DaemonPaths#credentials()
@@ -41,26 +39,16 @@ public final class CredentialsLoader {
     /// @return properties keyed as {@code hensu.credentials.<KEY>}, never null
     public static Properties load() {
         Properties props = new Properties();
-        var file = DaemonPaths.credentials();
-        if (!Files.exists(file)) {
-            return props;
-        }
         try {
-            Files.readAllLines(file, StandardCharsets.UTF_8).stream()
-                    .filter(line -> !line.isBlank() && !line.startsWith("#"))
-                    .forEach(
-                            line -> {
-                                int eq = line.indexOf('=');
-                                if (eq > 0) {
-                                    String key = line.substring(0, eq).strip();
-                                    String value = line.substring(eq + 1).strip();
-                                    if (!key.isBlank() && !value.isBlank()) {
-                                        props.setProperty(PREFIX + key, value);
-                                    }
-                                }
-                            });
+            CredentialsStore.ofDefaults()
+                    .loadAll()
+                    .forEach((k, v) -> props.setProperty(PREFIX + k, v));
         } catch (IOException e) {
-            log.warning("Could not read credentials file " + file + ": " + e.getMessage());
+            log.warning(
+                    "Could not read credentials file "
+                            + DaemonPaths.credentials()
+                            + ": "
+                            + e.getMessage());
         }
         return props;
     }

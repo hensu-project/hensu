@@ -54,14 +54,13 @@ class WorkflowResourceTest {
             Workflow wf = workflow("wf-1", "1.0.0");
             when(registryService.pushWorkflow("tenant-1", wf)).thenReturn(true);
 
-            Map<String, Object> entity;
             try (Response response = resource.pushWorkflow(wf)) {
                 assertThat(response.getStatus()).isEqualTo(201);
-                entity = (Map<String, Object>) response.getEntity();
+                var entity = (PushWorkflowResponse) response.getEntity();
+                assertThat(entity.id()).isEqualTo("wf-1");
+                assertThat(entity.version()).isEqualTo("1.0.0");
+                assertThat(entity.created()).isTrue();
             }
-            assertThat(entity.get("id")).isEqualTo("wf-1");
-            assertThat(entity.get("version")).isEqualTo("1.0.0");
-            assertThat(entity.get("created")).isEqualTo(true);
             verify(registryService).pushWorkflow("tenant-1", wf);
         }
 
@@ -70,12 +69,11 @@ class WorkflowResourceTest {
             Workflow wf = workflow("wf-1", "2.0.0");
             when(registryService.pushWorkflow("tenant-1", wf)).thenReturn(false);
 
-            Map<String, Object> entity;
             try (Response response = resource.pushWorkflow(wf)) {
                 assertThat(response.getStatus()).isEqualTo(200);
-                entity = (Map<String, Object>) response.getEntity();
+                var entity = (PushWorkflowResponse) response.getEntity();
+                assertThat(entity.created()).isFalse();
             }
-            assertThat(entity.get("created")).isEqualTo(false);
         }
 
         @Test
@@ -131,18 +129,18 @@ class WorkflowResourceTest {
     class ListWorkflows {
 
         @Test
+        @SuppressWarnings("unchecked")
         void shouldMapWorkflowsToIdVersionSummaries() {
             when(registryService.listWorkflows("tenant-1"))
                     .thenReturn(List.of(workflow("wf-1", "1.0.0"), workflow("wf-2", "2.0.0")));
 
-            List<Map<String, String>> entity;
             try (Response response = resource.listWorkflows()) {
                 assertThat(response.getStatus()).isEqualTo(200);
-                entity = (List<Map<String, String>>) response.getEntity();
+                var entity = (List<WorkflowSummary>) response.getEntity();
+                assertThat(entity).hasSize(2);
+                assertThat(entity.get(0)).isEqualTo(new WorkflowSummary("wf-1", "1.0.0"));
+                assertThat(entity.get(1)).isEqualTo(new WorkflowSummary("wf-2", "2.0.0"));
             }
-            assertThat(entity).hasSize(2);
-            assertThat(entity.get(0)).containsEntry("id", "wf-1").containsEntry("version", "1.0.0");
-            assertThat(entity.get(1)).containsEntry("id", "wf-2").containsEntry("version", "2.0.0");
         }
     }
 

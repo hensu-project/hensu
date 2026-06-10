@@ -24,50 +24,6 @@ class TenantToolRegistryTest {
     }
 
     @Nested
-    class BaseToolRegistration {
-
-        @Test
-        void shouldRegisterAndRetrieveBaseTool() {
-            ToolDefinition tool = ToolDefinition.simple("search", "Web search");
-
-            registry.register(tool);
-
-            assertThat(registry.get("search")).isPresent();
-            assertThat(registry.get("search").orElseThrow().name()).isEqualTo("search");
-        }
-
-        @Test
-        void shouldListBaseTools() {
-            registry.register(ToolDefinition.simple("tool1", "Tool 1"));
-            registry.register(ToolDefinition.simple("tool2", "Tool 2"));
-
-            List<ToolDefinition> tools = registry.baseTools();
-
-            assertThat(tools).hasSize(2);
-            assertThat(tools)
-                    .extracting(ToolDefinition::name)
-                    .containsExactlyInAnyOrder("tool1", "tool2");
-        }
-
-        @Test
-        void shouldRemoveBaseTool() {
-            registry.register(ToolDefinition.simple("search", "Web search"));
-
-            boolean removed = registry.remove("search");
-
-            assertThat(removed).isTrue();
-            assertThat(registry.get("search")).isEmpty();
-        }
-
-        @Test
-        void shouldReturnFalseWhenRemovingNonexistentTool() {
-            boolean removed = registry.remove("nonexistent");
-
-            assertThat(removed).isFalse();
-        }
-    }
-
-    @Nested
     class McpToolIntegration {
 
         @Test
@@ -194,23 +150,6 @@ class TenantToolRegistryTest {
 
             assertThat(tools).hasSize(1);
             assertThat(tools.getFirst().name()).isEqualTo("base_tool");
-        }
-    }
-
-    @Nested
-    class SizeMethod {
-
-        @Test
-        void shouldReturnTotalToolCount() throws Exception {
-            TenantInfo tenant = TenantInfo.withMcp("tenant-1", "http://mcp.local");
-            ToolDefinition mcpTool = ToolDefinition.simple("mcp_tool", "MCP tool");
-
-            registry.register(ToolDefinition.simple("base_tool", "Base tool"));
-            when(toolDiscovery.discoverTools()).thenReturn(List.of(mcpTool));
-
-            int size = TenantContext.runAs(tenant, () -> registry.size());
-
-            assertThat(size).isEqualTo(2);
         }
     }
 

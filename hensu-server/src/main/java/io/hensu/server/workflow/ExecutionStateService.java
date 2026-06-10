@@ -19,7 +19,6 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 import org.jboss.logging.Logger;
 
 /// Service for resuming paused workflow executions and managing checkpoint persistence.
@@ -110,8 +109,8 @@ public class ExecutionStateService {
                                         if (resumeInput
                                                 instanceof
                                                 ResumeInput.ApplyContextEdits(
-                                                        Map<String, Object> edits1)) {
-                                            state.getContext().putAll(edits1);
+                                                        Map<String, Object> contextEdits)) {
+                                            state.getContext().putAll(contextEdits);
                                         }
 
                                         Workflow workflow =
@@ -123,78 +122,15 @@ public class ExecutionStateService {
                                                         state,
                                                         checkpointListener(tenantId));
 
-                                        switch (result) {
-                                            case ExecutionResult.Completed(var finalState, _) -> {
-                                                stateRepository.save(
-                                                        tenantId,
-                                                        HensuSnapshot.from(
-                                                                finalState, "completed"));
-                                                eventBroadcaster.publish(
-                                                        executionId,
-                                                        ExecutionEvent.ExecutionCompleted.success(
-                                                                executionId,
-                                                                workflowId,
-                                                                finalState.getCurrentNode(),
-                                                                publicContext(
-                                                                        finalState.getContext())));
-                                            }
-                                            case ExecutionResult.Paused(var pausedState) -> {
-                                                stateRepository.save(
-                                                        tenantId,
-                                                        HensuSnapshot.from(pausedState, "paused"));
-                                                String correlationId =
-                                                        pausedState.getPhase()
-                                                                        instanceof
-                                                                        ExecutionPhase.Awaiting
-                                                                                awaiting
-                                                                ? awaiting.correlationId()
-                                                                : null;
-                                                eventBroadcaster.publish(
-                                                        executionId,
-                                                        ExecutionEvent.ExecutionPaused.now(
-                                                                executionId,
-                                                                workflowId,
-                                                                pausedState.getCurrentNode(),
-                                                                null,
-                                                                correlationId,
-                                                                "review",
-                                                                publicContext(
-                                                                        pausedState.getContext())));
-                                            }
-                                            case ExecutionResult.Rejected(_, var rejectedState) -> {
-                                                stateRepository.save(
-                                                        tenantId,
-                                                        HensuSnapshot.from(
-                                                                rejectedState, "rejected"));
-                                                eventBroadcaster.publish(
-                                                        executionId,
-                                                        ExecutionEvent.ExecutionCompleted.failure(
-                                                                executionId,
-                                                                workflowId,
-                                                                rejectedState.getCurrentNode(),
-                                                                publicContext(
-                                                                        rejectedState
-                                                                                .getContext())));
-                                            }
-                                            case ExecutionResult.Failure(
-                                                            var failedState,
-                                                            var e) -> {
-                                                stateRepository.save(
-                                                        tenantId,
-                                                        HensuSnapshot.from(failedState, "failed"));
-                                                eventBroadcaster.publish(
-                                                        executionId,
-                                                        ExecutionEvent.ExecutionError.now(
-                                                                executionId,
-                                                                "ExecutionFailure",
-                                                                e.getMessage(),
-                                                                failedState.getCurrentNode()));
-                                            }
-                                            case ExecutionResult.Success _ -> {
-                                                // Intermediate result — not expected from
-                                                // executeFrom
-                                            }
-                                        }
+                                        ExecutionResultHandler.handle(
+                                                result,
+                                                tenantId,
+                                                executionId,
+                                                workflowId,
+                                                stateRepository,
+                                                eventBroadcaster,
+                                                LOG,
+                                                "executeFrom");
 
                                         return null;
                                     });
@@ -205,6 +141,7 @@ public class ExecutionStateService {
                         e,
                         "Resume execution failed: executionId={0}",
                         LogSanitizer.sanitize(executionId));
+                stateRepository.save(tenantId, HensuSnapshot.from(snapshot.toState(), "failed"));
                 eventBroadcaster.publish(
                         executionId,
                         ExecutionEvent.ExecutionError.now(
@@ -224,11 +161,5 @@ public class ExecutionStateService {
                 stateRepository.save(tenantId, HensuSnapshot.from(state, "checkpoint"));
             }
         };
-    }
-
-    private static Map<String, Object> publicContext(Map<String, Object> context) {
-        return context.entrySet().stream()
-                .filter(e -> !e.getKey().startsWith("_"))
-                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 }

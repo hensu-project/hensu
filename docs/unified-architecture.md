@@ -341,6 +341,7 @@ Zero-dependency Java library. Contains:
 - `WorkflowRepository` / `WorkflowStateRepository` — Tenant-scoped storage interfaces with in-memory defaults
 - `HensuState` / `HensuSnapshot` / `ExecutionHistory` — Mutable runtime state, immutable checkpoints, execution trace
 - Workflow model, Node types (including `SubWorkflowNode`), Transition rules
+- `WorkflowValidator` (`workflow/validation`) — validates transition targets exist unconditionally; validates `writes` and prompt `{variable}` refs against schema when declared
 - `SubWorkflowGraphValidator` (`workflow/validation`) — cycle + dangling-ref detection across the sub-workflow reference graph, single-DFS with `globallyVisited`; `SubWorkflowNodeExecutor` enforces `MAX_DEPTH = 16` and propagates `_tenant_id` into the child context
 
 ### hensu-dsl (Kotlin DSL)
@@ -587,9 +588,11 @@ flowchart LR
 ### 4. State Schema Validation
 
 Workflows optionally declare a `WorkflowStateSchema` — a typed registry of domain variables
-(`writes` declarations) and their expected types. At load time, `WorkflowValidator` verifies
-the schema against all node `writes` declarations and prompt template bindings (e.g., `{orderId}`),
-preventing runtime binding failures before execution begins.
+(`writes` declarations) and their expected types. At load time, `WorkflowValidator` performs
+two categories of checks: **structural** — every transition target must reference an existing
+node in the workflow — and **schema** — all node `writes` declarations and prompt template
+bindings (e.g., `{orderId}`) must be declared in the schema. Structural validation runs
+unconditionally; schema validation is a no-op when no schema is declared.
 
 Three **engine variables** (`score`, `approved`, `recommendation`) are predefined in
 `WorkflowStateSchema.ENGINE_VARIABLES` — they must never appear in user `state { }` declarations
@@ -801,6 +804,6 @@ The unified architecture provides:
 16. **API Separation** — Workflow definitions and executions are distinct REST resources
 17. **GraalVM-First Design** — No-reflection core; explicit wiring enables static analysis
 18. **Three-Layer Testing** — Unit (Mockito), Integration (inmem + stubs), Persistence (Testcontainers)
-19. **State Schema Validation** — `WorkflowStateSchema` + `WorkflowValidator` enforce typed variable declarations and prompt bindings at load time
+19. **Workflow Validation** — `WorkflowValidator` enforces transition target existence unconditionally; `WorkflowStateSchema` adds typed variable declarations and prompt binding checks at load time
 20. **Execution Observability** — `ExecutionEventBroadcaster` fans out engine events to SSE subscribers; `ScopedValue` routes events across virtual threads without `ThreadLocal`
 21. **CLI Daemon** — `DaemonServer` keeps the JVM and Kotlin compiler warm; `OutputRingBuffer` allows detach/re-attach without losing execution output

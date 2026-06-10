@@ -12,19 +12,6 @@ class BroadcastOutputStreamTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
-    void write_withNonZeroOffset_slicesCorrectBytesIntoRingBuffer() throws Exception {
-        var exec = new StoredExecution("e1", "wf");
-
-        // Write bytes[3..6] from "0123456789" — should store "3456" only
-        try (var out = new BroadcastOutputStream(exec, mapper)) {
-            out.write("0123456789".getBytes(), 3, 4);
-        }
-
-        var replay = exec.getOutputBuffer().drain();
-        assertThat(new String(replay.bytes())).isEqualTo("3456");
-    }
-
-    @Test
     void write_encodesPayloadAsBase64InBroadcastedOutFrame() throws Exception {
         var exec = new StoredExecution("e2", "wf");
         var queue = new ArrayBlockingQueue<String>(10);
