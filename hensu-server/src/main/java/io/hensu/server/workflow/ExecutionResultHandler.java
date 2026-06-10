@@ -5,6 +5,7 @@ import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.state.WorkflowStateRepository;
+import io.hensu.core.util.LogSanitizer;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import org.jboss.logging.Logger;
@@ -86,7 +87,9 @@ final class ExecutionResultHandler {
                                 failedState.getCurrentNode()));
             }
             case ExecutionResult.Success(HensuState unexpectedState) -> {
-                log.warnv("Unexpected Success from {0}: executionId={1}", callerLabel, executionId);
+                log.warnv(
+                        "Unexpected Success from {0}: executionId={1}",
+                        callerLabel, LogSanitizer.sanitize(executionId));
                 stateRepository.save(tenantId, HensuSnapshot.from(unexpectedState, "failed"));
                 eventBroadcaster.publish(
                         executionId,
