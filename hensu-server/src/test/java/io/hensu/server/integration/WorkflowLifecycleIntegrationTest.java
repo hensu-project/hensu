@@ -1,21 +1,18 @@
 package io.hensu.server.integration;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.workflow.ExecutionStartResult;
 import io.hensu.server.workflow.WorkflowNotFoundException;
 import io.quarkus.test.junit.QuarkusTest;
-import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
-/// Integration tests for the full workflow lifecycle.
+/// Integration tests for workflow lifecycle error boundaries.
 ///
-/// Covers push-then-execute, execution status retrieval, multi-tenant
-/// isolation, and missing-workflow error handling.
+/// Covers multi-tenant isolation and missing-workflow error handling.
+/// Push-then-execute and status retrieval are covered by
+/// {@link StandardNodeIntegrationTest#shouldExecuteBasicStandardNode()}.
 ///
 /// ### Contracts
 /// - **Precondition**: Stub mode enabled (`hensu.stub.enabled=true`)
@@ -25,37 +22,6 @@ import org.junit.jupiter.api.Test;
 /// @see io.hensu.server.workflow.WorkflowService for the service layer under test
 @QuarkusTest
 class WorkflowLifecycleIntegrationTest extends IntegrationTestBase {
-
-    @Test
-    void shouldPushWorkflowThenExecute() {
-        Workflow workflow = loadWorkflow("standard-basic.json");
-        registerStub("process", "Lifecycle test output for topic.");
-
-        ExecutionStartResult result = pushAndExecute(workflow, Map.of("topic", "test"));
-
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, workflow.getId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
-        assertThat(snapshot.isCompleted()).isTrue();
-    }
-
-    @Test
-    void shouldRetrieveExecutionStatus() {
-        Workflow workflow = loadWorkflow("standard-basic.json");
-        registerStub("process", "Status retrieval test output.");
-
-        ExecutionStartResult result = pushAndExecute(workflow, Map.of("topic", "test"));
-
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, workflow.getId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
-        assertThat(snapshot.workflowId()).isEqualTo(workflow.getId());
-        assertThat(snapshot.checkpointReason()).isEqualTo("completed");
-    }
 
     @Test
     void shouldIsolateTenants() {

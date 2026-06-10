@@ -1,13 +1,16 @@
 package io.hensu.core.workflow.validation;
 
+import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.node.SubWorkflowNode;
 import io.hensu.core.workflow.state.WorkflowStateSchema;
+import io.hensu.core.workflow.transition.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -44,12 +47,17 @@ public final class WorkflowValidator {
     /// @param workflow the workflow to validate, not null
     /// @throws IllegalStateException if any schema violation is found, listing all errors
     public static void validate(Workflow workflow) {
+        List<String> errors = new ArrayList<>();
+
+        validateTransitionTargets(workflow, errors);
+
         WorkflowStateSchema schema = workflow.getStateSchema();
         if (schema == null) {
+            if (!errors.isEmpty()) {
+                throwErrors(workflow, errors);
+            }
             return;
         }
-
-        List<String> errors = new ArrayList<>();
 
         for (Map.Entry<String, Node> entry : workflow.getNodes().entrySet()) {
             String nodeId = entry.getKey();
@@ -89,12 +97,51 @@ public final class WorkflowValidator {
         }
 
         if (!errors.isEmpty()) {
-            throw new IllegalStateException(
-                    "Workflow '"
-                            + workflow.getId()
-                            + "' has schema violations:\n"
-                            + String.join("\n", errors));
+            throwErrors(workflow, errors);
         }
+    }
+
+    private static void validateTransitionTargets(Workflow workflow, List<String> errors) {
+        Set<String> nodeIds = workflow.getNodes().keySet();
+
+        for (Map.Entry<String, Node> entry : workflow.getNodes().entrySet()) {
+            String nodeId = entry.getKey();
+            Node node = entry.getValue();
+            if (!(node instanceof StandardNode standardNode)) continue;
+
+            for (TransitionRule rule : standardNode.getTransitionRules()) {
+                for (String target : extractTargets(rule)) {
+                    if (!nodeIds.contains(target)) {
+                        errors.add(
+                                "Node '"
+                                        + nodeId
+                                        + "' has transition to '"
+                                        + target
+                                        + "' which does not exist in the workflow");
+                    }
+                }
+            }
+        }
+    }
+
+    private static List<String> extractTargets(TransitionRule rule) {
+        return switch (rule) {
+            case SuccessTransition s -> List.of(s.targetNode());
+            case FailureTransition f ->
+                    f.targetNode() != null ? List.of(f.targetNode()) : List.of();
+            case ScoreTransition s ->
+                    s.conditions().stream().map(ScoreCondition::targetNode).toList();
+            case ApprovalTransition a -> List.of(a.targetNode());
+            case AlwaysTransition _, RubricFailTransition _ -> List.of();
+        };
+    }
+
+    private static void throwErrors(Workflow workflow, List<String> errors) {
+        throw new IllegalStateException(
+                "Workflow '"
+                        + workflow.getId()
+                        + "' has schema violations:\n"
+                        + String.join("\n", errors));
     }
 
     private static void validateSubWorkflow(

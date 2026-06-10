@@ -108,6 +108,25 @@ class McpToolDiscoveryTest {
         }
 
         @Test
+        void shouldNotPoisonCacheOnFetchFailure() {
+            when(connectionPool.get("http://failing")).thenThrow(new McpException("timeout"));
+            when(connectionPool.get("http://healthy")).thenReturn(connection);
+            when(connection.listTools())
+                    .thenReturn(
+                            List.of(new McpConnection.McpToolDescriptor("tool", "desc", Map.of())));
+
+            // Failing endpoint should not block healthy one
+            try {
+                discovery.discoverTools("http://failing");
+            } catch (McpException ignored) {
+            }
+
+            List<ToolDefinition> result = discovery.discoverTools("http://healthy");
+            assertThat(result).hasSize(1);
+            assertThat(discovery.cacheSize()).isEqualTo(1);
+        }
+
+        @Test
         void shouldRefetchAfterCacheInvalidation() {
             var mcpTool = new McpConnection.McpToolDescriptor("tool", "desc", Map.of());
 

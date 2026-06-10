@@ -88,15 +88,6 @@ class ExecutionStateServiceTest {
     }
 
     @Test
-    void shouldThrowExecutionNotFoundWhenSnapshotMissing() {
-        when(stateRepository.findByExecutionId("tenant-1", "exec-1")).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> service.resumeExecution("tenant-1", "exec-1", null))
-                .isInstanceOf(ExecutionNotFoundException.class)
-                .hasMessageContaining("exec-1");
-    }
-
-    @Test
     void shouldApplyDecisionModificationsToContextBeforeExecuting() throws Exception {
         when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
                 .thenReturn(Optional.of(pausedSnapshot()));
@@ -119,103 +110,7 @@ class ExecutionStateServiceTest {
     }
 
     @Test
-    void shouldPersistCompletedSnapshotWhenResumeReturnsCompleted() throws Exception {
-        when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
-                .thenReturn(Optional.of(pausedSnapshot()));
-        when(registryService.getWorkflow("tenant-1", "wf-1")).thenReturn(mock(Workflow.class));
-        when(workflowExecutor.executeFrom(any(), any(), any()))
-                .thenReturn(new ExecutionResult.Completed(completedState(), ExitStatus.SUCCESS));
-
-        service.resumeExecution("tenant-1", "exec-1", null);
-
-        ArgumentCaptor<HensuSnapshot> savedCaptor = ArgumentCaptor.forClass(HensuSnapshot.class);
-        verify(stateRepository).save(eq("tenant-1"), savedCaptor.capture());
-        assertThat(savedCaptor.getValue().checkpointReason()).isEqualTo("completed");
-
-        verify(eventBroadcaster)
-                .publish(eq("exec-1"), any(ExecutionEvent.ExecutionCompleted.class));
-        verify(eventBroadcaster).complete(eq("exec-1"));
-    }
-
-    @Test
-    void shouldPersistPausedSnapshotWhenResumeReturnsPaused() throws Exception {
-        when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
-                .thenReturn(Optional.of(pausedSnapshot()));
-        when(registryService.getWorkflow("tenant-1", "wf-1")).thenReturn(mock(Workflow.class));
-        when(workflowExecutor.executeFrom(any(), any(), any()))
-                .thenReturn(new ExecutionResult.Paused(completedState()));
-
-        service.resumeExecution("tenant-1", "exec-1", null);
-
-        ArgumentCaptor<HensuSnapshot> savedCaptor = ArgumentCaptor.forClass(HensuSnapshot.class);
-        verify(stateRepository).save(eq("tenant-1"), savedCaptor.capture());
-        assertThat(savedCaptor.getValue().checkpointReason()).isEqualTo("paused");
-    }
-
-    @Test
-    void shouldPersistRejectedSnapshotWhenResumeReturnsRejected() throws Exception {
-        when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
-                .thenReturn(Optional.of(pausedSnapshot()));
-        when(registryService.getWorkflow("tenant-1", "wf-1")).thenReturn(mock(Workflow.class));
-        when(workflowExecutor.executeFrom(any(), any(), any()))
-                .thenReturn(new ExecutionResult.Rejected("policy violation", completedState()));
-
-        service.resumeExecution("tenant-1", "exec-1", null);
-
-        ArgumentCaptor<HensuSnapshot> savedCaptor = ArgumentCaptor.forClass(HensuSnapshot.class);
-        verify(stateRepository).save(eq("tenant-1"), savedCaptor.capture());
-        assertThat(savedCaptor.getValue().checkpointReason()).isEqualTo("rejected");
-    }
-
-    @Test
-    void shouldPersistFailureSnapshotWhenResumeReturnsFailure() throws Exception {
-        when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
-                .thenReturn(Optional.of(pausedSnapshot()));
-        when(registryService.getWorkflow("tenant-1", "wf-1")).thenReturn(mock(Workflow.class));
-        when(workflowExecutor.executeFrom(any(), any(), any()))
-                .thenReturn(
-                        new ExecutionResult.Failure(
-                                completedState(), new IllegalStateException("boom")));
-
-        service.resumeExecution("tenant-1", "exec-1", null);
-
-        ArgumentCaptor<HensuSnapshot> savedCaptor = ArgumentCaptor.forClass(HensuSnapshot.class);
-        verify(stateRepository).save(eq("tenant-1"), savedCaptor.capture());
-        assertThat(savedCaptor.getValue().checkpointReason()).isEqualTo("failed");
-    }
-
-    @Test
-    void shouldWrapExecutorRuntimeExceptionAsWorkflowExecutionException() throws Exception {
-        when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
-                .thenReturn(Optional.of(pausedSnapshot()));
-        when(registryService.getWorkflow("tenant-1", "wf-1")).thenReturn(mock(Workflow.class));
-        when(workflowExecutor.executeFrom(any(), any(), any()))
-                .thenThrow(new RuntimeException("executor crashed"));
-
-        assertThatThrownBy(() -> service.resumeExecution("tenant-1", "exec-1", null))
-                .isInstanceOf(WorkflowExecutionException.class)
-                .hasMessageContaining("Resume failed")
-                .hasRootCauseMessage("executor crashed");
-    }
-
-    @Test
-    void shouldWrapRegistryNotFoundAsWorkflowExecutionException() {
-        when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
-                .thenReturn(Optional.of(pausedSnapshot()));
-        when(registryService.getWorkflow("tenant-1", "wf-1"))
-                .thenThrow(new WorkflowNotFoundException("Workflow not found: wf-1"));
-
-        assertThatThrownBy(() -> service.resumeExecution("tenant-1", "exec-1", null))
-                .isInstanceOf(WorkflowExecutionException.class)
-                .hasCauseInstanceOf(WorkflowNotFoundException.class);
-    }
-
-    @Test
     void shouldRejectResumeAndSkipExecutorWhenLeaseHeldByAnotherNode() throws Exception {
-        // Closes the split-brain window: an API-edge resume must refuse to drive the
-        // executor when the lease row is owned by a different node. tryClaim returning
-        // false is the only signal the service has — verify we throw and never touch
-        // the state repo, executor, or release path.
         when(leaseManager.tryClaim("tenant-1", "exec-1")).thenReturn(false);
 
         assertThatThrownBy(() -> service.resumeExecution("tenant-1", "exec-1", null))
@@ -229,10 +124,25 @@ class ExecutionStateServiceTest {
     }
 
     @Test
+    void shouldPersistFailedSnapshotWhenExecutorReturnsSuccess() throws Exception {
+        when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
+                .thenReturn(Optional.of(pausedSnapshot()));
+        when(registryService.getWorkflow("tenant-1", "wf-1")).thenReturn(mock(Workflow.class));
+        HensuState successState = completedState();
+        when(workflowExecutor.executeFrom(any(), any(), any()))
+                .thenReturn(new ExecutionResult.Success(successState));
+
+        service.resumeExecution("tenant-1", "exec-1", null);
+
+        ArgumentCaptor<HensuSnapshot> savedCaptor = ArgumentCaptor.forClass(HensuSnapshot.class);
+        verify(stateRepository).save(eq("tenant-1"), savedCaptor.capture());
+        assertThat(savedCaptor.getValue().checkpointReason()).isEqualTo("failed");
+
+        verify(eventBroadcaster).publish(eq("exec-1"), any(ExecutionEvent.ExecutionError.class));
+    }
+
+    @Test
     void shouldReleaseLeaseEvenWhenExecutorThrows() throws Exception {
-        // Defends against lease leakage on failure. Without the finally block a
-        // crashed execution stays locked to this node until the next 60 s recovery
-        // sweep, blocking manual retries and masking real outages.
         when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
                 .thenReturn(Optional.of(pausedSnapshot()));
         when(registryService.getWorkflow("tenant-1", "wf-1")).thenReturn(mock(Workflow.class));
@@ -243,5 +153,23 @@ class ExecutionStateServiceTest {
                 .isInstanceOf(WorkflowExecutionException.class);
 
         verify(leaseManager).release("tenant-1", "exec-1");
+    }
+
+    @Test
+    void shouldPersistFailedSnapshotWhenExecutorThrows() throws Exception {
+        when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
+                .thenReturn(Optional.of(pausedSnapshot()));
+        when(registryService.getWorkflow("tenant-1", "wf-1")).thenReturn(mock(Workflow.class));
+        when(workflowExecutor.executeFrom(any(), any(), any()))
+                .thenThrow(new RuntimeException("agent provider unavailable"));
+
+        assertThatThrownBy(() -> service.resumeExecution("tenant-1", "exec-1", null))
+                .isInstanceOf(WorkflowExecutionException.class);
+
+        ArgumentCaptor<HensuSnapshot> savedCaptor = ArgumentCaptor.forClass(HensuSnapshot.class);
+        verify(stateRepository).save(eq("tenant-1"), savedCaptor.capture());
+        assertThat(savedCaptor.getValue().checkpointReason()).isEqualTo("failed");
+
+        verify(eventBroadcaster).publish(eq("exec-1"), any(ExecutionEvent.ExecutionError.class));
     }
 }

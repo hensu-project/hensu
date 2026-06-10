@@ -21,7 +21,6 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
-import java.util.Map;
 import org.jboss.logging.Logger;
 
 /// REST API for workflow definition management.
@@ -116,11 +115,7 @@ public class WorkflowResource {
         Response.Status status = created ? Response.Status.CREATED : Response.Status.OK;
 
         return Response.status(status)
-                .entity(
-                        Map.of(
-                                "id", workflow.getId(),
-                                "version", workflow.getVersion(),
-                                "created", created))
+                .entity(new PushWorkflowResponse(workflow.getId(), workflow.getVersion(), created))
                 .build();
     }
 
@@ -186,9 +181,9 @@ public class WorkflowResource {
 
         List<Workflow> workflows = registryService.listWorkflows(tenantId);
 
-        List<Map<String, String>> summaries =
+        List<WorkflowSummary> summaries =
                 workflows.stream()
-                        .map(w -> Map.of("id", w.getId(), "version", w.getVersion()))
+                        .map(w -> new WorkflowSummary(w.getId(), w.getVersion()))
                         .toList();
 
         return Response.ok().entity(summaries).build();

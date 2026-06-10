@@ -18,7 +18,7 @@ class InMemoryWorkflowStateRepositoryTest {
     }
 
     private HensuSnapshot createSnapshot(
-            String workflowId, String executionId, String currentNodeId) {
+            String workflowId, String executionId, String currentNodeId, String checkpointReason) {
         return new HensuSnapshot(
                 workflowId,
                 executionId,
@@ -28,13 +28,13 @@ class InMemoryWorkflowStateRepositoryTest {
                 null,
                 null,
                 Instant.now(),
-                null);
+                checkpointReason);
     }
 
     @Test
     void shouldOverwriteSnapshotOnSameExecution() {
-        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "node-1"));
-        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "node-2"));
+        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "node-1", "paused"));
+        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "node-2", "paused"));
 
         var found = repository.findByExecutionId("tenant-1", "exec-1");
         assertThat(found).isPresent();
@@ -44,8 +44,8 @@ class InMemoryWorkflowStateRepositoryTest {
 
     @Test
     void shouldIsolateTenantData() {
-        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "node-1"));
-        repository.save("tenant-2", createSnapshot("wf-1", "exec-1", "node-2"));
+        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "node-1", "paused"));
+        repository.save("tenant-2", createSnapshot("wf-1", "exec-1", "node-2", "paused"));
 
         // Same executionId, different tenants – must not cross-contaminate
         assertThat(repository.findByExecutionId("tenant-1", "exec-1").orElseThrow().currentNodeId())
@@ -61,9 +61,9 @@ class InMemoryWorkflowStateRepositoryTest {
 
     @Test
     void shouldFilterPausedFromCompleted() {
-        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "node-1"));
-        repository.save("tenant-1", createSnapshot("wf-1", "exec-2", null)); // completed
-        repository.save("tenant-1", createSnapshot("wf-1", "exec-3", "node-2"));
+        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "node-1", "paused"));
+        repository.save("tenant-1", createSnapshot("wf-1", "exec-2", null, "completed"));
+        repository.save("tenant-1", createSnapshot("wf-1", "exec-3", "node-2", "paused"));
 
         List<HensuSnapshot> paused = repository.findPaused("tenant-1");
 
@@ -75,9 +75,9 @@ class InMemoryWorkflowStateRepositoryTest {
 
     @Test
     void shouldDeleteAllForTenantWithoutAffectingOthers() {
-        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "node-1"));
-        repository.save("tenant-1", createSnapshot("wf-1", "exec-2", "node-2"));
-        repository.save("tenant-2", createSnapshot("wf-1", "exec-3", "node-1"));
+        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "node-1", "paused"));
+        repository.save("tenant-1", createSnapshot("wf-1", "exec-2", "node-2", "paused"));
+        repository.save("tenant-2", createSnapshot("wf-1", "exec-3", "node-1", "paused"));
 
         int deleted = repository.deleteAllForTenant("tenant-1");
 
@@ -88,9 +88,9 @@ class InMemoryWorkflowStateRepositoryTest {
 
     @Test
     void shouldFindByWorkflowIdAcrossExecutions() {
-        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "node-1"));
-        repository.save("tenant-1", createSnapshot("wf-1", "exec-2", "node-2"));
-        repository.save("tenant-1", createSnapshot("wf-2", "exec-3", "node-1"));
+        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "node-1", "paused"));
+        repository.save("tenant-1", createSnapshot("wf-1", "exec-2", "node-2", "paused"));
+        repository.save("tenant-1", createSnapshot("wf-2", "exec-3", "node-1", "paused"));
 
         List<HensuSnapshot> found = repository.findByWorkflowId("tenant-1", "wf-1");
 

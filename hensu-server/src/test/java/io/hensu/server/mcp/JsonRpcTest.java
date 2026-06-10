@@ -159,6 +159,22 @@ class JsonRpcTest {
 
             assertThat(jsonRpc.parseParams(json)).isEmpty();
         }
+
+        @Test
+        void shouldReturnEmptyMapForArrayParams() {
+            String json =
+                    "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"test\",\"params\":[1,2,3]}";
+
+            assertThat(jsonRpc.parseParams(json)).isEmpty();
+        }
+
+        @Test
+        void shouldReturnEmptyMapForScalarParams() {
+            String json =
+                    "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"test\",\"params\":\"string\"}";
+
+            assertThat(jsonRpc.parseParams(json)).isEmpty();
+        }
     }
 
     @Nested

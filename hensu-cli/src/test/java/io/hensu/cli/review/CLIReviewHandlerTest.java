@@ -251,6 +251,28 @@ class CLIReviewHandlerTest {
                 .isEqualTo("Manual backtrack by reviewer");
     }
 
+    // — No-TTY / exhausted stdin ————————————————————————————————————————————
+
+    @Test
+    void shouldRejectWhenStdinExhausted() {
+        System.setProperty(CLIReviewHandler.INTERACTIVE_PROPERTY, "true");
+        CLIReviewHandler manager = new CLIReviewHandler(new Scanner(""), printStream, false);
+
+        ReviewOutcome outcome =
+                manager.requestReview(
+                        createStandardNode("test-node"),
+                        createSuccessResult(),
+                        createState(),
+                        new ExecutionHistory(),
+                        new ReviewConfig(ReviewMode.REQUIRED, true, false),
+                        createWorkflow());
+
+        assertThat(outcome).isInstanceOf(ReviewOutcome.Decided.class);
+        var decision = ((ReviewOutcome.Decided) outcome).decision();
+        assertThat(decision).isInstanceOf(ReviewDecision.Reject.class);
+        assertThat(((ReviewDecision.Reject) decision).reason()).contains("EOF");
+    }
+
     // — Helpers ———————————————————————————————————————————————————————————————
 
     private StandardNode createStandardNode(String id) {

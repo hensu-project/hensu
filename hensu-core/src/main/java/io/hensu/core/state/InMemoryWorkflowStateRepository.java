@@ -50,7 +50,9 @@ public final class InMemoryWorkflowStateRepository implements WorkflowStateRepos
             return List.of();
         }
 
-        return tenantSnapshots.values().stream().filter(s -> s.currentNodeId() != null).toList();
+        return tenantSnapshots.values().stream()
+                .filter(s -> s.currentNodeId() != null && "paused".equals(s.checkpointReason()))
+                .toList();
     }
 
     @Override

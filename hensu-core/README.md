@@ -340,7 +340,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   └── VarType.java                  # Type enum: STRING, NUMBER, BOOLEAN, LIST_STRING
 │   └── validation/
 │       ├── SubWorkflowGraphValidator.java # Load-time cycle + dangling-ref detection
-│       └── WorkflowValidator.java        # Load-time validator for writes + prompt {variable} refs
+│       └── WorkflowValidator.java        # Load-time validator for transition targets, writes, and prompt {variable} refs
 ├── rubric/                        # Quality evaluation engine
 │   ├── RubricEngine.java          # Evaluation orchestrator
 │   ├── model/                     # Rubric, Criterion, ScoreCondition, etc.
@@ -384,7 +384,8 @@ hensu-core/src/main/java/io/hensu/core/
 ├── util/
 │   ├── AgentOutputValidator.java  # LLM output safety checks (control chars, Unicode tricks, size)
 │   ├── JsonUtil.java              # Dependency-free JSON extraction utilities
-│   └── LogSanitizer.java         # Strips CR/LF from logged values to prevent log injection
+│   ├── LogSanitizer.java         # Strips CR/LF from logged values to prevent log injection
+│   └── ShellEscaper.java         # Escapes strings for safe shell interpolation in command templates
 └── state/                         # Execution state and persistence
     ├── HensuState.java            # Mutable runtime state during execution
     ├── HensuSnapshot.java         # Immutable checkpoint record for persistence

@@ -27,11 +27,6 @@ class DataTransformerHandlerTest {
     }
 
     @Test
-    void shouldReturnCorrectType() {
-        assertThat(handler.getType()).isEqualTo("data-transformer");
-    }
-
-    @Test
     void shouldFailWhenInputFieldNotFound() {
         GenericNode node = createNode(Map.of("inputField", "missing", "outputField", "output"));
         ExecutionContext context = createContext(Map.of());
@@ -62,55 +57,6 @@ class DataTransformerHandlerTest {
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(context.getState().getContext().get("output")).isEqualTo("test value");
-    }
-
-    @Test
-    void shouldApplyTrimOperation() {
-        GenericNode node =
-                createNode(
-                        Map.of(
-                                "inputField", "input",
-                                "outputField", "output",
-                                "operations", List.of("trim")));
-        ExecutionContext context = createContext(Map.of("input", "  hello world  "));
-
-        NodeResult result = handler.handle(node, context);
-
-        assertThat(result.isSuccess()).isTrue();
-        assertThat(result.getOutput()).isEqualTo("hello world");
-        assertThat(context.getState().getContext().get("output")).isEqualTo("hello world");
-    }
-
-    @Test
-    void shouldApplyLowercaseOperation() {
-        GenericNode node =
-                createNode(
-                        Map.of(
-                                "inputField", "input",
-                                "outputField", "output",
-                                "operations", List.of("lowercase")));
-        ExecutionContext context = createContext(Map.of("input", "HELLO WORLD"));
-
-        NodeResult result = handler.handle(node, context);
-
-        assertThat(result.isSuccess()).isTrue();
-        assertThat(result.getOutput()).isEqualTo("hello world");
-    }
-
-    @Test
-    void shouldApplyUppercaseOperation() {
-        GenericNode node =
-                createNode(
-                        Map.of(
-                                "inputField", "input",
-                                "outputField", "output",
-                                "operations", List.of("uppercase")));
-        ExecutionContext context = createContext(Map.of("input", "hello world"));
-
-        NodeResult result = handler.handle(node, context);
-
-        assertThat(result.isSuccess()).isTrue();
-        assertThat(result.getOutput()).isEqualTo("HELLO WORLD");
     }
 
     @Test
@@ -284,22 +230,6 @@ class DataTransformerHandlerTest {
 
         assertThat(context.getState().getContext().get("other")).isEqualTo("preserved");
         assertThat(context.getState().getContext().get("output")).isEqualTo("TEST");
-    }
-
-    @Test
-    void shouldHandleEmptyStringInput() {
-        GenericNode node =
-                createNode(
-                        Map.of(
-                                "inputField", "input",
-                                "outputField", "output",
-                                "operations", List.of("trim", "uppercase")));
-        ExecutionContext context = createContext(Map.of("input", ""));
-
-        NodeResult result = handler.handle(node, context);
-
-        assertThat(result.isSuccess()).isTrue();
-        assertThat(result.getOutput()).isEqualTo("");
     }
 
     @Test

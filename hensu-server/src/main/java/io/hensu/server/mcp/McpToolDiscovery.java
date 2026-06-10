@@ -71,7 +71,17 @@ public class McpToolDiscovery {
     public List<ToolDefinition> discoverTools(String endpoint) throws McpException {
         Objects.requireNonNull(endpoint, "endpoint must not be null");
 
-        return toolCache.computeIfAbsent(endpoint, this::fetchAndConvert);
+        List<ToolDefinition> cached = toolCache.get(endpoint);
+        if (cached != null) {
+            return cached;
+        }
+        List<ToolDefinition> fetched = fetchAndConvert(endpoint);
+        toolCache.putIfAbsent(endpoint, fetched);
+        // Re-read: if invalidateCache runs after putIfAbsent, the entry is removed.
+        // Returning the get result (null) lets this caller use its fetched copy once
+        // while keeping the cache empty — next caller will re-fetch fresh data.
+        List<ToolDefinition> winner = toolCache.get(endpoint);
+        return winner != null ? winner : fetched;
     }
 
     /// Invalidates the tool cache for the given endpoint.

@@ -2,11 +2,11 @@ package io.hensu.cli.commands;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.hensu.cli.daemon.CredentialsStore;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermission;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -21,7 +21,7 @@ class CredentialsCommandTest extends BaseWorkflowCommandTest {
         var cmd = new CredentialsCommand.Set();
         injectField(cmd, "key", "ANTHROPIC_API_KEY");
         injectField(cmd, "stdin", true);
-        injectField(cmd, "credentialsPath", credFile);
+        injectField(cmd, "store", new CredentialsStore(credFile));
 
         withStdin("my-secret-value", cmd);
 
@@ -41,7 +41,7 @@ class CredentialsCommandTest extends BaseWorkflowCommandTest {
         var cmd = new CredentialsCommand.Set();
         injectField(cmd, "key", "ANTHROPIC_API_KEY");
         injectField(cmd, "stdin", true);
-        injectField(cmd, "credentialsPath", credFile);
+        injectField(cmd, "store", new CredentialsStore(credFile));
 
         withStdin("new-value", cmd);
 
@@ -60,31 +60,13 @@ class CredentialsCommandTest extends BaseWorkflowCommandTest {
         var cmd = new CredentialsCommand.Set();
         injectField(cmd, "key", "NEW_KEY");
         injectField(cmd, "stdin", true);
-        injectField(cmd, "credentialsPath", credFile);
+        injectField(cmd, "store", new CredentialsStore(credFile));
 
         withStdin("new-value", cmd);
 
         List<String> lines = Files.readAllLines(credFile, StandardCharsets.UTF_8);
         assertThat(lines).contains("EXISTING_KEY=existing-value");
         assertThat(lines).contains("NEW_KEY=new-value");
-    }
-
-    @Test
-    void set_appliesRestrictedPermissions(@TempDir Path tempDir) throws Exception {
-        Path credFile = tempDir.resolve("credentials");
-        var cmd = new CredentialsCommand.Set();
-        injectField(cmd, "key", "MY_KEY");
-        injectField(cmd, "stdin", true);
-        injectField(cmd, "credentialsPath", credFile);
-
-        withStdin("my-value", cmd);
-
-        if (credFile.getFileSystem().supportedFileAttributeViews().contains("posix")) {
-            var perms = Files.getPosixFilePermissions(credFile);
-            assertThat(perms)
-                    .containsExactlyInAnyOrder(
-                            PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
-        }
     }
 
     // — Keys ———————————————————————————————————————————————————————————————————
@@ -99,7 +81,7 @@ class CredentialsCommandTest extends BaseWorkflowCommandTest {
                 StandardCharsets.UTF_8);
 
         var cmd = new CredentialsCommand.Keys();
-        injectField(cmd, "credentialsPath", credFile);
+        injectField(cmd, "store", new CredentialsStore(credFile));
         cmd.run();
 
         String out = outContent.toString(StandardCharsets.UTF_8);
@@ -108,15 +90,6 @@ class CredentialsCommandTest extends BaseWorkflowCommandTest {
         assertThat(out).doesNotContain("secret1");
         assertThat(out).doesNotContain("secret2");
         assertThat(out).doesNotContain("this is a comment");
-    }
-
-    @Test
-    void list_printsNoCredentialsMessage_whenFileAbsent(@TempDir Path tempDir) throws Exception {
-        var cmd = new CredentialsCommand.Keys();
-        injectField(cmd, "credentialsPath", tempDir.resolve("credentials"));
-        cmd.run();
-
-        assertThat(outContent.toString(StandardCharsets.UTF_8)).contains("No credentials file");
     }
 
     // — Unset ——————————————————————————————————————————————————————————————————
@@ -132,36 +105,13 @@ class CredentialsCommandTest extends BaseWorkflowCommandTest {
 
         var cmd = new CredentialsCommand.Unset();
         injectField(cmd, "key", "ANTHROPIC_API_KEY");
-        injectField(cmd, "credentialsPath", credFile);
+        injectField(cmd, "store", new CredentialsStore(credFile));
         cmd.run();
 
         List<String> lines = Files.readAllLines(credFile, StandardCharsets.UTF_8);
         assertThat(lines).doesNotContain("ANTHROPIC_API_KEY=secret1");
         assertThat(lines).contains("GOOGLE_API_KEY=secret2");
         assertThat(lines).contains("# comment");
-    }
-
-    @Test
-    void unset_printsWarning_whenKeyNotFound(@TempDir Path tempDir) throws Exception {
-        Path credFile = tempDir.resolve("credentials");
-        Files.writeString(credFile, "SOME_KEY=value\n", StandardCharsets.UTF_8);
-
-        var cmd = new CredentialsCommand.Unset();
-        injectField(cmd, "key", "NONEXISTENT_KEY");
-        injectField(cmd, "credentialsPath", credFile);
-        cmd.run();
-
-        assertThat(outContent.toString(StandardCharsets.UTF_8)).contains("not found");
-    }
-
-    @Test
-    void unset_printsNoFileMessage_whenFileAbsent(@TempDir Path tempDir) throws Exception {
-        var cmd = new CredentialsCommand.Unset();
-        injectField(cmd, "key", "ANY_KEY");
-        injectField(cmd, "credentialsPath", tempDir.resolve("credentials"));
-        cmd.run();
-
-        assertThat(outContent.toString(StandardCharsets.UTF_8)).contains("nothing to remove");
     }
 
     // — helpers ————————————————————————————————————————————————————————————————

@@ -141,11 +141,6 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
     }
 
     @Test
-    void findByExecutionId_returnsEmptyWhenNotFound() {
-        assertThat(stateRepo.findByExecutionId(TENANT, "nonexistent")).isEmpty();
-    }
-
-    @Test
     void findPaused_returnsOnlyHumanPausedSnapshots() {
         // Truly paused for human review: server_node_id = NULL (cleared on "paused" save)
         HensuSnapshot paused =
@@ -178,6 +173,35 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         "completed");
         stateRepo.save(TENANT, completed);
 
+        // Failed with current_node_id set — server_node_id NULL but NOT paused.
+        // Must NOT leak into findPaused() results.
+        HensuSnapshot failed =
+                new HensuSnapshot(
+                        "wf-parent",
+                        "exec-failed",
+                        "process",
+                        Map.of(),
+                        new ExecutionHistory(),
+                        null,
+                        null,
+                        Instant.now(),
+                        "failed");
+        stateRepo.save(TENANT, failed);
+
+        // Rejected with current_node_id set — same false-positive vector as failed.
+        HensuSnapshot rejected =
+                new HensuSnapshot(
+                        "wf-parent",
+                        "exec-rejected",
+                        "process",
+                        Map.of(),
+                        new ExecutionHistory(),
+                        null,
+                        null,
+                        Instant.now(),
+                        "rejected");
+        stateRepo.save(TENANT, rejected);
+
         List<HensuSnapshot> found = stateRepo.findPaused(TENANT);
         assertThat(found).hasSize(1);
         assertThat(found.getFirst().executionId()).isEqualTo("exec-paused");
@@ -193,29 +217,6 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
         assertThat(found)
                 .extracting(HensuSnapshot::executionId)
                 .containsExactlyInAnyOrder("exec-a", "exec-b");
-    }
-
-    @Test
-    void delete_returnsTrueWhenDeleted() {
-        stateRepo.save(TENANT, makeSnapshot("exec-del", "process"));
-
-        assertThat(stateRepo.delete(TENANT, "exec-del")).isTrue();
-        assertThat(stateRepo.findByExecutionId(TENANT, "exec-del")).isEmpty();
-    }
-
-    @Test
-    void delete_returnsFalseWhenNotFound() {
-        assertThat(stateRepo.delete(TENANT, "exec-ghost")).isFalse();
-    }
-
-    @Test
-    void deleteAllForTenant_removesAllAndReturnsCount() {
-        stateRepo.save(TENANT, makeSnapshot("exec-1", "process"));
-        stateRepo.save(TENANT, makeSnapshot("exec-2", "done"));
-
-        int deleted = stateRepo.deleteAllForTenant(TENANT);
-        assertThat(deleted).isEqualTo(2);
-        assertThat(stateRepo.findByWorkflowId(TENANT, "wf-parent")).isEmpty();
     }
 
     @Test

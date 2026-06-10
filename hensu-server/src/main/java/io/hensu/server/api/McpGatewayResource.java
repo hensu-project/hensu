@@ -16,7 +16,6 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import java.util.Map;
 import org.jboss.logging.Logger;
 import org.jboss.resteasy.reactive.RestStreamElementType;
 
@@ -184,9 +183,9 @@ public class McpGatewayResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Response status() {
         return Response.ok(
-                        Map.of(
-                                "connectedClients", sessionManager.connectedClientCount(),
-                                "pendingRequests", sessionManager.pendingRequestCount()))
+                        new GatewayStatusResponse(
+                                sessionManager.connectedClientCount(),
+                                sessionManager.pendingRequestCount()))
                 .build();
     }
 
@@ -198,21 +197,13 @@ public class McpGatewayResource {
     @Path("/clients/{clientId}/status")
     @Produces(MediaType.APPLICATION_JSON)
     public Response clientStatus(@PathParam("clientId") @ValidId String clientId) {
-        boolean connected = sessionManager.isConnected(clientId);
         McpSessionManager.ClientInfo info = sessionManager.getClientInfo(clientId);
 
-        if (connected && info != null) {
-            return Response.ok(
-                            Map.of(
-                                    "clientId",
-                                    clientId,
-                                    "connected",
-                                    true,
-                                    "connectedDurationMs",
-                                    info.connectedDurationMs()))
-                    .build();
-        } else {
-            return Response.ok(Map.of("clientId", clientId, "connected", false)).build();
-        }
+        ClientStatusResponse body =
+                (info != null && sessionManager.isConnected(clientId))
+                        ? ClientStatusResponse.connected(clientId, info.connectedDurationMs())
+                        : ClientStatusResponse.disconnected(clientId);
+
+        return Response.ok(body).build();
     }
 }

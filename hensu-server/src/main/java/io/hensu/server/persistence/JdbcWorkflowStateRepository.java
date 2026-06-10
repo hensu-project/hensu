@@ -73,14 +73,17 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
             WHERE tenant_id = ? AND execution_id = ?
             """;
 
-    /// Only returns executions that are safely paused for human review
-    /// (server_node_id IS NULL ensures active checkpoints are excluded).
+    /// Only returns executions that are safely paused for human review.
+    /// {@code server_node_id IS NULL} excludes active checkpoints;
+    /// {@code checkpoint_reason = 'paused'} excludes terminal states
+    /// (completed, failed, rejected) that also have a null server lease.
     private static final String SQL_FIND_PAUSED =
             """
             SELECT execution_id, workflow_id, current_node_id, context, history,
                    active_plan, phase, checkpoint_reason, created_at
             FROM runtime.execution_states
-            WHERE tenant_id = ? AND current_node_id IS NOT NULL AND server_node_id IS NULL
+            WHERE tenant_id = ? AND current_node_id IS NOT NULL
+                  AND server_node_id IS NULL AND checkpoint_reason = 'paused'
             ORDER BY created_at
             """;
 

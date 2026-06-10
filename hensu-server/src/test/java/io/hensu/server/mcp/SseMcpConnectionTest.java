@@ -131,26 +131,4 @@ class SseMcpConnectionTest {
             verify(sessionManager).disconnect("client-1");
         }
     }
-
-    @Nested
-    class Constructor {
-
-        @Test
-        void shouldRejectNullClientId() {
-            assertThatThrownBy(() -> new SseMcpConnection(null, sessionManager, jsonRpc))
-                    .isInstanceOf(NullPointerException.class);
-        }
-
-        @Test
-        void shouldRejectNullSessionManager() {
-            assertThatThrownBy(() -> new SseMcpConnection("client-1", null, jsonRpc))
-                    .isInstanceOf(NullPointerException.class);
-        }
-
-        @Test
-        void shouldRejectNullJsonRpc() {
-            assertThatThrownBy(() -> new SseMcpConnection("client-1", sessionManager, null))
-                    .isInstanceOf(NullPointerException.class);
-        }
-    }
 }

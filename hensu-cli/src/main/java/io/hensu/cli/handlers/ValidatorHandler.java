@@ -9,8 +9,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /// Generic node handler for validating context field values against constraints.
 ///
@@ -37,6 +39,10 @@ public class ValidatorHandler implements GenericNodeHandler {
 
     private static final Logger logger = Logger.getLogger(ValidatorHandler.class.getName());
     public static final String TYPE = "validator";
+    static final int MAX_PATTERN_LENGTH = 256;
+    static final int MAX_INPUT_LENGTH_FOR_REGEX = 10_000;
+    private static final int MAX_CACHED_PATTERNS = 64;
+    private final ConcurrentHashMap<String, Pattern> patternCache = new ConcurrentHashMap<>();
 
     @Override
     public String getType() {
@@ -76,10 +82,27 @@ public class ValidatorHandler implements GenericNodeHandler {
 
             // Pattern check
             String pattern = (String) config.get("pattern");
-            if (pattern != null && !Pattern.matches(pattern, fieldValue)) {
-                String errorMessage =
-                        (String) config.getOrDefault("errorMessage", "Invalid format");
-                errors.add(errorMessage);
+            if (pattern != null) {
+                if (pattern.length() > MAX_PATTERN_LENGTH) {
+                    errors.add(
+                            "Validation pattern exceeds maximum length of " + MAX_PATTERN_LENGTH);
+                } else if (fieldValue.length() > MAX_INPUT_LENGTH_FOR_REGEX) {
+                    errors.add(fieldName + " exceeds maximum length for pattern validation");
+                } else {
+                    try {
+                        Pattern compiled = patternCache.computeIfAbsent(pattern, Pattern::compile);
+                        if (patternCache.size() > MAX_CACHED_PATTERNS) {
+                            patternCache.clear();
+                        }
+                        if (!compiled.matcher(fieldValue).matches()) {
+                            String errorMessage =
+                                    (String) config.getOrDefault("errorMessage", "Invalid format");
+                            errors.add(errorMessage);
+                        }
+                    } catch (PatternSyntaxException e) {
+                        errors.add("Invalid validation pattern: " + e.getDescription());
+                    }
+                }
             }
         }
 

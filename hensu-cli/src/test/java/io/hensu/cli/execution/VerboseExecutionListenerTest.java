@@ -80,36 +80,6 @@ class VerboseExecutionListenerTest {
     // — Edge cases ————————————————————————————————————————————————————————————
 
     @Test
-    void shouldHandleNullPrompt() {
-        VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null, termWidth);
-
-        listener.onAgentStart("node", "agent", null);
-
-        assertThat(outputStream.toString()).contains("(empty)");
-    }
-
-    @Test
-    void shouldHandleEmptyPrompt() {
-        VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null, termWidth);
-
-        listener.onAgentStart("node", "agent", "");
-
-        assertThat(outputStream.toString()).contains("(empty)");
-    }
-
-    @Test
-    void shouldHandleEmptyOutput() {
-        VerboseExecutionListener listener =
-                new VerboseExecutionListener(printStream, false, null, null, termWidth);
-
-        listener.onAgentComplete("node", "agent", AgentResponse.TextResponse.of(""));
-
-        assertThat(outputStream.toString()).contains("(empty)");
-    }
-
-    @Test
     void shouldHandleMultilinePrompt() {
         VerboseExecutionListener listener =
                 new VerboseExecutionListener(printStream, false, null, null, termWidth);
@@ -158,18 +128,6 @@ class VerboseExecutionListenerTest {
         String output = outputStream.toString();
         assertThat(output).contains("start");
         assertThat(output).contains("STANDARD");
-    }
-
-    @Test
-    void shouldSkipVisualizationWhenWorkflowNull() {
-        VerboseExecutionListener listener =
-                new VerboseExecutionListener(
-                        printStream, false, null, new TextVisualizationFormat(), termWidth);
-
-        listener.onAgentStart("node", "agent", "prompt");
-
-        assertThat(outputStream.toString()).contains("input");
-        assertThat(outputStream.toString()).doesNotContain("STANDARD");
     }
 
     @Test

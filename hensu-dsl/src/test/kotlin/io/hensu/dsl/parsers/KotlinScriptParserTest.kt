@@ -1,6 +1,12 @@
 package io.hensu.dsl.parsers
 
+import io.hensu.core.review.ReviewConfig
+import io.hensu.core.review.ReviewMode
+import io.hensu.core.rubric.model.ComparisonOperator
 import io.hensu.core.workflow.node.StandardNode
+import io.hensu.core.workflow.transition.FailureTransition
+import io.hensu.core.workflow.transition.ScoreTransition
+import io.hensu.core.workflow.transition.SuccessTransition
 import io.hensu.dsl.WorkingDirectory
 import io.hensu.dsl.builders.Models
 import java.nio.file.Files
@@ -131,8 +137,93 @@ class KotlinScriptParserTest {
         val reviewNode = graph.nodes["review"] as StandardNode
         assertThat(reviewNode.writes).containsExactly("review")
 
+        // Verify review node transitions: onSuccess → quality-check, onFailure retry 2 → reject
+        val successRule = reviewNode.transitionRules.filterIsInstance<SuccessTransition>().single()
+        assertThat(successRule.targetNode).isEqualTo("quality-check")
+
+        val failureRule = reviewNode.transitionRules.filterIsInstance<FailureTransition>().single()
+        assertThat(failureRule.retryCount).isEqualTo(2)
+        assertThat(failureRule.thenTargetNode).isEqualTo("reject")
+
+        // Verify review node review config: OPTIONAL
+        assertThat(reviewNode.reviewConfig)
+            .isEqualTo(ReviewConfig(ReviewMode.OPTIONAL, false, false))
+
+        // Verify quality-check node score transitions
+        val qualityNode = graph.nodes["quality-check"] as StandardNode
+        val scoreRule = qualityNode.transitionRules.filterIsInstance<ScoreTransition>().single()
+        val conditions = scoreRule.conditions
+        assertThat(conditions).hasSize(4)
+        assertThat(conditions[0].operator).isEqualTo(ComparisonOperator.GTE)
+        assertThat(conditions[0].targetNode).isEqualTo("excellent")
+        assertThat(conditions[3].operator).isEqualTo(ComparisonOperator.LT)
+        assertThat(conditions[3].targetNode).isEqualTo("reject")
+
+        // Verify quality-check review config: REQUIRED with backtrack + edit
+        assertThat(qualityNode.reviewConfig)
+            .isEqualTo(ReviewConfig(ReviewMode.REQUIRED, true, true))
+
+        // Verify final-check review config: REQUIRED with backtrack, no edit
+        val finalNode = graph.nodes["final-check"] as StandardNode
+        assertThat(finalNode.reviewConfig).isEqualTo(ReviewConfig(ReviewMode.REQUIRED, true, false))
+
         val schema = graph.stateSchema
         assertThat(schema).isNotNull()
         assertThat(schema.variables.map { it.name() }).containsExactly("code", "review", "verdict")
+    }
+
+    @Test
+    fun `parser rejects dangling goto node references`() {
+        Files.createDirectories(tempDir.resolve("workflows"))
+        Files.createDirectories(tempDir.resolve("prompts"))
+        Files.createDirectories(tempDir.resolve("rubrics"))
+
+        val brokenContent =
+            """
+            fun broken() {
+                val workflow = workflow("BrokenRefs") {
+                    description = "Has dangling goto"
+                    version = "1.0.0"
+
+                    agents {
+                        agent("worker") {
+                            role = "Worker"
+                            model = Models.GPT_4
+                            temperature = 0.5
+                        }
+                    }
+
+                    state {
+                        variable("output", VarType.STRING, "result")
+                    }
+
+                    graph {
+                        start at "step-one"
+
+                        node("step-one") {
+                            agent = "worker"
+                            prompt = "Do work"
+                            writes("output")
+                            onSuccess goto "nonexistent-node"
+                        }
+
+                        end("done", ExitStatus.SUCCESS)
+                    }
+                }
+            }
+        """
+                .trimIndent()
+
+        val workflowFile = tempDir.resolve("workflows/broken.kt")
+        workflowFile.writeText(brokenContent)
+
+        val workingDir = WorkingDirectory.of(tempDir)
+
+        assertThatThrownBy { kotlinParser.parse(workingDir, "broken") }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasRootCauseMessage(
+                "Workflow 'brokenrefs' has schema violations:\n" +
+                    "Node 'step-one' has transition to 'nonexistent-node' which does not exist in the workflow"
+            )
     }
 }

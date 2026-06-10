@@ -1,5 +1,6 @@
 package io.hensu.server.workflow;
 
+import io.quarkus.runtime.annotations.RegisterForReflection;
 import java.util.Map;
 
 /// The public output of a completed or paused execution.
@@ -11,5 +12,6 @@ import java.util.Map;
 /// @param workflowId the workflow definition identifier, never null
 /// @param status `COMPLETED` or `PAUSED`, never null
 /// @param output public context variables produced by the workflow, never null, may be empty
+@RegisterForReflection
 public record ExecutionOutput(
         String executionId, String workflowId, String status, Map<String, Object> output) {}
