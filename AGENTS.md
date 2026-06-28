@@ -22,6 +22,7 @@ Hensu is a modular AI workflow engine on Java 25 + Kotlin DSL. Core design princ
 3. **Sealed interfaces** for results: `ExecutionResult` → `Completed | Paused | Rejected | Failure | Success`
 4. **Template resolution**: `{variable}` syntax in prompts, resolved via `SimpleTemplateResolver`
 5. **`@DslMarker`** on Kotlin builders to prevent scope leakage
+6. **Engine variables** (`score`, `approved`, `recommendation`): engine-managed, never declared in `writes()` or `state{}`. Surfaced to the next node by the `EngineVariablePromptEnricher` injectors (`FeedbackContextInjector` appends prior feedback as a `### Previous Feedback` section). A backtracking `revise` arm preserves them; a plain forward `goto` clears them unless marked `withFeedback`.
 
 ## Key Architectural Rules
 
@@ -32,7 +33,7 @@ Hensu is a modular AI workflow engine on Java 25 + Kotlin DSL. Core design princ
 5. **Server MCP-only**: server never executes bash locally, only MCP requests to external tools.
 6. **Storage in core**: repository interfaces and in-memory defaults live in `hensu-core`. JDBC impls live in `hensu-server/persistence/` as plain classes (not CDI beans). `HensuEnvironmentProducer` conditionally wires JDBC vs in-memory. Server exposes core components via `@Produces @Singleton` — never instantiates directly.
 7. **API separation**: `/api/v1/workflows` (definitions) and `/api/v1/executions` (runtime) are distinct resources.
-8. **JWT authentication**: SmallRye JWT bearer auth. Tenant identity extracted from `tenant_id` claim via `RequestTenantResolver`. CLI sends `Authorization: Bearer <token>` via `--token` or `hensu.server.token` config. Dev/test mode disables auth (`hensu.tenant.default`). RSA keys live outside the repo (e.g. `~/.hensu/`).
+8. **JWT authentication**: SmallRye JWT bearer auth. Tenant identity extracted from `tenant_id` claim via `RequestTenantResolver`. CLI sends `Authorization: Bearer <token>` via `--token` or `hensu.server.token` config. JWT is required in every profile **except `inmem`** (integration tests), which disables auth and uses `hensu.tenant.default`. RSA keys live outside the repo (e.g. `~/.hensu/`).
 
 ## CLI
 

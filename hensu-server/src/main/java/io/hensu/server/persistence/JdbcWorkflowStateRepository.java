@@ -19,8 +19,8 @@ import javax.sql.DataSource;
 /// PostgreSQL-backed workflow execution state repository.
 ///
 /// Stores {@link HensuSnapshot} records with JSONB columns for `context`,
-/// `history`, and `active_plan`. Each execution has at most one row —
-/// checkpoints overwrite the previous state (UPSERT semantics).
+/// `history`, `active_plan`, and `retry_counters`. Each execution has at most one
+/// row — checkpoints overwrite the previous state (UPSERT semantics).
 ///
 /// ### Lease Management
 /// `save()` automatically maintains the distributed recovery lease:
@@ -50,9 +50,9 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
             """
             INSERT INTO runtime.execution_states
                 (tenant_id, execution_id, workflow_id, current_node_id,
-                 context, history, active_plan, phase, checkpoint_reason, created_at,
-                 server_node_id, last_heartbeat_at)
-            VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?, ?)
+                 context, history, active_plan, phase, retry_counters,
+                 checkpoint_reason, created_at, server_node_id, last_heartbeat_at)
+            VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?, ?)
             ON CONFLICT (tenant_id, execution_id)
             DO UPDATE SET
                 current_node_id   = EXCLUDED.current_node_id,
@@ -60,6 +60,7 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
                 history           = EXCLUDED.history,
                 active_plan       = EXCLUDED.active_plan,
                 phase             = EXCLUDED.phase,
+                retry_counters    = EXCLUDED.retry_counters,
                 checkpoint_reason = EXCLUDED.checkpoint_reason,
                 server_node_id    = EXCLUDED.server_node_id,
                 last_heartbeat_at = EXCLUDED.last_heartbeat_at
@@ -67,7 +68,7 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
 
     private static final String SQL_FIND_BY_EXECUTION_ID =
             """
-            SELECT workflow_id, current_node_id, context, history,
+            SELECT workflow_id, current_node_id, context, retry_counters, history,
                    active_plan, phase, checkpoint_reason, created_at
             FROM runtime.execution_states
             WHERE tenant_id = ? AND execution_id = ?
@@ -79,7 +80,7 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
     /// (completed, failed, rejected) that also have a null server lease.
     private static final String SQL_FIND_PAUSED =
             """
-            SELECT execution_id, workflow_id, current_node_id, context, history,
+            SELECT execution_id, workflow_id, current_node_id, context, retry_counters, history,
                    active_plan, phase, checkpoint_reason, created_at
             FROM runtime.execution_states
             WHERE tenant_id = ? AND current_node_id IS NOT NULL
@@ -89,7 +90,7 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
 
     private static final String SQL_FIND_BY_WORKFLOW_ID =
             """
-            SELECT execution_id, workflow_id, current_node_id, context, history,
+            SELECT execution_id, workflow_id, current_node_id, context, retry_counters, history,
                    active_plan, phase, checkpoint_reason, created_at
             FROM runtime.execution_states
             WHERE tenant_id = ? AND workflow_id = ?
@@ -105,6 +106,8 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
     // --- Fields ---
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
+    private static final TypeReference<Map<String, Integer>> RETRY_COUNTERS_TYPE =
+            new TypeReference<>() {};
 
     private final JdbcSupport jdbc;
     private final ObjectMapper objectMapper;
@@ -148,11 +151,12 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
                                     ? writeJson(snapshot.activePlan())
                                     : null);
                     ps.setString(8, writeJson(snapshot.phase()));
-                    ps.setString(9, snapshot.checkpointReason());
+                    ps.setString(9, writeJson(snapshot.retryCounters()));
+                    ps.setString(10, snapshot.checkpointReason());
                     ps.setObject(
-                            10, OffsetDateTime.ofInstant(snapshot.createdAt(), ZoneOffset.UTC));
-                    ps.setString(11, leaseNodeId);
-                    ps.setObject(12, heartbeatAt);
+                            11, OffsetDateTime.ofInstant(snapshot.createdAt(), ZoneOffset.UTC));
+                    ps.setString(12, leaseNodeId);
+                    ps.setObject(13, heartbeatAt);
                 },
                 "Failed to save execution state: " + snapshot.executionId());
     }
@@ -227,6 +231,8 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
 
     private HensuSnapshot mapSnapshot(String executionId, ResultSet rs) throws SQLException {
         Map<String, Object> context = readJson(rs.getString("context"), MAP_TYPE);
+        Map<String, Integer> retryCounters =
+                readJson(rs.getString("retry_counters"), RETRY_COUNTERS_TYPE);
         ExecutionHistory history = readJson(rs.getString("history"), ExecutionHistory.class);
         String activePlanJson = rs.getString("active_plan");
         Plan activePlan = activePlanJson != null ? readJson(activePlanJson, Plan.class) : null;
@@ -243,6 +249,7 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
                 executionId,
                 rs.getString("current_node_id"),
                 new HashMap<>(context),
+                retryCounters,
                 history,
                 activePlan,
                 phase,

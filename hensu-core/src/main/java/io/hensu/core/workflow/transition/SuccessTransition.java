@@ -9,10 +9,16 @@ import io.hensu.core.state.HensuState;
 /// Returns the target node when the node result status is {@link ResultStatus#SUCCESS}.
 /// This is the most common transition type for happy-path workflow progression.
 ///
-/// @param targetNode the node ID to transition to on success, not null
+/// @param targetNode   the node ID to transition to on success, not null
+/// @param withFeedback when true, recommendation survives this transition
 /// @see FailureTransition for the complementary failure case
 /// @see TransitionRule for transition evaluation contract
-public record SuccessTransition(String targetNode) implements TransitionRule {
+public record SuccessTransition(String targetNode, boolean withFeedback) implements TransitionRule {
+
+    /// Creates a success transition without feedback preservation.
+    public SuccessTransition(String targetNode) {
+        this(targetNode, false);
+    }
 
     /// Evaluates whether execution succeeded.
     ///

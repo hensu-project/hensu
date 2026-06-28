@@ -4,6 +4,7 @@ import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.state.HensuState;
 import java.util.Map;
+import java.util.Set;
 
 /// Boolean approval transition that routes based on the `approved` engine variable.
 ///
@@ -26,14 +27,26 @@ import java.util.Map;
 /// }
 /// ```
 ///
-/// @param expected   `true` to match approval; `false` to match rejection
-/// @param targetNode node to route to when the context value equals `expected`, not null
+/// @param expected       `true` to match approval; `false` to match rejection
+/// @param targetNode     node to route to when the context value equals `expected`, not null
+/// @param withFeedback   when true, recommendation survives this transition
 /// @see TransitionRule for the evaluation contract
 /// @see ScoreTransition for numeric score-based routing
 /// @see io.hensu.core.workflow.state.WorkflowStateSchema#ENGINE_VARIABLES
 ///
 /// @implNote **Immutable.** Safe for concurrent evaluation in parallel workflow branches.
-public record ApprovalTransition(boolean expected, String targetNode) implements TransitionRule {
+public record ApprovalTransition(boolean expected, String targetNode, boolean withFeedback)
+        implements TransitionRule {
+
+    /// Creates an approval transition without feedback preservation.
+    public ApprovalTransition(boolean expected, String targetNode) {
+        this(expected, targetNode, false);
+    }
+
+    @Override
+    public Set<String> requiredEngineVars() {
+        return Set.of(EngineVariables.APPROVED, EngineVariables.RECOMMENDATION);
+    }
 
     @Override
     public String evaluate(HensuState state, NodeResult result) {

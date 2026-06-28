@@ -12,18 +12,21 @@ import java.util.List;
 ///
 /// ### Default pipeline
 /// {@link #DEFAULT} runs in this order:
-/// 1. {@link RubricPromptInjector} — injects rubric criteria when `node.getRubric()` is set
-/// 2. {@link ScoreVariableInjector} — injects `score` requirement when a
+/// 1. {@link FeedbackContextInjector} — injects previous engine feedback
+///    ({@link io.hensu.core.execution.EngineVariables#RECOMMENDATION}) when present so the
+///    agent sees prior evaluation context before output-format requirements
+/// 2. {@link RubricPromptInjector} — injects rubric criteria when `node.getRubric()` is set
+/// 3. {@link ScoreVariableInjector} — injects `score` requirement when a
 ///    {@link io.hensu.core.workflow.transition.ScoreTransition} exists or consensus branch
 ///    needs self-scoring
-/// 3. {@link ApprovalVariableInjector} — injects `approved` requirement when an
+/// 4. {@link ApprovalVariableInjector} — injects `approved` requirement when an
 ///    {@link io.hensu.core.workflow.transition.ApprovalTransition} exists or consensus branch
 ///    needs self-scoring
-/// 4. {@link RecommendationVariableInjector} — injects `recommendation` requirement when a
+/// 5. {@link RecommendationVariableInjector} — injects `recommendation` requirement when a
 ///    score/approval transition exists or consensus branch needs self-scoring
-/// 5. {@link WritesVariableInjector} — injects field requirements for all user-declared
+/// 6. {@link WritesVariableInjector} — injects field requirements for all user-declared
 ///    {@code writes()} variables so the LLM produces extractable JSON keys
-/// 6. {@link YieldsVariableInjector} — injects field requirements for branch
+/// 7. {@link YieldsVariableInjector} — injects field requirements for branch
 ///    {@code yields()} variables so the LLM produces extractable domain output
 ///
 /// ### Extension
@@ -39,6 +42,7 @@ public final class EngineVariablePromptEnricher {
     public static final EngineVariablePromptEnricher DEFAULT =
             new EngineVariablePromptEnricher(
                     List.of(
+                            new FeedbackContextInjector(),
                             new RubricPromptInjector(),
                             new ScoreVariableInjector(),
                             new ApprovalVariableInjector(),

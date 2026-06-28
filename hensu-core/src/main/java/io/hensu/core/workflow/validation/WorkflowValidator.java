@@ -1,12 +1,12 @@
 package io.hensu.core.workflow.validation;
 
-import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.node.SubWorkflowNode;
 import io.hensu.core.workflow.state.WorkflowStateSchema;
-import io.hensu.core.workflow.transition.*;
+import io.hensu.core.workflow.transition.TransitionRule;
+import io.hensu.core.workflow.transition.TransitionTargets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -110,7 +110,7 @@ public final class WorkflowValidator {
             if (!(node instanceof StandardNode standardNode)) continue;
 
             for (TransitionRule rule : standardNode.getTransitionRules()) {
-                for (String target : extractTargets(rule)) {
+                for (String target : TransitionTargets.of(rule)) {
                     if (!nodeIds.contains(target)) {
                         errors.add(
                                 "Node '"
@@ -122,18 +122,6 @@ public final class WorkflowValidator {
                 }
             }
         }
-    }
-
-    private static List<String> extractTargets(TransitionRule rule) {
-        return switch (rule) {
-            case SuccessTransition s -> List.of(s.targetNode());
-            case FailureTransition f ->
-                    f.targetNode() != null ? List.of(f.targetNode()) : List.of();
-            case ScoreTransition s ->
-                    s.conditions().stream().map(ScoreCondition::targetNode).toList();
-            case ApprovalTransition a -> List.of(a.targetNode());
-            case AlwaysTransition _, RubricFailTransition _ -> List.of();
-        };
     }
 
     private static void throwErrors(Workflow workflow, List<String> errors) {

@@ -196,4 +196,14 @@ public final class Rubric {
             return new Rubric(this);
         }
     }
+
+    @Override
+    public boolean equals(Object o) {
+        return this == o || (o instanceof Rubric r && Objects.equals(id, r.id));
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hashCode(id);
+    }
 }

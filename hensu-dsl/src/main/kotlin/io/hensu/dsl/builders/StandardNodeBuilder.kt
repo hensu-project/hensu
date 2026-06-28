@@ -7,6 +7,8 @@ import io.hensu.core.review.ReviewConfig
 import io.hensu.core.review.ReviewMode
 import io.hensu.core.rubric.RubricParser
 import io.hensu.core.workflow.node.StandardNode
+import io.hensu.core.workflow.transition.ApprovalTransition
+import io.hensu.core.workflow.transition.SuccessTransition
 import io.hensu.dsl.WorkingDirectory
 import io.hensu.dsl.extensions.resolveAsPrompt
 import io.hensu.dsl.extensions.resolveAsRubric
@@ -24,9 +26,10 @@ import io.hensu.dsl.extensions.resolveAsRubric
  *     prompt = "research.md"
  *     rubric = "quality"
  *     writes("findings", "confidence")
- *     review(ReviewMode.OPTIONAL)
+ *     review(ReviewMode.REQUIRED)
  *     onSuccess goto "write"
  *     onFailure retry 2 otherwise "error"
+ *     onRejection revise "research" retry 3 otherwise "escalate"
  * }
  * ```
  *
@@ -59,9 +62,13 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
     private var planningConfig: PlanningConfig = PlanningConfig.disabled()
     private var planFailureTarget: String? = null
 
-    /** Define transition on success. Usage: onSuccess goto "next_node" */
-    infix fun onSuccess.goto(targetNode: String) {
+    /**
+     * Define transition on success. Usage: `onSuccess goto "next_node"` or `onSuccess goto
+     * "next_node" withFeedback`
+     */
+    infix fun onSuccess.goto(targetNode: String): GotoHandle {
         transitionBuilder.addSuccessTransition(targetNode)
+        return GotoHandle(transitionBuilder.rulesRef()) { SuccessTransition(targetNode, true) }
     }
 
     /** Define direct failure transition without retry. Usage: onFailure goto "error-node" */
@@ -83,15 +90,40 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
     val onRejection: onRejection
         get() = io.hensu.dsl.builders.onRejection
 
-    /** Define transition on agent approval. Usage: onApproval goto "finalize" */
-    infix fun onApproval.goto(targetNode: String) {
+    /**
+     * Define transition on agent approval. Usage: `onApproval goto "finalize"` or `onApproval goto
+     * "finalize" withFeedback`
+     */
+    infix fun onApproval.goto(targetNode: String): GotoHandle {
         transitionBuilder.addApprovalTransition(true, targetNode)
+        return GotoHandle(transitionBuilder.rulesRef()) {
+            ApprovalTransition(true, targetNode, true)
+        }
     }
 
-    /** Define transition on agent rejection. Usage: onRejection goto "improve" */
-    infix fun onRejection.goto(targetNode: String) {
+    /**
+     * Define transition on agent rejection. Usage: `onRejection goto "improve"` or `onRejection
+     * goto "improve" withFeedback`
+     */
+    infix fun onRejection.goto(targetNode: String): GotoHandle {
         transitionBuilder.addApprovalTransition(false, targetNode)
+        return GotoHandle(transitionBuilder.rulesRef()) {
+            ApprovalTransition(false, targetNode, true)
+        }
     }
+
+    /**
+     * Defines a bounded-revise transition on agent rejection.
+     *
+     * Retries the producer node up to a budget, then escalates to a fallback target.
+     *
+     * Usage: `onRejection revise "producer" retry 3 otherwise "escalate"`
+     *
+     * @param producerNode the node to re-execute on each retry
+     * @return builder for specifying retry budget and escalation target
+     */
+    infix fun onRejection.revise(producerNode: String): ReviseBuilder =
+        transitionBuilder.createReviseBuilder(ApprovalTransition(false, producerNode), "approval")
 
     /**
      * Declares the semantic state variable names this node produces.
@@ -127,8 +159,8 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
      * Usage:
      * ```kotlin
      * onScore {
-     *     whenScore greaterThan 80.0 goto "success"
-     *     whenScore lessThan 60.0 goto "failure"
+     *     whenScore greaterThanOrEqual 80.0 goto "success"
+     *     whenScore lessThan 80.0 revise "producer" retry 3 otherwise "escalate"
      * }
      * ```
      */

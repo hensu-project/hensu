@@ -229,7 +229,7 @@ class ReviewTerminal {
 
             print("Reason for backtracking (optional): ");
             String reason = readInput();
-            if (reason == null || reason.isBlank()) reason = "Manual backtrack by reviewer";
+            if (reason == null || reason.isBlank()) reason = "Reviewer backtrack";
 
             Map<String, Object> editedContext = null;
             if (data.contextVariables() != null) {

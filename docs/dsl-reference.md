@@ -17,6 +17,8 @@ This document provides a complete reference for the Hensu Kotlin DSL used to def
   - [Sub-Workflow Node](#sub-workflow-node)
   - [End Node](#end-node)
 - [Transitions](#transitions)
+  - [Bounded Revise (`revise`)](#bounded-revise-revise)
+  - [Feedback Preservation (`withFeedback`)](#feedback-preservation-withfeedback)
 - [State Variables (`writes`)](#state-variables-writes)
 - [State Schema](#state-schema)
 - [Engine Variables](#engine-variables)
@@ -172,13 +174,14 @@ node("node-id") {
 
 #### Standard Node Functions
 
-| Function             | Description                                                                                                |
-|----------------------|------------------------------------------------------------------------------------------------------------|
-| `writes("a", "b")`   | Declares state variables this node produces. Single name: full text stored. Multiple: JSON keys extracted. |
-| `review(mode)`       | Configures human review checkpoint                                                                         |
-| `onApproval goto`    | Routes when the `approved` engine variable is `true`. Falls through if absent or non-boolean.              |
-| `onRejection goto`   | Routes when the `approved` engine variable is `false`. Falls through if absent or non-boolean.             |
-| `onPlanFailure goto` | Routes to a fallback node when plan execution fails (planning nodes only)                                  |
+| Function             | Description                                                                                                      |
+|----------------------|------------------------------------------------------------------------------------------------------------------|
+| `writes("a", "b")`   | Declares state variables this node produces. Single name: full text stored. Multiple: JSON keys extracted.       |
+| `review(mode)`       | Configures human review checkpoint                                                                               |
+| `onApproval goto`    | Routes when the `approved` engine variable is `true`. Falls through if absent or non-boolean.                    |
+| `onRejection goto`   | Routes when the `approved` engine variable is `false`. Falls through if absent or non-boolean.                   |
+| `onRejection revise` | Backtracks to a producer with a bounded retry budget on rejection. See [Bounded Revise](#bounded-revise-revise). |
+| `onPlanFailure goto` | Routes to a fallback node when plan execution fails (planning nodes only)                                        |
 
 ### Parallel Node
 
@@ -553,6 +556,8 @@ onScore {
 }
 ```
 
+Any arm may use `revise` instead of `goto` to backtrack to a producer with a bounded retry budget — see [Bounded Revise](#bounded-revise-revise).
+
 ### Score Operators
 
 | Operator             | Description                        |
@@ -579,11 +584,94 @@ node("classify") {
 
 Falls through (no match) if the `approved` key is absent or not a boolean. Both transitions are optional — you can use only `onApproval`, only `onRejection`, or combine with `onScore`.
 
+### Bounded Revise (`revise`)
+
+A `revise` transition backtracks to a producer node to fix its output, but bounds the loop with a retry budget. While the budget is unspent the workflow re-runs the producer; once the budget is exhausted it escalates to a fallback node instead of looping forever.
+
+```kotlin
+revise "producer-node" retry 3 otherwise "escalate-node"
+```
+
+| Segment             | Meaning                                                                |
+|---------------------|------------------------------------------------------------------------|
+| `revise "producer"` | Node to re-execute on each attempt (the backtrack target)              |
+| `retry N`           | Maximum attempts before escalation                                     |
+| `otherwise "node"`  | Escalation target once the budget is exhausted                         |
+
+`revise` is available on three triggers, each tracking its own per-node retry budget:
+
+```kotlin
+// Approval (standard node): reviewer keeps rejecting → re-run the producer, then escalate
+onRejection revise "write" retry 3 otherwise "escalate"
+
+// No consensus (parallel node): branches disagree → re-run the producer, then escalate
+onNoConsensus revise "draft" retry 3 otherwise "manual-review"
+
+// Score (standard node): a low-scoring arm backtracks instead of routing forward
+onScore {
+    whenScore greaterThanOrEqual 70.0 goto "publish"
+    whenScore lessThan 70.0 revise "write" retry 3 otherwise "escalate"
+}
+```
+
+The retry budget is namespaced per node and per trigger kind (`approval`, `consensus`, `score`), so a node carrying more than one `revise` rule tracks each independently. Counters reset when the node transitions forward (any non-revise move).
+
+Backtracking always forwards the `recommendation` feedback to the producer (see [Feedback Preservation](#feedback-preservation-withfeedback) and [Engine Variables](#engine-variables)) — that is the point of a revise loop. Contrast with `onFailure retry N otherwise` (blind self-loop on application failure, no backtrack, no feedback).
+
+### Feedback Preservation (`withFeedback`)
+
+By default, forward transitions clear all engine variables (`score`, `approved`, `recommendation`) from the state context. Append `withFeedback` to a transition to keep the `recommendation` value so the target node sees evaluation feedback from the previous node.
+
+```kotlin
+// Score-based: writer sees why it scored low
+onScore {
+    whenScore lessThan 70.0 goto "write" withFeedback
+    whenScore greaterThanOrEqual 70.0 goto "publish"
+}
+
+// Approval-based: rejected node sees reviewer reasoning
+onRejection goto "revise" withFeedback
+
+// Success: forward feedback to the next node
+onSuccess goto "next" withFeedback
+```
+
+`withFeedback` is available on all transition types except `onFailure` (application exceptions produce no agent feedback).
+
+#### With `revise` (bounded retry)
+
+Backtrack transitions from `revise` always preserve recommendation — that is the purpose of retry loops. The `withFeedback` keyword on `revise` itself is accepted as a no-op so users do not need to remember the distinction:
+
+```kotlin
+// These are equivalent — backtrack always preserves feedback
+onRejection revise "write" retry 3 otherwise "escalate"
+onRejection revise "write" withFeedback retry 3 otherwise "escalate"
+```
+
+To preserve feedback on the **escalation** edge (when retries are exhausted), append `withFeedback` after `otherwise`:
+
+```kotlin
+onRejection revise "write" retry 3 otherwise "escalate" withFeedback
+```
+
+Both positions are independent and composable:
+
+```kotlin
+onRejection revise "write" withFeedback retry 3 otherwise "escalate" withFeedback
+// ↑ no-op (backtrack already preserves)    ↑ meaningful (escalation preserves)
+```
+
 ### Consensus Transitions (Parallel Nodes)
 
 ```kotlin
 onConsensus goto "approved"
 onNoConsensus goto "rejected"
+```
+
+`onNoConsensus` also accepts `revise` to backtrack to a producer with a bounded retry budget instead of routing forward — see [Bounded Revise](#bounded-revise-revise):
+
+```kotlin
+onNoConsensus revise "draft" retry 3 otherwise "manual-review"
 ```
 
 ### Fork Completion Transition
@@ -688,11 +776,13 @@ workflow("ContentPipeline") {
 
 Engine variables are managed entirely by the Hensu engine — they are injected automatically into the LLM prompt and extracted from the JSON response. They are **always implicitly valid** in `{placeholder}` references. Do **not** declare them in `state { }` or `writes()`.
 
-| Variable         | Type    | When present                                                      | Description                                                                                      |
-|------------------|---------|-------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
-| `score`          | Number  | Node has `onScore { }` routing (rubric-evaluated or self-scoring) | Quality score 0–100. Drives `onScore` transitions.                                               |
-| `approved`       | Boolean | Node has `onApproval` / `onRejection` routing                     | `true` = approved, `false` = rejected. Falls through if absent.                                  |
-| `recommendation` | String  | Node has `onScore { }` or `onApproval` / `onRejection` routing    | Improvement feedback or review reasoning. Available as `{recommendation}` in downstream prompts. |
+| Variable         | Type    | When present                                                      | Description                                                                                                              |
+|------------------|---------|-------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
+| `score`          | Number  | Node has `onScore { }` routing (rubric-evaluated or self-scoring) | Quality score 0–100. Drives `onScore` transitions.                                                                       |
+| `approved`       | Boolean | Node has `onApproval` / `onRejection` routing                     | `true` = approved, `false` = rejected. Falls through if absent.                                                          |
+| `recommendation` | String  | Node has `onScore { }` or `onApproval` / `onRejection` routing    | Improvement feedback or review reasoning. Auto-surfaced to the next node when preserved across a transition (see below). |
+
+The "When present" column lists the **standard-node** routing that drives injection. On a **parallel node**, all three are produced instead by branch self-scoring on vote-based strategies (`MAJORITY_VOTE`, `WEIGHTED_VOTE`, `UNANIMOUS`) — never under `JUDGE_DECIDES`, regardless of the `onConsensus` / `onNoConsensus` transition declared. See [Rubric-Based Consensus](#rubric-based-consensus).
 
 ### How engine variables flow
 
@@ -712,9 +802,9 @@ flowchart TD
     linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
-### Using `{recommendation}` in downstream prompts
+### Feedback reaches the next node automatically
 
-Because `recommendation` is an engine variable, you reference it as a `{placeholder}` without declaring it anywhere:
+When a `recommendation` value is preserved across a transition (any backtrack `revise`, or a forward move marked [`withFeedback`](#feedback-preservation-withfeedback)), the engine appends it to the target node's prompt as a `### Previous Feedback` section before execution. The producer sees the prior feedback with no prompt changes on your part:
 
 ```kotlin
 node("score-content") {
@@ -724,16 +814,14 @@ node("score-content") {
 
     onScore {
         whenScore greaterThanOrEqual 80.0 goto "publish"
-        whenScore lessThan 80.0 goto "revise"
+        whenScore lessThan 80.0 revise "revise" retry 3 otherwise "escalate"
     }
 }
 
 node("revise") {
     agent = "writer"
-    prompt = """
-        Revise the article based on this feedback: {recommendation}
-        Original article: {article}
-    """.trimIndent()
+    // The engine appends the prior feedback as a "### Previous Feedback" section automatically.
+    prompt = "Revise the article: {article}"
 
     writes("article")
     onSuccess goto "score-content"

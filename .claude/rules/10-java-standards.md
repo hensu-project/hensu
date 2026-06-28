@@ -18,6 +18,7 @@ Generic SOLID/KISS/YAGNI/DRY apply silently. Only project-specific rules below.
 
 - Domain results → `sealed interface` (e.g. `ExecutionResult`, `TransitionStatus`), consumed via `switch` pattern matching.
 - All domain models immutable; construct via `hensu-serialization` builder mixins.
+- Never `instanceof` on `TransitionRule` subtypes outside `io.hensu.core.workflow.transition`, the serializers, and the visualizers – consume `requiredEngineVars()` (engine-variable wiring) or `trigger()` (inner-rule evaluation/labeling) so decorators keep their semantics.
 
 ## Kotlin DSL
 

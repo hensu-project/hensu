@@ -6,6 +6,7 @@ import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.state.HensuState;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /// Score-based transition rule that evaluates conditions against the agent-reported score.
 ///
@@ -14,14 +15,26 @@ import java.util.Map;
 /// JSON response (via `writes("score")` declared on the node).
 ///
 /// @param conditions list of score conditions to evaluate in order, not null
+/// @param withFeedback when true, recommendation survives this transition
 /// @see ScoreCondition for condition matching logic
 /// @see TransitionRule for transition evaluation contract
 ///
 /// @implNote **Immutable after construction.** The conditions list is defensively copied.
-public record ScoreTransition(List<ScoreCondition> conditions) implements TransitionRule {
+public record ScoreTransition(List<ScoreCondition> conditions, boolean withFeedback)
+        implements TransitionRule {
+
+    /// Creates a score transition without feedback preservation.
+    public ScoreTransition(List<ScoreCondition> conditions) {
+        this(conditions, false);
+    }
 
     public ScoreTransition {
         conditions = List.copyOf(conditions);
+    }
+
+    @Override
+    public Set<String> requiredEngineVars() {
+        return Set.of(EngineVariables.SCORE, EngineVariables.RECOMMENDATION);
     }
 
     @Override

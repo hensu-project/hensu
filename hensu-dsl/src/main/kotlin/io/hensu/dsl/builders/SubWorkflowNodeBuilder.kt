@@ -2,6 +2,7 @@ package io.hensu.dsl.builders
 
 import io.hensu.core.execution.EngineVariables
 import io.hensu.core.workflow.node.SubWorkflowNode
+import io.hensu.core.workflow.transition.SuccessTransition
 
 /**
  * DSL builder for sub-workflow delegation nodes.
@@ -81,9 +82,13 @@ class SubWorkflowNodeBuilder(private val id: String) : BaseNodeBuilder, Transiti
         writes = names.toList()
     }
 
-    /** Define transition on success. Usage: `onSuccess goto "next_node"` */
-    infix fun onSuccess.goto(targetNode: String) {
+    /**
+     * Define transition on success. Usage: `onSuccess goto "next_node"` or `onSuccess goto
+     * "next_node" withFeedback`
+     */
+    infix fun onSuccess.goto(targetNode: String): GotoHandle {
         transitionBuilder.addSuccessTransition(targetNode)
+        return GotoHandle(transitionBuilder.rulesRef()) { SuccessTransition(targetNode, true) }
     }
 
     /** Define transition on failure. Usage: `onFailure goto "error_node"` */

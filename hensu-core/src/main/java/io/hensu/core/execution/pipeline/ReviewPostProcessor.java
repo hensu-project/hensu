@@ -1,6 +1,7 @@
 package io.hensu.core.execution.pipeline;
 
 import io.hensu.core.execution.result.BacktrackEvent;
+import io.hensu.core.execution.result.BacktrackType;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.resume.ResumeInput;
@@ -162,6 +163,7 @@ public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
                                 .from(fromNodeId)
                                 .to(targetStep)
                                 .reason(backtrack.getReason())
+                                .type(BacktrackType.MANUAL)
                                 .build());
 
         return ProcessorOutcome.CONTINUE;

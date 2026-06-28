@@ -137,8 +137,9 @@ curl -X POST http://localhost:8080/api/v1/executions \
 ## REST API
 
 All API and MCP endpoints require a valid JWT bearer token (`Authorization: Bearer <jwt>`).
-Tenant identity is extracted from the `tenant_id` claim. In dev/test mode, authentication
-is disabled and a default tenant is used (see [Local Development](#local-development)).
+Tenant identity is extracted from the `tenant_id` claim. JWT is required in every profile
+except `inmem` (the integration-test profile), where authentication is disabled and a default
+tenant is used (see [Local Development](#local-development)).
 
 ### Workflow Definition Management
 
@@ -174,18 +175,18 @@ Runtime operations for starting and managing workflow executions (client integra
 
 Implements MCP (Model Context Protocol) over SSE using a "split-pipe" architecture:
 
-- **Downstream (SSE)**: Hensu pushes JSON-RPC tool call requests to connected clients
-- **Upstream (HTTP POST)**: Clients send JSON-RPC responses back (requests time out after 60 s if no response is received — see `McpSessionManager.DEFAULT_TIMEOUT`)
+- **Downstream (SSE)**: the Hensu server pushes JSON-RPC tool call requests to connected tenant clients
+- **Upstream (HTTP POST)**: tenant clients relay each request to their own MCP servers and post the JSON-RPC response back (requests time out after 60 s if no response is received — see `McpSessionManager.DEFAULT_TIMEOUT`)
 
 ```mermaid
 flowchart LR
-    subgraph engine["Hensu Engine"]
+    subgraph server["Hensu Server"]
         direction TB
         send(["sendRequest()"])
         handle(["handleResponse\n(Future.done)"])
     end
 
-    subgraph client["Tenant Client (MCP Server)"]
+    subgraph client["Tenant Client"]
         direction TB
         es(["EventSource"])
         post(["POST /message"])
@@ -194,7 +195,7 @@ flowchart LR
     send -->|"SSE (tools/call)"| es
     post -->|"POST (result/error)"| handle
 
-    style engine fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style server fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
     style client fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
     style send fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style handle fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
@@ -498,6 +499,25 @@ hensu-server/
 # Run JDBC repo tests (requires Docker for Testcontainers PostgreSQL)
 ./gradlew :hensu-server:test --tests "*.persistence.*"
 ```
+
+## Native Image
+
+`hensu-server` ships as a GraalVM native image built by Quarkus. Because `hensu-core` carries no
+serialization metadata, every reflective access Jackson needs is registered explicitly in the
+`config/*NativeConfig` classes — never in the core or DSL modules.
+
+```bash
+# Native build (requires GraalVM JDK 25+ with native-image; takes several minutes)
+./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native
+
+# Run the binary (inmem profile needs no PostgreSQL)
+QUARKUS_PROFILE=inmem ./hensu-server/build/hensu-server-*-runner
+```
+
+For day-to-day work use JVM mode (`./gradlew :hensu-server:quarkusDev`) and reserve native builds
+for release verification. See the [Server Developer Guide — GraalVM Native Image](../docs/developer-guide-server.md#graalvm-native-image)
+for the reflection-registration patterns, the `CoreModelNativeConfig` decision ladder, and resource
+bundling rules.
 
 ## Dependencies
 

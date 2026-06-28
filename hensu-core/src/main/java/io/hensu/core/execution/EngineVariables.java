@@ -18,10 +18,21 @@ import java.util.Set;
 /// - **approved** – boolean, drives {@code ApprovalTransition} and consensus voting
 /// - **recommendation** – string, justification for score/approval decisions
 ///
+/// ### Lifecycle – single owner
+/// {@link io.hensu.core.execution.pipeline.TransitionPostProcessor} is the sole
+/// owner of engine variable cleanup in the state context:
+/// - **Forward transition** – clears all engine vars via {@link #all()}
+/// - **Backtrack transition** – clears score and approved; keeps recommendation
+///   so {@link io.hensu.core.execution.enricher.FeedbackContextInjector} can
+///   surface it in the backtracked node's prompt
+///
+/// No other component (executors, enrichers) should remove engine vars from state.
+///
 /// @see io.hensu.core.execution.enricher.ScoreVariableInjector
 /// @see io.hensu.core.execution.enricher.ApprovalVariableInjector
 /// @see io.hensu.core.execution.enricher.RecommendationVariableInjector
 /// @see io.hensu.core.execution.parallel.ConsensusEvaluator
+/// @see io.hensu.core.execution.pipeline.TransitionPostProcessor
 public final class EngineVariables {
 
     /// Numeric score (0–100) for quality evaluation and consensus.
@@ -42,6 +53,13 @@ public final class EngineVariables {
     private static final Set<String> ENGINE_VAR_SET = Set.of(SCORE, APPROVED, RECOMMENDATION);
 
     private EngineVariables() {}
+
+    /// Returns an unmodifiable set of all engine variable names.
+    ///
+    /// @return unmodifiable set containing all engine variable names
+    public static Set<String> all() {
+        return ENGINE_VAR_SET;
+    }
 
     /// Checks whether the given name is a reserved engine variable.
     ///

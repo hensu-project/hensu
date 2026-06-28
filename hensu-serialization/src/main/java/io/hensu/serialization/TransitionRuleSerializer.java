@@ -13,7 +13,11 @@ import java.io.Serial;
 ///
 /// Emitted JSON shape per subtype:
 /// - **`SuccessTransition`**: `{"type":"success","targetNode":"..."}`
-/// - **`FailureTransition`**: `{"type":"failure","retryCount":N,"targetNode":"..."}`
+/// - **`FailureTransition`**: `{"type":"failure","targetNode":"..."|null}`
+/// - **`NoConsensusTransition`**: `{"type":"noConsensus","targetNode":"..."}`
+/// - **`BoundedTransition`**:
+/// `{"type":"bounded","namespace":"...","budget":N,"otherwise":"...","inner":{...}}`
+///   — the `inner` field is a recursively serialized `TransitionRule`
 /// - **`AlwaysTransition`**: `{"type":"always"}`
 /// - **`ScoreTransition`**: `{"type":"score","conditions":[...]}` — each condition written
 ///   manually: `operator` (string), `value` (number|null), `range` (object|null), `targetNode`
@@ -49,8 +53,26 @@ class TransitionRuleSerializer extends StdSerializer<TransitionRule> {
             }
             case FailureTransition t -> {
                 gen.writeStringField("type", "failure");
-                gen.writeNumberField("retryCount", t.retryCount());
+                if (t.targetNode() != null) {
+                    gen.writeStringField("targetNode", t.targetNode());
+                } else {
+                    gen.writeNullField("targetNode");
+                }
+            }
+            case NoConsensusTransition t -> {
+                gen.writeStringField("type", "noConsensus");
                 gen.writeStringField("targetNode", t.targetNode());
+            }
+            case BoundedTransition t -> {
+                gen.writeStringField("type", "bounded");
+                gen.writeStringField("namespace", t.namespace());
+                gen.writeNumberField("budget", t.budget());
+                gen.writeStringField("otherwise", t.otherwise());
+                if (t.escalationWithFeedback()) {
+                    gen.writeBooleanField("escalationWithFeedback", true);
+                }
+                gen.writeFieldName("inner");
+                serialize(t.inner(), gen, provider);
             }
             case AlwaysTransition _ -> gen.writeStringField("type", "always");
             case ScoreTransition t -> {
@@ -84,6 +106,10 @@ class TransitionRuleSerializer extends StdSerializer<TransitionRule> {
                 gen.writeBooleanField("expected", t.expected());
                 gen.writeStringField("targetNode", t.targetNode());
             }
+        }
+
+        if (!(rule instanceof BoundedTransition) && rule.withFeedback()) {
+            gen.writeBooleanField("withFeedback", true);
         }
 
         gen.writeEndObject();

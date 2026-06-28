@@ -4,6 +4,7 @@
  * This workflow demonstrates:
  * - Parallel execution of reviewers with different weights
  * - Weighted vote consensus: weighted approval ratio must meet threshold
+ * - Bounded revise on no-consensus: retries up to 2 times before escalating
  * - Senior reviewer has higher weight (influence) than junior reviewers
  * - Branch yields: each reviewer produces domain feedback
  * - All yields merge into context regardless of vote outcome
@@ -100,7 +101,7 @@ fun workflow() = workflow("weighted-vote-test") {
             }
 
             onConsensus goto "revise"
-            onNoConsensus goto "rejected"
+            onNoConsensus revise "write-docs" retry 2 otherwise "rejected"
         }
 
         node("revise") {

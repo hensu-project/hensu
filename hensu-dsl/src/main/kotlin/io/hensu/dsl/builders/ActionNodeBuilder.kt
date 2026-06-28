@@ -2,6 +2,7 @@ package io.hensu.dsl.builders
 
 import io.hensu.core.execution.action.Action
 import io.hensu.core.workflow.node.ActionNode
+import io.hensu.core.workflow.transition.SuccessTransition
 
 /**
  * DSL builder for action nodes.
@@ -101,9 +102,13 @@ class ActionNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMar
         actions.add(Action.Execute(commandId))
     }
 
-    /** Define transition on success. Usage: `onSuccess goto "next_node"` */
-    infix fun onSuccess.goto(targetNode: String) {
+    /**
+     * Define transition on success. Usage: `onSuccess goto "next_node"` or `onSuccess goto
+     * "next_node" withFeedback`
+     */
+    infix fun onSuccess.goto(targetNode: String): GotoHandle {
         transitionBuilder.addSuccessTransition(targetNode)
+        return GotoHandle(transitionBuilder.rulesRef()) { SuccessTransition(targetNode, true) }
     }
 
     /** Define direct failure transition without retry. Usage: `onFailure goto "error-node"` */

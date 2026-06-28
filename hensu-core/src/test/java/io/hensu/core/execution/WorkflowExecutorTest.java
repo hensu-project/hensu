@@ -103,7 +103,7 @@ class WorkflowExecutorTest extends WorkflowExecutorTestBase {
                         .transitionRules(
                                 List.of(
                                         new SuccessTransition("success-end"),
-                                        new FailureTransition(0, "failure-end")))
+                                        new FailureTransition("failure-end")))
                         .build();
         var workflow =
                 WorkflowTest.TestWorkflowBuilder.create("test")

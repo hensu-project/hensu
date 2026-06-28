@@ -21,6 +21,7 @@ class HensuSnapshotTest {
                         "exec-1",
                         "current-node",
                         Map.of("key", "value"),
+                        Map.of(),
                         new ExecutionHistory(),
                         null,
                         null,

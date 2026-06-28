@@ -7,9 +7,7 @@ import io.hensu.core.util.AgentOutputValidator;
 import io.hensu.core.util.JsonUtil;
 import io.hensu.core.workflow.node.GenericNode;
 import io.hensu.core.workflow.node.StandardNode;
-import io.hensu.core.workflow.transition.ApprovalTransition;
-import io.hensu.core.workflow.transition.ScoreTransition;
-import java.io.Serial;
+import io.hensu.core.workflow.transition.TransitionRule;
 import java.util.*;
 import java.util.logging.Logger;
 
@@ -22,7 +20,8 @@ import java.util.logging.Logger;
 ///
 /// ### Engine variables
 /// `score`, `approved`, and `recommendation` are extracted automatically based on transitions.
-/// `score` → {@link ScoreTransition}, `approved` → {@link ApprovalTransition},
+/// `score` → {@link io.hensu.core.workflow.transition.ScoreTransition},
+/// `approved` → {@link io.hensu.core.workflow.transition.ApprovalTransition},
 /// `recommendation` → either transition (scoring and approval both require justification).
 /// Developers do not declare these in `writes` — the engine infers them from the graph.
 ///
@@ -85,17 +84,9 @@ public final class OutputExtractionPostProcessor implements PostNodeExecutionPro
             List<String> engineVars = engineVarsFor(standardNode);
 
             if (!writes.isEmpty() || !engineVars.isEmpty()) {
-                List<String> allKeys =
-                        new ArrayList<>(
-                                new LinkedHashSet<>(writes) {
-                                    @Serial
-                                    private static final long serialVersionUID =
-                                            6441855807738151353L;
-
-                                    {
-                                        addAll(engineVars);
-                                    }
-                                });
+                Set<String> keySet = new LinkedHashSet<>(writes);
+                keySet.addAll(engineVars);
+                List<String> allKeys = new ArrayList<>(keySet);
 
                 if (engineVars.isEmpty() && writes.size() == 1) {
                     // Single domain write, no engine vars: fall back to raw text if JSON misses key
@@ -118,17 +109,15 @@ public final class OutputExtractionPostProcessor implements PostNodeExecutionPro
     }
 
     private List<String> engineVarsFor(StandardNode node) {
-        List<String> vars = new ArrayList<>();
-        boolean hasScore = node.getRubric() != null;
-        boolean hasApproval = false;
-        for (var rule : node.getTransitionRules()) {
-            if (rule instanceof ScoreTransition) hasScore = true;
-            else if (rule instanceof ApprovalTransition) hasApproval = true;
+        Set<String> vars = new LinkedHashSet<>();
+        if (node.getRubric() != null) {
+            vars.add(EngineVariables.SCORE);
+            vars.add(EngineVariables.RECOMMENDATION);
         }
-        if (hasScore) vars.add(EngineVariables.SCORE);
-        if (hasApproval) vars.add(EngineVariables.APPROVED);
-        if (hasScore || hasApproval) vars.add(EngineVariables.RECOMMENDATION);
-        return vars;
+        for (TransitionRule rule : node.getTransitionRules()) {
+            vars.addAll(rule.requiredEngineVars());
+        }
+        return List.copyOf(vars);
     }
 
     private ProcessorOutcome rejectOutput(HensuState state, String nodeId, String reason) {

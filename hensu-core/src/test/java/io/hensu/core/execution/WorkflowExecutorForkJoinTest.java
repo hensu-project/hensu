@@ -443,7 +443,7 @@ class WorkflowExecutorForkJoinTest extends WorkflowExecutorTestBase {
                         .transitionRules(
                                 List.of(
                                         new SuccessTransition("end"),
-                                        new FailureTransition(0, "fail-end")))
+                                        new FailureTransition("fail-end")))
                         .build());
         nodes.put("end", end("end"));
         nodes.put("fail-end", failEnd("fail-end"));

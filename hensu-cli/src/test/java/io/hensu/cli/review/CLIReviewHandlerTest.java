@@ -248,7 +248,7 @@ class CLIReviewHandlerTest {
         var decision = ((ReviewOutcome.Decided) outcome).decision();
         assertThat(decision).isInstanceOf(ReviewDecision.Backtrack.class);
         assertThat(((ReviewDecision.Backtrack) decision).getReason())
-                .isEqualTo("Manual backtrack by reviewer");
+                .isEqualTo("Reviewer backtrack");
     }
 
     // — No-TTY / exhausted stdin ————————————————————————————————————————————

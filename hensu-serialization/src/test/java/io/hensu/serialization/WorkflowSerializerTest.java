@@ -25,7 +25,9 @@ import io.hensu.core.workflow.state.StateVariableDeclaration;
 import io.hensu.core.workflow.state.VarType;
 import io.hensu.core.workflow.state.WorkflowStateSchema;
 import io.hensu.core.workflow.transition.ApprovalTransition;
+import io.hensu.core.workflow.transition.BoundedTransition;
 import io.hensu.core.workflow.transition.FailureTransition;
+import io.hensu.core.workflow.transition.NoConsensusTransition;
 import io.hensu.core.workflow.transition.RubricFailTransition;
 import io.hensu.core.workflow.transition.ScoreTransition;
 import io.hensu.core.workflow.transition.SuccessTransition;
@@ -593,6 +595,103 @@ class WorkflowSerializerTest {
         assertThat(restoredRule.function()).isNotNull();
     }
 
+    @Test
+    void roundTrip_boundedNoConsensusTransition() {
+        // BoundedTransition wrapping NoConsensusTransition — verifies recursive inner
+        // serialization with the "noConsensus" type discriminator
+        StandardNode start =
+                StandardNode.builder()
+                        .id("start")
+                        .transitionRules(
+                                List.of(
+                                        new BoundedTransition(
+                                                new NoConsensusTransition("producer"),
+                                                "consensus",
+                                                3,
+                                                "escalate")))
+                        .build();
+
+        Workflow workflow = buildWorkflowWith(start);
+        Workflow restored = WorkflowSerializer.fromJson(WorkflowSerializer.toJson(workflow));
+
+        StandardNode restoredStart = (StandardNode) restored.getNodes().get("start");
+        BoundedTransition bounded =
+                (BoundedTransition) restoredStart.getTransitionRules().getFirst();
+        assertThat(bounded.namespace()).isEqualTo("consensus");
+        assertThat(bounded.budget()).isEqualTo(3);
+        assertThat(bounded.otherwise()).isEqualTo("escalate");
+        assertThat(bounded.inner()).isInstanceOf(NoConsensusTransition.class);
+        assertThat(((NoConsensusTransition) bounded.inner()).targetNode()).isEqualTo("producer");
+    }
+
+    @Test
+    void roundTrip_boundedApprovalTransition() {
+        // BoundedTransition wrapping ApprovalTransition(false, ...) — the "rejection revise" case
+        StandardNode start =
+                StandardNode.builder()
+                        .id("start")
+                        .transitionRules(
+                                List.of(
+                                        new BoundedTransition(
+                                                new ApprovalTransition(false, "producer"),
+                                                "approval",
+                                                2,
+                                                "escalate")))
+                        .build();
+
+        Workflow workflow = buildWorkflowWith(start);
+        Workflow restored = WorkflowSerializer.fromJson(WorkflowSerializer.toJson(workflow));
+
+        StandardNode restoredStart = (StandardNode) restored.getNodes().get("start");
+        BoundedTransition bounded =
+                (BoundedTransition) restoredStart.getTransitionRules().getFirst();
+        assertThat(bounded.namespace()).isEqualTo("approval");
+        assertThat(bounded.budget()).isEqualTo(2);
+        assertThat(bounded.otherwise()).isEqualTo("escalate");
+        assertThat(bounded.inner()).isInstanceOf(ApprovalTransition.class);
+        ApprovalTransition inner = (ApprovalTransition) bounded.inner();
+        assertThat(inner.expected()).isFalse();
+        assertThat(inner.targetNode()).isEqualTo("producer");
+    }
+
+    @Test
+    void roundTrip_boundedScoreTransition() {
+        // BoundedTransition wrapping ScoreTransition — the "score revise" case
+        StandardNode start =
+                StandardNode.builder()
+                        .id("start")
+                        .transitionRules(
+                                List.of(
+                                        new BoundedTransition(
+                                                new ScoreTransition(
+                                                        List.of(
+                                                                new ScoreCondition(
+                                                                        ComparisonOperator.LT,
+                                                                        60.0,
+                                                                        null,
+                                                                        "producer"))),
+                                                "score",
+                                                3,
+                                                "escalate")))
+                        .build();
+
+        Workflow workflow = buildWorkflowWith(start);
+        Workflow restored = WorkflowSerializer.fromJson(WorkflowSerializer.toJson(workflow));
+
+        StandardNode restoredStart = (StandardNode) restored.getNodes().get("start");
+        BoundedTransition bounded =
+                (BoundedTransition) restoredStart.getTransitionRules().getFirst();
+        assertThat(bounded.namespace()).isEqualTo("score");
+        assertThat(bounded.budget()).isEqualTo(3);
+        assertThat(bounded.otherwise()).isEqualTo("escalate");
+        assertThat(bounded.inner()).isInstanceOf(ScoreTransition.class);
+        ScoreTransition inner = (ScoreTransition) bounded.inner();
+        assertThat(inner.conditions()).hasSize(1);
+        assertThat(inner.conditions().getFirst().operator()).isEqualTo(ComparisonOperator.LT);
+        assertThat(inner.conditions().getFirst().value()).isEqualTo(60.0);
+        assertThat(inner.conditions().getFirst().targetNode()).isEqualTo("producer");
+    }
+
     // --- helpers ---
 
     private Workflow buildStandardWorkflow() {
@@ -625,7 +724,10 @@ class WorkflowSerializerTest {
                 .rubric(RubricParser.parseContent("start", "quality"))
                 .writes(List.of("sentiment", "score"))
                 .transitionRules(
-                        List.of(new SuccessTransition("done"), new FailureTransition(3, "done")))
+                        List.of(
+                                new SuccessTransition("done"),
+                                new BoundedTransition(
+                                        new FailureTransition(null), "failure", 3, "done")))
                 .build();
     }
 

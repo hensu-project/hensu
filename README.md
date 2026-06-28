@@ -122,11 +122,11 @@ fun contentPipeline() = workflow("content-pipeline") {
 
         node("write") {
             agent  = "writer"
-            prompt = "Write a short article about {topic}. {recommendation}"
+            prompt = "Write a short article about {topic}."
             writes("draft")
             rubric = "content-quality.md"
             onScore {
-                whenScore lessThan 70.0 goto "write"  // score too low – retry
+                whenScore lessThan 70.0 goto "write" withFeedback  // score too low – retry with feedback
             }
             onSuccess goto "review"
         }
@@ -136,7 +136,7 @@ fun contentPipeline() = workflow("content-pipeline") {
             prompt = "Review this article: {draft}. Is it good enough to publish?"
             writes("draft")
             onApproval  goto "done"
-            onRejection goto "write"                  // rejected – loop back
+            onRejection goto "write" withFeedback     // rejected – loop back with feedback
         }
 
         end("done", ExitStatus.SUCCESS)

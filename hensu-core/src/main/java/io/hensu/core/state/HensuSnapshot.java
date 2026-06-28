@@ -34,6 +34,7 @@ import java.util.Objects;
 /// @param executionId unique identifier for this execution run, not null
 /// @param currentNodeId the node where execution should resume, may be null if completed
 /// @param context workflow variables and data, not null
+/// @param retryCounters per-node retry budgets keyed by `namespace:nodeId`, not null
 /// @param history execution history including steps and backtracks, not null
 /// @param activePlan current micro-plan state if planning is active, may be null
 /// @param phase execution phase within the current node's lifecycle, not null after construction
@@ -47,6 +48,7 @@ public record HensuSnapshot(
         String executionId,
         String currentNodeId,
         Map<String, Object> context,
+        Map<String, Integer> retryCounters,
         ExecutionHistory history,
         Plan activePlan,
         ExecutionPhase phase,
@@ -66,6 +68,7 @@ public record HensuSnapshot(
         Objects.requireNonNull(executionId, "executionId must not be null");
         //noinspection Java9CollectionFactory
         context = context != null ? Collections.unmodifiableMap(new HashMap<>(context)) : Map.of();
+        retryCounters = retryCounters != null ? Map.copyOf(retryCounters) : Map.of();
         history = history != null ? history.copy() : new ExecutionHistory();
         phase = phase != null ? phase : ExecutionPhase.INITIAL;
         createdAt = createdAt != null ? createdAt : Instant.now();
@@ -94,6 +97,7 @@ public record HensuSnapshot(
                 state.getExecutionId(),
                 state.getCurrentNode(),
                 state.getContext(),
+                state.getRetryCounters(),
                 state.getHistory(),
                 state.getActivePlan(),
                 state.getPhase(),
@@ -110,6 +114,7 @@ public record HensuSnapshot(
                 .executionId(executionId)
                 .currentNode(currentNodeId)
                 .context(context)
+                .retryCounters(retryCounters)
                 .history(history)
                 .activePlan(activePlan)
                 .phase(phase)
