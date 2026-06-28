@@ -86,10 +86,51 @@ The server is a **pure orchestrator** — it has no shell, no `eval`, no script 
 (tool calls, database writes, API requests) are routed to tenant-owned MCP servers via the **Split-Pipe**
 transport:
 
-- **Downstream (SSE):** The server pushes JSON-RPC tool requests to the connected tenant client.
-- **Upstream (HTTP POST):** The client executes the tool locally and returns the result.
+- **Downstream (SSE):** The Hensu server pushes each JSON-RPC tool request — tagged with a unique request id — over the tenant client's open `/mcp/connect` stream.
+- **Upstream (HTTP POST):** The tenant client relays the request to its own MCP servers, then posts the JSON-RPC result to `/mcp/message`. `McpSessionManager` correlates the response by request id, completing the matching pending future (60 s timeout; futures are cancelled if the client disconnects).
 
-This means tenant clients connect *outbound* — no inbound ports, no firewall rules, no VPN.
+```mermaid
+flowchart LR
+    subgraph client["Tenant Client"]
+        direction TB
+        es(["EventSource\nGET /mcp/connect"])
+        post(["POST /mcp/message"])
+    end
+
+    subgraph server["Hensu Server"]
+        direction TB
+        send(["sendRequest()\n· new request id\n· pending future"])
+        handle(["handleResponse()\n· match id → complete future"])
+    end
+
+    subgraph backends["Tenant MCP Servers"]
+        direction TB
+        tools(["Tools · Data · Auth"])
+    end
+
+    es -->|"① opens SSE stream — outbound"| send
+    send -->|"② tools/call + id — pushed over open stream"| es
+    post -->|"③ POST result + id — outbound"| handle
+    es -.->|"relay"| tools
+    tools -.->|"result"| post
+
+    style client fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style server fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style backends fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style es fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style post fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style send fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style handle fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tools fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle 0,2 stroke:#0A84FF, stroke-width:1px
+    linkStyle 1,3,4 stroke:#48484a, stroke-width:1px
+```
+
+Both pipes (①, ③) are **opened by the tenant client** — the accent arrows point *into* Hensu.
+The only server→client traffic (②) is tool-call data pushed back over the SSE stream the client
+already opened. Hensu never initiates a connection to the tenant, so tenants expose **no inbound
+ports, no firewall rules, no VPN**.
 The server never sees raw credentials or executes user-supplied code. LLM output is treated with
 equal suspicion — `AgentOutputValidator` sanitizes all agent responses for control characters,
 Unicode manipulation, and excessive payload size before the output is written to workflow state.
@@ -98,16 +139,16 @@ Unicode manipulation, and excessive payload size before the output is written to
 
 Workflows are not limited to linear chains. The graph engine supports:
 
-| Capability                | Mechanism                                                                                                                                                                                                                                                                     |
-|:--------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Conditional branching** | `ScoreTransition` routes on rubric scores; `SuccessTransition` / `FailureTransition` route on result; `AlwaysTransition` for unconditional hops; `RubricFailTransition` for rubric-specific failure; `ApprovalTransition` for review-gated routing                            |
-| **Loops**                 | `LoopNode` with configurable break conditions and max iterations                                                                                                                                                                                                              |
-| **Parallel fan-out**      | `ParallelNode` executes branches concurrently on virtual threads                                                                                                                                                                                                              |
-| **Fork / Join**           | `ForkNode` spawns independent parallel paths; `JoinNode` awaits and merges results                                                                                                                                                                                            |
-| **Consensus**             | Majority vote, unanimous, weighted vote, or judge-decides strategies. Branches declare domain output via `yields()`. Vote strategies merge all branch yields; JUDGE_DECIDES merges only the winning branch's yields                                                           |
-| **Backtracking**          | Review decisions can jump to any previous node, restoring state from execution history                                                                                                                                                                                        |
-| **Sub-workflows**         | `SubWorkflowNode` delegates to another workflow by id with input/output mapping; `SubWorkflowGraphValidator` rejects cycles and dangling refs at push, `SubWorkflowNodeExecutor.MAX_DEPTH = 16` bounds recursion, `_tenant_id` propagates into the child                      |
-| **Pause / Resume**        | Any node returning `PENDING` checkpoints state (including `PlanSnapshot` — micro-plan step index — alongside node position); `executeFrom()` resumes from snapshot. The SSE stream is closed on pause (reviews may take days); clients re-subscribe after submitting a resume |
+| Capability                | Mechanism                                                                                                                                                                                                                                                                                                                                                                                                                              |
+|:--------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Conditional branching** | `ScoreTransition` routes on rubric scores; `SuccessTransition` / `FailureTransition` route on result; `NoConsensusTransition` routes when a parallel node misses consensus; `AlwaysTransition` for unconditional hops; `RubricFailTransition` for rubric-specific failure; `ApprovalTransition` for review-gated routing; `BoundedTransition` decorates any trigger with a per-node retry budget + escalation (the `revise` mechanism) |
+| **Loops**                 | `LoopNode` with configurable break conditions and max iterations                                                                                                                                                                                                                                                                                                                                                                       |
+| **Parallel fan-out**      | `ParallelNode` executes branches concurrently on virtual threads                                                                                                                                                                                                                                                                                                                                                                       |
+| **Fork / Join**           | `ForkNode` spawns independent parallel paths; `JoinNode` awaits and merges results                                                                                                                                                                                                                                                                                                                                                     |
+| **Consensus**             | Majority vote, unanimous, weighted vote, or judge-decides strategies. Branches declare domain output via `yields()`. Vote strategies merge all branch yields; JUDGE_DECIDES merges only the winning branch's yields                                                                                                                                                                                                                    |
+| **Backtracking**          | Review decisions can jump to any previous node, restoring state from execution history                                                                                                                                                                                                                                                                                                                                                 |
+| **Sub-workflows**         | `SubWorkflowNode` delegates to another workflow by id with input/output mapping; `SubWorkflowGraphValidator` rejects cycles and dangling refs at push, `SubWorkflowNodeExecutor.MAX_DEPTH = 16` bounds recursion, `_tenant_id` propagates into the child                                                                                                                                                                               |
+| **Pause / Resume**        | Any node returning `PENDING` checkpoints state (including the active `Plan` — micro-plan step index — alongside node position); `executeFrom()` resumes from snapshot. The SSE stream is closed on pause (reviews may take days); clients re-subscribe after submitting a resume                                                                                                                                                       |
 
 For non-agent steps, `GenericNode` runs custom synchronous logic registered by `executorType`;
 `ActionNode` dispatches asynchronous tasks to external systems via a registered `ActionHandler`
@@ -149,8 +190,9 @@ Node outputs can be evaluated against markdown rubric definitions before the wor
 engine variable written directly to context by the agent's synthesis step — no JSON parsing required.
 `ScoreTransition` rules route based on thresholds, enabling self-correcting loops where low-scoring
 outputs are sent back for revision. The evaluator also accumulates feedback into the `recommendation`
-engine variable, which `RecommendationVariableInjector` injects into the next agent's prompt
-automatically when a `ScoreTransition` or `ApprovalTransition` is present on the node.
+engine variable; `FeedbackContextInjector` then surfaces it to the next agent automatically as a
+`### Previous Feedback` section whenever the feedback is preserved across the transition (backtracking
+`revise` arms preserve it; a plain forward `goto` clears it unless marked `withFeedback`).
 
 ### 7. Storage Architecture
 
@@ -333,9 +375,11 @@ Zero-dependency Java library. Contains:
   from context; accumulates feedback into `recommendation`; no JSON parsing
 - `EngineVariables` — SSOT for engine variable names (`score`, `approved`, `recommendation`)
 - `AgentLifecycleRunner` — Composition-based agent call: prompt enrichment → execution → output extraction
-- `EngineVariablePromptEnricher` — Composite enricher running 6 injectors before each agent call:
-  `RubricPromptInjector` → `ScoreVariableInjector` → `ApprovalVariableInjector` →
-  `RecommendationVariableInjector` → `WritesVariableInjector` → `YieldsVariableInjector`.
+- `EngineVariablePromptEnricher` — Composite enricher running 7 injectors before each agent call:
+  `FeedbackContextInjector` → `RubricPromptInjector` → `ScoreVariableInjector` →
+  `ApprovalVariableInjector` → `RecommendationVariableInjector` → `WritesVariableInjector` →
+  `YieldsVariableInjector`. `FeedbackContextInjector` runs first and surfaces preserved feedback
+  as a `### Previous Feedback` section.
   Score/Approval/Recommendation injectors fire for both transition-based nodes and consensus branches
   (via `BranchExecutionConfig.needsSelfScoring()`)
 - `WorkflowRepository` / `WorkflowStateRepository` — Tenant-scoped storage interfaces with in-memory defaults
@@ -793,7 +837,7 @@ The unified architecture provides:
 5. **Non-Linear Graphs** — Loops, conditional branches, fork/join, parallel fan-out with consensus, backtracking
 6. **Structured Concurrency** — `StructuredTaskScope` (preview) for all parallel execution; no `ExecutorService`, no thread pool lifecycle
 7. **Rubric Evaluation** — Quality gates that score outputs and route on thresholds for self-correcting loops
-8. **Pause / Resume** — Workflows checkpoint at any node (including micro-plan step index via `PlanSnapshot`) and resume; the lease protocol protects against data races when the owning node crashes
+8. **Pause / Resume** — Workflows checkpoint at any node (including micro-plan step index via the active `Plan`) and resume; the lease protocol protects against data races when the owning node crashes
 9. **Distributed Recovery** — Heartbeat/sweeper lease protocol for crashed-node detection; atomic PostgreSQL `UPDATE…RETURNING` claim
 10. **Sub-Workflows** — Hierarchical composition via `SubWorkflowNode` with input/output mapping; `SubWorkflowGraphValidator` rejects cycles and dangling refs at push (under `WorkflowPushLock`); recursion bounded by `MAX_DEPTH = 16`; tenant isolation preserved across the boundary via `_tenant_id` propagation
 11. **Flexible Planning** — Static (predefined) or Dynamic (LLM-generated) execution plans within nodes

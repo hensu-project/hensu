@@ -76,7 +76,7 @@ public class TextVisualizationFormat implements VisualizationFormat {
         sb.append(styles.gray("─".repeat(50))).append(System.lineSeparator());
         sb.append(System.lineSeparator());
 
-        renderWorkflowNodes(sb, workflow, subWorkflows, 0, styles);
+        renderWorkflowNodes(sb, workflow, subWorkflows, styles);
 
         return sb.toString();
     }
@@ -96,11 +96,10 @@ public class TextVisualizationFormat implements VisualizationFormat {
             StringBuilder sb,
             Workflow workflow,
             Map<String, Workflow> subWorkflows,
-            int baseLevel,
             AnsiStyles styles) {
         Set<String> visited = new HashSet<>();
         Deque<NodeLevel> queue = new ArrayDeque<>();
-        queue.add(new NodeLevel(workflow.getStartNode(), baseLevel));
+        queue.add(new NodeLevel(workflow.getStartNode(), 0));
 
         while (!queue.isEmpty()) {
             NodeLevel current = queue.removeFirst();
@@ -139,7 +138,7 @@ public class TextVisualizationFormat implements VisualizationFormat {
 
         // Render sub-workflow content into a buffer
         StringBuilder content = new StringBuilder();
-        renderWorkflowNodes(content, subWorkflow, subWorkflows, 0, styles);
+        renderWorkflowNodes(content, subWorkflow, subWorkflows, styles);
         String contentStr = content.toString().stripTrailing();
 
         // Top border with label
@@ -278,6 +277,7 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                                     .getStrategy()
                                                     .toString())));
                 }
+                appendTransitions(sb, indent, parallelNode.getTransitionRules(), styles);
             }
             case ForkNode forkNode -> {
                 sb.append(
@@ -421,15 +421,14 @@ public class TextVisualizationFormat implements VisualizationFormat {
     }
 
     private void appendTransitions(
-            StringBuilder sb,
-            String indent,
-            java.util.List<TransitionRule> rules,
-            AnsiStyles styles) {
+            StringBuilder sb, String indent, List<TransitionRule> rules, AnsiStyles styles) {
         if (rules.isEmpty()) {
             return;
         }
         for (TransitionRule rule : rules) {
-            if (rule instanceof SuccessTransition success) {
+            if (rule instanceof BoundedTransition bounded) {
+                appendBoundedTransition(sb, indent, bounded, styles);
+            } else if (rule instanceof SuccessTransition success) {
                 sb.append(
                         String.format(
                                 "%s%s  %s %-14s %s%n",
@@ -438,15 +437,27 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                 styles.arrow(),
                                 styles.bold(success.getTargetNode()),
                                 styles.dim("on success")));
-            } else if (rule instanceof FailureTransition failure) {
+            } else if (rule instanceof FailureTransition(String node)) {
+                if (node != null) {
+                    sb.append(
+                            String.format(
+                                    "%s%s  %s %-14s %s%n",
+                                    indent,
+                                    styles.boxMid(),
+                                    styles.arrow(),
+                                    styles.bold(node),
+                                    styles.dim("on failure")));
+                }
+            } else if (rule instanceof NoConsensusTransition(String node, boolean fb)) {
+                String label = fb ? "on no consensus +fb" : "on no consensus";
                 sb.append(
                         String.format(
                                 "%s%s  %s %-14s %s%n",
                                 indent,
                                 styles.boxMid(),
                                 styles.arrow(),
-                                styles.bold(failure.getThenTargetNode()),
-                                styles.dim("on failure  retry " + failure.getRetryCount())));
+                                styles.bold(node),
+                                styles.dim(label)));
             } else if (rule instanceof ScoreTransition score) {
                 for (ScoreCondition cond : score.getConditions()) {
                     String condValue =
@@ -462,8 +473,11 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                     styles.bold(cond.getTargetNode()),
                                     styles.dim("score " + cond.getOperator() + " " + condValue)));
                 }
-            } else if (rule instanceof ApprovalTransition(boolean expected, String targetNode)) {
-                String label = expected ? "on approval" : "on rejection";
+            } else if (rule
+                    instanceof
+                    ApprovalTransition(boolean expected, String targetNode, boolean fb)) {
+                String base = expected ? "on approval" : "on rejection";
+                String label = fb ? base + " +fb" : base;
                 sb.append(
                         String.format(
                                 "%s%s  %s %-14s %s%n",
@@ -476,6 +490,77 @@ public class TextVisualizationFormat implements VisualizationFormat {
         }
     }
 
+    private void appendBoundedTransition(
+            StringBuilder sb, String indent, BoundedTransition bounded, AnsiStyles styles) {
+        TransitionRule inner = bounded.trigger();
+        String budget = "≤" + bounded.budget();
+
+        if (inner instanceof FailureTransition(String node)) {
+            String target = node != null ? node : "(self)";
+            sb.append(
+                    String.format(
+                            "%s%s  %s %-14s %s%n",
+                            indent,
+                            styles.boxMid(),
+                            styles.arrow(),
+                            styles.bold(target),
+                            styles.dim("on failure retry " + budget)));
+        } else if (inner instanceof NoConsensusTransition(String node, boolean fb)) {
+            String fbSuffix = fb ? " +fb" : "";
+            sb.append(
+                    String.format(
+                            "%s%s  %s %-14s %s%n",
+                            indent,
+                            styles.boxMid(),
+                            styles.arrow(),
+                            styles.bold(node),
+                            styles.dim("on no consensus revise " + budget + fbSuffix)));
+        } else if (inner
+                instanceof ApprovalTransition(boolean expected, String targetNode, boolean fb)) {
+            String prefix = expected ? "on approval" : "on rejection";
+            String fbSuffix = fb ? " +fb" : "";
+            sb.append(
+                    String.format(
+                            "%s%s  %s %-14s %s%n",
+                            indent,
+                            styles.boxMid(),
+                            styles.arrow(),
+                            styles.bold(targetNode),
+                            styles.dim(prefix + " revise " + budget + fbSuffix)));
+        } else if (inner instanceof ScoreTransition score) {
+            for (ScoreCondition cond : score.getConditions()) {
+                String condValue =
+                        cond.getOperator() == ComparisonOperator.RANGE && cond.range() != null
+                                ? cond.range().start() + ".." + cond.range().end()
+                                : String.valueOf(cond.getValue());
+                sb.append(
+                        String.format(
+                                "%s%s  %s %-14s %s%n",
+                                indent,
+                                styles.boxMid(),
+                                styles.arrow(),
+                                styles.bold(cond.getTargetNode()),
+                                styles.dim(
+                                        "score "
+                                                + cond.getOperator()
+                                                + " "
+                                                + condValue
+                                                + " revise "
+                                                + budget)));
+            }
+        }
+
+        // Escalation line
+        sb.append(
+                String.format(
+                        "%s%s  %s %-14s %s%n",
+                        indent,
+                        styles.boxMid(),
+                        styles.arrow(),
+                        styles.bold(bounded.otherwise()),
+                        styles.dim("budget exhausted")));
+    }
+
     private String colorByNodeType(String text, NodeType type, AnsiStyles styles) {
         return switch (type) {
             case STANDARD, GENERIC, PARALLEL, FORK, JOIN -> styles.accent(text);
@@ -486,38 +571,8 @@ public class TextVisualizationFormat implements VisualizationFormat {
     }
 
     private void collectNextNodes(Node node, int level, Deque<NodeLevel> queue) {
-        switch (node) {
-            case LoopNode loopNode -> {
-                if (loopNode.getBreakRules() != null) {
-                    for (BreakRule rule : loopNode.getBreakRules()) {
-                        queue.add(new NodeLevel(rule.getTargetNode(), level + 1));
-                    }
-                }
-            }
-            case ForkNode forkNode -> {
-                for (String target : forkNode.getTargets()) {
-                    queue.add(new NodeLevel(target, level + 1));
-                }
-                collectTransitionTargets(forkNode.getTransitionRules(), level, queue);
-            }
-            default -> collectTransitionTargets(node.getTransitionRules(), level, queue);
-        }
-    }
-
-    private void collectTransitionTargets(
-            List<TransitionRule> rules, int level, Deque<NodeLevel> queue) {
-        for (TransitionRule rule : rules) {
-            if (rule instanceof SuccessTransition success) {
-                queue.add(new NodeLevel(success.getTargetNode(), level + 1));
-            } else if (rule instanceof FailureTransition failure) {
-                queue.add(new NodeLevel(failure.getThenTargetNode(), level + 1));
-            } else if (rule instanceof ScoreTransition score) {
-                for (ScoreCondition cond : score.getConditions()) {
-                    queue.add(new NodeLevel(cond.getTargetNode(), level + 1));
-                }
-            } else if (rule instanceof ApprovalTransition approval) {
-                queue.add(new NodeLevel(approval.targetNode(), level + 1));
-            }
+        for (String target : NodeTargets.of(node)) {
+            queue.add(new NodeLevel(target, level + 1));
         }
     }
 

@@ -16,6 +16,7 @@ import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.ParallelNode;
 import io.hensu.core.workflow.transition.FailureTransition;
+import io.hensu.core.workflow.transition.NoConsensusTransition;
 import io.hensu.core.workflow.transition.SuccessTransition;
 import java.util.HashMap;
 import java.util.List;
@@ -173,7 +174,7 @@ class WorkflowExecutorParallelTest extends WorkflowExecutorTestBase {
                         .transitionRules(
                                 List.of(
                                         new SuccessTransition("end"),
-                                        new FailureTransition(0, "fail-end")))
+                                        new FailureTransition("fail-end")))
                         .build());
         nodes.put("end", end("end"));
         nodes.put("fail-end", failEnd("fail-end"));
@@ -311,7 +312,8 @@ class WorkflowExecutorParallelTest extends WorkflowExecutorTestBase {
                         .transitionRules(
                                 List.of(
                                         new SuccessTransition("end"),
-                                        new FailureTransition(0, "fail-end")))
+                                        new NoConsensusTransition("fail-end"),
+                                        new FailureTransition("fail-end")))
                         .build());
         nodes.put("end", end("end"));
         nodes.put("fail-end", failEnd("fail-end"));
@@ -365,7 +367,8 @@ class WorkflowExecutorParallelTest extends WorkflowExecutorTestBase {
                         .transitionRules(
                                 List.of(
                                         new SuccessTransition("success-end"),
-                                        new FailureTransition(0, "failure-end")))
+                                        new NoConsensusTransition("failure-end"),
+                                        new FailureTransition("failure-end")))
                         .build());
         nodes.put("success-end", end("success-end"));
         nodes.put("failure-end", failEnd("failure-end"));

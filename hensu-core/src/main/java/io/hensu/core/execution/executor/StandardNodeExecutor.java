@@ -41,6 +41,8 @@ public class StandardNodeExecutor implements NodeExecutor<StandardNode> {
 
         // Remove stale output variables so they don't shadow this node's computation.
         // OutputExtractionPostProcessor will repopulate these with fresh values after execution.
+        // Engine vars (score, approved, recommendation) are managed exclusively by
+        // TransitionPostProcessor — see EngineVariables Javadoc for lifecycle.
         node.getWrites().forEach(state.getContext().keySet()::remove);
 
         // Delegate to shared agent execution lifecycle (prompt already resolved)

@@ -1,5 +1,7 @@
 package io.hensu.core.execution.pipeline;
 
+import io.hensu.core.execution.EngineVariables;
+import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.AutoBacktrack;
 import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.rubric.RubricEngine;
@@ -14,6 +16,7 @@ import io.hensu.core.workflow.transition.TransitionRule;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.logging.Logger;
 
@@ -143,8 +146,7 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
         }
 
         if (evaluation.getScore() < MINOR_FAILURE_THRESHOLD) {
-            Integer retryAttempt = (Integer) state.getContext().get("retry_attempt");
-            int currentAttempt = retryAttempt != null ? retryAttempt : 0;
+            int currentAttempt = state.getRetryCount("rubric_backtrack", currentNode.getId());
 
             if (currentAttempt >= DEFAULT_MAX_BACKTRACK_RETRIES) {
                 logger.warning(
@@ -157,8 +159,8 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
                 return null;
             }
 
+            state.incrementRetryCount("rubric_backtrack", currentNode.getId());
             Map<String, Object> updates = new HashMap<>();
-            updates.put("retry_attempt", currentAttempt + 1);
             updates.put("improvement_hints", evaluation.getSuggestions());
             addRecommendationsToContext(updates, selfRecommendations, evaluation);
             return new AutoBacktrack(currentNode.getId(), updates);
@@ -201,7 +203,7 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
         }
 
         if (!recommendations.isEmpty()) {
-            updates.put("recommendations", recommendations.toString().trim());
+            updates.put(EngineVariables.RECOMMENDATION, recommendations.toString().trim());
         }
     }
 
@@ -228,7 +230,7 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
             Node stepNode = workflow.getNodes().get(step.getNodeId());
             if (stepNode != null
                     && stepNode.getRubric() != null
-                    && stepNode.getRubric() != currentRubric) {
+                    && !Objects.equals(stepNode.getRubric(), currentRubric)) {
                 return step.getNodeId();
             }
         }
@@ -236,10 +238,9 @@ public final class RubricPostProcessor implements PostNodeExecutionProcessor {
         return null;
     }
 
-    private boolean hasMatchingScoreTransition(
-            Node node, HensuState state, io.hensu.core.execution.executor.NodeResult result) {
+    private boolean hasMatchingScoreTransition(Node node, HensuState state, NodeResult result) {
         for (TransitionRule rule : node.getTransitionRules()) {
-            if (rule instanceof ScoreTransition st && st.evaluate(state, result) != null) {
+            if (rule.trigger() instanceof ScoreTransition && rule.evaluate(state, result) != null) {
                 return true;
             }
         }

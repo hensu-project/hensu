@@ -57,8 +57,10 @@
         "type" : "success",
         "targetNode" : "consensus-reached"
       }, {
+        "type" : "noConsensus",
+        "targetNode" : "no-consensus"
+      }, {
         "type" : "failure",
-        "retryCount" : 0,
         "targetNode" : "no-consensus"
       } ]
     },

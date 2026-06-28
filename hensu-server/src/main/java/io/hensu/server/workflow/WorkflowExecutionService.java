@@ -176,6 +176,7 @@ public class WorkflowExecutionService {
                                 executionId,
                                 null,
                                 executionContext,
+                                Map.of(),
                                 null,
                                 null,
                                 null,

@@ -11,6 +11,7 @@ import io.hensu.core.workflow.node.GenericNode;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.node.SubWorkflowNode;
+import io.hensu.core.workflow.transition.BoundedTransition;
 import io.hensu.core.workflow.transition.FailureTransition;
 import io.hensu.core.workflow.transition.SuccessTransition;
 import java.time.Instant;
@@ -443,7 +444,11 @@ class TextVisualizationFormatTest {
                         .transitionRules(
                                 List.of(
                                         new SuccessTransition("end"),
-                                        new FailureTransition(3, "error")))
+                                        new BoundedTransition(
+                                                new FailureTransition(null),
+                                                "failure",
+                                                3,
+                                                "error")))
                         .build());
         nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
         nodes.put("error", EndNode.builder().id("error").status(ExitStatus.FAILURE).build());

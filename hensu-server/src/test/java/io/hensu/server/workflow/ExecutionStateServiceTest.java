@@ -72,6 +72,7 @@ class ExecutionStateServiceTest {
                 "exec-1",
                 "node-1",
                 new HashMap<>(Map.of("k", "v")),
+                Map.of(),
                 null,
                 null,
                 null,

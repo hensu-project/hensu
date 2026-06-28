@@ -1,11 +1,11 @@
 package io.hensu.core.state;
 
-import io.hensu.core.execution.result.BacktrackEvent;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.plan.Plan;
 import io.hensu.core.resume.ResumeInput;
 import io.hensu.core.rubric.evaluator.RubricEvaluation;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -22,7 +22,7 @@ import java.util.UUID;
 /// - **Immutable**: `executionId`, `workflowId` (set at construction)
 /// - **Mutable context**: `context` map for variable storage
 /// - **Mutable position**: `currentNode`, `loopBreakTarget`
-/// - **Mutable evaluation**: `rubricEvaluation`, `retryCount`
+/// - **Mutable evaluation**: `rubricEvaluation`, `retryCounters`
 /// - **Append-only**: `history` for execution tracking
 ///
 /// ### Thread Safety
@@ -44,7 +44,7 @@ public final class HensuState {
     private Plan activePlan;
     private RubricEvaluation rubricEvaluation;
     private String currentNode;
-    private int retryCount;
+    private final Map<String, Integer> retryCounters;
     private String loopBreakTarget;
     private ExecutionPhase phase = ExecutionPhase.INITIAL;
 
@@ -63,7 +63,7 @@ public final class HensuState {
         this.history = builder.history;
         this.activePlan = builder.activePlan;
         this.rubricEvaluation = builder.rubricEvaluation;
-        this.retryCount = builder.retryCount;
+        this.retryCounters = new HashMap<>(builder.retryCounters);
         this.phase = builder.phase != null ? builder.phase : ExecutionPhase.INITIAL;
     }
 
@@ -77,6 +77,7 @@ public final class HensuState {
         this.workflowId = workflowId;
         this.currentNode = currentNode;
         this.history = history;
+        this.retryCounters = new HashMap<>();
     }
 
     // Getters
@@ -108,10 +109,6 @@ public final class HensuState {
         return rubricEvaluation;
     }
 
-    public int getRetryCount() {
-        return retryCount;
-    }
-
     public String getCurrentNode() {
         return currentNode;
     }
@@ -120,8 +117,36 @@ public final class HensuState {
         this.currentNode = currentNode;
     }
 
-    public void incrementRetryCount() {
-        ++retryCount;
+    /// Returns the retry count for the given namespace and node, or 0 if none recorded.
+    ///
+    /// @param namespace counter namespace isolating budgets per trigger kind
+    /// @param nodeId the node the budget applies to
+    /// @return current count, never negative
+    public int getRetryCount(String namespace, String nodeId) {
+        return retryCounters.getOrDefault(namespace + ":" + nodeId, 0);
+    }
+
+    /// Increments the retry count for the given namespace and node.
+    ///
+    /// @param namespace counter namespace isolating budgets per trigger kind
+    /// @param nodeId the node the budget applies to
+    public void incrementRetryCount(String namespace, String nodeId) {
+        retryCounters.merge(namespace + ":" + nodeId, 1, Integer::sum);
+    }
+
+    /// Clears counters in all namespaces for the given node — called when the node
+    /// transitions forward (any non-revise transition).
+    ///
+    /// @param nodeId the node whose counters are cleared
+    public void resetRetryCounts(String nodeId) {
+        retryCounters.keySet().removeIf(k -> k.endsWith(":" + nodeId));
+    }
+
+    /// Returns a read-only view of all retry counters keyed by `namespace:nodeId`.
+    ///
+    /// @return unmodifiable view of the counter map, never null
+    public Map<String, Integer> getRetryCounters() {
+        return Collections.unmodifiableMap(retryCounters);
     }
 
     public void setRubricEvaluation(RubricEvaluation rubricEvaluation) {
@@ -204,13 +229,6 @@ public final class HensuState {
         return toBuilder().rubricEvaluation(evaluation).build();
     }
 
-    /// Add backtrack event (immutable).
-    public HensuState withBacktrack(BacktrackEvent backtrack) {
-        ExecutionHistory newHistory = history.addBacktrack(backtrack);
-
-        return toBuilder().history(newHistory).retryCount(retryCount + 1).build();
-    }
-
     /// Creates an isolated state copy for concurrent branch execution.
     ///
     /// Returns a new `HensuState` with a defensive copy of the context map, positioned
@@ -229,6 +247,7 @@ public final class HensuState {
                 .currentNode(branchNode)
                 .context(context)
                 .history(history)
+                .retryCounters(retryCounters)
                 .build();
     }
 
@@ -263,7 +282,7 @@ public final class HensuState {
                 .history(history)
                 .activePlan(activePlan)
                 .rubricEvaluation(rubricEvaluation)
-                .retryCount(retryCount)
+                .retryCounters(retryCounters)
                 .phase(phase);
     }
 
@@ -275,7 +294,7 @@ public final class HensuState {
         private ExecutionHistory history = new ExecutionHistory();
         private Plan activePlan;
         private RubricEvaluation rubricEvaluation;
-        private int retryCount = 0;
+        private Map<String, Integer> retryCounters = new HashMap<>();
         private ExecutionPhase phase = ExecutionPhase.INITIAL;
 
         public Builder() {}
@@ -315,8 +334,8 @@ public final class HensuState {
             return this;
         }
 
-        public Builder retryCount(int retryCount) {
-            this.retryCount = retryCount;
+        public Builder retryCounters(Map<String, Integer> retryCounters) {
+            this.retryCounters = new HashMap<>(retryCounters); // defensive copy — B3
             return this;
         }
 

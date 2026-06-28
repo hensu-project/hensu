@@ -4,7 +4,7 @@ import io.hensu.core.review.ReviewConfig
 import io.hensu.core.review.ReviewMode
 import io.hensu.core.rubric.model.ComparisonOperator
 import io.hensu.core.workflow.node.StandardNode
-import io.hensu.core.workflow.transition.FailureTransition
+import io.hensu.core.workflow.transition.BoundedTransition
 import io.hensu.core.workflow.transition.ScoreTransition
 import io.hensu.core.workflow.transition.SuccessTransition
 import io.hensu.dsl.WorkingDirectory
@@ -141,9 +141,9 @@ class KotlinScriptParserTest {
         val successRule = reviewNode.transitionRules.filterIsInstance<SuccessTransition>().single()
         assertThat(successRule.targetNode).isEqualTo("quality-check")
 
-        val failureRule = reviewNode.transitionRules.filterIsInstance<FailureTransition>().single()
-        assertThat(failureRule.retryCount).isEqualTo(2)
-        assertThat(failureRule.thenTargetNode).isEqualTo("reject")
+        val boundedRule = reviewNode.transitionRules.filterIsInstance<BoundedTransition>().single()
+        assertThat(boundedRule.budget()).isEqualTo(2)
+        assertThat(boundedRule.otherwise()).isEqualTo("reject")
 
         // Verify review node review config: OPTIONAL
         assertThat(reviewNode.reviewConfig)

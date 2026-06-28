@@ -289,6 +289,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── enricher/
 │   │   ├── EngineVariableInjector.java        # Single-injector interface
 │   │   ├── EngineVariablePromptEnricher.java  # Composite enricher — runs injector chain before each agent call
+│   │   ├── FeedbackContextInjector.java       # Appends prior `recommendation` as a "### Previous Feedback" section (runs first)
 │   │   ├── RubricPromptInjector.java          # Injects rubric criteria when node has a parsed Rubric
 │   │   ├── ScoreVariableInjector.java         # Injects `score` requirement on ScoreTransition nodes or consensus branches
 │   │   ├── ApprovalVariableInjector.java      # Injects `approved` requirement on ApprovalTransition nodes or consensus branches
@@ -330,10 +331,37 @@ hensu-core/src/main/java/io/hensu/core/
 │       └── BranchExecutionConfig.java # Typed branch metadata on ExecutionContext (consensus, yields)
 ├── workflow/
 │   ├── Workflow.java              # Workflow definition (agents + graph + optional state schema)
+│   ├── WorkflowConfig.java        # Execution tuning (retry limits, timeouts, defaults)
+│   ├── WorkflowMetadata.java      # Descriptive metadata (name, version, description)
 │   ├── WorkflowRepository.java   # Tenant-scoped workflow storage interface
 │   ├── InMemoryWorkflowRepository.java  # Default in-memory implementation
-│   ├── node/                      # Node types: Standard, Parallel, Fork, etc.
-│   ├── transition/                # Transition rules: Success, Failure, Score, Approval, Always, etc.
+│   ├── node/
+│   │   ├── Node.java              # Sealed base node interface
+│   │   ├── NodeType.java          # Node type enum
+│   │   ├── NodeTargets.java       # Outgoing-edge target set for a node
+│   │   ├── StandardNode.java      # LLM prompt node with writes + transitions
+│   │   ├── ParallelNode.java      # Concurrent branches with consensus
+│   │   ├── ForkNode.java          # Splits into parallel paths (StructuredTaskScope)
+│   │   ├── JoinNode.java          # Merges parallel results via writes/exports
+│   │   ├── MergeStrategy.java     # Join merge strategy enum
+│   │   ├── LoopNode.java          # Iterates until condition or max iterations
+│   │   ├── ActionNode.java        # Dispatches actions (send HTTP, execute command)
+│   │   ├── GenericNode.java       # Custom handler for extensible operations
+│   │   ├── SubWorkflowNode.java   # Delegates to another workflow
+│   │   └── EndNode.java           # Terminal node
+│   ├── transition/
+│   │   ├── TransitionRule.java        # Sealed trigger interface; exposes requiredEngineVars()
+│   │   ├── TransitionTargets.java     # Primary + escalation target pair
+│   │   ├── SuccessTransition.java     # Routes on successful execution
+│   │   ├── FailureTransition.java     # Routes on execution failure (pure trigger)
+│   │   ├── NoConsensusTransition.java # Routes when a parallel node fails consensus
+│   │   ├── ScoreTransition.java       # Routes on rubric evaluation score
+│   │   ├── ApprovalTransition.java    # Routes on the approved engine variable
+│   │   ├── BoundedTransition.java     # Decorates a trigger with retry budget + escalation (backs revise)
+│   │   ├── AlwaysTransition.java      # Unconditional transition
+│   │   ├── RubricFailTransition.java  # Routes when rubric evaluation itself fails
+│   │   ├── LoopCondition.java         # Continuation predicate for LoopNode
+│   │   └── BreakRule.java             # Early-exit rule for LoopNode
 │   ├── state/
 │   │   ├── WorkflowStateSchema.java      # Typed state variable schema (optional per-workflow)
 │   │   ├── StateVariableDeclaration.java # Variable declaration record (name, type, isInput)
@@ -412,14 +440,16 @@ hensu-core/src/main/java/io/hensu/core/
 
 ## Transition Rules
 
-| Rule                   | Description                                                               |
-|------------------------|---------------------------------------------------------------------------|
-| `SuccessTransition`    | Routes on successful execution                                            |
-| `FailureTransition`    | Routes on execution failure                                               |
-| `ScoreTransition`      | Routes based on rubric evaluation score                                   |
-| `ApprovalTransition`   | Routes on the `approved` boolean engine variable (fall-through if absent) |
-| `AlwaysTransition`     | Unconditional transition                                                  |
-| `RubricFailTransition` | Routes when rubric evaluation itself fails                                |
+| Rule                    | Description                                                                                                       |
+|-------------------------|-------------------------------------------------------------------------------------------------------------------|
+| `SuccessTransition`     | Routes on successful execution                                                                                    |
+| `FailureTransition`     | Routes on execution failure (pure trigger; no retry budget)                                                       |
+| `NoConsensusTransition` | Routes when a parallel node fails to reach consensus                                                              |
+| `ScoreTransition`       | Routes based on rubric evaluation score                                                                           |
+| `ApprovalTransition`    | Routes on the `approved` boolean engine variable (fall-through if absent)                                         |
+| `BoundedTransition`     | Decorates a trigger with a per-node retry budget + escalation target (the `revise` / `onFailure retry` mechanism) |
+| `AlwaysTransition`      | Unconditional transition                                                                                          |
+| `RubricFailTransition`  | Routes when rubric evaluation itself fails                                                                        |
 
 ## Agent Provider Interface
 

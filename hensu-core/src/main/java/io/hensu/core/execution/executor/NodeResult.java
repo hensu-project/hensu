@@ -44,7 +44,7 @@ public final class NodeResult {
     public NodeResult(ResultStatus status, Object output, Map<String, Object> metadata) {
         this.status = status;
         this.output = output;
-        this.metadata = metadata;
+        this.metadata = metadata != null ? metadata : Map.of();
     }
 
     /// Returns the execution status.

@@ -3,6 +3,7 @@ package io.hensu.dsl.builders
 import io.hensu.core.rubric.RubricParser
 import io.hensu.core.workflow.node.GenericNode
 import io.hensu.core.workflow.node.Node
+import io.hensu.core.workflow.transition.SuccessTransition
 
 /**
  * Builder for generic nodes that allow custom execution logic.
@@ -73,9 +74,13 @@ class GenericNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMa
         configMap.putAll(builder.entries)
     }
 
-    /** Define transition on success. Usage: onSuccess goto "next_node" */
-    infix fun onSuccess.goto(targetNode: String) {
+    /**
+     * Define transition on success. Usage: `onSuccess goto "next_node"` or `onSuccess goto
+     * "next_node" withFeedback`
+     */
+    infix fun onSuccess.goto(targetNode: String): GotoHandle {
         transitionBuilder.addSuccessTransition(targetNode)
+        return GotoHandle(transitionBuilder.rulesRef()) { SuccessTransition(targetNode, true) }
     }
 
     /** Define direct failure transition without retry. Usage: onFailure goto "error-node" */

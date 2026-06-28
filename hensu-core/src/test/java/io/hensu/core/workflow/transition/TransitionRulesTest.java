@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
+import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.rubric.model.ComparisonOperator;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.state.HensuState;
@@ -46,65 +47,101 @@ class TransitionRulesTest {
     }
 
     @Nested
+    class NoConsensusTransitionTest {
+
+        @Test
+        void shouldFireOnConsensusFailure() {
+            // FAILURE + consensus_reached=false → routes to target
+            NoConsensusTransition transition = new NoConsensusTransition("revise-node");
+            NodeResult result =
+                    new NodeResult(
+                            ResultStatus.FAILURE, null, Map.of("consensus_reached", Boolean.FALSE));
+
+            assertThat(transition.evaluate(state, result)).isEqualTo("revise-node");
+        }
+
+        @Test
+        void shouldNotFireOnNonConsensusFailure() {
+            // FAILURE without consensus_reached=false → fall-through (FailureTransition's domain)
+            NoConsensusTransition transition = new NoConsensusTransition("revise-node");
+            NodeResult result = NodeResult.failure("Agent error");
+
+            assertThat(transition.evaluate(state, result)).isNull();
+        }
+
+        @Test
+        void shouldNotFireOnSuccess() {
+            // SUCCESS with consensus_reached=false in metadata → must not fire
+            NoConsensusTransition transition = new NoConsensusTransition("revise-node");
+            NodeResult result =
+                    NodeResult.success("Output", Map.of("consensus_reached", Boolean.FALSE));
+
+            assertThat(transition.evaluate(state, result)).isNull();
+        }
+
+        @Test
+        void shouldNotThrowOnNullMetadata() {
+            // NodeResult constructed via 3-arg ctor with null metadata — must not NPE
+            NoConsensusTransition transition = new NoConsensusTransition("revise-node");
+            NodeResult result = new NodeResult(ResultStatus.FAILURE, null, null);
+
+            assertThat(transition.evaluate(state, result)).isNull();
+        }
+    }
+
+    @Nested
     class FailureTransitionTest {
 
         @Test
-        void shouldRetryOnFirstFailure() {
-            // Given
-            FailureTransition transition = new FailureTransition(3, "fallback");
-            NodeResult result = NodeResult.failure("Error");
+        void shouldNotFireOnConsensusFailure() {
+            // consensus_reached=false with FAILURE status — FailureTransition must yield to
+            // NoConsensusTransition, not swallow the event
+            FailureTransition transition = new FailureTransition("fallback");
+            NodeResult result =
+                    new NodeResult(
+                            ResultStatus.FAILURE, null, Map.of("consensus_reached", Boolean.FALSE));
 
-            // When
             String target = transition.evaluate(state, result);
 
-            // Then - should retry current node
-            assertThat(target).isEqualTo("current-node");
-            assertThat(state.getRetryCount()).isEqualTo(1);
-        }
-
-        @Test
-        void shouldRetryUntilMaxRetriesReached() {
-            // Given
-            FailureTransition transition = new FailureTransition(2, "fallback");
-            NodeResult result = NodeResult.failure("Error");
-
-            // When - first retry
-            transition.evaluate(state, result);
-            assertThat(state.getRetryCount()).isEqualTo(1);
-
-            // When - second retry
-            transition.evaluate(state, result);
-            assertThat(state.getRetryCount()).isEqualTo(2);
-
-            // When - max retries reached, go to fallback
-            String target = transition.evaluate(state, result);
-            assertThat(target).isEqualTo("fallback");
-        }
-
-        @Test
-        void shouldReturnNullOnSuccess() {
-            // Given
-            FailureTransition transition = new FailureTransition(3, "fallback");
-            NodeResult result = NodeResult.success("Output", Map.of());
-
-            // When
-            String target = transition.evaluate(state, result);
-
-            // Then
             assertThat(target).isNull();
         }
+    }
+
+    @Nested
+    class BoundedTransitionTest {
 
         @Test
-        void shouldGoDirectlyToFallbackWhenRetryCountIsZero() {
-            // Given
-            FailureTransition transition = new FailureTransition(0, "fallback");
+        void shouldRetryAtBudgetBoundaryThenEscalate() {
+            // budget=2: at count=1 (one below budget) → inner target; at count=2 → escalation
+            BoundedTransition bounded =
+                    new BoundedTransition(new FailureTransition(null), "failure", 2, "fallback");
             NodeResult result = NodeResult.failure("Error");
 
-            // When
-            String target = transition.evaluate(state, result);
+            // One attempt used — still under budget
+            state.incrementRetryCount("failure", "current-node");
+            assertThat(bounded.evaluate(state, result)).isEqualTo("current-node");
 
-            // Then
-            assertThat(target).isEqualTo("fallback");
+            // Second attempt — budget exhausted → escalate
+            state.incrementRetryCount("failure", "current-node");
+            assertThat(bounded.evaluate(state, result)).isEqualTo("fallback");
+        }
+
+        @Test
+        void selfLoopShouldRespectBudget() {
+            // FailureTransition(null) self-loops to current node. If counter wiring is wrong,
+            // this spins forever. Verify escalation still fires after budget attempts.
+            BoundedTransition bounded =
+                    new BoundedTransition(new FailureTransition(null), "failure", 1, "fallback");
+            NodeResult result = NodeResult.failure("Error");
+
+            // First evaluation — under budget → self-loop target
+            assertThat(bounded.evaluate(state, result)).isEqualTo("current-node");
+
+            // Simulate TransitionPostProcessor incrementing counter after the match
+            state.incrementRetryCount("failure", "current-node");
+
+            // Second evaluation — budget exhausted → must escalate, not self-loop
+            assertThat(bounded.evaluate(state, result)).isEqualTo("fallback");
         }
     }
 

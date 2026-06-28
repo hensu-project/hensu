@@ -2,11 +2,7 @@ package io.hensu.cli.commands;
 
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
-import io.hensu.core.workflow.node.StandardNode;
-import io.hensu.core.workflow.transition.FailureTransition;
-import io.hensu.core.workflow.transition.ScoreTransition;
-import io.hensu.core.workflow.transition.SuccessTransition;
-import io.hensu.core.workflow.transition.TransitionRule;
+import io.hensu.core.workflow.node.NodeTargets;
 import java.util.*;
 import java.util.stream.Collectors;
 import picocli.CommandLine;
@@ -62,8 +58,9 @@ class WorkflowValidateCommand extends WorkflowCommand {
 
     /// Finds nodes that are not reachable from the start node via any transition path.
     ///
-    /// Performs breadth-first traversal from the start node following all transition types
-    /// (success, failure, score). Nodes not visited are considered unreachable.
+    /// Performs breadth-first traversal from the start node following every node's successors
+    /// (transition rules plus fork and loop-break targets). Nodes not visited are considered
+    /// unreachable.
     ///
     /// @param workflow the workflow to analyze, not null
     /// @return list of unreachable node IDs (empty if all nodes are reachable)
@@ -78,15 +75,8 @@ class WorkflowValidateCommand extends WorkflowCommand {
             reachable.add(nodeId);
 
             Node node = workflow.getNodes().get(nodeId);
-            if (node instanceof StandardNode standardNode) {
-                for (TransitionRule rule : standardNode.getTransitionRules()) {
-                    if (rule instanceof SuccessTransition st) queue.add(st.getTargetNode());
-                    else if (rule instanceof FailureTransition ft)
-                        queue.add(ft.getThenTargetNode());
-                    else if (rule instanceof ScoreTransition sct) {
-                        sct.getConditions().forEach(c -> queue.add(c.getTargetNode()));
-                    }
-                }
+            if (node != null) {
+                queue.addAll(NodeTargets.of(node));
             }
         }
 

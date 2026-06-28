@@ -16,6 +16,7 @@ import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.ParallelNode;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.node.SubWorkflowNode;
+import io.hensu.core.workflow.transition.BoundedTransition;
 import io.hensu.core.workflow.transition.FailureTransition;
 import io.hensu.core.workflow.transition.SuccessTransition;
 import java.time.Instant;
@@ -91,7 +92,7 @@ class MermaidVisualizationFormatTest {
 
         String result = format.render(workflow);
 
-        assertThat(result).contains("retry 3");
+        assertThat(result).contains("retry ≤3");
     }
 
     @Test
@@ -206,7 +207,11 @@ class MermaidVisualizationFormatTest {
                         .transitionRules(
                                 List.of(
                                         new SuccessTransition("end"),
-                                        new FailureTransition(3, "error")))
+                                        new BoundedTransition(
+                                                new FailureTransition(null),
+                                                "failure",
+                                                3,
+                                                "error")))
                         .build());
         nodes.put("end", EndNode.builder().id("end").status(ExitStatus.SUCCESS).build());
         nodes.put("error", EndNode.builder().id("error").status(ExitStatus.FAILURE).build());
@@ -488,7 +493,7 @@ class MermaidVisualizationFormatTest {
                         .transitionRules(
                                 List.of(
                                         new SuccessTransition("refine"),
-                                        new FailureTransition(0, "rejected")))
+                                        new FailureTransition("rejected")))
                         .build());
         nodes.put(
                 "refine",

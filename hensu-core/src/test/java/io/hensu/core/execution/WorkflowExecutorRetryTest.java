@@ -11,6 +11,7 @@ import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.workflow.WorkflowTest;
 import io.hensu.core.workflow.node.StandardNode;
+import io.hensu.core.workflow.transition.BoundedTransition;
 import io.hensu.core.workflow.transition.FailureTransition;
 import io.hensu.core.workflow.transition.SuccessTransition;
 import java.util.HashMap;
@@ -23,7 +24,7 @@ class WorkflowExecutorRetryTest extends WorkflowExecutorTestBase {
 
     @Test
     void shouldRetryOnFailureAndSucceedOnSecondAttempt() throws Exception {
-        // FailureTransition(maxRetries=3) — agent fails once then succeeds → SUCCESS end.
+        // BoundedTransition(budget=3) — agent fails once then succeeds → SUCCESS end.
         var start =
                 StandardNode.builder()
                         .id("start")
@@ -32,7 +33,11 @@ class WorkflowExecutorRetryTest extends WorkflowExecutorTestBase {
                         .transitionRules(
                                 List.of(
                                         new SuccessTransition("end"),
-                                        new FailureTransition(3, "fallback")))
+                                        new BoundedTransition(
+                                                new FailureTransition(null),
+                                                "failure",
+                                                3,
+                                                "fallback")))
                         .build();
         var workflow =
                 WorkflowTest.TestWorkflowBuilder.create("retry")
@@ -56,7 +61,7 @@ class WorkflowExecutorRetryTest extends WorkflowExecutorTestBase {
 
     @Test
     void shouldExhaustRetriesAndTransitionToFallback() throws Exception {
-        // 1 original + 3 retries all fail → FailureTransition fires → fallback (FAILURE).
+        // 1 original + 3 retries all fail → BoundedTransition escalates → fallback (FAILURE).
         var start =
                 StandardNode.builder()
                         .id("start")
@@ -65,7 +70,11 @@ class WorkflowExecutorRetryTest extends WorkflowExecutorTestBase {
                         .transitionRules(
                                 List.of(
                                         new SuccessTransition("end"),
-                                        new FailureTransition(3, "fallback")))
+                                        new BoundedTransition(
+                                                new FailureTransition(null),
+                                                "failure",
+                                                3,
+                                                "fallback")))
                         .build();
         var workflow =
                 WorkflowTest.TestWorkflowBuilder.create("exhaust-retry")
@@ -99,7 +108,11 @@ class WorkflowExecutorRetryTest extends WorkflowExecutorTestBase {
                         .transitionRules(
                                 List.of(
                                         new SuccessTransition("end"),
-                                        new FailureTransition(2, "fallback")))
+                                        new BoundedTransition(
+                                                new FailureTransition(null),
+                                                "failure",
+                                                2,
+                                                "fallback")))
                         .build();
         var workflow =
                 WorkflowTest.TestWorkflowBuilder.create("retry-prompt-capture")

@@ -31,6 +31,6 @@ object Models {
     const val GEMINI_2_5_PRO = "gemini-2.5-pro"
 
     // DeepSeek models
-    const val DEEPSEEK_CHAT = "deepseek-chat"
-    const val DEEPSEEK_CODER = "deepseek-coder"
+    const val DEEPSEEK_V4_FLASH = "deepseek-v4-flash"
+    const val DEEPSEEK_V4_PRO = "deepseek-v4-pro"
 }

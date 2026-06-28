@@ -122,7 +122,7 @@ hensu-dsl/src/main/kotlin/io/hensu/dsl/
 │   ├── TransitionBuilder.kt      # Transition rule builders
 │   ├── ScoreTransitionBuilder.kt # Score-based routing
 │   ├── ScoreConditionBuilder.kt  # Score condition expressions
-│   ├── RubricBuilder.kt          # Quality gate definition
+│   ├── ReviseBuilder.kt          # Bounded `revise` retry/escalation chain builder
 │   ├── RetryBuilder.kt           # Retry configuration
 │   ├── ReviewConfigBuilder.kt    # Human review settings
 │   ├── PlanBuilder.kt            # Agentic planning config
@@ -187,8 +187,8 @@ The `Models` object provides constants for supported AI models:
 | `Models.GEMINI_3_1_PRO`        | `gemini-3.1-pro-preview` |
 | `Models.GEMINI_2_5_FLASH`      | `gemini-2.5-flash`       |
 | `Models.GEMINI_2_5_PRO`        | `gemini-2.5-pro`         |
-| `Models.DEEPSEEK_CHAT`         | `deepseek-chat`          |
-| `Models.DEEPSEEK_CODER`        | `deepseek-coder`         |
+| `Models.DEEPSEEK_V4_FLASH`     | `deepseek-v4-flash`      |
+| `Models.DEEPSEEK_V4_PRO`       | `deepseek-v4-pro`        |
 
 ## Documentation
 

@@ -56,7 +56,7 @@ fun llmEvalTestWorkflow() = workflow("llm-eval-test") {
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "approve"
-                whenScore `in` 60.0..79.0 goto "revise"
+                whenScore `in` 60.0..79.0 revise "revise" retry 2 otherwise "escalate"
                 whenScore lessThan 60.0 goto "rewrite"
             }
         }

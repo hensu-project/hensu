@@ -304,7 +304,6 @@ io.hensu.server/
 │   ├── ValidMessageValidator     # Size-limit + control-character validator
 │   ├── ValidWorkflow             # Custom constraint for Workflow request bodies
 │   ├── ValidWorkflowValidator    # Deep-validates workflow object graph
-│   ├── LogSanitizer              # Strips CR/LF for log injection prevention
 │   ├── IllegalArgumentExceptionMapper  # Maps IllegalArgumentException → 400
 │   └── ConstraintViolationExceptionMapper  # Global 400 error mapper
 │
@@ -371,9 +370,7 @@ io.hensu.server/
 │   └── InteractiveReviewHandler  # @ApplicationScoped default ReviewHandler for plan reviews
 │
 └── tenant/                # Multi-tenancy
-    ├── TenantContext            # ScopedValue-based context
-    ├── TenantAware              # Marker interface
-    └── TenantResolutionInterceptor
+    └── TenantContext            # ScopedValue-based context
 ```
 
 ---
@@ -1420,7 +1417,7 @@ Registrations are split across five dedicated classes to keep each concern isola
 
 4. **Simple immutable types with custom deser but default ser** — `WorkflowStateSchema` and `StateVariableDeclaration` use a custom deserializer (`WorkflowStateSchemaDeserializer`) that extracts fields manually. However, Jackson's default serializer reads `getVariables()` reflectively, so both classes must be registered.
 
-5. **Record types embedded in builder classes** — When a `record` is a field inside a mixin-registered builder type, Jackson reaches it via its canonical constructor and component accessors. GraalVM cannot trace those calls statically. Register the record and every nested record transitively. No mixin or custom deserializer is needed — registration alone is sufficient. Current types: `ReviewConfig`, `HensuSnapshot`, `PlanSnapshot` hierarchy.
+5. **Record types embedded in builder classes** — When a `record` is a field inside a mixin-registered builder type, Jackson reaches it via its canonical constructor and component accessors. GraalVM cannot trace those calls statically. Register the record and every nested record transitively. No mixin or custom deserializer is needed — registration alone is sufficient. Current types: `ReviewConfig`, `HensuSnapshot`, and `Plan` (the active micro-plan embedded in `HensuSnapshot.activePlan`).
 
 **When to add vs. fix:** if the class is a simple record with no `Duration`/nested-complex fields, fix the deserializer. If it contains `Duration` or deeply nested types, add it here. For records embedded in builder types, always register them. For types in pattern 3, registration is needed only because the serialization path uses default Jackson. See [hensu-serialization Developer Guide](developer-guide-serialization.md#the-treetovalue-rule) for the full rule.
 

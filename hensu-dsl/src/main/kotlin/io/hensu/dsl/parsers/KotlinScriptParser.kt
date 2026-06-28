@@ -40,6 +40,31 @@ class KotlinScriptParser {
          * ensures visibility across threads.
          */
         @Volatile private var useJsr223: Boolean? = null
+
+        /**
+         * Markers that begin a transition chain. A bare `withFeedback` always punctuates a chain
+         * rooted at one of these, so [desugarWithFeedback] wraps from the nearest preceding marker.
+         */
+        private val TRANSITION_MARKERS =
+            listOf(
+                "onSuccess",
+                "onFailure",
+                "onConsensus",
+                "onNoConsensus",
+                "onComplete",
+                "OnPlanFailure",
+                "onApproval",
+                "onRejection",
+                "whenScore",
+            )
+
+        /** Matches a standalone `withFeedback` keyword that is not already dotted. */
+        private val WITH_FEEDBACK_TOKEN =
+            Regex("""(?<![A-Za-z0-9_.])withFeedback(?![A-Za-z0-9_])""")
+
+        /** Matches a standalone transition marker keyword. */
+        private val MARKER_TOKEN =
+            Regex("""(?<![A-Za-z0-9_.])(${TRANSITION_MARKERS.joinToString("|")})(?![A-Za-z0-9_])""")
     }
 
     /**
@@ -248,7 +273,128 @@ class KotlinScriptParser {
                 }
                 .joinToString("\n")
 
+        content = desugarWithFeedback(content)
+
         return content
+    }
+
+    /**
+     * Desugars bare `withFeedback` keywords into explicit property access on the preceding
+     * transition chain.
+     *
+     * Kotlin's grammar cannot place a bare trailing identifier in an infix chain: `goto "write"
+     * withFeedback` fails to parse because `withFeedback` has neither a following argument (it is a
+     * property, not an infix function) nor a leading dot. Postfix `.` access also binds tighter
+     * than infix application, so naively dotting the keyword (`goto "write".withFeedback`) would
+     * bind the property to the string argument rather than the chain result.
+     *
+     * The fix wraps the entire chain preceding each `withFeedback` in parentheses, then accesses
+     * the property on that parenthesized result. The chain starts at the nearest preceding
+     * transition marker (see [TRANSITION_MARKERS]); the keyword is rewritten to `).withFeedback`.
+     * Locating the marker by scanning the token stream — rather than the physical line — lets a
+     * chain span multiple lines.
+     *
+     * Scanning is token-aware: a [codeMask] excludes string literals and comments, so an occurrence
+     * of `withFeedback` inside a prompt string or comment is never rewritten. Occurrences are
+     * processed right-to-left so that two markers on one chain nest correctly: the outer
+     * `.withFeedback` wraps the inner one.
+     *
+     * Examples:
+     * ```
+     * whenScore lessThan 70.0 goto "write" withFeedback
+     *   -> (whenScore lessThan 70.0 goto "write").withFeedback
+     *
+     * onRejection revise "write" withFeedback retry 3 otherwise "x" withFeedback
+     *   -> ((onRejection revise "write").withFeedback retry 3 otherwise "x").withFeedback
+     * ```
+     */
+    private fun desugarWithFeedback(content: String): String {
+        var source = content
+        while (true) {
+            val mask = codeMask(source)
+
+            // Rightmost bare keyword that sits in code (not a string/comment). Rewriting it to
+            // `.withFeedback` removes it from the next pass via the not-dotted lookbehind.
+            val keyword =
+                WITH_FEEDBACK_TOKEN.findAll(source).lastOrNull { mask[it.range.first] } ?: break
+
+            val keywordStart = keyword.range.first
+            val keywordEnd = keyword.range.last + 1
+
+            // Collapse the whitespace between the chain and the keyword into the inserted `).`.
+            var chainEnd = keywordStart
+            while (chainEnd > 0 && source[chainEnd - 1].isWhitespace()) chainEnd--
+
+            // Chain start = nearest preceding marker in code; fall back to line start if absent.
+            val chainStart =
+                MARKER_TOKEN.findAll(source)
+                    .lastOrNull { it.range.first < keywordStart && mask[it.range.first] }
+                    ?.range
+                    ?.first
+                    ?: source.lastIndexOf('\n', keywordStart).let { if (it < 0) 0 else it + 1 }
+
+            source =
+                source.substring(0, chainStart) +
+                    "(" +
+                    source.substring(chainStart, chainEnd) +
+                    ").withFeedback" +
+                    source.substring(keywordEnd)
+        }
+        return source
+    }
+
+    /**
+     * Builds a per-character mask marking which positions are source code rather than string
+     * literals or comments.
+     *
+     * Recognizes line comments (`//`), block comments, single- and triple-quoted string literals
+     * (honoring backslash escapes outside triple quotes), and character literals. Characters inside
+     * any of these are marked `false`; everything else is `true`. Used by [desugarWithFeedback] to
+     * avoid rewriting a `withFeedback` keyword that appears inside a prompt string or comment.
+     */
+    private fun codeMask(s: String): BooleanArray {
+        val code = BooleanArray(s.length)
+        val n = s.length
+        var i = 0
+        while (i < n) {
+            val c = s[i]
+            when {
+                c == '/' && i + 1 < n && s[i + 1] == '/' -> {
+                    while (i < n && s[i] != '\n') i++
+                }
+                c == '/' && i + 1 < n && s[i + 1] == '*' -> {
+                    i += 2
+                    while (i < n && !(s[i] == '*' && i + 1 < n && s[i + 1] == '/')) i++
+                    i += 2
+                }
+                c == '"' && i + 2 < n && s[i + 1] == '"' && s[i + 2] == '"' -> {
+                    i += 3
+                    while (i + 2 < n && !(s[i] == '"' && s[i + 1] == '"' && s[i + 2] == '"')) i++
+                    i += 3
+                }
+                c == '"' -> {
+                    i++
+                    while (i < n && s[i] != '"') {
+                        if (s[i] == '\\') i++
+                        i++
+                    }
+                    i++
+                }
+                c == '\'' -> {
+                    i++
+                    while (i < n && s[i] != '\'') {
+                        if (s[i] == '\\') i++
+                        i++
+                    }
+                    i++
+                }
+                else -> {
+                    code[i] = true
+                    i++
+                }
+            }
+        }
+        return code
     }
 
     /**

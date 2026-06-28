@@ -285,29 +285,7 @@ public class MermaidVisualizationFormat implements VisualizationFormat {
             if (node == null) continue;
             ordered.put(nodeId, node);
 
-            for (TransitionRule rule : node.getTransitionRules()) {
-                switch (rule) {
-                    case SuccessTransition s -> queue.add(s.getTargetNode());
-                    case FailureTransition f -> queue.add(f.getThenTargetNode());
-                    case ScoreTransition sc -> {
-                        for (var cond : sc.getConditions()) {
-                            queue.add(cond.getTargetNode());
-                        }
-                    }
-                    case ApprovalTransition a -> queue.add(a.targetNode());
-                    default -> {}
-                }
-            }
-
-            switch (node) {
-                case LoopNode ln when ln.getBreakRules() != null -> {
-                    for (BreakRule br : ln.getBreakRules()) {
-                        queue.add(br.getTargetNode());
-                    }
-                }
-                case ForkNode fn -> queue.addAll(fn.getTargets());
-                default -> {}
-            }
+            queue.addAll(NodeTargets.of(node));
         }
 
         return new ArrayList<>(ordered.entrySet());
@@ -381,15 +359,23 @@ public class MermaidVisualizationFormat implements VisualizationFormat {
     private void renderTransitionRules(
             StringBuilder sb, String fromId, List<TransitionRule> rules, String workflowPrefix) {
         for (TransitionRule rule : rules) {
-            if (rule instanceof SuccessTransition success) {
+            if (rule instanceof BoundedTransition bounded) {
+                renderBoundedTransition(sb, fromId, bounded, workflowPrefix);
+            } else if (rule instanceof SuccessTransition success) {
                 String toId = resolveTargetId(success.getTargetNode(), workflowPrefix);
                 sb.append("  ").append(fromId).append(" --> ").append(toId).append("\n");
-            } else if (rule instanceof FailureTransition failure) {
-                String toId = resolveTargetId(failure.getThenTargetNode(), workflowPrefix);
-                String label =
-                        failure.getRetryCount() > 0
-                                ? "retry " + failure.getRetryCount()
-                                : "failure";
+            } else if (rule instanceof FailureTransition(String node)) {
+                if (node != null) {
+                    String toId = resolveTargetId(node, workflowPrefix);
+                    sb.append("  ")
+                            .append(fromId)
+                            .append(" -.->|failure| ")
+                            .append(toId)
+                            .append("\n");
+                }
+            } else if (rule instanceof NoConsensusTransition(String node, boolean fb)) {
+                String toId = resolveTargetId(node, workflowPrefix);
+                String label = fb ? "no consensus · fb" : "no consensus";
                 sb.append("  ")
                         .append(fromId)
                         .append(" -.->|")
@@ -412,9 +398,12 @@ public class MermaidVisualizationFormat implements VisualizationFormat {
                             .append(toId)
                             .append("\n");
                 }
-            } else if (rule instanceof ApprovalTransition(boolean expected, String targetNode)) {
+            } else if (rule
+                    instanceof
+                    ApprovalTransition(boolean expected, String targetNode, boolean fb)) {
                 String toId = resolveTargetId(targetNode, workflowPrefix);
-                String label = expected ? "approved" : "rejected";
+                String base = expected ? "approved" : "rejected";
+                String label = fb ? base + " · fb" : base;
                 sb.append("  ")
                         .append(fromId)
                         .append(" -->|")
@@ -424,6 +413,86 @@ public class MermaidVisualizationFormat implements VisualizationFormat {
                         .append("\n");
             }
         }
+    }
+
+    private void renderBoundedTransition(
+            StringBuilder sb, String fromId, BoundedTransition bounded, String workflowPrefix) {
+        TransitionRule inner = bounded.trigger();
+        String budgetLabel = " ≤" + bounded.budget();
+
+        // Inner target edge with budget annotation
+        if (inner instanceof FailureTransition(String node)) {
+            if (node != null) {
+                String toId = resolveTargetId(node, workflowPrefix);
+                sb.append("  ")
+                        .append(fromId)
+                        .append(" -.->|retry")
+                        .append(budgetLabel)
+                        .append("| ")
+                        .append(toId)
+                        .append("\n");
+            } else {
+                // Self-loop retry
+                sb.append("  ")
+                        .append(fromId)
+                        .append(" -.->|retry")
+                        .append(budgetLabel)
+                        .append("| ")
+                        .append(fromId)
+                        .append("\n");
+            }
+        } else if (inner instanceof NoConsensusTransition(String node, boolean fb)) {
+            String toId = resolveTargetId(node, workflowPrefix);
+            String fbSuffix = fb ? " · fb" : "";
+            sb.append("  ")
+                    .append(fromId)
+                    .append(" -.->|no consensus · revise")
+                    .append(budgetLabel)
+                    .append(fbSuffix)
+                    .append("| ")
+                    .append(toId)
+                    .append("\n");
+        } else if (inner
+                instanceof ApprovalTransition(boolean expected, String targetNode, boolean fb)) {
+            String toId = resolveTargetId(targetNode, workflowPrefix);
+            String prefix = expected ? "approved" : "rejected";
+            String fbSuffix = fb ? " · fb" : "";
+            sb.append("  ")
+                    .append(fromId)
+                    .append(" -->|")
+                    .append(prefix)
+                    .append(" · revise")
+                    .append(budgetLabel)
+                    .append(fbSuffix)
+                    .append("| ")
+                    .append(toId)
+                    .append("\n");
+        } else if (inner instanceof ScoreTransition score) {
+            for (ScoreCondition cond : score.getConditions()) {
+                String toId = resolveTargetId(cond.getTargetNode(), workflowPrefix);
+                String condLabel =
+                        cond.getOperator() == ComparisonOperator.RANGE && cond.range() != null
+                                ? "score " + cond.range().start() + "–" + cond.range().end()
+                                : "score " + cond.getOperator() + " " + cond.getValue();
+                sb.append("  ")
+                        .append(fromId)
+                        .append(" -->|")
+                        .append(condLabel)
+                        .append(" · revise")
+                        .append(budgetLabel)
+                        .append("| ")
+                        .append(toId)
+                        .append("\n");
+            }
+        }
+
+        // Escalation edge
+        String escalationId = resolveTargetId(bounded.otherwise(), workflowPrefix);
+        sb.append("  ")
+                .append(fromId)
+                .append(" -.->|budget exhausted| ")
+                .append(escalationId)
+                .append("\n");
     }
 
     private static String resolveTargetId(String nodeId, String workflowPrefix) {

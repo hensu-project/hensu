@@ -3,6 +3,7 @@ package io.hensu.dsl.builders
 import io.hensu.core.workflow.node.ForkNode
 import io.hensu.core.workflow.node.JoinNode
 import io.hensu.core.workflow.node.MergeStrategy
+import io.hensu.core.workflow.transition.SuccessTransition
 
 /**
  * DSL builder for fork nodes that spawn parallel execution paths.
@@ -64,8 +65,9 @@ class ForkNodeBuilder(private val id: String) : BaseNodeBuilder, ForkJoinMarkers
      *
      * @param targetNode the node to transition to after forking, not null
      */
-    infix fun onComplete.goto(targetNode: String) {
+    infix fun onComplete.goto(targetNode: String): GotoHandle {
         transitionBuilder.addSuccessTransition(targetNode)
+        return GotoHandle(transitionBuilder.rulesRef()) { SuccessTransition(targetNode, true) }
     }
 
     /**
@@ -179,8 +181,9 @@ class JoinNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMarke
      *
      * @param targetNode the node to transition to on success, not null
      */
-    infix fun onSuccess.goto(targetNode: String) {
+    infix fun onSuccess.goto(targetNode: String): GotoHandle {
         transitionBuilder.addSuccessTransition(targetNode)
+        return GotoHandle(transitionBuilder.rulesRef()) { SuccessTransition(targetNode, true) }
     }
 
     /**

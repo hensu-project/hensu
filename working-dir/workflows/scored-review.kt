@@ -29,7 +29,6 @@ fun workflow() = workflow("demo") {
             prompt = """
                 Write a focused article about: {topic}
                 Keep it under 300 words. Be specific, avoid filler.
-                If feedback was provided, incorporate it: {recommendation}
             """.trimIndent()
             writes("article")
             rubric = "content-quality.md"

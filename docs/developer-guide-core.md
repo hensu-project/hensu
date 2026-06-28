@@ -753,6 +753,10 @@ Rules:
 - Accepts `true`/`false` as Java `Boolean` or case-insensitive strings `"true"`/`"false"`.
 - `approved` is an **engine variable** — injected automatically when `onApproval`/`onRejection` routing is present. Never declare it in `writes()` or the state schema.
 
+### Bounded Revise
+
+`BoundedTransition` decorates a trigger rule (`ApprovalTransition`, `NoConsensusTransition`, or a single-condition `ScoreTransition`) with a per-node retry budget and an escalation target. It backs the DSL `revise "producer" retry N otherwise "escalate"` form on `onRejection`, `onNoConsensus`, and score arms. Counters are namespaced per node and trigger kind in `HensuState`; `TransitionPostProcessor` increments on a backtrack and resets on any forward move. The decorator is transparent to engine-variable wiring — injectors and output extraction consume `TransitionRule.requiredEngineVars()` rather than `instanceof`, so a revise-only node still gets its `approved`/`score`/`recommendation` instructions. See the [DSL Reference](dsl-reference.md#bounded-revise-revise) for author-facing syntax.
+
 ## State Schema
 
 `WorkflowStateSchema` is an optional typed declaration on a `Workflow` that lists all domain-specific
@@ -856,19 +860,26 @@ class — the single source of truth for all engine-managed variable keys.
 
 ### Injection Pipeline
 
-Each injector fires when **either** of two conditions is met:
+`FeedbackContextInjector` runs first and is the odd one out: it surfaces *prior* feedback rather
+than instructing the agent to produce a new variable. It appends a `### Previous Feedback` section
+whenever the context carries a non-blank `recommendation` value (preserved across a backtrack
+`revise` or a forward `withFeedback` transition — see `TransitionPostProcessor` for the lifecycle).
+
+Each remaining injector fires when **either** of two conditions is met:
 1. The node has a matching transition rule (e.g., `ScoreTransition` for `ScoreVariableInjector`)
 2. The execution context carries a `BranchExecutionConfig` where `needsSelfScoring()` returns true
    (consensus branch with a non-JUDGE_DECIDES strategy)
 
 ```mermaid
 flowchart LR
-    r(["RubricPromptInjector\n· rubric != null"]) --> s(["ScoreVariableInjector\n· ScoreTransition or\nconsensus branch"])
+    fc(["FeedbackContextInjector\n· recommendation present"]) --> r(["RubricPromptInjector\n· rubric != null"])
+    r --> s(["ScoreVariableInjector\n· ScoreTransition or\nconsensus branch"])
     s --> a(["ApprovalVariableInjector\n· ApprovalTransition or\nconsensus branch"])
     a --> rec(["RecommendationVariable\nInjector\n· Score/Approval or\nconsensus branch"])
     rec --> w(["WritesVariableInjector\n· has writes()"])
     w --> y(["YieldsVariableInjector\n· has yields()"])
 
+    style fc fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style r fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style s fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style a fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
@@ -901,6 +912,7 @@ Construct a custom enricher with additional injectors:
 ```java
 EngineVariablePromptEnricher enricher = new EngineVariablePromptEnricher(
     List.of(
+        new FeedbackContextInjector(),
         new RubricPromptInjector(),
         new ScoreVariableInjector(),
         new ApprovalVariableInjector(),
@@ -1412,6 +1424,8 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `workflow/state/StateVariableDeclaration.java`          | Single variable declaration record (name, type, isInput)                                         |
 | `workflow/state/VarType.java`                           | Variable type enum: STRING, NUMBER, BOOLEAN, LIST_STRING                                         |
 | `workflow/transition/ApprovalTransition.java`           | Boolean approval routing via the `approved` engine variable                                      |
+| `workflow/transition/NoConsensusTransition.java`        | Routes when a parallel node fails to reach consensus                                             |
+| `workflow/transition/BoundedTransition.java`            | Decorates a trigger with a per-node retry budget + escalation target (backs DSL `revise`)        |
 | `workflow/validation/SubWorkflowGraphValidator.java`    | Load-time cycle + dangling-reference detector for sub-workflow graphs                            |
 | `workflow/validation/WorkflowValidator.java`            | Load-time validator for transition targets, `writes`, and prompt `{variable}` references         |
 | `rubric/RubricEngine.java`                              | Quality evaluation engine                                                                        |

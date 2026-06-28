@@ -77,6 +77,10 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
     public NodeResult execute(ParallelNode node, ExecutionContext context) throws Exception {
         HensuState state = context.getState();
 
+        // Parallel nodes do not support per-branch prompt override; consume any staged
+        // override so it does not leak into downstream nodes.
+        state.getContext().remove("_prompt_override");
+
         logger.info(
                 "Executing parallel node: "
                         + node.getId()
@@ -176,6 +180,9 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
 
                                 String branchNodeId = node.getId() + "/" + branch.getId();
 
+                                // Propagate current node for agent awareness.
+                                branchSnapshot.put("current_node", node.getId());
+
                                 // Resolve template against branch-isolated snapshot
                                 TemplateResolver resolver = branchCtx.getTemplateResolver();
                                 String resolvedPrompt =
@@ -183,6 +190,11 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
                                                 ? resolver.resolve(
                                                         branch.getPrompt(), branchSnapshot)
                                                 : "";
+
+                                // Clear stale branch yields after template resolution.
+                                // Engine vars (score, approved, recommendation) are managed
+                                // by TransitionPostProcessor — see EngineVariables Javadoc.
+                                branch.getYields().forEach(branchSnapshot.keySet()::remove);
 
                                 // Delegate to shared agent execution lifecycle
                                 NodeResult nodeResult =
@@ -327,16 +339,27 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
 
         for (BranchResult br : branchResults) {
             if (!judgeStrategy || winnerIds.contains(br.getBranchId())) {
-                state.getContext().putAll(br.yields());
+                // Promote only domain yields. Engine variables (score/approved/recommendation)
+                // are consensus-internal; promoting them would poison the feedback channel
+                // for downstream nodes.
+                br.yields()
+                        .forEach(
+                                (k, v) -> {
+                                    if (!EngineVariables.isEngineVar(k)) {
+                                        state.getContext().put(k, v);
+                                    }
+                                });
             }
         }
 
-        // Store consensus metadata in context for downstream processing
-        state.getContext().put("consensus_reached", consensusResult.consensusReached());
-        state.getContext().put("consensus_result", consensusResult);
-        state.getContext().put("consensus_votes", consensusResult.votes());
+        // Store consensus metadata under node-scoped keys for multi-parallel safety.
+        String nodeId = state.getCurrentNode();
+        state.getContext().put("consensus_reached:" + nodeId, consensusResult.consensusReached());
+        state.getContext().put("consensus_result:" + nodeId, consensusResult);
+        state.getContext().put("consensus_votes:" + nodeId, consensusResult.votes());
         if (consensusResult.winningBranchId() != null) {
-            state.getContext().put("consensus_winning_branch", consensusResult.winningBranchId());
+            state.getContext()
+                    .put("consensus_winning_branch:" + nodeId, consensusResult.winningBranchId());
         }
 
         // Build result metadata

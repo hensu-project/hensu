@@ -31,7 +31,7 @@ fun backtrackRoutingWorkflow() = workflow("backtrack-routing") {
             model = Models.CLAUDE_HAIKU_4_5
         }
         agent("critic") {
-            role = "Quality Reviewer. Return JSON with key: recommendation."
+            role = "Quality Reviewer"
             model = Models.GEMINI_3_1_PRO
         }
     }
@@ -41,7 +41,7 @@ fun backtrackRoutingWorkflow() = workflow("backtrack-routing") {
 
         node("draft") {
             agent = "writer"
-            prompt = "Write a short article about {topic}. {recommendation}"
+            prompt = "Write a short article about {topic}."
             writes("article")
             onSuccess goto "review"
             onFailure retry 2 otherwise "reject"
@@ -61,7 +61,7 @@ fun backtrackRoutingWorkflow() = workflow("backtrack-routing") {
 
         node("refine") {
             agent = "writer"
-            prompt = "Refine the following draft based on the recommendation.\n\nDraft: {article}\nRecommendation: {recommendation}"
+            prompt = "Refine the following draft.\n\nDraft: {article}"
             writes("article")
             onSuccess goto "final_check"
             onFailure retry 2 otherwise "reject"

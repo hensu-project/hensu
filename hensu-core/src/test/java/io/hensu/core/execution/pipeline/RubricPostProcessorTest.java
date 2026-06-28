@@ -190,7 +190,7 @@ class RubricPostProcessorTest {
 
             assertThat(result).isInstanceOf(ProcessorOutcome.Continue.class);
             assertThat(ctx.state().getCurrentNode()).isEqualTo("current");
-            assertThat(ctx.state().getContext().get("retry_attempt")).isEqualTo(1);
+            assertThat(ctx.state().getRetryCount("rubric_backtrack", "current")).isEqualTo(1);
             assertThat(ctx.state().getHistory().getBacktracks()).hasSize(1);
         }
 
@@ -215,14 +215,17 @@ class RubricPostProcessorTest {
 
             processor.process(ctx);
 
-            assertThat(ctx.state().getContext().get("retry_attempt")).isEqualTo(1);
+            assertThat(ctx.state().getRetryCount("rubric_backtrack", "node")).isEqualTo(1);
         }
 
         @Test
         @DisplayName("does not backtrack and records no history entry after max retry attempts")
         void shouldStopAfterMaxRetries() {
             var ctx = contextWithRubric(RUBRIC_CONTENT);
-            ctx.state().getContext().put("retry_attempt", 3);
+            // Seed namespaced retry counter to max (3) so next attempt is refused
+            for (int i = 0; i < 3; i++) {
+                ctx.state().incrementRetryCount("rubric_backtrack", "node");
+            }
             mockRubricEvaluation(70.0, false);
 
             var result = processor.process(ctx);

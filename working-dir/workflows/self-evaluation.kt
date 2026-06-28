@@ -4,6 +4,7 @@
  * Demonstrates the rubric evaluation system including:
  * - Self-evaluation: Agent returns its own score and recommendations
  * - Auto-backtracking: Automatic retry when scores are low
+ * - Bounded revise: Reviewer rejection backtracks to draft, capped at 2 attempts
  * - Score-based transitions: Different paths based on evaluation scores
  *
  * Usage:
@@ -30,21 +31,21 @@ fun selfEvaluationWorkflow() = workflow("self-evaluation") {
     agents {
         // Main content writer - provides self-evaluation in output
         agent("writer") {
-            role = "Content writer who produces articles and self-evaluates. Return JSON with keys: article, recommendation."
+            role = "Content writer who produces articles and self-evaluates."
             model = Models.GEMINI_2_5_PRO
             temperature = 0.7
         }
 
         // Reviewer agent - evaluates content independently
         agent("reviewer") {
-            role = "Content reviewer. Return JSON with key: recommendation."
+            role = "Content reviewer."
             model = Models.GEMINI_3_1_PRO
             temperature = 0.3
         }
 
         // Editor for improvements
         agent("editor") {
-            role = "Editor who improves content based on recommendations. Return JSON with keys: article, recommendation."
+            role = "Editor who improves content based on feedback."
             model = Models.GEMINI_3_1_FLASH_LITE
             temperature = 0.5
         }
@@ -56,7 +57,7 @@ fun selfEvaluationWorkflow() = workflow("self-evaluation") {
         // Step 1: Initial draft with self-evaluation
         node("draft") {
             agent = "writer"
-            prompt = "Write about: {topic}. {recommendation}. Requirements: 1) Clear introduction, 2) At least 3 main points, 3) Concrete examples, 4) Conclusion."
+            prompt = "Write about: {topic}. Requirements: 1) Clear introduction, 2) At least 3 main points, 3) Concrete examples, 4) Conclusion."
             writes("article")
 
             onScore {
@@ -75,13 +76,13 @@ fun selfEvaluationWorkflow() = workflow("self-evaluation") {
             // Critical failure overrides approval: score below 60 means restart draft
             onScore { whenScore lessThan 60.0 goto "draft" }
             onApproval goto "finalize"
-            onRejection goto "improve"
+            onRejection revise "draft" retry 2 otherwise "escalate"
         }
 
         // Step 3: Improvement based on feedback
         node("improve") {
             agent = "editor"
-            prompt = "Improve this content: {article}. Feedback: {recommendation}."
+            prompt = "Improve this content: {article}."
             writes("article")
 
             onScore {
@@ -95,11 +96,11 @@ fun selfEvaluationWorkflow() = workflow("self-evaluation") {
         // Step 4: Restart from scratch
         node("restart") {
             agent = "writer"
-            prompt = "Previous attempt failed. Starting fresh. Topic: {topic}. Issues: {recommendation}. Create a new draft."
+            prompt = "Previous attempt failed. Starting fresh. Topic: {topic}. Create a new draft."
             writes("article")
 
             onScore {
-                whenScore greaterThanOrEqual 70.0 goto "review"
+                whenScore greaterThanOrEqual 70.0 goto "review" withFeedback
                 whenScore lessThan 70.0 goto "fail"
             }
         }
@@ -107,7 +108,7 @@ fun selfEvaluationWorkflow() = workflow("self-evaluation") {
         // Step 5: Finalize
         node("finalize") {
             agent = "editor"
-            prompt = "Finalize this approved content: {article}. Apply final recommendation: {recommendation}. Format for publication."
+            prompt = "Finalize this approved content: {article}. Format for publication."
             writes("article")
             onSuccess goto "success"
         }

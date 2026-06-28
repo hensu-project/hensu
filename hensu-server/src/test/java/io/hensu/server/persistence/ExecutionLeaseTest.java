@@ -102,6 +102,7 @@ class ExecutionLeaseTest extends JdbcRepositoryTestBase {
                 executionId,
                 "step-1",
                 Map.of(),
+                Map.of(),
                 new ExecutionHistory(),
                 null,
                 null,

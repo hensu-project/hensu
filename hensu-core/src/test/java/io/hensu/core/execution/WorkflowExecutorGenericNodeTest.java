@@ -105,7 +105,7 @@ class WorkflowExecutorGenericNodeTest extends WorkflowExecutorTestBase {
                         .transitionRules(
                                 List.of(
                                         new SuccessTransition("success-end"),
-                                        new FailureTransition(0, "failure-end")))
+                                        new FailureTransition("failure-end")))
                         .build());
         nodes.put("success-end", end("success-end"));
         nodes.put("failure-end", failEnd("failure-end"));

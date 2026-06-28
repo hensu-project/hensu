@@ -24,6 +24,7 @@ class InMemoryWorkflowStateRepositoryTest {
                 executionId,
                 currentNodeId,
                 Map.of(),
+                Map.of(),
                 null,
                 null,
                 null,

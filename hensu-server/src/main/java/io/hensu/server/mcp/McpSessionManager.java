@@ -22,8 +22,8 @@ import org.jboss.logging.Logger;
 /// ### Architecture
 /// ```
 /// +—————————————————+                    +—————————————————+
-/// │  Hensu Engine   │                    │  Tenant Client  │
-/// │                 │                    │  (MCP Server)   │
+/// │  Hensu Server   │                    │  Tenant Client  │
+/// │                 │                    │  (bridge)       │
 /// │  sendRequest()  │———— SSE ——————————>│  EventSource    │
 /// │                 │  (tools/call)      │                 │
 /// │                 │                    │                 │

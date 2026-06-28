@@ -6,6 +6,8 @@ import io.hensu.core.execution.parallel.ConsensusConfig
 import io.hensu.core.execution.parallel.ConsensusStrategy
 import io.hensu.core.rubric.RubricParser
 import io.hensu.core.workflow.node.ParallelNode
+import io.hensu.core.workflow.transition.NoConsensusTransition
+import io.hensu.core.workflow.transition.SuccessTransition
 import io.hensu.dsl.WorkingDirectory
 import io.hensu.dsl.extensions.resolveAsPrompt
 import io.hensu.dsl.extensions.resolveAsRubric
@@ -37,7 +39,7 @@ import java.util.logging.Logger
  *     }
  *
  *     onConsensus goto "approved"
- *     onNoConsensus goto "needs_review"
+ *     onNoConsensus revise "producer" retry 3 otherwise "escalate"
  * }
  * ```
  *
@@ -87,34 +89,52 @@ class ParallelNodeBuilder(private val id: String, private val workingDirectory: 
      *
      * @param targetNode the node to transition to on consensus, not null
      */
-    infix fun onConsensus.goto(targetNode: String) {
+    infix fun onConsensus.goto(targetNode: String): GotoHandle {
         transitionBuilder.addSuccessTransition(targetNode)
+        return GotoHandle(transitionBuilder.rulesRef()) { SuccessTransition(targetNode, true) }
     }
 
     /**
      * Defines transition when consensus is not reached.
      *
-     * Usage: `onNoConsensus goto "needs_review"`
+     * Usage: `onNoConsensus goto "needs_review"` or `onNoConsensus goto "needs_review"
+     * withFeedback`
      *
      * @param targetNode the node to transition to when no consensus, not null
      */
-    infix fun onNoConsensus.goto(targetNode: String) {
-        transitionBuilder.addFailureTransition(targetNode)
+    infix fun onNoConsensus.goto(targetNode: String): GotoHandle {
+        transitionBuilder.addNoConsensusTransition(targetNode)
+        return GotoHandle(transitionBuilder.rulesRef()) { NoConsensusTransition(targetNode, true) }
     }
+
+    /**
+     * Defines a bounded-revise transition when consensus is not reached.
+     *
+     * Retries the producer node up to a budget, then escalates to a fallback target.
+     *
+     * Usage: `onNoConsensus revise "producer" retry 3 otherwise "escalate"`
+     *
+     * @param producerNode the node to re-execute on each retry
+     * @return builder for specifying retry budget and escalation target
+     */
+    infix fun onNoConsensus.revise(producerNode: String): ReviseBuilder =
+        transitionBuilder.createReviseBuilder(NoConsensusTransition(producerNode), "consensus")
 
     /**
      * Defines transition on success (alias for [onConsensus]).
      *
      * @param targetNode the node to transition to on success, not null
      */
-    infix fun onSuccess.goto(targetNode: String) {
+    infix fun onSuccess.goto(targetNode: String): GotoHandle {
         transitionBuilder.addSuccessTransition(targetNode)
+        return GotoHandle(transitionBuilder.rulesRef()) { SuccessTransition(targetNode, true) }
     }
 
     /**
-     * Defines transition on failure (alias for [onNoConsensus]).
+     * Defines transition on agent execution failure (not consensus failure).
      *
      * @param targetNode the node to transition to on failure, not null
+     * @see onNoConsensus for consensus-specific failure handling
      */
     infix fun onFailure.goto(targetNode: String) {
         transitionBuilder.addFailureTransition(targetNode)
