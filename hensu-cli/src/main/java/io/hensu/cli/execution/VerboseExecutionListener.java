@@ -140,6 +140,13 @@ public class VerboseExecutionListener implements ExecutionListener {
         }
     }
 
+    @Override
+    public void onTransitionWarning(String nodeId, String message) {
+        out.println(styles.warn("⚠ transition warning") + styles.dim(" · ") + nodeId);
+        out.println("  " + styles.warn(message));
+        out.println();
+    }
+
     private String extractOutput(AgentResponse response) {
         return switch (response) {
             case AgentResponse.TextResponse t -> t.content();

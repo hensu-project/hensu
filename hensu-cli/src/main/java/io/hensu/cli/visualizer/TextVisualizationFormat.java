@@ -486,8 +486,31 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                 styles.arrow(),
                                 styles.bold(targetNode),
                                 styles.dim(label)));
+            } else if (rule instanceof ConditionTransition condition) {
+                sb.append(
+                        String.format(
+                                "%s%s  %s %-14s %s%n",
+                                indent,
+                                styles.boxMid(),
+                                styles.arrow(),
+                                styles.bold(condition.targetNode()),
+                                styles.dim(conditionLabel(condition))));
+            } else if (rule instanceof AlwaysTransition(String targetNode, boolean fb)) {
+                String label = fb ? "otherwise +fb" : "otherwise";
+                sb.append(
+                        String.format(
+                                "%s%s  %s %-14s %s%n",
+                                indent,
+                                styles.boxMid(),
+                                styles.arrow(),
+                                styles.bold(targetNode),
+                                styles.dim(label)));
             }
         }
+    }
+
+    private String conditionLabel(ConditionTransition condition) {
+        return condition.variable() + " " + condition.condition().describe();
     }
 
     private void appendBoundedTransition(
@@ -548,6 +571,24 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                                 + " revise "
                                                 + budget)));
             }
+        } else if (inner instanceof ConditionTransition condition) {
+            sb.append(
+                    String.format(
+                            "%s%s  %s %-14s %s%n",
+                            indent,
+                            styles.boxMid(),
+                            styles.arrow(),
+                            styles.bold(condition.targetNode()),
+                            styles.dim(conditionLabel(condition) + " revise " + budget)));
+        } else if (inner instanceof AlwaysTransition(String targetNode, boolean _)) {
+            sb.append(
+                    String.format(
+                            "%s%s  %s %-14s %s%n",
+                            indent,
+                            styles.boxMid(),
+                            styles.arrow(),
+                            styles.bold(targetNode),
+                            styles.dim("otherwise revise " + budget)));
         }
 
         // Escalation line

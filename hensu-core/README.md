@@ -144,7 +144,7 @@ flowchart LR
 | `Criterion`        | Single evaluation dimension with weight and minimum score         |
 | `RubricEvaluation` | Complete evaluation result with per-criterion scores              |
 
-Score-based routing: nodes can use `ScoreTransition` to route based on evaluation scores (e.g., score >= 80 goto "approve", else goto "revise"). Nodes that write a boolean `approved` variable can use `ApprovalTransition` (`onApproval` / `onRejection` in DSL) for binary decision routing.
+Score-based routing: nodes can use `ScoreTransition` to route based on evaluation scores (e.g., score >= 80 goto "approve", else goto "revise"). Nodes that write a boolean `approved` variable can use `ApprovalTransition` (`onApproval` / `onRejection` in DSL) for binary decision routing. For routing on any other declared output variable — e.g. a self-reported `status` driving a bounded work loop — use `ConditionTransition` (`onCondition` in DSL).
 
 ## Plan Engine
 
@@ -327,8 +327,7 @@ hensu-core/src/main/java/io/hensu/core/
 │       ├── ConsensusEvaluator.java # Evaluates branch results against consensus rules
 │       ├── ConsensusResult.java   # Outcome of consensus evaluation
 │       ├── BranchExecutionConfig.java # Typed branch metadata on ExecutionContext (consensus, yields)
-│       ├── FailureMarker.java     # Sentinel for failed branches in fork/join
-│       └── BranchExecutionConfig.java # Typed branch metadata on ExecutionContext (consensus, yields)
+│       └── FailureMarker.java     # Sentinel for failed branches in fork/join
 ├── workflow/
 │   ├── Workflow.java              # Workflow definition (agents + graph + optional state schema)
 │   ├── WorkflowConfig.java        # Execution tuning (retry limits, timeouts, defaults)
@@ -350,15 +349,18 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── SubWorkflowNode.java   # Delegates to another workflow
 │   │   └── EndNode.java           # Terminal node
 │   ├── transition/
-│   │   ├── TransitionRule.java        # Sealed trigger interface; exposes requiredEngineVars()
+│   │   ├── TransitionRule.java        # Sealed trigger interface; exposes requiredEngineVars(), retryFeedback(), mismatchDiagnostic()
 │   │   ├── TransitionTargets.java     # Primary + escalation target pair
+│   │   ├── TransitionRuleChecks.java  # Shared rule-list validations (duplicate namespaces, arm ordering)
 │   │   ├── SuccessTransition.java     # Routes on successful execution
 │   │   ├── FailureTransition.java     # Routes on execution failure (pure trigger)
 │   │   ├── NoConsensusTransition.java # Routes when a parallel node fails consensus
 │   │   ├── ScoreTransition.java       # Routes on rubric evaluation score
 │   │   ├── ApprovalTransition.java    # Routes on the approved engine variable
+│   │   ├── Condition.java             # Sealed value predicates (Equals, NotEquals, Compare) with coercion
+│   │   ├── ConditionTransition.java   # Routes on a declared output variable (backs onCondition)
 │   │   ├── BoundedTransition.java     # Decorates a trigger with retry budget + escalation (backs revise)
-│   │   ├── AlwaysTransition.java      # Unconditional transition
+│   │   ├── AlwaysTransition.java      # Else-arm: routes every successful result to its target
 │   │   ├── RubricFailTransition.java  # Routes when rubric evaluation itself fails
 │   │   ├── LoopCondition.java         # Continuation predicate for LoopNode
 │   │   └── BreakRule.java             # Early-exit rule for LoopNode
@@ -440,16 +442,17 @@ hensu-core/src/main/java/io/hensu/core/
 
 ## Transition Rules
 
-| Rule                    | Description                                                                                                       |
-|-------------------------|-------------------------------------------------------------------------------------------------------------------|
-| `SuccessTransition`     | Routes on successful execution                                                                                    |
-| `FailureTransition`     | Routes on execution failure (pure trigger; no retry budget)                                                       |
-| `NoConsensusTransition` | Routes when a parallel node fails to reach consensus                                                              |
-| `ScoreTransition`       | Routes based on rubric evaluation score                                                                           |
-| `ApprovalTransition`    | Routes on the `approved` boolean engine variable (fall-through if absent)                                         |
-| `BoundedTransition`     | Decorates a trigger with a per-node retry budget + escalation target (the `revise` / `onFailure retry` mechanism) |
-| `AlwaysTransition`      | Unconditional transition                                                                                          |
-| `RubricFailTransition`  | Routes when rubric evaluation itself fails                                                                        |
+| Rule                    | Description                                                                                                                                      |
+|-------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
+| `SuccessTransition`     | Routes on successful execution                                                                                                                   |
+| `FailureTransition`     | Routes on execution failure (pure trigger; no retry budget)                                                                                      |
+| `NoConsensusTransition` | Routes when a parallel node fails to reach consensus                                                                                             |
+| `ScoreTransition`       | Routes based on rubric evaluation score                                                                                                          |
+| `ApprovalTransition`    | Routes on the `approved` boolean engine variable (fall-through if absent)                                                                        |
+| `ConditionTransition`   | Routes on a declared output variable via a typed `Condition` predicate; type mismatches emit a loud transition warning (backs DSL `onCondition`) |
+| `BoundedTransition`     | Decorates a trigger with a per-node retry budget + escalation target (the `revise` / `onFailure retry` mechanism)                                |
+| `AlwaysTransition`      | Else-arm of `onScore` / `onCondition`: routes every **successful** result to its target; failures fall through to `FailureTransition`            |
+| `RubricFailTransition`  | Routes when rubric evaluation itself fails                                                                                                       |
 
 ## Agent Provider Interface
 

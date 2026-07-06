@@ -65,6 +65,11 @@ public final class SynchronizedListenerDecorator implements ExecutionListener {
     }
 
     @Override
+    public synchronized void onTransitionWarning(String nodeId, String message) {
+        delegate.onTransitionWarning(nodeId, message);
+    }
+
+    @Override
     public synchronized void onCheckpoint(HensuState state) {
         delegate.onCheckpoint(state);
     }

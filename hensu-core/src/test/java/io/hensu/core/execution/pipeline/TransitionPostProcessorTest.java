@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.execution.EngineVariables;
+import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.executor.ExecutionContext;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.parallel.ConsensusResult;
@@ -21,8 +22,11 @@ import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.LoopNode;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
+import io.hensu.core.workflow.transition.AlwaysTransition;
 import io.hensu.core.workflow.transition.ApprovalTransition;
 import io.hensu.core.workflow.transition.BoundedTransition;
+import io.hensu.core.workflow.transition.Condition;
+import io.hensu.core.workflow.transition.ConditionTransition;
 import io.hensu.core.workflow.transition.FailureTransition;
 import io.hensu.core.workflow.transition.NoConsensusTransition;
 import io.hensu.core.workflow.transition.ScoreTransition;
@@ -325,6 +329,93 @@ class TransitionPostProcessorTest {
         }
     }
 
+    // — Condition variable lifecycle and mismatch warnings ————————————————
+
+    @Nested
+    @DisplayName("Condition transitions")
+    class ConditionTransitions {
+
+        @Test
+        @DisplayName("forward transition clears the declared condition variable — no stale routing")
+        void forwardClearsDeclaredConditionVariable() {
+            // "status" is not in the hardcoded score/approved pair; if the clear-set
+            // is not derived from requiredEngineVars(), the value written here leaks
+            // into a later node routing a ConditionTransition on the same name and
+            // fires it prematurely (ticket #88 defect 2).
+            var rule =
+                    new ConditionTransition("status", new Condition.Equals("complete"), "deploy");
+            var ctx = contextWithTransitions("node-a", List.of(rule));
+            ctx.state().getContext().put("status", "complete");
+
+            processor.process(ctx);
+
+            assertThat(ctx.state().getCurrentNode()).isEqualTo("deploy");
+            assertThat(ctx.state().getContext()).doesNotContainKey("status");
+        }
+
+        @Test
+        @DisplayName("type mismatch emits onTransitionWarning — never a silent no-match")
+        void mismatchEmitsListenerWarning() {
+            // Agent emitted a boolean where the predicate needs a number. The rule
+            // must fall through to the next arm AND surface a warning; without it
+            // the loop silently burns its budget (ticket #88 defect 1).
+            var mismatched =
+                    new ConditionTransition(
+                            "status", new Condition.Compare(Condition.Op.GTE, 80.0), "deploy");
+            var warnings = new java.util.ArrayList<String>();
+            var listener =
+                    new ExecutionListener() {
+                        @Override
+                        public void onTransitionWarning(String nodeId, String message) {
+                            warnings.add(nodeId + ": " + message);
+                        }
+                    };
+            var ctx =
+                    contextWithTransitionsAndListener(
+                            List.of(mismatched, new SuccessTransition("fallback")), listener);
+            ctx.state().getContext().put("status", Boolean.TRUE);
+
+            processor.process(ctx);
+
+            assertThat(ctx.state().getCurrentNode()).isEqualTo("fallback");
+            assertThat(warnings).hasSize(1);
+            assertThat(warnings.getFirst()).contains("node-a").contains("status");
+        }
+
+        @Test
+        @DisplayName(
+                "failed node bypasses condition arms and else-arm — onFailure routes, no warnings")
+        void failedResultFallsThroughToFailureTransition() {
+            // A failed node never wrote the routed variable. Without the SUCCESS guard
+            // the else-arm swallows the failure, burns the revise budget re-prompting a
+            // broken agent, and makes the FailureTransition behind it dead code — while
+            // mismatch diagnostics spam warnings about a variable that could never exist.
+            var arm = new ConditionTransition("status", new Condition.Equals("complete"), "done");
+            var elseArm =
+                    new BoundedTransition(new AlwaysTransition("work"), "condition", 5, "escalate");
+            var warnings = new java.util.ArrayList<String>();
+            var listener =
+                    new ExecutionListener() {
+                        @Override
+                        public void onTransitionWarning(String nodeId, String message) {
+                            warnings.add(message);
+                        }
+                    };
+            Node node =
+                    StandardNode.builder()
+                            .id("work")
+                            .transitionRules(
+                                    List.of(arm, elseArm, new FailureTransition("fallback")))
+                            .build();
+            var ctx = buildContext("work", node, NodeResult.failure("agent error"), listener);
+
+            processor.process(ctx);
+
+            assertThat(ctx.state().getCurrentNode()).isEqualTo("fallback");
+            assertThat(warnings).isEmpty();
+        }
+    }
+
     // — Consensus feedback injection —————————————————————————————————————
 
     @Nested
@@ -411,15 +502,22 @@ class TransitionPostProcessorTest {
     private ProcessorContext contextWithTransitionsAndResult(
             String nodeId, List<TransitionRule> rules, NodeResult result) {
         Node node = StandardNode.builder().id(nodeId).transitionRules(rules).build();
-        return buildContext(nodeId, node, result);
+        return buildContext(nodeId, node, result, null);
+    }
+
+    private ProcessorContext contextWithTransitionsAndListener(
+            List<TransitionRule> rules, ExecutionListener listener) {
+        Node node = StandardNode.builder().id("node-a").transitionRules(rules).build();
+        return buildContext("node-a", node, NodeResult.success("output", Map.of()), listener);
     }
 
     private ProcessorContext loopNodeContext() {
         LoopNode loopNode = new LoopNode("loop");
-        return buildContext("loop", loopNode, NodeResult.success("output", Map.of()));
+        return buildContext("loop", loopNode, NodeResult.success("output", Map.of()), null);
     }
 
-    private ProcessorContext buildContext(String nodeId, Node node, NodeResult result) {
+    private ProcessorContext buildContext(
+            String nodeId, Node node, NodeResult result, ExecutionListener listener) {
         var state =
                 new HensuState.Builder()
                         .executionId("test")
@@ -436,7 +534,12 @@ class TransitionPostProcessorTest {
                         .nodes(Map.of(nodeId, node))
                         .build();
 
-        var execCtx = ExecutionContext.builder().state(state).workflow(workflow).build();
+        var execCtx =
+                ExecutionContext.builder()
+                        .state(state)
+                        .workflow(workflow)
+                        .listener(listener)
+                        .build();
         return new ProcessorContext(execCtx, node, result);
     }
 }

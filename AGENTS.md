@@ -34,6 +34,7 @@ Hensu is a modular AI workflow engine on Java 25 + Kotlin DSL. Core design princ
 6. **Storage in core**: repository interfaces and in-memory defaults live in `hensu-core`. JDBC impls live in `hensu-server/persistence/` as plain classes (not CDI beans). `HensuEnvironmentProducer` conditionally wires JDBC vs in-memory. Server exposes core components via `@Produces @Singleton` — never instantiates directly.
 7. **API separation**: `/api/v1/workflows` (definitions) and `/api/v1/executions` (runtime) are distinct resources.
 8. **JWT authentication**: SmallRye JWT bearer auth. Tenant identity extracted from `tenant_id` claim via `RequestTenantResolver`. CLI sends `Authorization: Bearer <token>` via `--token` or `hensu.server.token` config. JWT is required in every profile **except `inmem`** (integration tests), which disables auth and uses `hensu.tenant.default`. RSA keys live outside the repo (e.g. `~/.hensu/`).
+9. **Nodes do work; transitions route.** Control-flow capabilities (iteration, exit conditions, budgets, feedback) are expressed in the `TransitionRule` sealed hierarchy — never as node types, node flags, or executor forks on node configuration. A request shaped like "this node needs to loop/branch/retry/converge" is answered with a new or extended transition rule wired through `requiredEngineVars()`. The plan subsystem and `LoopNode` were both removed for violating this; do not reintroduce the pattern.
 
 ## CLI
 

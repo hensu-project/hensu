@@ -52,8 +52,21 @@ class WorkflowValidateCommand extends WorkflowCommand {
                 System.out.println(" [WARN] Unreachable nodes: " + String.join(", ", unreachable));
             }
         } catch (Exception e) {
-            System.err.println(" [FAIL] Validation failed: " + e.getMessage());
+            System.err.println(" [FAIL] Validation failed: " + rootCauseMessage(e));
         }
+    }
+
+    /// Walks the cause chain to the deepest exception carrying a message, so DSL
+    /// build errors (e.g. overlapping condition arms) surface instead of generic
+    /// script-engine wrappers like "Script execution error".
+    private static String rootCauseMessage(Throwable e) {
+        String message = e.getMessage();
+        for (Throwable t = e.getCause(); t != null; t = t.getCause()) {
+            if (t.getMessage() != null) {
+                message = t.getMessage();
+            }
+        }
+        return message;
     }
 
     /// Finds nodes that are not reachable from the start node via any transition path.

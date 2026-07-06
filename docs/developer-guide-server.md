@@ -321,7 +321,7 @@ io.hensu.server/
 │   └── SleepHandler             # Simulates long-running node for crash-recovery tests
 │
 ├── execution/             # Server-side execution listeners
-│   ├── LoggingExecutionListener   # Logs plan/step lifecycle events
+│   ├── LoggingExecutionListener   # Logs plan/step lifecycle events + transition warnings
 │   └── CompositeExecutionListener # Combines multiple ExecutionListeners
 │
 ├── mcp/                   # MCP protocol implementation

@@ -9,6 +9,8 @@ import io.hensu.core.rubric.RubricParser
 import io.hensu.core.workflow.node.StandardNode
 import io.hensu.core.workflow.transition.ApprovalTransition
 import io.hensu.core.workflow.transition.SuccessTransition
+import io.hensu.core.workflow.transition.TransitionRule
+import io.hensu.core.workflow.transition.TransitionRuleChecks
 import io.hensu.dsl.WorkingDirectory
 import io.hensu.dsl.extensions.resolveAsPrompt
 import io.hensu.dsl.extensions.resolveAsRubric
@@ -168,6 +170,24 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
         transitionBuilder.onScore(block)
     }
 
+    /**
+     * Define conditional transitions routed on a declared output variable.
+     *
+     * The variable must be declared via [writes] so the engine instructs the agent to produce it –
+     * validated at build time.
+     *
+     * Usage:
+     * ```kotlin
+     * onCondition("status") {
+     *     whenValue equalTo "complete" goto "publish"
+     *     whenValue notEqualTo "complete" revise "draft" retry 5 otherwise "escalate"
+     * }
+     * ```
+     */
+    fun onCondition(variable: String, block: ConditionTransitionBuilder.() -> Unit) {
+        transitionBuilder.onCondition(variable, block)
+    }
+
     /** Define human review (simple mode). Usage: review(ReviewMode.REQUIRED) */
     fun review(mode: ReviewMode) {
         reviewConfig = ReviewConfig(mode, false, false)
@@ -245,8 +265,9 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
         planFailureTarget = targetNode
     }
 
-    override fun build(): StandardNode =
-        StandardNode.builder()
+    override fun build(): StandardNode {
+        validateTransitions(transitionBuilder.build())
+        return StandardNode.builder()
             .id(id)
             .agentId(agent)
             .prompt(prompt.resolveAsPrompt(workingDirectory))
@@ -260,4 +281,41 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
             .staticPlan(staticPlan)
             .planFailureTarget(planFailureTarget)
             .build()
+    }
+
+    /**
+     * Validates the compiled transition rules at build time:
+     * - every custom variable a rule routes on must be declared in [writes] (engine variables are
+     *   inferred from the graph and exempt)
+     * - two bounded rules must not share a retry-counter namespace on one node
+     * - a bounded retry arm ordered before an exit arm is logged as a warning (the exit arm cannot
+     *   fire until the budget is exhausted)
+     */
+    private fun validateTransitions(rules: List<TransitionRule>) {
+        val declared = writes.toSet()
+        for (rule in rules) {
+            val custom = rule.requiredEngineVars() - EngineVariables.all()
+            for (variable in custom) {
+                require(variable in declared) {
+                    "Node '$id': transition routes on variable '$variable' which is not " +
+                        "declared in writes(...). Add writes(\"$variable\") so the agent is " +
+                        "instructed to produce it."
+                }
+            }
+        }
+        val duplicates = TransitionRuleChecks.duplicateBoundedNamespaces(rules)
+        require(duplicates.isEmpty()) {
+            "Node '$id': multiple bounded retry rules share the namespace(s) " +
+                "${duplicates.joinToString(", ") { "'$it'" }} and would silently share a " +
+                "retry counter. Keep a single revise/retry arm per trigger kind on a node."
+        }
+        TransitionRuleChecks.boundedBeforeExitWarning(rules, id).ifPresent { warning ->
+            logger.warning(warning)
+        }
+    }
+
+    private companion object {
+        private val logger =
+            java.util.logging.Logger.getLogger(StandardNodeBuilder::class.java.name)
+    }
 }

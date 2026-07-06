@@ -61,6 +61,11 @@ public final class CompositeExecutionListener implements ExecutionListener {
     }
 
     @Override
+    public void onTransitionWarning(String nodeId, String message) {
+        for (ExecutionListener d : delegates) d.onTransitionWarning(nodeId, message);
+    }
+
+    @Override
     public void onCheckpoint(HensuState state) {
         for (ExecutionListener d : delegates) d.onCheckpoint(state);
     }

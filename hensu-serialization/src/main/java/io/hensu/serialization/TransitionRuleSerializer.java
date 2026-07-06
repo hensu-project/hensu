@@ -18,9 +18,12 @@ import java.io.Serial;
 /// - **`BoundedTransition`**:
 /// `{"type":"bounded","namespace":"...","budget":N,"otherwise":"...","inner":{...}}`
 ///   — the `inner` field is a recursively serialized `TransitionRule`
-/// - **`AlwaysTransition`**: `{"type":"always"}`
+/// - **`AlwaysTransition`**: `{"type":"always","targetNode":"..."}`
 /// - **`ScoreTransition`**: `{"type":"score","conditions":[...]}` — each condition written
 ///   manually: `operator` (string), `value` (number|null), `range` (object|null), `targetNode`
+/// - **`ConditionTransition`**:
+/// `{"type":"condition","variable":"...","operator":"EQ","expected":<scalar>,"targetNode":"..."}`
+///   — `operator` is `EQ`/`NEQ` (string `expected`) or `GT`/`GTE`/`LT`/`LTE` (numeric `expected`)
 /// - **`RubricFailTransition`**: `{"type":"rubricFail"}` — the handler predicate is not
 ///   serializable and is reconstructed as a no-op lambda on deserialization
 /// - **`ApprovalTransition`**: `{"type":"approval","expected":true|false,"targetNode":"..."}`
@@ -74,7 +77,10 @@ class TransitionRuleSerializer extends StdSerializer<TransitionRule> {
                 gen.writeFieldName("inner");
                 serialize(t.inner(), gen, provider);
             }
-            case AlwaysTransition _ -> gen.writeStringField("type", "always");
+            case AlwaysTransition t -> {
+                gen.writeStringField("type", "always");
+                gen.writeStringField("targetNode", t.targetNode());
+            }
             case ScoreTransition t -> {
                 gen.writeStringField("type", "score");
                 gen.writeArrayFieldStart("conditions");
@@ -99,6 +105,25 @@ class TransitionRuleSerializer extends StdSerializer<TransitionRule> {
                     gen.writeEndObject();
                 }
                 gen.writeEndArray();
+            }
+            case ConditionTransition t -> {
+                gen.writeStringField("type", "condition");
+                gen.writeStringField("variable", t.variable());
+                switch (t.condition()) {
+                    case Condition.Equals c -> {
+                        gen.writeStringField("operator", "EQ");
+                        gen.writeStringField("expected", c.expected());
+                    }
+                    case Condition.NotEquals c -> {
+                        gen.writeStringField("operator", "NEQ");
+                        gen.writeStringField("expected", c.expected());
+                    }
+                    case Condition.Compare c -> {
+                        gen.writeStringField("operator", c.op().name());
+                        gen.writeNumberField("expected", c.threshold());
+                    }
+                }
+                gen.writeStringField("targetNode", t.targetNode());
             }
             case RubricFailTransition _ -> gen.writeStringField("type", "rubricFail");
             case ApprovalTransition t -> {

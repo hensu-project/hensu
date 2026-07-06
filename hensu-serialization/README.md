@@ -61,7 +61,11 @@ Types using the builder pattern are handled via Jackson mixins — no annotation
 Builder mixins use `@JsonPOJOBuilder(withPrefix = "", buildMethodName = "build")` to match
 the fluent builder API (e.g., `.nodeId("x")` not `.withNodeId("x")`).
 
-**`NodeResult.getError()`** is `@JsonIgnore`d because `Throwable` is not safely serializable.
+**`NodeResult.getError()`** is `@JsonIgnore`d because `Throwable` is not safely serializable —
+errors are transient and not persisted in snapshots. The builder mixin (`NodeResultBuilderMixin`)
+also suppresses the `error(Throwable)` setter with `@JsonIgnore`, preventing Jackson from crashing
+when deserializing a snapshot payload that contains no `error` field. Both halves of the ignore
+pattern are required; removing either one breaks round-trip deserialization.
 
 ### Plain Records (Default Jackson Serialization)
 
@@ -85,10 +89,6 @@ serialized via default Jackson machinery in `WorkflowSerializer.toJson()`. Both 
 
 All are registered in `CoreModelNativeConfig` in `hensu-server`. Do **not** create mixins for these –
 reflection registration is sufficient since they have public constructors and accessors.
-Errors are transient and not persisted in snapshots. The builder mixin (`NodeResultBuilderMixin`)
-also suppresses the `error(Throwable)` setter with `@JsonIgnore` — this prevents Jackson from
-crashing when deserializing a snapshot payload that contains no `error` field. Both halves of
-the ignore pattern are required; removing either one breaks round-trip deserialization.
 
 ## Module Structure
 

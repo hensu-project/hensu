@@ -28,4 +28,11 @@ public record FailureTransition(String targetNode) implements TransitionRule {
 
         return targetNode != null ? targetNode : state.getCurrentNode();
     }
+
+    /// Execution failures carry no agent-evaluated feedback – the recommendation is cleared
+    /// on retry so the next attempt starts from the original prompt.
+    @Override
+    public RetryFeedback retryFeedback() {
+        return RetryFeedback.NONE;
+    }
 }

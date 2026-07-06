@@ -30,4 +30,10 @@ public record NoConsensusTransition(String targetNode, boolean withFeedback)
         if (!Boolean.FALSE.equals(consensusReached)) return null;
         return targetNode;
     }
+
+    /// Consensus failures inject vote/judge details into the recommendation on retry.
+    @Override
+    public RetryFeedback retryFeedback() {
+        return RetryFeedback.CONSENSUS;
+    }
 }

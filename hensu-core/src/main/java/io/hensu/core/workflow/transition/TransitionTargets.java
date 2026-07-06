@@ -30,7 +30,9 @@ public final class TransitionTargets {
             case NoConsensusTransition n -> List.of(n.targetNode());
             case BoundedTransition b ->
                     Stream.concat(of(b.inner()).stream(), Stream.of(b.otherwise())).toList();
-            case AlwaysTransition _, RubricFailTransition _ -> List.of();
+            case AlwaysTransition a -> List.of(a.targetNode());
+            case ConditionTransition c -> List.of(c.targetNode());
+            case RubricFailTransition _ -> List.of();
         };
     }
 }

@@ -3,12 +3,14 @@ package io.hensu.core.execution.pipeline;
 import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.parallel.ConsensusResult;
 import io.hensu.core.execution.parallel.ConsensusStrategy;
+import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.node.LoopNode;
+import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.transition.BoundedTransition;
-import io.hensu.core.workflow.transition.FailureTransition;
-import io.hensu.core.workflow.transition.NoConsensusTransition;
 import io.hensu.core.workflow.transition.TransitionRule;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /// Evaluates transition rules to determine the next node after execution.
@@ -81,8 +83,19 @@ public final class TransitionPostProcessor implements PostNodeExecutionProcessor
         for (TransitionRule rule : node.getTransitionRules()) {
             String target = rule.evaluate(state, context.result());
             if (target != null) {
-                applyTransitionEffects(state, rule);
+                applyTransitionEffects(state, node, rule);
                 return target;
+            }
+            // A failed node never produced its routed variables — mismatch diagnostics
+            // would be noise on top of the node's own error.
+            if (context.result().getStatus() != ResultStatus.SUCCESS) {
+                continue;
+            }
+            String diagnostic = rule.mismatchDiagnostic(state);
+            if (diagnostic != null) {
+                context.executionContext()
+                        .getListener()
+                        .onTransitionWarning(node.getId(), diagnostic);
             }
         }
 
@@ -92,37 +105,56 @@ public final class TransitionPostProcessor implements PostNodeExecutionProcessor
     /// Applies retry-counter, feedback, and engine var cleanup after a transition rule matches.
     ///
     /// Engine variable lifecycle is centralized here — no other component clears engine vars
-    /// from the state context. Three paths:
-    /// - **Backtrack** (bounded, under budget): clear routing vars (score, approved). Keep
-    ///   recommendation for {@link io.hensu.core.execution.enricher.FeedbackContextInjector},
-    ///   except for failure retries where no agent feedback exists.
+    /// from the state context. The routing clear-set is derived from the node's rules'
+    /// {@link TransitionRule#requiredEngineVars()} (minus recommendation, which has its own
+    /// feedback lifecycle) plus the built-in score/approved pair, so declared condition
+    /// variables cannot leak into a later node routing on the same name. Three paths:
+    /// - **Backtrack** (bounded, under budget): clear routing vars. Feedback handling follows
+    ///   {@link TransitionRule#retryFeedback()}: keep recommendation for
+    ///   {@link io.hensu.core.execution.enricher.FeedbackContextInjector}, clear it when no
+    ///   agent feedback exists, or synthesize it from consensus vote details.
     /// - **Forward with feedback** ({@link TransitionRule#withFeedback()} is true): clear
     ///   routing vars but keep recommendation so the target node sees evaluation context.
-    /// - **Forward** (default): clear all engine vars.
+    /// - **Forward** (default): clear routing vars and recommendation.
     ///
     /// @param state current workflow state (mutated in place)
+    /// @param node the node being transitioned away from
     /// @param rule the transition rule that matched
-    private void applyTransitionEffects(HensuState state, TransitionRule rule) {
+    private void applyTransitionEffects(HensuState state, Node node, TransitionRule rule) {
         String nodeId = state.getCurrentNode();
+        Set<String> routingVars = routingVarsFor(node);
         if (rule instanceof BoundedTransition bt && bt.underBudget(state)) {
             state.incrementRetryCount(bt.namespace(), nodeId);
-            if (bt.inner() instanceof NoConsensusTransition) {
-                injectConsensusFeedback(state, nodeId);
+            switch (rule.retryFeedback()) {
+                case CONSENSUS -> injectConsensusFeedback(state, nodeId);
+                case NONE -> state.getContext().remove(EngineVariables.RECOMMENDATION);
+                case RECOMMENDATION -> {}
             }
-            state.getContext().remove(EngineVariables.SCORE);
-            state.getContext().remove(EngineVariables.APPROVED);
-            if (bt.inner() instanceof FailureTransition) {
-                state.getContext().remove(EngineVariables.RECOMMENDATION);
-            }
+            state.getContext().keySet().removeAll(routingVars);
             return;
         }
         state.resetRetryCounts(nodeId);
-        if (rule.withFeedback()) {
-            state.getContext().remove(EngineVariables.SCORE);
-            state.getContext().remove(EngineVariables.APPROVED);
-        } else {
-            EngineVariables.all().forEach(state.getContext().keySet()::remove);
+        state.getContext().keySet().removeAll(routingVars);
+        if (!rule.withFeedback()) {
+            state.getContext().remove(EngineVariables.RECOMMENDATION);
         }
+    }
+
+    /// Derives the routing-variable clear-set for a node: every engine variable its rules
+    /// declare via {@link TransitionRule#requiredEngineVars()} plus the built-in
+    /// score/approved pair, minus recommendation (dedicated feedback lifecycle).
+    ///
+    /// @param node the node whose rules define the routing variables
+    /// @return mutable set of variable names to clear, never null
+    private Set<String> routingVarsFor(Node node) {
+        Set<String> vars = new HashSet<>();
+        for (TransitionRule rule : node.getTransitionRules()) {
+            vars.addAll(rule.requiredEngineVars());
+        }
+        vars.add(EngineVariables.SCORE);
+        vars.add(EngineVariables.APPROVED);
+        vars.remove(EngineVariables.RECOMMENDATION);
+        return vars;
     }
 
     /// Injects prior-round consensus feedback into the state context so the producer

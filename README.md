@@ -144,8 +144,9 @@ fun contentPipeline() = workflow("content-pipeline") {
 }
 ```
 
-The [DSL Reference](docs/dsl-reference.md) covers parallel branches, consensus, dynamic planning,
-fork/join, and sub-workflows.
+The [DSL Reference](docs/dsl-reference.md) covers condition-based routing (`onCondition` —
+bounded self-revising work loops), parallel branches, consensus, dynamic planning, fork/join,
+and sub-workflows.
 
 ---
 
@@ -168,8 +169,9 @@ fork/join, and sub-workflows.
   artifact that runs in production.
 - **Virtual-thread parallelism.** Parallel branches, consensus evaluation, and multi-tenant workloads
   run on Java 25 virtual threads.
-- **Non-linear flow.** Loops, conditional branches, parallel fan-out with consensus (majority,
-  unanimous, weighted, judge-decides), fork/join, and sub-workflows.
+- **Non-linear flow.** Condition-routed loops with bounded revise budgets, conditional branches,
+  parallel fan-out with consensus (majority, unanimous, weighted, judge-decides), fork/join, and
+  sub-workflows.
 
 ### Quality & Review
 

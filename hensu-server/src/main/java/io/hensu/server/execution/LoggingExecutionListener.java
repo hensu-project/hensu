@@ -64,6 +64,11 @@ public class LoggingExecutionListener implements ExecutionListener {
     }
 
     @Override
+    public void onTransitionWarning(String nodeId, String message) {
+        LOG.warnv("[{0}]  TRANSITION WARNING: {1}", nodeId, message);
+    }
+
+    @Override
     public void onPlannerStart(String nodeId, String planningPrompt) {
         LOG.infov("[{0}]  PLANNER INPUT:\n{1}", nodeId, planningPrompt);
     }
