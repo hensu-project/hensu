@@ -151,6 +151,30 @@ class TransitionBuilder {
     }
 
     /**
+     * Defines conditional transitions routed on an arbitrary declared output variable.
+     *
+     * Arms compile to [io.hensu.core.workflow.transition.ConditionTransition] rules in declaration
+     * order; revise arms desugar to bounded transitions under the `"condition"` namespace. The
+     * variable must be declared in the node's `writes(...)`.
+     *
+     * Usage:
+     * ```kotlin
+     * onCondition("status") {
+     *     whenValue equalTo "complete" goto "publish"
+     *     whenValue notEqualTo "complete" revise "draft" retry 5 otherwise "escalate"
+     * }
+     * ```
+     *
+     * @param variable name of the declared writes variable to route on
+     * @param block condition arm configuration block
+     */
+    fun onCondition(variable: String, block: ConditionTransitionBuilder.() -> Unit) {
+        val builder = ConditionTransitionBuilder(variable)
+        builder.apply(block)
+        rules.addAll(builder.buildAll())
+    }
+
+    /**
      * Builds the list of compiled transition rules.
      *
      * @return immutable list of transition rules

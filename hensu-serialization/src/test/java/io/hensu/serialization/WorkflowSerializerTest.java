@@ -24,13 +24,17 @@ import io.hensu.core.workflow.node.*;
 import io.hensu.core.workflow.state.StateVariableDeclaration;
 import io.hensu.core.workflow.state.VarType;
 import io.hensu.core.workflow.state.WorkflowStateSchema;
+import io.hensu.core.workflow.transition.AlwaysTransition;
 import io.hensu.core.workflow.transition.ApprovalTransition;
 import io.hensu.core.workflow.transition.BoundedTransition;
+import io.hensu.core.workflow.transition.Condition;
+import io.hensu.core.workflow.transition.ConditionTransition;
 import io.hensu.core.workflow.transition.FailureTransition;
 import io.hensu.core.workflow.transition.NoConsensusTransition;
 import io.hensu.core.workflow.transition.RubricFailTransition;
 import io.hensu.core.workflow.transition.ScoreTransition;
 import io.hensu.core.workflow.transition.SuccessTransition;
+import io.hensu.core.workflow.transition.TransitionRule;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -690,6 +694,63 @@ class WorkflowSerializerTest {
         assertThat(inner.conditions().getFirst().operator()).isEqualTo(ComparisonOperator.LT);
         assertThat(inner.conditions().getFirst().value()).isEqualTo(60.0);
         assertThat(inner.conditions().getFirst().targetNode()).isEqualTo("producer");
+    }
+
+    @Test
+    void roundTrip_conditionAndAlwaysTransitions() {
+        // A ralph-loop node shape: condition exit arm, bounded condition revise arm,
+        // and an always else-arm. Exercises every Condition predicate discriminator
+        // (EQ string, NEQ, GTE numeric) plus AlwaysTransition's targetNode — a
+        // persisted workflow reloading with a different predicate or target routes
+        // differently in production.
+        StandardNode start =
+                StandardNode.builder()
+                        .id("start")
+                        .transitionRules(
+                                List.of(
+                                        new ConditionTransition(
+                                                "status",
+                                                new Condition.Equals("complete"),
+                                                "deploy",
+                                                true),
+                                        new BoundedTransition(
+                                                new ConditionTransition(
+                                                        "status",
+                                                        new Condition.NotEquals("blocked"),
+                                                        "start"),
+                                                "condition",
+                                                5,
+                                                "escalate"),
+                                        new ConditionTransition(
+                                                "confidence",
+                                                new Condition.Compare(Condition.Op.GTE, 0.9),
+                                                "publish"),
+                                        new AlwaysTransition("review")))
+                        .build();
+
+        Workflow workflow = buildWorkflowWith(start);
+        Workflow restored = WorkflowSerializer.fromJson(WorkflowSerializer.toJson(workflow));
+
+        StandardNode restoredStart = (StandardNode) restored.getNodes().get("start");
+        List<TransitionRule> rules = restoredStart.getTransitionRules();
+        assertThat(rules).hasSize(4);
+
+        ConditionTransition exit = (ConditionTransition) rules.getFirst();
+        assertThat(exit.variable()).isEqualTo("status");
+        assertThat(exit.condition()).isEqualTo(new Condition.Equals("complete"));
+        assertThat(exit.targetNode()).isEqualTo("deploy");
+        assertThat(exit.withFeedback()).isTrue();
+
+        BoundedTransition bounded = (BoundedTransition) rules.get(1);
+        ConditionTransition revise = (ConditionTransition) bounded.inner();
+        assertThat(revise.condition()).isEqualTo(new Condition.NotEquals("blocked"));
+        assertThat(revise.targetNode()).isEqualTo("start");
+
+        ConditionTransition numeric = (ConditionTransition) rules.get(2);
+        assertThat(numeric.condition()).isEqualTo(new Condition.Compare(Condition.Op.GTE, 0.9));
+
+        AlwaysTransition always = (AlwaysTransition) rules.get(3);
+        assertThat(always.targetNode()).isEqualTo("review");
     }
 
     // --- helpers ---

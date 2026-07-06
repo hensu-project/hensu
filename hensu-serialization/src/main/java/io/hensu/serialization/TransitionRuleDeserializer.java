@@ -24,6 +24,8 @@ import java.util.List;
 ///   field is recursively deserialized via {@link #deserializeNode(JsonNode)}
 /// - **`"always"`** → `AlwaysTransition()`
 /// - **`"score"`** → `ScoreTransition` with a manually extracted `ScoreCondition` list
+/// - **`"condition"`** → `ConditionTransition` — `operator` selects the `Condition` subtype
+///   (`EQ`/`NEQ` → string equality, `GT`/`GTE`/`LT`/`LTE` → numeric comparison)
 /// - **`"rubricFail"`** → `RubricFailTransition` with a no-op lambda; the original
 ///   predicate is not serializable and cannot be restored from JSON
 /// - **`"approval"`** → `ApprovalTransition(expected, targetNode)`
@@ -82,7 +84,7 @@ class TransitionRuleDeserializer extends StdDeserializer<TransitionRule> {
                             root.get("budget").asInt(),
                             root.get("otherwise").asText(),
                             boolField(root, "escalationWithFeedback"));
-            case "always" -> new AlwaysTransition(feedback);
+            case "always" -> new AlwaysTransition(root.get("targetNode").asText(), feedback);
             case "score" -> {
                 List<ScoreCondition> conditions = new ArrayList<>();
                 for (JsonNode c : root.get("conditions")) {
@@ -102,6 +104,26 @@ class TransitionRuleDeserializer extends StdDeserializer<TransitionRule> {
                             new ScoreCondition(op, value, range, c.get("targetNode").asText()));
                 }
                 yield new ScoreTransition(conditions, feedback);
+            }
+            case "condition" -> {
+                String operator = root.get("operator").asText();
+                JsonNode expected = root.get("expected");
+                Condition condition =
+                        switch (operator) {
+                            case "EQ" -> new Condition.Equals(expected.asText());
+                            case "NEQ" -> new Condition.NotEquals(expected.asText());
+                            case "GT", "GTE", "LT", "LTE" ->
+                                    new Condition.Compare(
+                                            Condition.Op.valueOf(operator), expected.doubleValue());
+                            default ->
+                                    throw new IOException(
+                                            "Unknown condition operator: " + operator);
+                        };
+                yield new ConditionTransition(
+                        root.get("variable").asText(),
+                        condition,
+                        root.get("targetNode").asText(),
+                        feedback);
             }
             case "rubricFail" -> new RubricFailTransition(_ -> null, feedback);
             case "approval" ->

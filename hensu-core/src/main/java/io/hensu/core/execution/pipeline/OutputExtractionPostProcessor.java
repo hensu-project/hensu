@@ -88,6 +88,11 @@ public final class OutputExtractionPostProcessor implements PostNodeExecutionPro
                 keySet.addAll(engineVars);
                 List<String> allKeys = new ArrayList<>(keySet);
 
+                // Clear every key about to be re-extracted so a transition rule never
+                // fires on a stale value from a previous iteration when the agent omits
+                // the field. Applies only to this node's own keys.
+                state.getContext().keySet().removeAll(keySet);
+
                 if (engineVars.isEmpty() && writes.size() == 1) {
                     // Single domain write, no engine vars: fall back to raw text if JSON misses key
                     String key = writes.getFirst();

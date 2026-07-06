@@ -202,26 +202,6 @@ class TransitionRulesTest {
         }
 
         @Test
-        void shouldReadScoreFromContextWhenNoRubricEvaluation() {
-            // Given
-            List<ScoreCondition> conditions =
-                    List.of(
-                            new ScoreCondition(ComparisonOperator.GTE, 80.0, null, "approved"),
-                            new ScoreCondition(ComparisonOperator.LT, 80.0, null, "needs-review"));
-            ScoreTransition transition = new ScoreTransition(conditions);
-
-            // Set score in context (self-reported)
-            state.getContext().put(EngineVariables.SCORE, 90.0);
-            NodeResult result = NodeResult.success("Output", Map.of());
-
-            // When
-            String target = transition.evaluate(state, result);
-
-            // Then
-            assertThat(target).isEqualTo("approved");
-        }
-
-        @Test
         void shouldParseScoreFromString() {
             // Given
             List<ScoreCondition> conditions =

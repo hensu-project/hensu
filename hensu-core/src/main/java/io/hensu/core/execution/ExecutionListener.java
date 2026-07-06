@@ -80,6 +80,17 @@ public interface ExecutionListener {
     /// @param steps  the planned steps returned by the LLM, not null
     default void onPlannerComplete(String nodeId, List<PlannedStep> steps) {}
 
+    /// Called when a transition rule detects a type mismatch while routing.
+    ///
+    /// Fires when a routing value cannot be coerced to a rule's expected form (absent
+    /// variable, non-numeric string under a numeric operator, structured JSON object).
+    /// The rule reports no match, but the mismatch is never silent – surface this
+    /// warning so loop budgets are not burned invisibly.
+    ///
+    /// @param nodeId identifier of the node whose transition rule mismatched, not null
+    /// @param message diagnostic naming variable, expected form, and actual value, not null
+    default void onTransitionWarning(String nodeId, String message) {}
+
     /// Called when workflow state is fully consistent and safe to persist.
     ///
     /// Fires once per loop iteration, after all state mutations from the previous

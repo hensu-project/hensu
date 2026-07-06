@@ -6,8 +6,10 @@
  * - Score >= 70 at review  → proceed to refine
  * - Score <  70 at review  → backtrack to draft
  * - Score >= 80 at final   → approve
- * - Score 50–79 at final   → backtrack to refine
  * - Score <  50 at final   → backtrack all the way to draft
+ * - Otherwise (50–79)      → backtrack to refine
+ *
+ * Arms must be disjoint (overlap is a build error); the middle band is the else-arm.
  *
  * Flow:
  *   [draft] -> [review] -> [refine] -> [final_check] -> [approve]
@@ -74,8 +76,8 @@ fun backtrackRoutingWorkflow() = workflow("backtrack-routing") {
 
             onScore {
                 whenScore greaterThanOrEqual 80.0 goto "approve"
-                whenScore greaterThanOrEqual 50.0 goto "refine"
                 whenScore lessThan 50.0 goto "draft"
+                otherwise goto "refine"
             }
             onFailure retry 1 otherwise "reject"
         }

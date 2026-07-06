@@ -24,6 +24,9 @@ object onFailure
 /** Marker for score condition syntax: `whenScore greaterThan 80.0 goto "nodeId"`. */
 object whenScore
 
+/** Marker for condition arm syntax: `whenValue equalTo "complete" goto "nodeId"`. */
+object whenValue
+
 /** Marker for consensus reached syntax: `onConsensus goto "nodeId"`. */
 object onConsensus
 

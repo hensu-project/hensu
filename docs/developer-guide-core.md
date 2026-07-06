@@ -21,6 +21,8 @@ This guide covers API usage, adapter development, extension points, and testing 
 - [Rubric Engine](#rubric-engine)
   - [Score-Based Routing](#score-based-routing)
   - [Approval Routing](#approval-routing)
+  - [Condition-Based Routing](#condition-based-routing)
+  - [Bounded Revise](#bounded-revise)
 - [State Schema](#state-schema)
 - [Engine Variable Injection](#engine-variable-injection)
 - [Tool Registry](#tool-registry)
@@ -209,6 +211,19 @@ rule that returns a valid target node ID wins, and the state is updated to point
 current node was already updated by the backtracking processor. The flag is then reset. Clears
 `state.activePlan` on every transition to prevent stale plans from leaking across nodes. Throws
 `IllegalStateException` if no rule matches, preventing the workflow from silently getting stuck.
+
+Two further responsibilities live here:
+
+- **Mismatch diagnostics.** When a rule yields no match but reports a type-mismatch via
+  `TransitionRule.mismatchDiagnostic(state)` (e.g. a `ConditionTransition` whose routed variable is absent or
+  uncoercible), the processor emits `ExecutionListener.onTransitionWarning(nodeId, message)` — a mismatch is never a
+  silent `false`. Diagnostics are suppressed for failed node results, where the routed variable legitimately never
+  existed.
+- **Engine variable lifecycle.** The routing clear-set is derived from the node's rules'
+  `TransitionRule.requiredEngineVars()` (plus the built-in `score`/`approved` pair, minus `recommendation`, which has
+  its own feedback lifecycle). Declared condition variables are therefore cleared on every transition, preventing a
+  stale value from a previous iteration from firing an exit arm prematurely. No other component clears engine
+  variables from the state context.
 
 ### Parallel Branch Concurrency
 
@@ -753,9 +768,41 @@ Rules:
 - Accepts `true`/`false` as Java `Boolean` or case-insensitive strings `"true"`/`"false"`.
 - `approved` is an **engine variable** — injected automatically when `onApproval`/`onRejection` routing is present. Never declare it in `writes()` or the state schema.
 
+### Condition-Based Routing
+
+`ConditionTransition` routes on an arbitrary **declared output variable** (a `writes()` name, not an engine
+variable) via a typed `Condition` predicate — the general loop-exit primitive behind the DSL's
+`onCondition("status") { }` block.
+
+```kotlin
+onCondition("status") {
+    whenValue equalTo "complete" goto "done"
+    whenValue equalTo "blocked" goto "escalate"
+    otherwise revise "work" retry 5 otherwise "escalate"
+}
+```
+
+Key types and semantics:
+
+- `Condition` is a sealed hierarchy: `Equals` / `NotEquals` (canonical-string compare — `85`, `85.0`, and `"85"`
+  are equal; booleans compare via `"true"`/`"false"`) and `Compare` (GT/GTE/LT/LTE with numeric coercion,
+  accepting numbers and numeric strings). `Condition.test()` returns `MATCH`, `NO_MATCH`, or `TYPE_MISMATCH`.
+- A `TYPE_MISMATCH` (absent variable, non-numeric string under a numeric operator, nested JSON object) never
+  matches **and** surfaces through `mismatchDiagnostic()` → `ExecutionListener.onTransitionWarning` — see
+  `TransitionPostProcessor` above.
+- `ConditionTransition.requiredEngineVars()` returns the routed variable plus `recommendation`, which drives both
+  prompt injection (the agent is instructed to emit the variable) and the transition clear-set.
+- The DSL validates at build time: the routed variable must be declared in `writes()`, arms must be disjoint
+  (`ArmIntervals` in `hensu-dsl`), and no arm may follow the `otherwise` else-arm.
+- `AlwaysTransition` is the compiled form of the `otherwise` else-arm — it carries a target and fires on every
+  **successful** result no earlier arm matched. Like `ConditionTransition`, it never routes a failed result:
+  failures fall through to a `FailureTransition` (or abort with `IllegalStateException` if none is declared).
+
+See the [DSL Reference](dsl-reference.md#condition-based-transitions-oncondition) for author-facing syntax.
+
 ### Bounded Revise
 
-`BoundedTransition` decorates a trigger rule (`ApprovalTransition`, `NoConsensusTransition`, or a single-condition `ScoreTransition`) with a per-node retry budget and an escalation target. It backs the DSL `revise "producer" retry N otherwise "escalate"` form on `onRejection`, `onNoConsensus`, and score arms. Counters are namespaced per node and trigger kind in `HensuState`; `TransitionPostProcessor` increments on a backtrack and resets on any forward move. The decorator is transparent to engine-variable wiring — injectors and output extraction consume `TransitionRule.requiredEngineVars()` rather than `instanceof`, so a revise-only node still gets its `approved`/`score`/`recommendation` instructions. See the [DSL Reference](dsl-reference.md#bounded-revise-revise) for author-facing syntax.
+`BoundedTransition` decorates a trigger rule (`ApprovalTransition`, `NoConsensusTransition`, a single-condition `ScoreTransition`, a `ConditionTransition` arm, or an `AlwaysTransition` else-arm) with a per-node retry budget and an escalation target. It backs the DSL `revise "producer" retry N otherwise "escalate"` form on `onRejection`, `onNoConsensus`, score arms, and condition arms. Counters are namespaced per node and trigger kind (`approval`, `consensus`, `score`, `condition`) in `HensuState`; `TransitionPostProcessor` increments on a backtrack and resets on any forward move. The decorator is transparent to engine-variable wiring — injectors and output extraction consume `TransitionRule.requiredEngineVars()`, and feedback injection consumes `TransitionRule.retryFeedback()` (`NONE` for failure triggers, `CONSENSUS` for no-consensus, `RECOMMENDATION` otherwise) rather than `instanceof`, so a revise-only node still gets its `approved`/`score`/`recommendation` instructions and decorators keep their semantics. See the [DSL Reference](dsl-reference.md#bounded-revise-revise) for author-facing syntax.
 
 ## State Schema
 
@@ -775,11 +822,14 @@ node ID. Schema mode enables:
 
 The following variables are always implicitly valid — never declare them in the schema or in `writes()`:
 
-| Variable           | Type      | Injected when                                                  |
-|--------------------|-----------|----------------------------------------------------------------|
-| `score`            | `NUMBER`  | Node has `onScore` routing (rubric-evaluated or self-scoring)  |
-| `approved`         | `BOOLEAN` | Node has `onApproval` / `onRejection` routing                  |
-| `recommendation`   | `STRING`  | Node has `onScore` or `onApproval` / `onRejection` routing     |
+| Variable           | Type      | Injected when                                                              |
+|--------------------|-----------|----------------------------------------------------------------------------|
+| `score`            | `NUMBER`  | Node has `onScore` routing (rubric-evaluated or self-scoring)              |
+| `approved`         | `BOOLEAN` | Node has `onApproval` / `onRejection` routing                              |
+| `recommendation`   | `STRING`  | Node has `onScore`, `onCondition`, or `onApproval` / `onRejection` routing |
+
+Variables routed by `onCondition` are **not** engine variables — they are ordinary declared outputs and must appear
+in both the schema and the node's `writes()`.
 
 ### DSL declaration
 
@@ -866,16 +916,19 @@ whenever the context carries a non-blank `recommendation` value (preserved acros
 `revise` or a forward `withFeedback` transition — see `TransitionPostProcessor` for the lifecycle).
 
 Each remaining injector fires when **either** of two conditions is met:
-1. The node has a matching transition rule (e.g., `ScoreTransition` for `ScoreVariableInjector`)
+1. A transition rule on the node declares the injector's variable via
+   `TransitionRule.requiredEngineVars()` (shared activation logic in the `TransitionVariableInjector` base class —
+   no `instanceof` on rule types, so `BoundedTransition` decorators and `ConditionTransition` arms activate the
+   same injectors as their bare counterparts)
 2. The execution context carries a `BranchExecutionConfig` where `needsSelfScoring()` returns true
    (consensus branch with a non-JUDGE_DECIDES strategy)
 
 ```mermaid
 flowchart LR
     fc(["FeedbackContextInjector\n· recommendation present"]) --> r(["RubricPromptInjector\n· rubric != null"])
-    r --> s(["ScoreVariableInjector\n· ScoreTransition or\nconsensus branch"])
-    s --> a(["ApprovalVariableInjector\n· ApprovalTransition or\nconsensus branch"])
-    a --> rec(["RecommendationVariable\nInjector\n· Score/Approval or\nconsensus branch"])
+    r --> s(["ScoreVariableInjector\n· rule requires score or\nconsensus branch"])
+    s --> a(["ApprovalVariableInjector\n· rule requires approved or\nconsensus branch"])
+    a --> rec(["RecommendationVariable\nInjector\n· rule requires recommendation\nor consensus branch"])
     rec --> w(["WritesVariableInjector\n· has writes()"])
     w --> y(["YieldsVariableInjector\n· has yields()"])
 
@@ -1426,6 +1479,10 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `workflow/transition/ApprovalTransition.java`           | Boolean approval routing via the `approved` engine variable                                      |
 | `workflow/transition/NoConsensusTransition.java`        | Routes when a parallel node fails to reach consensus                                             |
 | `workflow/transition/BoundedTransition.java`            | Decorates a trigger with a per-node retry budget + escalation target (backs DSL `revise`)        |
+| `workflow/transition/Condition.java`                    | Sealed value predicates (`Equals`, `NotEquals`, `Compare`) with coercion + `TYPE_MISMATCH`       |
+| `workflow/transition/ConditionTransition.java`          | Routes on a declared output variable via a `Condition` predicate (backs DSL `onCondition`)       |
+| `workflow/transition/AlwaysTransition.java`             | Else-arm of `onScore`/`onCondition`: routes every successful result to its target                |
+| `workflow/transition/TransitionRuleChecks.java`         | Shared rule-list validations (duplicate bounded namespaces, bounded-before-exit warning)         |
 | `workflow/validation/SubWorkflowGraphValidator.java`    | Load-time cycle + dangling-reference detector for sub-workflow graphs                            |
 | `workflow/validation/WorkflowValidator.java`            | Load-time validator for transition targets, `writes`, and prompt `{variable}` references         |
 | `rubric/RubricEngine.java`                              | Quality evaluation engine                                                                        |

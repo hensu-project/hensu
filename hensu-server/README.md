@@ -421,7 +421,7 @@ hensu-server/
 │   │   ├── ServerBootstrap.java                   # Startup registrations
 │   │   └── ServerConfiguration.java               # CDI delegation + server beans
 │   ├── execution/                         # Server-side execution listeners
-│   │   ├── LoggingExecutionListener.java  # Structured log output for plan/step events
+│   │   ├── LoggingExecutionListener.java  # Structured log output for plan/step events + transition warnings
 │   │   └── CompositeExecutionListener.java # Combines multiple ExecutionListeners
 │   ├── dev/                               # Dev-only handlers (excluded from prod image)
 │   │   └── SleepHandler.java              # Simulates long-running node for crash-recovery tests
@@ -475,13 +475,12 @@ hensu-server/
     └── io/hensu/server/
         ├── action/
         ├── api/
-        ├── config/
         ├── integration/       # Full-stack tests via IntegrationTestBase (inmem profile)
         ├── mcp/
         ├── persistence/       # JDBC repo tests via Testcontainers PostgreSQL
-        ├── workflow/
         ├── streaming/
-        └── tenant/
+        ├── validation/
+        └── workflow/
 ```
 
 ## Testing
@@ -491,7 +490,7 @@ hensu-server/
 ./gradlew :hensu-server:test
 
 # Run specific test class
-./gradlew :hensu-server:test --tests "*.AgenticNodeExecutorTest"
+./gradlew :hensu-server:test --tests "*.WorkflowExecutionServiceTest"
 
 # Run integration tests (inmem profile, no Docker required)
 ./gradlew :hensu-server:test --tests "*.integration.*"

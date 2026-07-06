@@ -289,6 +289,20 @@ class WorkflowRunCommand extends WorkflowCommand {
 
     // — Inline path ——————————————————————————————————————————————————————————
 
+    /// Listener for non-verbose runs: silent except for transition warnings, which
+    /// signal misrouting (e.g. a type-mismatched condition arm) and must stay visible
+    /// regardless of verbosity.
+    private static ExecutionListener transitionWarningListener(PrintStream out, AnsiStyles styles) {
+        return new ExecutionListener() {
+            @Override
+            public void onTransitionWarning(String nodeId, String message) {
+                out.println(styles.warn("⚠ transition warning") + styles.dim(" · ") + nodeId);
+                out.println("  " + styles.warn(message));
+                out.println();
+            }
+        };
+    }
+
     private void runInline(
             Workflow workflow, Map<String, Object> context, AnsiStyles styles, ExecutionSink sink)
             throws Exception {
@@ -306,7 +320,7 @@ class WorkflowRunCommand extends WorkflowCommand {
         ExecutionListener listener =
                 verbose
                         ? listenerFactory.create(workflow, out, color, terminalWidth())
-                        : ExecutionListener.NOOP;
+                        : transitionWarningListener(out, styles);
 
         ExecutionResult result = workflowExecutor.execute(workflow, context, listener);
 

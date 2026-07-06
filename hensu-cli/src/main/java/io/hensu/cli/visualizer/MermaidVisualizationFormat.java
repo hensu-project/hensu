@@ -411,8 +411,31 @@ public class MermaidVisualizationFormat implements VisualizationFormat {
                         .append("| ")
                         .append(toId)
                         .append("\n");
+            } else if (rule instanceof ConditionTransition condition) {
+                String toId = resolveTargetId(condition.targetNode(), workflowPrefix);
+                sb.append("  ")
+                        .append(fromId)
+                        .append(" -->|")
+                        .append(escapeLabel(conditionLabel(condition)))
+                        .append("| ")
+                        .append(toId)
+                        .append("\n");
+            } else if (rule instanceof AlwaysTransition(String targetNode, boolean fb)) {
+                String toId = resolveTargetId(targetNode, workflowPrefix);
+                String label = fb ? "otherwise · fb" : "otherwise";
+                sb.append("  ")
+                        .append(fromId)
+                        .append(" -->|")
+                        .append(label)
+                        .append("| ")
+                        .append(toId)
+                        .append("\n");
             }
         }
+    }
+
+    private static String conditionLabel(ConditionTransition condition) {
+        return condition.variable() + " " + condition.condition().describe();
     }
 
     private void renderBoundedTransition(
@@ -484,6 +507,26 @@ public class MermaidVisualizationFormat implements VisualizationFormat {
                         .append(toId)
                         .append("\n");
             }
+        } else if (inner instanceof ConditionTransition condition) {
+            String toId = resolveTargetId(condition.targetNode(), workflowPrefix);
+            sb.append("  ")
+                    .append(fromId)
+                    .append(" -->|")
+                    .append(escapeLabel(conditionLabel(condition)))
+                    .append(" · revise")
+                    .append(budgetLabel)
+                    .append("| ")
+                    .append(toId)
+                    .append("\n");
+        } else if (inner instanceof AlwaysTransition(String targetNode, boolean _)) {
+            String toId = resolveTargetId(targetNode, workflowPrefix);
+            sb.append("  ")
+                    .append(fromId)
+                    .append(" -->|otherwise · revise")
+                    .append(budgetLabel)
+                    .append("| ")
+                    .append(toId)
+                    .append("\n");
         }
 
         // Escalation edge

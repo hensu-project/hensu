@@ -17,6 +17,9 @@ This document provides a complete reference for the Hensu Kotlin DSL used to def
   - [Sub-Workflow Node](#sub-workflow-node)
   - [End Node](#end-node)
 - [Transitions](#transitions)
+  - [Condition-Based Transitions (`onCondition`)](#condition-based-transitions-oncondition)
+  - [Else Arm (`otherwise`)](#else-arm-otherwise)
+  - [Combining Transition Blocks](#combining-transition-blocks)
   - [Bounded Revise (`revise`)](#bounded-revise-revise)
   - [Feedback Preservation (`withFeedback`)](#feedback-preservation-withfeedback)
 - [State Variables (`writes`)](#state-variables-writes)
@@ -174,14 +177,15 @@ node("node-id") {
 
 #### Standard Node Functions
 
-| Function             | Description                                                                                                      |
-|----------------------|------------------------------------------------------------------------------------------------------------------|
-| `writes("a", "b")`   | Declares state variables this node produces. Single name: full text stored. Multiple: JSON keys extracted.       |
-| `review(mode)`       | Configures human review checkpoint                                                                               |
-| `onApproval goto`    | Routes when the `approved` engine variable is `true`. Falls through if absent or non-boolean.                    |
-| `onRejection goto`   | Routes when the `approved` engine variable is `false`. Falls through if absent or non-boolean.                   |
-| `onRejection revise` | Backtracks to a producer with a bounded retry budget on rejection. See [Bounded Revise](#bounded-revise-revise). |
-| `onPlanFailure goto` | Routes to a fallback node when plan execution fails (planning nodes only)                                        |
+| Function             | Description                                                                                                                                         |
+|----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
+| `writes("a", "b")`   | Declares state variables this node produces. Single name: full text stored. Multiple: JSON keys extracted.                                          |
+| `review(mode)`       | Configures human review checkpoint                                                                                                                  |
+| `onApproval goto`    | Routes when the `approved` engine variable is `true`. Falls through if absent or non-boolean.                                                       |
+| `onRejection goto`   | Routes when the `approved` engine variable is `false`. Falls through if absent or non-boolean.                                                      |
+| `onRejection revise` | Backtracks to a producer with a bounded retry budget on rejection. See [Bounded Revise](#bounded-revise-revise).                                    |
+| `onCondition(v) { }` | Routes on an arbitrary declared output variable with typed predicates. See [Condition-Based Transitions](#condition-based-transitions-oncondition). |
+| `onPlanFailure goto` | Routes to a fallback node when plan execution fails (planning nodes only)                                                                           |
 
 ### Parallel Node
 
@@ -545,28 +549,142 @@ Retries up to 3 times before transitioning to the fallback node.
 
 ### Score-Based Transitions
 
-Route based on rubric evaluation scores. Conditions are evaluated in declaration order – the first match wins. When using overlapping ranges (e.g., `greaterThanOrEqual 80.0` before `greaterThanOrEqual 50.0`), place the most specific condition first:
+Route based on rubric evaluation scores. Conditions are evaluated in declaration order – the first match wins.
+
+**Arms must be disjoint.** Overlapping arms (e.g. `greaterThanOrEqual 80.0` together with `greaterThanOrEqual 50.0`) are a **build error** — first-match-wins ordering would silently mask the later arm. Cover the middle band with an explicit `otherwise` else-arm instead of a range: `in` ranges are closed on both ends, so `` `in` 60.0..79.0 `` leaves fractional scores in `(79, 80)` unmatched, while `otherwise` is gap-free.
 
 ```kotlin
 onScore {
     whenScore greaterThanOrEqual 90.0 goto "excellent"
-    whenScore `in` 70.0..89.0 goto "good"
-    whenScore `in` 50.0..69.0 goto "needs-work"
     whenScore lessThan 50.0 goto "reject"
+    otherwise goto "needs-work"      // covers [50, 90) with no gaps
 }
 ```
 
-Any arm may use `revise` instead of `goto` to backtrack to a producer with a bounded retry budget — see [Bounded Revise](#bounded-revise-revise).
+Any arm may use `revise` instead of `goto` to backtrack to a producer with a bounded retry budget — see [Bounded Revise](#bounded-revise-revise). The `otherwise` arm must be last — declaring an arm after it is a build error. See [Else Arm](#else-arm-otherwise).
 
 ### Score Operators
 
-| Operator             | Description                        |
-|----------------------|------------------------------------|
-| `greaterThan`        | Score > value                      |
-| `greaterThanOrEqual` | Score >= value                     |
-| `lessThan`           | Score < value                      |
-| `lessThanOrEqual`    | Score <= value                     |
-| `` `in` ``           | Score within range (use backticks) |
+| Operator             | Description                                                                                              |
+|----------------------|----------------------------------------------------------------------------------------------------------|
+| `greaterThan`        | Score > value                                                                                            |
+| `greaterThanOrEqual` | Score >= value                                                                                           |
+| `lessThan`           | Score < value                                                                                            |
+| `lessThanOrEqual`    | Score <= value                                                                                           |
+| `` `in` ``           | Score within range, closed on both ends (use backticks; prefer `otherwise` for middle bands — see above) |
+
+### Condition-Based Transitions (`onCondition`)
+
+Route on an arbitrary declared output variable — the general loop-exit primitive. A node revising itself under a bounded budget exits the loop when the agent self-reports a terminal value:
+
+```kotlin
+node("work") {
+    agent  = "worker"
+    prompt = "Work on this task: {task}."
+    writes("result", "status")
+
+    onCondition("status") {
+        whenValue equalTo "complete" goto "done"
+        whenValue equalTo "blocked" goto "escalate"
+        otherwise revise "work" retry 5 otherwise "escalate"
+    }
+}
+```
+
+#### Value Operators
+
+| Operator             | Operand type            | Description                                         |
+|----------------------|-------------------------|-----------------------------------------------------|
+| `equalTo`            | String, Boolean, Number | Value equals the operand (canonical-string compare) |
+| `notEqualTo`         | String, Boolean, Number | Value differs from the operand                      |
+| `greaterThan`        | Number                  | Value > operand                                     |
+| `greaterThanOrEqual` | Number                  | Value >= operand                                    |
+| `lessThan`           | Number                  | Value < operand                                     |
+| `lessThanOrEqual`    | Number                  | Value <= operand                                    |
+
+Each arm ends in `goto "node"` (optionally `withFeedback`) or `revise "producer" retry N otherwise "escalate"` — see [Bounded Revise](#bounded-revise-revise).
+
+#### Semantics and Validation
+
+- **Declared variable required.** The routed variable must appear in the node's `writes(...)` — a build error names the missing declaration. The engine instructs the agent to emit the variable and extracts it from the JSON response.
+- **First match wins.** Arms are evaluated in declaration order.
+- **Arms must be disjoint.** Overlapping arms are a build error (a `notEqualTo "x"` arm overlaps every arm except `equalTo "x"` — use `otherwise` instead).
+- **One predicate per arm, OR-only composition.** A conjunction such as `status == "complete" AND score >= 80` is deliberately inexpressible — have the agent emit a combined variable instead.
+- **Coercion is lenient, mismatches are loud.** Equality compares canonical string forms (`equalTo "85"` matches the number `85`; `equalTo "true"` matches boolean `true`). Numeric operators accept numbers and numeric strings. A value that cannot be coerced (absent variable, non-numeric string under a numeric operator, nested JSON object) never matches **and** emits a transition warning naming the variable and predicate — the CLI prints it regardless of `-v`.
+- **Only successful results are routed.** A failed node bypasses all condition arms and the else-arm, falling through to `onFailure` (or aborting the workflow if none is declared).
+- **Blocks compose by ordering.** Multiple `onCondition { }` / `onScore { }` blocks on one node evaluate as a single first-match-wins list — see [Combining Transition Blocks](#combining-transition-blocks).
+
+### Else Arm (`otherwise`)
+
+Both `onScore { }` and `onCondition { }` accept one explicit else-arm covering every value no earlier arm matched, so the workflow cannot die with "No valid transition" at runtime:
+
+```kotlin
+otherwise goto "review"                              // forward, optionally withFeedback
+otherwise revise "draft" retry 3 otherwise "escalate" // bounded backtrack
+```
+
+- The else-arm must be **last** — declaring an arm after it is a build error.
+- Only **one** else-arm per block.
+- Like the value arms, the else-arm routes successful results only; failures fall through to `onFailure`.
+
+### Combining Transition Blocks
+
+All transition declarations on a node — `onSuccess`, `onScore { }`, `onCondition { }`, `onApproval` / `onRejection`, `onFailure` — compile into a single flat rule list in declaration order. There is no precedence between blocks: at runtime the engine walks the list once and the **first matching rule wins, across block boundaries**. Block order is therefore load-bearing.
+
+Two consequences follow:
+
+- **Disjointness is checked per block only.** Arms inside one `onScore { }` or `onCondition { }` block must not overlap (build error), but arms in *different* blocks are never compared — an earlier block silently shadows a later one wherever both would match.
+- **An else-arm ends the line.** `otherwise` compiles to an unconditional rule that matches every successful result, so any block declared after it is unreachable. Declare at most one else-arm per node, in the last conditional block.
+
+`onFailure` is exempt from both concerns: score, condition, approval, and else-arm rules route successful results only, so failure routing works the same wherever it is declared (convention: last).
+
+**Guard first, grade second** — a status check preempts score routing; the guard block has no else-arm, so unmatched values fall through to the next block:
+
+```kotlin
+node("review") {
+    agent = "reviewer"
+    writes("status")
+
+    onCondition("status") {
+        whenValue equalTo "blocked" goto "human-triage"   // no otherwise — falls through
+    }
+    onScore {
+        whenScore greaterThanOrEqual 80.0 goto "publish"
+        whenScore lessThan 80.0 revise "draft" retry 3 otherwise "escalate"
+    }
+    onFailure goto "error"
+}
+```
+
+`status == "blocked"` routes to triage even with a score of 95; every other status reaches the score arms.
+
+**Sequential guards approximate a conjunction** — "publish only if `status == "complete"` and score ≥ 80" is expressed by ordering, since a later block is only reachable when no earlier arm matched:
+
+```kotlin
+onCondition("status") {
+    whenValue notEqualTo "complete" revise "draft" retry 5 otherwise "escalate"
+}
+onScore {
+    whenScore greaterThanOrEqual 80.0 goto "publish"
+    whenScore lessThan 80.0 revise "draft" retry 3 otherwise "escalate"
+}
+```
+
+Note the two `revise` arms track independent budgets (`condition` and `score` namespaces), so the node may re-run up to 5 + 3 times in total. When that is not intended, prefer a single combined variable emitted by the agent (e.g. `done`) and one `onCondition("done")` block.
+
+**Anti-pattern: else-arm in a non-final block** — everything after it is dead code:
+
+```kotlin
+onCondition("status") {
+    whenValue equalTo "complete" goto "publish"
+    otherwise goto "revise-queue"       // matches every remaining SUCCESS
+}
+onScore {
+    whenScore lessThan 50.0 goto "escalate"   // unreachable
+}
+```
+
+This builds without error — the engine cannot distinguish a shadowed block from deliberate fall-through — so the ordering discipline is on the workflow author.
 
 ### Approval Transitions
 
@@ -598,7 +716,7 @@ revise "producer-node" retry 3 otherwise "escalate-node"
 | `retry N`           | Maximum attempts before escalation                                     |
 | `otherwise "node"`  | Escalation target once the budget is exhausted                         |
 
-`revise` is available on three triggers, each tracking its own per-node retry budget:
+`revise` is available on four triggers, each tracking its own per-node retry budget:
 
 ```kotlin
 // Approval (standard node): reviewer keeps rejecting → re-run the producer, then escalate
@@ -612,9 +730,15 @@ onScore {
     whenScore greaterThanOrEqual 70.0 goto "publish"
     whenScore lessThan 70.0 revise "write" retry 3 otherwise "escalate"
 }
+
+// Condition (standard node): any non-terminal status revises the worker — the ralph-loop pattern
+onCondition("status") {
+    whenValue equalTo "complete" goto "done"
+    otherwise revise "work" retry 5 otherwise "escalate"
+}
 ```
 
-The retry budget is namespaced per node and per trigger kind (`approval`, `consensus`, `score`), so a node carrying more than one `revise` rule tracks each independently. Counters reset when the node transitions forward (any non-revise move).
+The retry budget is namespaced per node and per trigger kind (`approval`, `consensus`, `score`, `condition`), so a node carrying more than one `revise` rule tracks each independently. Counters reset when the node transitions forward (any non-revise move).
 
 Backtracking always forwards the `recommendation` feedback to the producer (see [Feedback Preservation](#feedback-preservation-withfeedback) and [Engine Variables](#engine-variables)) — that is the point of a revise loop. Contrast with `onFailure retry N otherwise` (blind self-loop on application failure, no backtrack, no feedback).
 
@@ -776,11 +900,11 @@ workflow("ContentPipeline") {
 
 Engine variables are managed entirely by the Hensu engine — they are injected automatically into the LLM prompt and extracted from the JSON response. They are **always implicitly valid** in `{placeholder}` references. Do **not** declare them in `state { }` or `writes()`.
 
-| Variable         | Type    | When present                                                      | Description                                                                                                              |
-|------------------|---------|-------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
-| `score`          | Number  | Node has `onScore { }` routing (rubric-evaluated or self-scoring) | Quality score 0–100. Drives `onScore` transitions.                                                                       |
-| `approved`       | Boolean | Node has `onApproval` / `onRejection` routing                     | `true` = approved, `false` = rejected. Falls through if absent.                                                          |
-| `recommendation` | String  | Node has `onScore { }` or `onApproval` / `onRejection` routing    | Improvement feedback or review reasoning. Auto-surfaced to the next node when preserved across a transition (see below). |
+| Variable         | Type    | When present                                                                       | Description                                                                                                              |
+|------------------|---------|------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
+| `score`          | Number  | Node has `onScore { }` routing (rubric-evaluated or self-scoring)                  | Quality score 0–100. Drives `onScore` transitions.                                                                       |
+| `approved`       | Boolean | Node has `onApproval` / `onRejection` routing                                      | `true` = approved, `false` = rejected. Falls through if absent.                                                          |
+| `recommendation` | String  | Node has `onScore { }`, `onCondition { }`, or `onApproval` / `onRejection` routing | Improvement feedback or review reasoning. Auto-surfaced to the next node when preserved across a transition (see below). |
 
 The "When present" column lists the **standard-node** routing that drives injection. On a **parallel node**, all three are produced instead by branch self-scoring on vote-based strategies (`MAJORITY_VOTE`, `WEIGHTED_VOTE`, `UNANIMOUS`) — never under `JUDGE_DECIDES`, regardless of the `onConsensus` / `onNoConsensus` transition declared. See [Rubric-Based Consensus](#rubric-based-consensus).
 
@@ -1070,8 +1194,8 @@ Models.GEMINI_2_5_FLASH         // gemini-2.5-flash
 Models.GEMINI_2_5_PRO           // gemini-2.5-pro
 
 // DeepSeek
-Models.DEEPSEEK_CHAT            // deepseek-chat
-Models.DEEPSEEK_CODER           // deepseek-coder
+Models.DEEPSEEK_V4_FLASH        // deepseek-v4-flash
+Models.DEEPSEEK_V4_PRO          // deepseek-v4-pro
 ```
 
 ## External Prompt Files

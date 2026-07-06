@@ -142,7 +142,8 @@ increase the limit.
 `SubWorkflowLoader.CLI_TENANT`) so sub-workflow nodes resolve children from the same
 repository slot the loader populated.
 
-**Interactive review (`-i`):** When a workflow node has `review = true`, the daemon pauses
+**Interactive review (`-i`):** When a workflow node declares a review gate — `review(ReviewMode.REQUIRED)`
+or a `review { mode = ReviewMode.REQUIRED }` block — the daemon pauses
 execution and sends a `review_request` frame to the attached client. The terminal displays the
 node output and prompts for a decision:
 
@@ -429,8 +430,8 @@ Output:
 ```
 ID                              VERSION
 ---------------------------------------------
-my-workflow                     1
-other-workflow                  3
+my-workflow                     1.0.0
+other-workflow                  1.2.0
 ```
 
 ---
@@ -503,7 +504,9 @@ See [Credentials Commands](#credentials-commands) above.
 
 ### Application Properties
 
-`hensu-cli/src/main/resources/application.properties`:
+The shipped `hensu-cli/src/main/resources/application.properties` sets `hensu.server.url`
+and `hensu.workflow.file`. The following properties are all honored via MicroProfile config
+(system property or environment variable) even when absent from the file:
 
 ```properties
 # Default server URL for push / pull / delete / list
@@ -584,10 +587,15 @@ workflow context at execution time.
 
 ## Exit Codes
 
-| Code | Meaning                                                                   |
-|------|---------------------------------------------------------------------------|
-| `0`  | Workflow completed successfully                                           |
-| `1`  | General failure (workflow error, daemon not reachable, invalid arguments) |
+| Code | Meaning                                                                                                     |
+|------|-------------------------------------------------------------------------------------------------------------|
+| `0`  | Command ran — including workflows ending in `FAILURE` status and reported errors (e.g. validation failures) |
+| `1`  | Unhandled internal error                                                                                    |
+| `2`  | Invalid command-line arguments (picocli usage error)                                                        |
+
+Commands report execution and validation errors on stderr but still exit `0` — scripts
+must parse the output (`[OK]` / `[FAIL]`, the `status` line) rather than rely on the
+exit code to detect workflow-level failure.
 
 ---
 

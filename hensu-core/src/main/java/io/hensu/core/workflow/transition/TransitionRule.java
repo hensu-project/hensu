@@ -16,6 +16,7 @@ import java.util.Set;
 /// - {@link FailureTransition} – transitions on failed execution (retry)
 /// - {@link NoConsensusTransition} – transitions when a parallel node reaches no consensus
 /// - {@link ScoreTransition} – conditional on rubric score thresholds
+/// - {@link ConditionTransition} – conditional on an arbitrary declared output variable
 /// - {@link RubricFailTransition} – transitions when rubric evaluation fails
 /// - {@link ApprovalTransition} – conditional on the `approved` boolean engine variable
 /// - {@link BoundedTransition} – decorates any trigger with a per-node retry budget and
@@ -35,11 +36,25 @@ public sealed interface TransitionRule
         permits AlwaysTransition,
                 ApprovalTransition,
                 BoundedTransition,
+                ConditionTransition,
                 FailureTransition,
                 NoConsensusTransition,
                 RubricFailTransition,
                 ScoreTransition,
                 SuccessTransition {
+
+    /// Feedback behavior applied when a bounded backtrack (retry) fires on this rule.
+    ///
+    /// Consumed by {@link io.hensu.core.execution.pipeline.TransitionPostProcessor} instead
+    /// of {@code instanceof} dispatch on rule types, so decorated rules keep their semantics.
+    enum RetryFeedback {
+        /// No agent feedback exists for this trigger – recommendation is cleared on retry.
+        NONE,
+        /// The agent-produced recommendation survives the retry for prompt injection.
+        RECOMMENDATION,
+        /// Consensus vote details are formatted into the recommendation on retry.
+        CONSENSUS
+    }
 
     /// Evaluates whether this rule applies and returns the target node.
     ///
@@ -78,6 +93,33 @@ public sealed interface TransitionRule
     /// @return true if recommendation should survive this transition
     default boolean withFeedback() {
         return false;
+    }
+
+    /// Returns the feedback behavior applied when a bounded backtrack fires on this rule.
+    ///
+    /// Decorators delegate to {@link #trigger()}. The default is
+    /// {@link RetryFeedback#RECOMMENDATION} – most triggers route on agent-evaluated
+    /// output, so the agent's own justification is preserved for the retry prompt.
+    ///
+    /// @return the retry feedback behavior, never null
+    default RetryFeedback retryFeedback() {
+        return RetryFeedback.RECOMMENDATION;
+    }
+
+    /// Returns a human-readable diagnostic when this rule failed to match because the
+    /// routing value could not be coerced to the rule's expected form – as opposed to a
+    /// legitimate no-match. Returns null in every other case, including a clean no-match.
+    ///
+    /// {@link io.hensu.core.execution.pipeline.TransitionPostProcessor} surfaces a non-null
+    /// diagnostic through
+    /// {@link io.hensu.core.execution.ExecutionListener#onTransitionWarning(String, String)}
+    /// so a type mismatch is never a silent {@code false}. Decorators delegate to their
+    /// inner rule.
+    ///
+    /// @param state current workflow execution state, not null
+    /// @return diagnostic message naming variable, expected form, and actual value, or null
+    default String mismatchDiagnostic(HensuState state) {
+        return null;
     }
 
     /// Returns the underlying trigger rule. Decorators return their wrapped rule;

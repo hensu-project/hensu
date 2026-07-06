@@ -67,6 +67,16 @@ public record BoundedTransition(
     }
 
     @Override
+    public RetryFeedback retryFeedback() {
+        return trigger().retryFeedback();
+    }
+
+    @Override
+    public String mismatchDiagnostic(HensuState state) {
+        return trigger().mismatchDiagnostic(state);
+    }
+
+    @Override
     public TransitionRule trigger() {
         return inner.trigger();
     }

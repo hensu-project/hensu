@@ -89,7 +89,8 @@ See [DSL Reference](../docs/dsl-reference.md) for the complete syntax reference 
 - Workflow structure and configuration
 - Agent definitions and model constants
 - Node types (standard, parallel, fork/join, action, generic, sub-workflow, end)
-- Transition rules (success, failure, score-based, approval, consensus)
+- Transition rules (success, failure, score-based, condition-based, approval, consensus)
+- Condition-based routing (`onCondition` with typed value predicates, `otherwise` else-arm, bounded `revise` loops)
 - State variables (`writes()` + `{placeholder}` syntax), branch outputs (`yields()`), join boundary filter (`exports()`)
 - State schema (`state { }` block with typed `input`/`variable` declarations and load-time validation)
 - Approval routing (`onApproval goto` / `onRejection goto`)
@@ -122,6 +123,8 @@ hensu-dsl/src/main/kotlin/io/hensu/dsl/
 │   ├── TransitionBuilder.kt      # Transition rule builders
 │   ├── ScoreTransitionBuilder.kt # Score-based routing
 │   ├── ScoreConditionBuilder.kt  # Score condition expressions
+│   ├── ConditionTransitionBuilder.kt # Condition-based routing (`onCondition` arms)
+│   ├── ArmIntervals.kt           # Overlap detection across transition arms
 │   ├── ReviseBuilder.kt          # Bounded `revise` retry/escalation chain builder
 │   ├── RetryBuilder.kt           # Retry configuration
 │   ├── ReviewConfigBuilder.kt    # Human review settings

@@ -3,6 +3,7 @@ package io.hensu.server.execution;
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.plan.PlannedStep;
+import io.hensu.core.util.LogSanitizer;
 import java.util.List;
 import org.jboss.logging.Logger;
 
@@ -61,6 +62,13 @@ public class LoggingExecutionListener implements ExecutionListener {
                     case AgentResponse.Error e -> e.message();
                 };
         LOG.infov("[{0}] ← {1}  OUTPUT ({2}):\n{3}", nodeId, agentId, status, output);
+    }
+
+    @Override
+    public void onTransitionWarning(String nodeId, String message) {
+        LOG.warnv(
+                "[{0}]  TRANSITION WARNING: {1}",
+                LogSanitizer.sanitize(nodeId), LogSanitizer.sanitize(message));
     }
 
     @Override
