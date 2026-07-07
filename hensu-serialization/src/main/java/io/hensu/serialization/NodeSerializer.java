@@ -25,7 +25,6 @@ import java.io.Serial;
 /// JOIN           │ awaitTargets, mergeStrategy, writes, exports,
 ///                │ timeoutMs, failOnAnyError, transitionRules
 /// SUB_WORKFLOW   │ workflowId, inputMapping, outputMapping, transitionRules
-/// LOOP           │ (none — only id and nodeType are written)
 /// ```
 ///
 /// @implNote Package-private. Registered by {@link HensuJacksonModule}.
@@ -60,7 +59,6 @@ class NodeSerializer extends StdSerializer<Node> {
             case ForkNode n -> writeForkNode(n, gen, provider);
             case JoinNode n -> writeJoinNode(n, gen, provider);
             case SubWorkflowNode n -> writeSubWorkflowNode(n, gen, provider);
-            case LoopNode _ -> {} // Stub — id and nodeType already written
             default ->
                     throw new IOException("Unknown node type: " + node.getClass().getSimpleName());
         }

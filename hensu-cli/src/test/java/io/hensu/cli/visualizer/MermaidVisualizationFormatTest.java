@@ -11,7 +11,6 @@ import io.hensu.core.workflow.node.EndNode;
 import io.hensu.core.workflow.node.ForkNode;
 import io.hensu.core.workflow.node.GenericNode;
 import io.hensu.core.workflow.node.JoinNode;
-import io.hensu.core.workflow.node.LoopNode;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.ParallelNode;
 import io.hensu.core.workflow.node.StandardNode;
@@ -104,17 +103,6 @@ class MermaidVisualizationFormatTest {
         // Generic nodes use hexagon syntax: id{{"label"}}
         assertThat(result).contains("{{\"");
         assertThat(result).contains("validator");
-    }
-
-    @Test
-    void shouldRenderLoopNodeAsDiamond() {
-        Workflow workflow = createWorkflowWithLoopNode();
-
-        String result = format.render(workflow);
-
-        // Loop nodes use diamond syntax: id{"label"}
-        assertThat(result).contains("{\"");
-        assertThat(result).contains("loop");
     }
 
     @Test
@@ -612,27 +600,6 @@ class MermaidVisualizationFormatTest {
                 .agents(agents)
                 .nodes(nodes)
                 .startNode("sub-start")
-                .build();
-    }
-
-    private Workflow createWorkflowWithLoopNode() {
-        Map<String, Node> nodes = new HashMap<>();
-        nodes.put("loop", new LoopNode("loop"));
-        nodes.put("exit", EndNode.builder().id("exit").status(ExitStatus.SUCCESS).build());
-
-        return Workflow.builder()
-                .id("loop-workflow")
-                .version("1.0.0")
-                .metadata(
-                        new WorkflowMetadata(
-                                "loop-workflow",
-                                "Test workflow",
-                                "tester",
-                                Instant.now(),
-                                List.of()))
-                .agents(Map.of())
-                .nodes(nodes)
-                .startNode("loop")
                 .build();
     }
 

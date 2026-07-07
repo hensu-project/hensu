@@ -25,7 +25,6 @@ public class DefaultNodeExecutorRegistry implements NodeExecutorRegistry {
     public DefaultNodeExecutorRegistry() {
         // Register all built-in executors (stateless)
         register(new StandardNodeExecutor());
-        register(new LoopNodeExecutor());
         register(new ParallelNodeExecutor());
         register(new SubWorkflowNodeExecutor());
         register(new EndNodeExecutor());

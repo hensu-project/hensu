@@ -24,7 +24,6 @@ import java.util.Set;
 /// ### Node Shape Mapping
 /// - **StandardNode**: Stadium (pill) shape with agent label
 /// - **EndNode**: Stadium shape with exit status
-/// - **LoopNode**: Diamond shape
 /// - **ParallelNode**: Double rectangle
 /// - **ForkNode**: Asymmetric shape (flag)
 /// - **JoinNode**: Parallelogram
@@ -211,10 +210,6 @@ public class MermaidVisualizationFormat implements VisualizationFormat {
                         }
                         yield id + "([\"" + lb + "\"])";
                     }
-                    case LoopNode ignored -> {
-                        String label = safeDisplayId + " (loop)";
-                        yield id + "{\"" + label + "\"}";
-                    }
                     case ParallelNode pn -> {
                         String label =
                                 safeDisplayId + "\\n(parallel: " + pn.getBranches().length + ")";
@@ -308,16 +303,6 @@ public class MermaidVisualizationFormat implements VisualizationFormat {
             StringBuilder sb, String fromId, Node node, String workflowPrefix) {
 
         switch (node) {
-            case LoopNode loopNode when loopNode.getBreakRules() != null -> {
-                for (BreakRule rule : loopNode.getBreakRules()) {
-                    String toId = resolveTargetId(rule.getTargetNode(), workflowPrefix);
-                    sb.append("  ")
-                            .append(fromId)
-                            .append(" -.->|break| ")
-                            .append(toId)
-                            .append("\n");
-                }
-            }
             case ForkNode forkNode -> {
                 for (String target : forkNode.getTargets()) {
                     String toId = resolveTargetId(target, workflowPrefix);

@@ -280,7 +280,6 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── ParallelNodeExecutor.java      # Concurrent branch execution
 │   │   ├── ForkNodeExecutor.java          # Fork into parallel paths
 │   │   ├── JoinNodeExecutor.java          # Merge parallel results
-│   │   ├── LoopNodeExecutor.java          # Iterative execution
 │   │   ├── ActionNodeExecutor.java        # Action dispatch
 │   │   ├── GenericNodeExecutor.java       # Custom node handlers
 │   │   ├── SubWorkflowNodeExecutor.java   # Nested workflow execution
@@ -343,7 +342,6 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── ForkNode.java          # Splits into parallel paths (StructuredTaskScope)
 │   │   ├── JoinNode.java          # Merges parallel results via writes/exports
 │   │   ├── MergeStrategy.java     # Join merge strategy enum
-│   │   ├── LoopNode.java          # Iterates until condition or max iterations
 │   │   ├── ActionNode.java        # Dispatches actions (send HTTP, execute command)
 │   │   ├── GenericNode.java       # Custom handler for extensible operations
 │   │   ├── SubWorkflowNode.java   # Delegates to another workflow
@@ -361,9 +359,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── ConditionTransition.java   # Routes on a declared output variable (backs onCondition)
 │   │   ├── BoundedTransition.java     # Decorates a trigger with retry budget + escalation (backs revise)
 │   │   ├── AlwaysTransition.java      # Else-arm: routes every successful result to its target
-│   │   ├── RubricFailTransition.java  # Routes when rubric evaluation itself fails
-│   │   ├── LoopCondition.java         # Continuation predicate for LoopNode
-│   │   └── BreakRule.java             # Early-exit rule for LoopNode
+│   │   └── RubricFailTransition.java  # Routes when rubric evaluation itself fails
 │   ├── state/
 │   │   ├── WorkflowStateSchema.java      # Typed state variable schema (optional per-workflow)
 │   │   ├── StateVariableDeclaration.java # Variable declaration record (name, type, isInput)
@@ -432,7 +428,6 @@ hensu-core/src/main/java/io/hensu/core/
 | `ParallelNode`    | Runs multiple branches concurrently; branches declare domain output via `yields()` which merge into workflow state |
 | `ForkNode`        | Splits execution into parallel paths via `StructuredTaskScope`                                                     |
 | `JoinNode`        | Merges parallel results via `writes()` with configurable strategy; `exports()` filters boundary variables          |
-| `LoopNode`        | Iterates until a condition or max iterations                                                                       |
 | `ActionNode`      | Dispatches actions (send HTTP, execute command)                                                                    |
 | `GenericNode`     | Custom handler for extensible operations                                                                           |
 | `SubWorkflowNode` | Delegates to another workflow                                                                                      |

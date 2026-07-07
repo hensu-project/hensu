@@ -1,6 +1,7 @@
 package io.hensu.serialization;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.execution.action.Action;
@@ -94,6 +95,17 @@ class WorkflowSerializerTest {
         Node node = restored.getNodes().get("done");
         assertThat(node).isInstanceOf(EndNode.class);
         assertThat(((EndNode) node).getStatus()).isEqualTo(ExitStatus.SUCCESS);
+    }
+
+    @Test
+    void unknownNodeType_throwsDatabindExceptionWithTypeName() {
+        String json = "{\"id\": \"done\", \"nodeType\": \"LOOP\"}";
+
+        // Must be a DatabindException (not a plain IOException) so JAX-RS body
+        // readers report it as a client error (400) instead of a server 500.
+        assertThatThrownBy(() -> WorkflowSerializer.createMapper().readValue(json, Node.class))
+                .isInstanceOf(com.fasterxml.jackson.databind.JsonMappingException.class)
+                .hasMessageContaining("Unknown node type: LOOP");
     }
 
     @Test

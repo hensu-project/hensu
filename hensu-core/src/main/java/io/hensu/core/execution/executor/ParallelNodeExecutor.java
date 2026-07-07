@@ -352,14 +352,16 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
             }
         }
 
-        // Store consensus metadata under node-scoped keys for multi-parallel safety.
-        String nodeId = state.getCurrentNode();
-        state.getContext().put("consensus_reached:" + nodeId, consensusResult.consensusReached());
-        state.getContext().put("consensus_result:" + nodeId, consensusResult);
-        state.getContext().put("consensus_votes:" + nodeId, consensusResult.votes());
-        if (consensusResult.winningBranchId() != null) {
-            state.getContext()
-                    .put("consensus_winning_branch:" + nodeId, consensusResult.winningBranchId());
+        // On failed consensus, store retry feedback under a node-scoped key for
+        // multi-parallel safety. Formatted to a plain string at write time so the
+        // context only ever holds snapshot-safe values — a raw ConsensusResult would
+        // not survive a checkpoint/restore round-trip between failure and transition.
+        if (!consensusResult.consensusReached()) {
+            String nodeId = state.getCurrentNode();
+            String feedback = formatConsensusFeedback(consensusResult);
+            if (!feedback.isBlank()) {
+                state.getContext().put("consensus_feedback:" + nodeId, feedback);
+            }
         }
 
         // Build result metadata
@@ -398,5 +400,22 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
                 consensusResult.consensusReached() ? ResultStatus.SUCCESS : ResultStatus.FAILURE,
                 output,
                 metadata);
+    }
+
+    /// Formats failed-consensus details into a feedback string for the retry round.
+    ///
+    /// For {@link ConsensusStrategy#JUDGE_DECIDES} the judge's reasoning is used
+    /// directly; for algorithmic strategies each vote's output is joined with
+    /// separator lines.
+    ///
+    /// @param cr the failed consensus result, not null
+    /// @return feedback text, may be blank when no reasoning or votes exist
+    private static String formatConsensusFeedback(ConsensusResult cr) {
+        if (cr.strategyUsed() == ConsensusStrategy.JUDGE_DECIDES && cr.reasoning() != null) {
+            return cr.reasoning();
+        }
+        return cr.votes().values().stream()
+                .map(v -> v.branchId() + " (" + v.voteType() + "): " + v.output())
+                .collect(Collectors.joining("\n---\n"));
     }
 }

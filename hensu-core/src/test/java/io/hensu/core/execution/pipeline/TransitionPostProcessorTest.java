@@ -7,10 +7,6 @@ import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.executor.ExecutionContext;
 import io.hensu.core.execution.executor.NodeResult;
-import io.hensu.core.execution.parallel.ConsensusResult;
-import io.hensu.core.execution.parallel.ConsensusResult.Vote;
-import io.hensu.core.execution.parallel.ConsensusResult.VoteType;
-import io.hensu.core.execution.parallel.ConsensusStrategy;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.plan.Plan;
@@ -19,7 +15,6 @@ import io.hensu.core.rubric.model.ComparisonOperator;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.core.workflow.node.LoopNode;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.transition.AlwaysTransition;
@@ -60,56 +55,6 @@ class TransitionPostProcessorTest {
         assertThatThrownBy(() -> processor.process(ctx))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("orphan");
-    }
-
-    @Test
-    @DisplayName("LoopNode without loop_exit_target throws — LoopNode has no fallback transitions")
-    void shouldThrowWhenLoopNodeHasNoExitTarget() {
-        var ctx = loopNodeContext();
-
-        assertThatThrownBy(() -> processor.process(ctx))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("loop");
-    }
-
-    // — LoopNode loop_exit_target ————————————————————————————————————————
-
-    @Test
-    @DisplayName("LoopNode with loop_exit_target in context redirects to that target")
-    void shouldUseLoopExitTargetWhenSetInContext() {
-        var ctx = loopNodeContext();
-        ctx.state().getContext().put("loop_exit_target", "exit-node");
-
-        processor.process(ctx);
-
-        assertThat(ctx.state().getCurrentNode()).isEqualTo("exit-node");
-    }
-
-    @Test
-    @DisplayName("loopBreakTarget takes priority over loop_exit_target for LoopNode")
-    void shouldPreferLoopBreakTargetOverLoopExitTarget() {
-        var ctx = loopNodeContext();
-        ctx.state().setLoopBreakTarget("break-target");
-        ctx.state().getContext().put("loop_exit_target", "exit-node");
-
-        processor.process(ctx);
-
-        assertThat(ctx.state().getCurrentNode()).isEqualTo("break-target");
-        assertThat(ctx.state().getLoopBreakTarget()).isNull();
-    }
-
-    // — Loop break override (StandardNode) ———————————————————————————————
-
-    @Test
-    @DisplayName("loopBreakTarget overrides normal transition on StandardNode and is consumed")
-    void shouldPrioritizeLoopBreakOverRuleOnStandardNode() {
-        var ctx = contextWithTransitions("node", List.of(new SuccessTransition("rule-target")));
-        ctx.state().setLoopBreakTarget("override-target");
-
-        processor.process(ctx);
-
-        assertThat(ctx.state().getCurrentNode()).isEqualTo("override-target");
-        assertThat(ctx.state().getLoopBreakTarget()).isNull();
     }
 
     // — Backtrack skip ————————————————————————————————————————————————————
@@ -423,41 +368,8 @@ class TransitionPostProcessorTest {
     class ConsensusFeedbackInjection {
 
         @Test
-        @DisplayName("injects vote details into recommendation on no-consensus backtrack")
-        void injectsVoteFeedbackOnNoConsensusBacktrack() {
-            var inner = new NoConsensusTransition("producer");
-            var rule = new BoundedTransition(inner, "consensus", 3, "escalate");
-            var votes =
-                    Map.of(
-                            "branch-a",
-                            new Vote(
-                                    "branch-a", "agent-a", VoteType.APPROVE, 80.0, 1.0, "output-a"),
-                            "branch-b",
-                            new Vote(
-                                    "branch-b", "agent-b", VoteType.REJECT, 40.0, 1.0, "output-b"));
-            var consensus =
-                    new ConsensusResult(
-                            false, ConsensusStrategy.MAJORITY_VOTE, List.of(), null, votes, null);
-            var result =
-                    NodeResult.builder()
-                            .status(ResultStatus.FAILURE)
-                            .output("no consensus")
-                            .metadata(new HashMap<>(Map.of("consensus_reached", false)))
-                            .build();
-            var ctx = contextWithTransitionsAndResult("parallel", List.of(rule), result);
-            ctx.state().getContext().put("consensus_result:parallel", consensus);
-
-            processor.process(ctx);
-
-            String recommendation =
-                    (String) ctx.state().getContext().get(EngineVariables.RECOMMENDATION);
-            assertThat(recommendation).isNotBlank();
-            assertThat(recommendation).contains("branch-a", "branch-b");
-        }
-
-        @Test
-        @DisplayName("injects judge reasoning on JUDGE_DECIDES no-consensus backtrack")
-        void injectsJudgeReasoningOnNoConsensusBacktrack() {
+        @DisplayName("promotes consensus_feedback string to recommendation on backtrack")
+        void promotesConsensusFeedbackOnNoConsensusBacktrack() {
             var inner = new NoConsensusTransition("producer");
             var rule = new BoundedTransition(inner, "consensus", 3, "escalate");
             var result =
@@ -469,20 +381,31 @@ class TransitionPostProcessorTest {
             var ctx = contextWithTransitionsAndResult("parallel", List.of(rule), result);
             ctx.state()
                     .getContext()
-                    .put(
-                            "consensus_result:parallel",
-                            new ConsensusResult(
-                                    false,
-                                    ConsensusStrategy.JUDGE_DECIDES,
-                                    List.of(),
-                                    null,
-                                    Map.of(),
-                                    "branches disagree on tone"));
+                    .put("consensus_feedback:parallel", "branch-a (APPROVE): output-a");
 
             processor.process(ctx);
 
             assertThat(ctx.state().getContext().get(EngineVariables.RECOMMENDATION))
-                    .isEqualTo("branches disagree on tone");
+                    .isEqualTo("branch-a (APPROVE): output-a");
+            assertThat(ctx.state().getContext()).doesNotContainKey("consensus_feedback:parallel");
+        }
+
+        @Test
+        @DisplayName("missing consensus_feedback leaves recommendation absent — no stale carryover")
+        void missingConsensusFeedbackLeavesRecommendationAbsent() {
+            var inner = new NoConsensusTransition("producer");
+            var rule = new BoundedTransition(inner, "consensus", 3, "escalate");
+            var result =
+                    NodeResult.builder()
+                            .status(ResultStatus.FAILURE)
+                            .output("no consensus")
+                            .metadata(new HashMap<>(Map.of("consensus_reached", false)))
+                            .build();
+            var ctx = contextWithTransitionsAndResult("parallel", List.of(rule), result);
+
+            processor.process(ctx);
+
+            assertThat(ctx.state().getContext()).doesNotContainKey(EngineVariables.RECOMMENDATION);
         }
     }
 
@@ -509,11 +432,6 @@ class TransitionPostProcessorTest {
             List<TransitionRule> rules, ExecutionListener listener) {
         Node node = StandardNode.builder().id("node-a").transitionRules(rules).build();
         return buildContext("node-a", node, NodeResult.success("output", Map.of()), listener);
-    }
-
-    private ProcessorContext loopNodeContext() {
-        LoopNode loopNode = new LoopNode("loop");
-        return buildContext("loop", loopNode, NodeResult.success("output", Map.of()), null);
     }
 
     private ProcessorContext buildContext(

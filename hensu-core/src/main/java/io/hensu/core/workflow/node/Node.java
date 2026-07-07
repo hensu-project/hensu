@@ -14,7 +14,6 @@ import java.util.List;
 /// - {@link StandardNode} - Agent execution with prompt
 /// - {@link EndNode} - Workflow end state (success/failure)
 /// - {@link ParallelNode} - Concurrent branch execution
-/// - {@link LoopNode} - Iterative execution
 /// - {@link SubWorkflowNode} - Nested workflow invocation
 /// - {@link ForkNode} / {@link JoinNode} - Fork-join parallelism
 /// - {@link GenericNode} - Custom execution logic

@@ -1,5 +1,6 @@
 package io.hensu.server.security;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
@@ -28,7 +29,7 @@ public class GlobalExceptionMapper implements ExceptionMapper<Throwable> {
     public Response toResponse(Throwable exception) {
         if (exception instanceof WebApplicationException wae) {
             int status = wae.getResponse().getStatus();
-            String message = sanitize(status, wae.getMessage());
+            String message = sanitize(status, wae.getMessage(), wae.getCause());
 
             if (status >= 500) {
                 LOG.errorv(exception, "Server error: {0}", message);
@@ -50,9 +51,18 @@ public class GlobalExceptionMapper implements ExceptionMapper<Throwable> {
                 .build();
     }
 
-    private static String sanitize(int status, String raw) {
+    private static String sanitize(int status, String raw, Throwable cause) {
         return switch (status) {
-            case 400 -> raw != null ? raw : "Bad request";
+            case 400 -> {
+                // Body readers wrap JSON parse/bind failures in a generic
+                // WebApplicationException whose own message carries no detail;
+                // the cause's message is the client-actionable part.
+                if (cause instanceof JsonProcessingException jpe
+                        && jpe.getOriginalMessage() != null) {
+                    yield jpe.getOriginalMessage();
+                }
+                yield raw != null ? raw : "Bad request";
+            }
             case 401 -> "Authentication required";
             case 403 -> "Access denied";
             case 404 -> "Resource not found";
