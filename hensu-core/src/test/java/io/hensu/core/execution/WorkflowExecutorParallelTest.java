@@ -3,6 +3,8 @@ package io.hensu.core.execution;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.hensu.core.agent.Agent;
@@ -15,6 +17,8 @@ import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.ParallelNode;
+import io.hensu.core.workflow.node.StandardNode;
+import io.hensu.core.workflow.transition.BoundedTransition;
 import io.hensu.core.workflow.transition.FailureTransition;
 import io.hensu.core.workflow.transition.NoConsensusTransition;
 import io.hensu.core.workflow.transition.SuccessTransition;
@@ -27,6 +31,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
 
 class WorkflowExecutorParallelTest extends WorkflowExecutorTestBase {
 
@@ -331,6 +336,95 @@ class WorkflowExecutorParallelTest extends WorkflowExecutorTestBase {
         assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
         assertThat(((ExecutionResult.Completed) result).getExitStatus())
                 .isEqualTo(ExitStatus.FAILURE);
+    }
+
+    // — Consensus retry feedback ——————————————————————————————————————————
+
+    @Test
+    void shouldFeedVoteDetailsToProducerOnNoConsensusRetry() throws Exception {
+        // Failed consensus formats vote details to a plain string at write time
+        // (snapshot-safe — a raw ConsensusResult would not survive a checkpoint
+        // between failure and transition). The bounded no-consensus backtrack must
+        // promote that string to recommendation so the producer's retry prompt
+        // carries the reviewers' objections.
+        var producer = mock(Agent.class);
+        var reviewer = mock(Agent.class);
+        when(agentRegistry.getAgent("producer")).thenReturn(Optional.of(producer));
+        when(agentRegistry.getAgent("reviewer1")).thenReturn(Optional.of(reviewer));
+        when(agentRegistry.getAgent("reviewer2")).thenReturn(Optional.of(reviewer));
+        when(producer.execute(any(), any()))
+                .thenReturn(AgentResponse.TextResponse.of("Draft article"));
+        when(reviewer.execute(any(), any()))
+                .thenReturn(
+                        AgentResponse.TextResponse.of(
+                                """
+                {"score": 20, "approved": false, "recommendation": "Too shallow"}"""));
+
+        var agents =
+                Map.of(
+                        "producer",
+                                AgentConfig.builder()
+                                        .id("producer")
+                                        .role("Writer")
+                                        .model("test")
+                                        .build(),
+                        "reviewer1",
+                                AgentConfig.builder()
+                                        .id("reviewer1")
+                                        .role("Reviewer")
+                                        .model("test")
+                                        .build(),
+                        "reviewer2",
+                                AgentConfig.builder()
+                                        .id("reviewer2")
+                                        .role("Reviewer")
+                                        .model("test")
+                                        .build());
+        var nodes = new HashMap<String, Node>();
+        nodes.put(
+                "produce",
+                StandardNode.builder()
+                        .id("produce")
+                        .agentId("producer")
+                        .prompt("Write an article")
+                        .transitionRules(List.of(new SuccessTransition("parallel")))
+                        .build());
+        nodes.put(
+                "parallel",
+                ParallelNode.builder("parallel")
+                        .branch("b1", "reviewer1", "Review")
+                        .branch("b2", "reviewer2", "Review")
+                        .consensus(null, ConsensusStrategy.MAJORITY_VOTE)
+                        .transitionRules(
+                                List.of(
+                                        new SuccessTransition("end"),
+                                        new BoundedTransition(
+                                                new NoConsensusTransition("produce"),
+                                                "consensus",
+                                                1,
+                                                "fail-end")))
+                        .build());
+        nodes.put("end", end("end"));
+        nodes.put("fail-end", failEnd("fail-end"));
+        var workflow =
+                Workflow.builder()
+                        .id("consensus-retry-feedback")
+                        .agents(agents)
+                        .nodes(nodes)
+                        .startNode("produce")
+                        .build();
+
+        var result = executor.execute(workflow, new HashMap<>());
+
+        // Both rounds reject → budget 1 exhausted → escalation to fail-end.
+        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
+        assertThat(((ExecutionResult.Completed) result).getExitStatus())
+                .isEqualTo(ExitStatus.FAILURE);
+
+        var prompts = ArgumentCaptor.forClass(String.class);
+        verify(producer, times(2)).execute(prompts.capture(), any());
+        assertThat(prompts.getAllValues().getFirst()).doesNotContain("Too shallow");
+        assertThat(prompts.getAllValues().get(1)).contains("Too shallow");
     }
 
     // — helpers ———————————————————————————————————————————————————————————

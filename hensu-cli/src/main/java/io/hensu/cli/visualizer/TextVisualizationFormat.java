@@ -23,7 +23,6 @@ import java.util.Set;
 /// ### Node Type Colors
 /// - **Blue (accent)**: STANDARD, GENERIC, PARALLEL, FORK, JOIN
 /// - **Green (success)**: END, ACTION
-/// - **Yellow (warn)**: LOOP
 /// - **Gray**: SUB_WORKFLOW
 ///
 /// @implNote Thread-safe. Each render call creates its own AnsiStyles instance.
@@ -220,31 +219,6 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                             standardNode.getReviewConfig().getMode().toString())));
                 }
                 appendTransitions(sb, indent, standardNode.getTransitionRules(), styles);
-            }
-            case LoopNode loopNode -> {
-                sb.append(
-                        String.format(
-                                "%s%s  %-9s %s%n",
-                                indent,
-                                styles.boxMid(),
-                                "max",
-                                styles.accent(String.valueOf(loopNode.getMaxIterations()))));
-                sb.append(
-                        String.format(
-                                "%s%s  %-9s %s%n",
-                                indent, styles.boxMid(), "condition", loopNode.getCondition()));
-                if (loopNode.getBreakRules() != null) {
-                    for (BreakRule rule : loopNode.getBreakRules()) {
-                        sb.append(
-                                String.format(
-                                        "%s%s  %s %-14s %s%n",
-                                        indent,
-                                        styles.boxMid(),
-                                        styles.arrow(),
-                                        styles.bold(rule.getTargetNode()),
-                                        styles.dim("on break")));
-                    }
-                }
             }
             case ParallelNode parallelNode -> {
                 sb.append(
@@ -606,7 +580,6 @@ public class TextVisualizationFormat implements VisualizationFormat {
         return switch (type) {
             case STANDARD, GENERIC, PARALLEL, FORK, JOIN -> styles.accent(text);
             case END, ACTION -> styles.success(text);
-            case LOOP -> styles.warn(text);
             case SUB_WORKFLOW -> styles.gray(text);
         };
     }

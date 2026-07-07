@@ -3,6 +3,7 @@ package io.hensu.serialization;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
@@ -70,7 +71,16 @@ class NodeDeserializer extends StdDeserializer<Node> {
         JsonNode root = mapper.readTree(p);
 
         String id = root.get("id").asText();
-        NodeType nodeType = NodeType.valueOf(root.get("nodeType").asText());
+        String nodeTypeName = root.get("nodeType").asText();
+        NodeType nodeType;
+        try {
+            nodeType = NodeType.valueOf(nodeTypeName);
+        } catch (IllegalArgumentException e) {
+            // DatabindException (not plain IOException) so JAX-RS body readers
+            // classify the failure as malformed client input (HTTP 400), not a
+            // server fault (HTTP 500).
+            throw JsonMappingException.from(p, "Unknown node type: " + nodeTypeName, e);
+        }
 
         return switch (nodeType) {
             case STANDARD -> deserializeStandard(mapper, root, id);
@@ -81,7 +91,6 @@ class NodeDeserializer extends StdDeserializer<Node> {
             case FORK -> deserializeFork(mapper, root, id);
             case JOIN -> deserializeJoin(mapper, root, id);
             case SUB_WORKFLOW -> deserializeSubWorkflow(mapper, root, id);
-            case LOOP -> new LoopNode(id);
         };
     }
 

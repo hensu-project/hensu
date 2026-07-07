@@ -21,7 +21,7 @@ import java.util.UUID;
 /// ### State Components
 /// - **Immutable**: `executionId`, `workflowId` (set at construction)
 /// - **Mutable context**: `context` map for variable storage
-/// - **Mutable position**: `currentNode`, `loopBreakTarget`
+/// - **Mutable position**: `currentNode`
 /// - **Mutable evaluation**: `rubricEvaluation`, `retryCounters`
 /// - **Append-only**: `history` for execution tracking
 ///
@@ -45,7 +45,6 @@ public final class HensuState {
     private RubricEvaluation rubricEvaluation;
     private String currentNode;
     private final Map<String, Integer> retryCounters;
-    private String loopBreakTarget;
     private ExecutionPhase phase = ExecutionPhase.INITIAL;
 
     // Transient — set before executeFrom(), consumed by post-processors, never persisted.
@@ -151,14 +150,6 @@ public final class HensuState {
 
     public void setRubricEvaluation(RubricEvaluation rubricEvaluation) {
         this.rubricEvaluation = rubricEvaluation;
-    }
-
-    public String getLoopBreakTarget() {
-        return loopBreakTarget;
-    }
-
-    public void setLoopBreakTarget(String loopBreakTarget) {
-        this.loopBreakTarget = loopBreakTarget;
     }
 
     /// Returns the current execution phase, never null.

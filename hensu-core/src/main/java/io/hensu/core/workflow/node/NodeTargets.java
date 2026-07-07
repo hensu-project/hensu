@@ -1,6 +1,5 @@
 package io.hensu.core.workflow.node;
 
-import io.hensu.core.workflow.transition.BreakRule;
 import io.hensu.core.workflow.transition.TransitionRule;
 import io.hensu.core.workflow.transition.TransitionTargets;
 import java.util.ArrayList;
@@ -15,7 +14,6 @@ import java.util.List;
 ///
 /// - All nodes contribute their {@link Node#getTransitionRules() transition rule} targets.
 /// - {@link ForkNode} additionally contributes its fork {@link ForkNode#getTargets() targets}.
-/// - {@link LoopNode} additionally contributes its {@link BreakRule break-rule} targets.
 ///
 /// A {@link JoinNode}'s await targets are deliberately excluded: they are predecessors that
 /// feed into the join, not successors it routes to.
@@ -34,16 +32,8 @@ public final class NodeTargets {
         for (TransitionRule rule : node.getTransitionRules()) {
             targets.addAll(TransitionTargets.of(rule));
         }
-        switch (node) {
-            case ForkNode fork -> targets.addAll(fork.getTargets());
-            case LoopNode loop -> {
-                if (loop.getBreakRules() != null) {
-                    for (BreakRule rule : loop.getBreakRules()) {
-                        targets.add(rule.getTargetNode());
-                    }
-                }
-            }
-            default -> {}
+        if (node instanceof ForkNode fork) {
+            targets.addAll(fork.getTargets());
         }
         return targets;
     }

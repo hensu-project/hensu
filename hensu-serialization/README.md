@@ -81,9 +81,6 @@ serialized via default Jackson machinery in `WorkflowSerializer.toJson()`. Both 
 | `Branch`                   | Embedded in `ParallelNode` – includes `yields` (List of String)    |
 | `ConsensusConfig`          | Embedded in `ParallelNode` – strategy, threshold, judge agent ID   |
 | `ConsensusStrategy`        | Enum inside `ConsensusConfig`                                      |
-| `ConsensusResult`          | Stored in state context during checkpoint serialization            |
-| `ConsensusResult.Vote`     | Inner record inside `ConsensusResult`                              |
-| `ConsensusResult.VoteType` | Enum inside `ConsensusResult.Vote`                                 |
 | `ScoreCondition`           | Embedded in `ScoreTransition` via `NodeDeserializer`               |
 | `DoubleRange`              | Embedded in `ScoreCondition`                                       |
 

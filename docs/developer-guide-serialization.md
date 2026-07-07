@@ -251,9 +251,6 @@ Java records have no inner `Builder` class — Jackson deserializes them via the
 | `Branch`                   | `ParallelNode` branch list                   | Record with `yields` (`List<String>`) component               |
 | `ConsensusConfig`          | `ParallelNode` consensus configuration       | Record with strategy enum + nullable threshold                |
 | `ConsensusStrategy`        | `ConsensusConfig.strategy()`                 | Enum – Jackson needs reflection to serialize enum constants   |
-| `ConsensusResult`          | State context map (checkpoint serialization) | Stored under `consensus_result:<nodeId>` key during execution |
-| `ConsensusResult.Vote`     | `ConsensusResult.votes()` map values         | Inner record with vote type, score, weight                    |
-| `ConsensusResult.VoteType` | `ConsensusResult.Vote.voteType()`            | Enum (APPROVE / REJECT)                                       |
 | `ScoreCondition`           | `ScoreTransition` condition list             | Nested record inside transition rules                         |
 | `DoubleRange`              | `ScoreCondition.range()`                     | Nested record inside `ScoreCondition`                         |
 

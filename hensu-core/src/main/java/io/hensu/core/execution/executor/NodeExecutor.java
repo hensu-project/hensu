@@ -5,8 +5,8 @@ import io.hensu.core.workflow.node.Node;
 /// Strategy interface for executing workflow nodes.
 ///
 /// Each node type ({@link io.hensu.core.workflow.node.StandardNode},
-/// {@link io.hensu.core.workflow.node.LoopNode}, {@link io.hensu.core.workflow.node.ParallelNode},
-/// etc.) has a corresponding executor implementation that handles its specific execution logic.
+/// {@link io.hensu.core.workflow.node.ParallelNode}, etc.) has a corresponding executor
+/// implementation that handles its specific execution logic.
 ///
 /// Implementations should be stateless and thread-safe. All execution state is passed via
 /// the {@link ExecutionContext}.

@@ -4,7 +4,6 @@ import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.parallel.Branch;
 import io.hensu.core.execution.parallel.ConsensusConfig;
-import io.hensu.core.execution.parallel.ConsensusResult;
 import io.hensu.core.execution.parallel.ConsensusStrategy;
 import io.hensu.core.execution.result.BacktrackEvent;
 import io.hensu.core.execution.result.ExecutionHistory;
@@ -98,9 +97,6 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
             Branch.class,
             ConsensusConfig.class,
             ConsensusStrategy.class,
-            ConsensusResult.class,
-            ConsensusResult.Vote.class,
-            ConsensusResult.VoteType.class,
             ScoreCondition.class,
             DoubleRange.class,
             // --- Serialization of simple immutable types ---
