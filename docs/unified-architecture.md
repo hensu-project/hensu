@@ -15,8 +15,9 @@ maintaining distributed lease state (`serverNodeId`, heartbeats) across the clus
 
 - **Macro-Graph:** The static, declarative flow defined in the DSL — which nodes run, in what order, with what
   transitions. This is the **strategy**.
-- **Micro-Plan:** The dynamic, step-by-step execution logic within a single node — tool calls, replanning, reflection
-  loops. This is the **tactics**.
+- **Micro-Tactics:** The dynamic execution logic within a single node. Two paths: an **agent-native tool loop**
+  (`ToolLoopRunner`) where the agent drives tool calls directly via `ToolCapable` / `ToolSession`, or a **plan
+  pipeline** (`AgenticNodeExecutor`) with static/dynamic step sequences. This is the **tactics**.
 
 **The Architectural Core:** The engine is **pure Java** with **zero external dependencies**. Protocol handling (MCP),
 provider integrations (LLMs), persistence, and security (multi-tenancy via `ScopedValues`) are pluggable modules wired
@@ -76,7 +77,8 @@ agent providers, action executors, repositories, and configuration are resolved 
 The builder is the only place where deployment-specific behavior diverges: both CLI and server wire the LangChain4j
 provider for LLM access. The CLI additionally wires a local bash executor (`CLIActionExecutor`); the server wires
 `ServerActionExecutor` that dispatches `Action.Send` to any registered `ActionHandler` (falling back to MCP for
-unrecognized handlers) while rejecting `Action.Execute` (local bash), and delegates all components via CDI producers.
+unrecognized handlers) while rejecting `Action.Execute` (local bash) and skipping template resolution for
+agent-originated tool calls (`rawPayload`), and delegates all components via CDI producers.
 
 See [Core Developer Guide](developer-guide-core.md) for usage patterns.
 
@@ -306,7 +308,7 @@ flowchart TD
         subgraph core["hensu-core (HensuEnvironment)"]
             direction LR
             we(["Workflow\nExecutor"]) ~~~ ne(["Node\nExecutors"]) ~~~ pe(["Plan\nEngine"]) ~~~ ae(["Action\nExecutor"]) ~~~ re(["Rubric\nEngine"])
-            tr(["Tool\nRegistry"]) ~~~ ar(["Agent\nRegistry"]) ~~~ lp(["LLM\nPlanner"]) ~~~ el(["Execution\nListener"]) ~~~ wr(["Workflow\nRepository"]) ~~~ wsr(["WorkflowState\nRepository"])
+            tlr(["ToolLoop\nRunner"]) ~~~ tr(["Tool\nRegistry"]) ~~~ ar(["Agent\nRegistry"]) ~~~ lp(["LLM\nPlanner"]) ~~~ el(["Execution\nListener"]) ~~~ wr(["Workflow\nRepository"]) ~~~ wsr(["WorkflowState\nRepository"])
         end
     end
 
@@ -334,6 +336,7 @@ flowchart TD
     style pe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style ae fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style re fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tlr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style tr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style ar fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style lp fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
@@ -370,11 +373,14 @@ Zero-dependency Java library. Contains:
   and `SynthesizeStepHandler`
 - `StaticPlanner` / `LlmPlanner` — Planner implementations: `StaticPlanner` resolves predefined
   DSL steps; `LlmPlanner` generates and revises plans dynamically via an LLM agent
-- `ToolRegistry` / `ToolDefinition` — Protocol-agnostic tool descriptors for MCP integration
+- `ToolCapable` / `ToolSession` — Narrow interface for agents that support tool sessions; `ToolSession` is call-scoped (not stateful on the agent) for `ParallelNodeExecutor` safety
+- `ToolLoopRunner` — Stateless driver dispatched from `AgentLifecycleRunner` when a node declares tools and the agent implements `ToolCapable`. Iterates the sealed `AgentResponse` hierarchy (`TextResponse` = done, `ToolRequest` = continue, `Error` = done), enforcing `AgentConfig.maxToolCalls` budget (default 10, counting executed calls). Cap exhaustion → one final summarization call → `SUCCESS` or hard `FAILURE`
+- `ToolCallResult` — Record `(toolName, success, output, error)` with `success()` / `failure()` factories
+- `ToolRegistry` / `ToolDefinition` — Protocol-agnostic tool descriptors used by agent-native tool loops, plan generation, and MCP integration
 - `RubricEngine` / `ScoreExtractingEvaluator` — Quality evaluation: reads `score` engine variable
   from context; accumulates feedback into `recommendation`; no JSON parsing
 - `EngineVariables` — SSOT for engine variable names (`score`, `approved`, `recommendation`)
-- `AgentLifecycleRunner` — Composition-based agent call: prompt enrichment → execution → output extraction
+- `AgentLifecycleRunner` — Composition-based agent call: prompt enrichment → execution → output extraction. When the node declares tools and the agent implements `ToolCapable`, dispatches to `ToolLoopRunner` for agent-native tool execution
 - `EngineVariablePromptEnricher` — Composite enricher running 7 injectors before each agent call:
   `FeedbackContextInjector` → `RubricPromptInjector` → `ScoreVariableInjector` →
   `ApprovalVariableInjector` → `RecommendationVariableInjector` → `WritesVariableInjector` →
@@ -405,7 +411,7 @@ Extends core with HTTP, MCP, and multi-tenancy:
 
 - `HensuEnvironmentProducer` — CDI producer using `HensuFactory.builder()`
 - `ServerConfiguration` — Delegates core components from `HensuEnvironment` via `@Produces @Singleton`
-- `ServerActionExecutor` — Send-action dispatcher (routes to registered handlers, falls back to MCP; rejects `Action.Execute`)
+- `ServerActionExecutor` — Send-action dispatcher (routes to registered handlers, falls back to MCP; rejects `Action.Execute`). Skips template resolution for agent-originated tool calls (`rawPayload`) to prevent context exfiltration from LLM-generated arguments
 - `WorkflowService` — Service layer facade: start/resume executions, snapshot management
 - `WorkflowRegistryService` — Push pipeline: wraps save in `WorkflowPushLock` and invokes `SubWorkflowGraphValidator` lazily resolving sub-workflow ids through the repository
 - `WorkflowPushLock` — Cluster-wide push mutex (`pg_advisory_xact_lock` with JVM `ReentrantLock` fallback) preventing concurrent pushes on different nodes from introducing cycles
@@ -421,7 +427,8 @@ Extends core with HTTP, MCP, and multi-tenancy:
 Bridges `hensu-core`'s `Agent` / `AgentProvider` abstraction with LangChain4j model implementations:
 
 - `LangChain4jProvider` — `AgentProvider` that creates `LangChain4jAgent` instances from `AgentConfig`
-- `LangChain4jAgent` — Wraps a LangChain4j `ChatModel` as a Hensu `Agent`
+- `LangChain4jAgent` — Wraps a LangChain4j `ChatModel` as a Hensu `Agent`; implements `ToolCapable` to support agent-native tool loops
+- `LangChain4jToolSession` — `ToolSession` implementation with multi-tool queue draining and `ReentrantLock`-guarded history (virtual-thread safe)
 - Programmatic `ChatModel` construction via builders (not CDI) – requires explicit native-image registration in `hensu-server` (`LangChain4j*NativeConfig` classes)
 
 Wired by both CLI and server via `HensuFactory.builder().agentProviders(List.of(new LangChain4jProvider()))`.
@@ -496,9 +503,29 @@ workflow("OrderProcessing") {
 }
 ```
 
-### 2. Micro-Plan (Node Level)
+### 2. Micro-Tactics (Node Level)
 
-Internal execution strategy within a node. Two modes:
+Internal execution strategy within a node. Three modes:
+
+**Agent-Native Tool Loop (Preferred):**
+
+When a node declares `tools` and its agent implements `ToolCapable`, `AgentLifecycleRunner` dispatches
+to `ToolLoopRunner`. The agent drives tool calls directly — the sealed `AgentResponse` hierarchy controls
+flow: `TextResponse` terminates with success, `ToolRequest` continues the loop, `Error` terminates with
+failure. Budget enforced by `AgentConfig.maxToolCalls` (default 10, counting executed calls not round-trips).
+Agent-originated tool arguments use `Action.Send(rawPayload=true)` to skip template resolution.
+
+```kotlin
+node("research-topic") {
+    agent = "researcher"
+    tools = listOf("search", "analyze", "summarize")
+    maxToolCalls = 15
+
+    prompt = "Research {topic} comprehensively"
+    onSuccess goto "publish"
+    onFailure goto "fallback"
+}
+```
 
 **Predefined Plan (Static):**
 
@@ -582,7 +609,35 @@ flowchart LR
 
 Any processor can short-circuit by returning a terminal `ExecutionResult`.
 
-**Inner Plan Loop** — what `node.execute()` runs for `StandardNode` via `AgenticNodeExecutor`:
+**Inner Execution** — what `node.execute()` runs for `StandardNode`. `AgentLifecycleRunner` selects the
+execution path: if the node declares tools and the agent implements `ToolCapable`, it dispatches to
+`ToolLoopRunner` (agent-native tool loop); otherwise it falls through to `AgenticNodeExecutor` (plan pipeline).
+
+**Tool Loop Path** (`ToolLoopRunner`):
+
+```mermaid
+flowchart LR
+    enrich(["PromptEnricher\n(7 injectors)"]) --> open(["openSession()\n(ToolCapable)"])
+    open --> call(["agent.call()\n→ AgentResponse"])
+    call -->|"TextResponse"| done(["SUCCESS\n(text = output)"])
+    call -->|"ToolRequest"| exec(["execute tools\n(Action.Send rawPayload)"])
+    exec -->|"budget ok"| call
+    exec -->|"cap exhausted"| summary(["final summarization\ncall"])
+    summary --> done
+    call -->|"Error"| fail(["FAILURE"])
+
+    style enrich fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style open fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style call fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style done fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style exec fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style summary fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style fail fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
+```
+
+**Plan Pipeline Path** (`AgenticNodeExecutor`) — used when agent does not implement `ToolCapable` or node has no tools:
 
 ```mermaid
 flowchart LR
@@ -838,10 +893,10 @@ The unified architecture provides:
 5. **Non-Linear Graphs** — Condition-routed loops with bounded revise budgets, conditional branches, fork/join, parallel fan-out with consensus, backtracking
 6. **Structured Concurrency** — `StructuredTaskScope` (preview) for all parallel execution; no `ExecutorService`, no thread pool lifecycle
 7. **Rubric Evaluation** — Quality gates that score outputs and route on thresholds for self-correcting loops
-8. **Pause / Resume** — Workflows checkpoint at any node (including micro-plan step index via the active `Plan`) and resume; the lease protocol protects against data races when the owning node crashes
+8. **Pause / Resume** — Workflows checkpoint at any node (including plan step index for plan-pipeline nodes) and resume; tool-loop nodes re-enter from the node level. The lease protocol protects against data races when the owning node crashes
 9. **Distributed Recovery** — Heartbeat/sweeper lease protocol for crashed-node detection; atomic PostgreSQL `UPDATE…RETURNING` claim
 10. **Sub-Workflows** — Hierarchical composition via `SubWorkflowNode` with input/output mapping; `SubWorkflowGraphValidator` rejects cycles and dangling refs at push (under `WorkflowPushLock`); recursion bounded by `MAX_DEPTH = 16`; tenant isolation preserved across the boundary via `_tenant_id` propagation
-11. **Flexible Planning** — Static (predefined) or Dynamic (LLM-generated) execution plans within nodes
+11. **Flexible Execution** — Agent-native tool loop (`ToolLoopRunner` via `ToolCapable` / `ToolSession`) for direct tool driving, or plan pipeline with Static (predefined) / Dynamic (LLM-generated) step sequences
 12. **Human Review** — Checkpoints for manual approval at both plan and execution levels
 13. **Multi-Tenancy** — Java 25 `ScopedValues` for safe tenant context propagation and isolation
 14. **Storage in Core** — Repository interfaces with in-memory defaults; server delegates via CDI

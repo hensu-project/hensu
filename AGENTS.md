@@ -23,6 +23,7 @@ Hensu is a modular AI workflow engine on Java 25 + Kotlin DSL. Core design princ
 4. **Template resolution**: `{variable}` syntax in prompts, resolved via `SimpleTemplateResolver`
 5. **`@DslMarker`** on Kotlin builders to prevent scope leakage
 6. **Engine variables** (`score`, `approved`, `recommendation`): engine-managed, never declared in `writes()` or `state{}`. Surfaced to the next node by the `EngineVariablePromptEnricher` injectors (`FeedbackContextInjector` appends prior feedback as a `### Previous Feedback` section). A backtracking `revise` arm preserves them; a plain forward `goto` clears them unless marked `withFeedback`.
+7. **Agent tool loop**: agents implementing `ToolCapable` open a call-scoped `ToolSession` and execute tools natively via `ToolLoopRunner` — the sealed `AgentResponse` hierarchy (`TextResponse`/`ToolRequest`/`Error`) controls flow. Budget enforced by `AgentConfig.maxToolCalls` (default 10, counting executed calls). Agent-originated tool args use `Action.Send(rawPayload=true)` to skip template resolution (prevents context exfiltration).
 
 ## Key Architectural Rules
 
@@ -34,7 +35,7 @@ Hensu is a modular AI workflow engine on Java 25 + Kotlin DSL. Core design princ
 6. **Storage in core**: repository interfaces and in-memory defaults live in `hensu-core`. JDBC impls live in `hensu-server/persistence/` as plain classes (not CDI beans). `HensuEnvironmentProducer` conditionally wires JDBC vs in-memory. Server exposes core components via `@Produces @Singleton` — never instantiates directly.
 7. **API separation**: `/api/v1/workflows` (definitions) and `/api/v1/executions` (runtime) are distinct resources.
 8. **JWT authentication**: SmallRye JWT bearer auth. Tenant identity extracted from `tenant_id` claim via `RequestTenantResolver`. CLI sends `Authorization: Bearer <token>` via `--token` or `hensu.server.token` config. JWT is required in every profile **except `inmem`** (integration tests), which disables auth and uses `hensu.tenant.default`. RSA keys live outside the repo (e.g. `~/.hensu/`).
-9. **Nodes do work; transitions route.** Control-flow capabilities (iteration, exit conditions, budgets, feedback) are expressed in the `TransitionRule` sealed hierarchy — never as node types, node flags, or executor forks on node configuration. A request shaped like "this node needs to loop/branch/retry/converge" is answered with a new or extended transition rule wired through `requiredEngineVars()`. The plan subsystem and `LoopNode` were both removed for violating this; do not reintroduce the pattern.
+9. **Nodes do work; transitions route.** Control-flow capabilities (iteration, exit conditions, budgets, feedback) are expressed in the `TransitionRule` sealed hierarchy — never as node types, node flags, or executor forks on node configuration. A request shaped like "this node needs to loop/branch/retry/converge" is answered with a new or extended transition rule wired through `requiredEngineVars()`. `LoopNode` was removed for violating this; the plan subsystem is next (PR5). Do not reintroduce the pattern.
 
 ## CLI
 

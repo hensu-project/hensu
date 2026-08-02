@@ -142,7 +142,9 @@ public class LangChain4jProvider implements AgentProvider {
                         .modelName(config.getModel())
                         .temperature(getTemperature(config))
                         .maxOutputTokens(getMaxTokens(config))
-                        .timeout(Duration.ofSeconds(getTimeout(config)));
+                        .timeout(Duration.ofSeconds(getTimeout(config)))
+                        .returnThinking(true)
+                        .sendThinking(true);
 
         if (config.getTopP() != null) builder.topP(config.getTopP());
 

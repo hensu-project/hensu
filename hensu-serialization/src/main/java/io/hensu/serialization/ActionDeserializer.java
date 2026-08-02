@@ -52,7 +52,8 @@ class ActionDeserializer extends StdDeserializer<Action> {
                         root.has("payload")
                                 ? mapper.convertValue(root.get("payload"), new TypeReference<>() {})
                                 : Map.of();
-                yield new Action.Send(handlerId, payload);
+                boolean rawPayload = root.has("rawPayload") && root.get("rawPayload").asBoolean();
+                yield new Action.Send(handlerId, payload, rawPayload);
             }
             case "execute" -> new Action.Execute(root.get("commandId").asText());
             default -> throw new IOException("Unknown Action type: " + type);

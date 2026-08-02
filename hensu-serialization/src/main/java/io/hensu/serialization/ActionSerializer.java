@@ -42,6 +42,9 @@ class ActionSerializer extends StdSerializer<Action> {
                 if (!s.getPayload().isEmpty()) {
                     provider.defaultSerializeField("payload", s.getPayload(), gen);
                 }
+                if (s.isRawPayload()) {
+                    gen.writeBooleanField("rawPayload", true);
+                }
             }
             case Action.Execute e -> {
                 gen.writeStringField("type", "execute");

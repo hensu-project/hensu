@@ -156,7 +156,13 @@ public class HensuMcpTransport {
 
         LOG.info("MCP tool call received: tool={}, requestId={}", toolName, requestId);
 
-        Map<String, Object> result = dispatcher.dispatch(toolName, arguments);
+        Map<String, Object> result;
+        try {
+            result = dispatcher.dispatch(toolName, arguments);
+        } catch (Exception e) {
+            LOG.error("Tool execution failed for '{}': {}", toolName, e.getMessage());
+            result = Map.of("error", "Execution error: " + e.getMessage());
+        }
         postResponse(requestId, result);
     }
 

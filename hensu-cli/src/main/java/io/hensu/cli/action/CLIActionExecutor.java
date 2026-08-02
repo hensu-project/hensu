@@ -124,10 +124,12 @@ public class CLIActionExecutor implements ActionExecutor {
 
         logger.info("Executing send action via handler: " + handlerId);
 
-        // Resolve template variables in payload values
-        Map<String, Object> resolvedPayload = resolvePayload(send.getPayload(), context);
+        Map<String, Object> effectivePayload =
+                send.isRawPayload()
+                        ? send.getPayload()
+                        : templateResolver.resolvePayload(send.getPayload(), context);
 
-        return handler.execute(resolvedPayload, context);
+        return handler.execute(effectivePayload, context);
     }
 
     private ActionResult executeCommand(Action.Execute exec, Map<String, Object> context) {
@@ -212,20 +214,5 @@ public class CLIActionExecutor implements ActionExecutor {
             }
         }
         return escaped;
-    }
-
-    /// Resolves template variables in payload string values.
-    private Map<String, Object> resolvePayload(
-            Map<String, Object> payload, Map<String, Object> context) {
-        Map<String, Object> resolved = new HashMap<>();
-        for (Map.Entry<String, Object> entry : payload.entrySet()) {
-            Object value = entry.getValue();
-            if (value instanceof String stringValue) {
-                resolved.put(entry.getKey(), templateResolver.resolve(stringValue, context));
-            } else {
-                resolved.put(entry.getKey(), value);
-            }
-        }
-        return resolved;
     }
 }

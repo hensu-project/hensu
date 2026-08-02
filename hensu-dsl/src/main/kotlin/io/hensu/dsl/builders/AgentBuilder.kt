@@ -125,6 +125,9 @@ class AgentBuilder(private val id: String) {
     /** Request timeout in seconds, may be null to use default. */
     var timeout: Long? = null
 
+    /** Maximum number of tool calls allowed per execution, may be null to use default (10). */
+    var maxToolCalls: Int? = null
+
     /**
      * Builds the immutable [AgentConfig] from this builder.
      *
@@ -148,6 +151,7 @@ class AgentBuilder(private val id: String) {
             .frequencyPenalty(frequencyPenalty)
             .presencePenalty(presencePenalty)
             .timeout(timeout)
+            .maxToolCalls(maxToolCalls)
             .build()
     }
 }

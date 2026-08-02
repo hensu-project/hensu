@@ -8,7 +8,6 @@ import io.hensu.core.template.TemplateResolver;
 import io.hensu.server.mcp.McpSidecar;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -76,12 +75,16 @@ public class ServerActionExecutor implements ActionExecutor {
             ActionHandler mcpHandler = handlers.get(McpSidecar.HANDLER_ID);
             if (mcpHandler != null) {
                 LOG.debugv("Routing tool '{0}' through MCP handler", handlerId);
+                Map<String, Object> effectivePayload =
+                        send.isRawPayload()
+                                ? send.getPayload()
+                                : templateResolver.resolvePayload(send.getPayload(), context);
                 Map<String, Object> mcpPayload =
                         Map.of(
                                 McpSidecar.TOOL_KEY,
                                 handlerId,
                                 McpSidecar.ARGUMENTS_KEY,
-                                resolvePayload(send.getPayload(), context));
+                                effectivePayload);
                 return mcpHandler.execute(mcpPayload, context);
             }
             LOG.warnv(
@@ -91,21 +94,10 @@ public class ServerActionExecutor implements ActionExecutor {
 
         LOG.debugv("Executing send action via handler: {0}", handlerId);
 
-        Map<String, Object> resolvedPayload = resolvePayload(send.getPayload(), context);
-        return handler.execute(resolvedPayload, context);
-    }
-
-    private Map<String, Object> resolvePayload(
-            Map<String, Object> payload, Map<String, Object> context) {
-        Map<String, Object> resolved = new HashMap<>();
-        for (Map.Entry<String, Object> entry : payload.entrySet()) {
-            Object value = entry.getValue();
-            if (value instanceof String stringValue) {
-                resolved.put(entry.getKey(), templateResolver.resolve(stringValue, context));
-            } else {
-                resolved.put(entry.getKey(), value);
-            }
-        }
-        return resolved;
+        Map<String, Object> effectivePayload =
+                send.isRawPayload()
+                        ? send.getPayload()
+                        : templateResolver.resolvePayload(send.getPayload(), context);
+        return handler.execute(effectivePayload, context);
     }
 }

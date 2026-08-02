@@ -4,7 +4,11 @@ import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.agent.AgentResponse.TextResponse;
+import io.hensu.core.agent.ToolCapable;
+import io.hensu.core.agent.ToolSession;
+import io.hensu.core.tool.ToolDefinition;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.logging.Logger;
 
@@ -30,7 +34,7 @@ import java.util.logging.Logger;
 ///
 /// @see StubAgentProvider for enabling stub mode
 /// @see StubResponseRegistry for response configuration
-public class StubAgent implements Agent {
+public class StubAgent implements Agent, ToolCapable {
 
     private static final Logger logger = Logger.getLogger(StubAgent.class.getName());
 
@@ -57,6 +61,17 @@ public class StubAgent implements Agent {
     @Override
     public AgentConfig getConfig() {
         return config;
+    }
+
+    @Override
+    public ToolSession openToolSession(
+            String prompt, Map<String, Object> context, List<ToolDefinition> tools) {
+        String nodeId = context != null ? (String) context.get("current_node") : null;
+        String response = responseRegistry.getResponse(nodeId, id, context, prompt);
+        if (response == null) {
+            response = generateMockResponse(prompt, context);
+        }
+        return new StubToolSession(response);
     }
 
     /// Executes the agent by returning a configured or generated stub response.

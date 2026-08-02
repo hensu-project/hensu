@@ -115,7 +115,8 @@ class WorkflowSerializerTest {
                         .id("notify")
                         .actions(
                                 List.of(
-                                        new Action.Send("slack", Map.of("channel", "#general")),
+                                        new Action.Send(
+                                                "slack", Map.of("channel", "#general"), false),
                                         new Action.Execute("deploy-script")))
                         .transitionRules(List.of(new SuccessTransition("done")))
                         .build();
@@ -139,6 +140,40 @@ class WorkflowSerializerTest {
 
         Action.Execute exec = (Action.Execute) restoredAction.getActions().get(1);
         assertThat(exec.getCommandId()).isEqualTo("deploy-script");
+    }
+
+    @Test
+    void roundTrip_actionNode_rawPayloadPreserved() {
+        ActionNode actionNode =
+                ActionNode.builder()
+                        .id("notify")
+                        .actions(
+                                List.of(
+                                        new Action.Send("tool", Map.of("arg", "{var}"), true),
+                                        new Action.Send(
+                                                "slack", Map.of("msg", "{greeting}"), false)))
+                        .transitionRules(List.of(new SuccessTransition("done")))
+                        .build();
+        EndNode end = EndNode.builder().id("done").status(ExitStatus.SUCCESS).build();
+
+        Workflow workflow =
+                Workflow.builder()
+                        .id("test")
+                        .startNode("notify")
+                        .nodes(Map.of("notify", actionNode, "done", end))
+                        .build();
+
+        Workflow restored = WorkflowSerializer.fromJson(WorkflowSerializer.toJson(workflow));
+
+        ActionNode restoredAction = (ActionNode) restored.getNodes().get("notify");
+        assertThat(restoredAction.getActions()).hasSize(2);
+
+        Action.Send rawSend = (Action.Send) restoredAction.getActions().getFirst();
+        assertThat(rawSend.isRawPayload()).isTrue();
+        assertThat(rawSend.getPayload()).containsEntry("arg", "{var}");
+
+        Action.Send dslSend = (Action.Send) restoredAction.getActions().get(1);
+        assertThat(dslSend.isRawPayload()).isFalse();
     }
 
     @Test

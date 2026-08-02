@@ -277,7 +277,7 @@ The server initializes core infrastructure via CDI:
 
 1. `HensuEnvironmentProducer` creates `HensuEnvironment` via `HensuFactory.builder()`
 2. `ServerConfiguration` delegates core components for CDI injection
-3. `ServerActionExecutor` routes `Action.Send` to registered handlers (MCP and others) and rejects `Action.Execute` (local command execution)
+3. `ServerActionExecutor` routes `Action.Send` to registered handlers (MCP and others), skipping template resolution for agent-originated tool calls (`rawPayload`), and rejects `Action.Execute` (local command execution)
 
 See [Server Developer Guide](../docs/developer-guide-server.md) for implementation details.
 

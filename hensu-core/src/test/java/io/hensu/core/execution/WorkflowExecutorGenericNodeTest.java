@@ -36,6 +36,7 @@ class WorkflowExecutorGenericNodeTest extends WorkflowExecutorTestBase {
                                 genericRegistry, ReviewHandler.AUTO_APPROVE, rubricEngine),
                         null,
                         null,
+                        null,
                         null);
     }
 
