@@ -225,6 +225,7 @@ public final class HensuFactory {
                 workflowRepository,
                 workflowStateRepository,
                 null,
+                null,
                 null);
     }
 
@@ -243,7 +244,8 @@ public final class HensuFactory {
             WorkflowRepository workflowRepository,
             WorkflowStateRepository workflowStateRepository,
             Planner planner,
-            StepHandlerRegistry stepHandlerRegistry) {
+            StepHandlerRegistry stepHandlerRegistry,
+            ToolRegistry toolRegistry) {
         RubricRepository rubricRepository = createRubricRepository(config);
         RubricEngine rubricEngine =
                 new RubricEngine(rubricRepository, new ScoreExtractingEvaluator());
@@ -263,7 +265,8 @@ public final class HensuFactory {
                         lifecycleCoordinator,
                         actionExecutor,
                         templateResolver,
-                        workflowRepository);
+                        workflowRepository,
+                        toolRegistry);
 
         return new HensuEnvironment(
                 workflowExecutor,
@@ -763,7 +766,8 @@ public final class HensuFactory {
                     workflowRepository,
                     workflowStateRepository,
                     planner,
-                    builtStepHandlerRegistry);
+                    builtStepHandlerRegistry,
+                    toolRegistry != null ? toolRegistry : EMPTY_TOOL_REGISTRY);
         }
     }
 

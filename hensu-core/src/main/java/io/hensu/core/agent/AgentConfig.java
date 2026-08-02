@@ -42,6 +42,7 @@ public final class AgentConfig {
     private final Double frequencyPenalty;
     private final Double presencePenalty;
     private final Long timeout;
+    private final Integer maxToolCalls;
 
     private AgentConfig(Builder builder) {
         this.id = Objects.requireNonNull(builder.id, "Agent ID required");
@@ -56,6 +57,7 @@ public final class AgentConfig {
         this.frequencyPenalty = builder.frequencyPenalty;
         this.presencePenalty = builder.presencePenalty;
         this.timeout = builder.timeout;
+        this.maxToolCalls = builder.maxToolCalls;
     }
 
     /// Returns the unique agent identifier.
@@ -142,6 +144,13 @@ public final class AgentConfig {
         return timeout;
     }
 
+    /// Returns the maximum number of tool calls allowed per execution.
+    ///
+    /// @return max tool calls limit, may be null (runner uses default of 10)
+    public Integer getMaxToolCalls() {
+        return maxToolCalls;
+    }
+
     /// Creates a new builder for constructing AgentConfig instances.
     ///
     /// @return a new builder instance, never null
@@ -165,6 +174,7 @@ public final class AgentConfig {
         private Double frequencyPenalty;
         private Double presencePenalty;
         private Long timeout;
+        private Integer maxToolCalls;
 
         private Builder() {}
 
@@ -276,6 +286,15 @@ public final class AgentConfig {
             return this;
         }
 
+        /// Sets the maximum number of tool calls allowed per execution.
+        ///
+        /// @param maxToolCalls the limit, may be null (runner uses default of 10)
+        /// @return this builder for chaining
+        public Builder maxToolCalls(Integer maxToolCalls) {
+            this.maxToolCalls = maxToolCalls;
+            return this;
+        }
+
         /// Builds an immutable AgentConfig instance.
         ///
         /// @return the constructed configuration, never null
@@ -300,7 +319,8 @@ public final class AgentConfig {
                 && Objects.equals(topP, that.topP)
                 && Objects.equals(frequencyPenalty, that.frequencyPenalty)
                 && Objects.equals(presencePenalty, that.presencePenalty)
-                && Objects.equals(timeout, that.timeout);
+                && Objects.equals(timeout, that.timeout)
+                && Objects.equals(maxToolCalls, that.maxToolCalls);
     }
 
     @Override
@@ -317,7 +337,8 @@ public final class AgentConfig {
                 topP,
                 frequencyPenalty,
                 presencePenalty,
-                timeout);
+                timeout,
+                maxToolCalls);
     }
 
     @Override

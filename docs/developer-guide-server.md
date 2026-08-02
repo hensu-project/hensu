@@ -195,6 +195,7 @@ public HensuEnvironment hensuEnvironment() {
             .loadCredentials(properties)
             .agentProviders(List.of(new LangChain4jProvider()))
             .actionExecutor(actionExecutor)   // ServerActionExecutor (send-action dispatcher)
+            .toolRegistry(tenantToolRegistry) // MCP-discovered tools for agent tool loops + planning
             .planObservers(planObservers.stream().toList())
             .planResponseParser(new JacksonPlanResponseParser(objectMapper));
 
@@ -254,7 +255,7 @@ public ObjectMapper objectMapper() {
 
 ### ServerActionExecutor
 
-Server-specific `ActionExecutor` that routes `Action.Send` to registered handlers (such as `McpSidecar`) and rejects `Action.Execute` (local command execution):
+Server-specific `ActionExecutor` that routes `Action.Send` to registered handlers (such as `McpSidecar`) and rejects `Action.Execute` (local command execution). When `send.isRawPayload()` is true (agent-originated tool calls via `ToolLoopRunner`), template resolution is skipped to prevent exfiltration of workflow context through LLM-generated arguments:
 
 ```java
 @Override
@@ -264,6 +265,13 @@ public ActionResult execute(Action action, Map<String, Object> context) {
         case Action.Execute exec -> ActionResult.failure(
             "Server mode does not support local command execution");
     };
+}
+
+private ActionResult executeSend(Action.Send send, Map<String, Object> context) {
+    Map<String, Object> payload = send.isRawPayload()
+            ? send.getPayload()                    // agent-originated: skip template resolution
+            : resolvePayload(send, context);       // DSL-authored: resolve {variable} placeholders
+    // ... handler lookup and dispatch
 }
 ```
 
@@ -867,6 +875,10 @@ MCP tools are discovered at runtime — no server code changes are required to s
   their own MCP implementations.
 - **No server changes**: `McpSidecar.execute()` resolves tool names dynamically from the JSON-RPC
   payload. Adding a new tool on the MCP server side is sufficient; no `McpSidecar` update is needed.
+- **Consumers**: `TenantToolRegistry` is wired into `HensuFactory` via `HensuEnvironmentProducer`,
+  making discovered tools available to both `ToolLoopRunner` (agent-native tool loops) and
+  `PlanExecutor` (plan-based tool execution). Before PR4, the tool registry was never wired in the
+  server context — planning ran against an empty registry.
 
 ---
 

@@ -108,6 +108,7 @@ agents {
 | `temperature`      | Double       | No       | 0.7         | Sampling temperature (0.0-2.0)                                       |
 | `maxTokens`        | Int?         | No       | null        | Maximum tokens in response (null = model default)                    |
 | `tools`            | List<String> | No       | emptyList() | Tool identifiers available to this agent                             |
+| `maxToolCalls`     | Int?         | No       | null        | Maximum tool calls per node execution (null = engine default of 10)  |
 | `maintainContext`  | Boolean      | No       | false       | Whether to maintain conversation context across executions           |
 | `instructions`     | String?      | No       | null        | Additional system instructions appended to role                      |
 | `topP`             | Double?      | No       | null        | Top-p (nucleus) sampling parameter (0.0-1.0)                         |

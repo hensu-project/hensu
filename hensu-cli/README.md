@@ -580,8 +580,9 @@ The CLI supports two action types that nodes can trigger during execution, imple
   directory). Commands are looked up by ID from a `CommandRegistry` – the DSL never
   specifies raw shell strings, keeping credentials out of workflow files.
 
-All action parameters support `{variable}` template syntax, resolved from the current
-workflow context at execution time.
+DSL-authored action parameters support `{variable}` template syntax, resolved from the
+current workflow context at execution time. Agent-originated tool calls bypass template
+resolution to prevent context exfiltration from LLM-generated arguments.
 
 ---
 

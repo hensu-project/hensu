@@ -1,0 +1,38 @@
+{
+  "id" : "tool-loop",
+  "version" : "1.0.0",
+  "stateSchema" : {
+    "variables" : [ {
+      "name" : "query",
+      "type" : "STRING",
+      "isInput" : true
+    } ]
+  },
+  "startNode" : "search-node",
+  "agents" : {
+    "tool-agent" : {
+      "id" : "tool-agent",
+      "role" : "researcher",
+      "model" : "stub",
+      "temperature" : 0.7,
+      "tools" : [ "test-tool" ]
+    }
+  },
+  "nodes" : {
+    "search-node" : {
+      "id" : "search-node",
+      "nodeType" : "STANDARD",
+      "agentId" : "tool-agent",
+      "prompt" : "Research {query} using available tools",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

@@ -27,7 +27,8 @@ class CLIActionExecutorTest {
         var handler = new PayloadCapturingHandler("template-handler");
         executor.registerHandler(handler);
 
-        Action.Send send = new Action.Send("template-handler", Map.of("message", "Hello {name}"));
+        Action.Send send =
+                new Action.Send("template-handler", Map.of("message", "Hello {name}"), false);
         Map<String, Object> context = Map.of("name", "World");
 
         executor.execute(send, context);
@@ -36,8 +37,21 @@ class CLIActionExecutorTest {
     }
 
     @Test
+    void shouldNotResolveTemplatesWhenRawPayloadTrue() {
+        var handler = new PayloadCapturingHandler("raw-handler");
+        executor.registerHandler(handler);
+
+        Action.Send send = new Action.Send("raw-handler", Map.of("message", "{name}"), true);
+        Map<String, Object> context = Map.of("name", "World");
+
+        executor.execute(send, context);
+
+        assertThat(handler.capturedPayload).containsEntry("message", "{name}");
+    }
+
+    @Test
     void shouldFailSendWhenHandlerNotRegistered() {
-        Action.Send send = new Action.Send("unknown-handler");
+        Action.Send send = new Action.Send("unknown-handler", Map.of(), false);
 
         ActionResult result = executor.execute(send, Map.of());
 

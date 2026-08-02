@@ -25,6 +25,7 @@ This guide covers API usage, adapter development, extension points, and testing 
   - [Bounded Revise](#bounded-revise)
 - [State Schema](#state-schema)
 - [Engine Variable Injection](#engine-variable-injection)
+- [Agent Tool Loop](#agent-tool-loop)
 - [Tool Registry](#tool-registry)
 - [Plan Engine](#plan-engine)
 - [Template Resolution](#template-resolution)
@@ -978,9 +979,92 @@ EngineVariablePromptEnricher enricher = new EngineVariablePromptEnricher(
 
 Inject it via `HensuFactory` or override the server CDI producer.
 
+## Agent Tool Loop
+
+Agents that implement `ToolCapable` can natively request and receive tool results during execution,
+without routing through the plan subsystem. The loop is driven by `ToolLoopRunner`, dispatched from
+`AgentLifecycleRunner` when a node declares tools.
+
+### Protocol
+
+Three types form the tool session protocol (all in `hensu-core`, zero external deps):
+
+| Type             | Description                                                                                         |
+|------------------|-----------------------------------------------------------------------------------------------------|
+| `ToolCapable`    | Narrow interface on agents: `openToolSession(prompt, context, tools)` returns a `ToolSession`       |
+| `ToolSession`    | Call-scoped session: `start()`, `submit(ToolCallResult)`, `compact()`, `close()`                    |
+| `ToolCallResult` | Record `(toolName, success, output, error)` with `success()`/`failure()` factories and `asText()`   |
+
+Sessions are call-scoped, not stateful on the agent – `ParallelNodeExecutor` fan-out shares one agent
+instance across branches, so loop state must not live on the agent.
+
+### Termination Semantics
+
+The sealed `AgentResponse` hierarchy IS the termination signal – no explicit "done" message:
+
+| Response       | Meaning                                      |
+|----------------|----------------------------------------------|
+| `TextResponse` | Loop DONE – agent produced final answer      |
+| `ToolRequest`  | Loop continues – another tool call round     |
+| `Error`        | Loop DONE – agent errored                    |
+
+### Engagement
+
+`ToolLoopRunner` engages when both conditions hold:
+1. `agent.getConfig().getTools()` is non-empty
+2. `agent instanceof ToolCapable`
+
+Tools declared but agent not capable → `NodeResult.failure()` (routable via `onFailure`).
+
+### Tool Resolution
+
+Tools are resolved via the MCP discovery chain:
+1. `ctx.getToolRegistry().all()` returns all available tools (in server context: `TenantToolRegistry` → `McpToolDiscovery`)
+2. Filter to the agent's declared `tools` names
+3. Unresolvable name → `NodeResult.failure()` with diagnostic listing available tools
+4. Filtered `List<ToolDefinition>` (with full schemas) passed into `openToolSession()`
+
+### Budget Enforcement
+
+`AgentConfig.maxToolCalls` (default 10) caps EXECUTED tool calls – each `Action.Send` counts, so one
+round with N parallel calls from the model counts N (not 1).
+
+On cap exhaustion:
+1. Feed back `ToolCallResult.failure(lastToolName, "Tool call budget exhausted (N/N)...")` via `session.submit()`
+2. Model responds with `TextResponse` → **SUCCESS** (accumulated context preserved)
+3. Model responds with `ToolRequest` → **hard FAILURE** ("agent continued requesting tools after budget exhaustion")
+
+No retry, no counter reset. If an agent genuinely needs more budget, raise `maxToolCalls` in the DSL.
+
+### Safety: Raw Payloads
+
+Agent-originated tool arguments are dispatched as `Action.Send(..., rawPayload=true)`. The `rawPayload`
+flag prevents template resolution of LLM-generated content – without it, an argument containing `{secret_key}`
+would be expanded from workflow context (template exfiltration). DSL-authored sends use `rawPayload=false`
+and continue to resolve templates normally.
+
+### Unknown Tools
+
+When an agent requests a tool name that doesn't exist (hallucination), the runner feeds back
+`ToolCallResult.failure(toolName, "Unknown tool 'X', available: [...]")` rather than hard-failing.
+The agent can retry or answer – budget bounds the loop.
+
+### Session Lifecycle
+
+`ToolLoopRunner` wraps the loop in try/finally:
+- `session.compact()` before the cap-exhaustion final call (maximize context for summarization)
+- `session.close()` in the finally block (release resources, flush final pair to shared history)
+
+### Adapter Implementations
+
+| Adapter        | Class                    | Notes                                                                        |
+|----------------|--------------------------|------------------------------------------------------------------------------|
+| LangChain4j    | `LangChain4jToolSession` | Multi-tool queue draining, `ReentrantLock`-guarded history, system-msg merge |
+| Stub (testing) | `StubToolSession`        | Scripted turns via `---TURN---` separator, `[TOOL_CALL]` prefix for requests |
+
 ## Tool Registry
 
-Protocol-agnostic tool descriptors used by plan generation and MCP integration. The core defines tool shapes; actual invocation happens through `ActionHandler` at the application layer.
+Protocol-agnostic tool descriptors used by agent tool loops, plan generation, and MCP integration. The core defines tool shapes; actual invocation happens through `ActionHandler` at the application layer.
 
 ### Registering Tools
 
@@ -1000,10 +1084,11 @@ registry.register(ToolDefinition.of("analyze", "Analyze data",
 
 ### MCP Integration
 
-The server layer populates the tool registry from MCP server connections. Tools discovered via MCP become `ToolDefinition` instances available for plan generation and execution.
+The server layer populates the tool registry from MCP server connections. Tools discovered via MCP become `ToolDefinition` instances available for agent tool loops and plan generation.
 
 ```
-MCP Server ──► ToolDefinition ──► ToolRegistry ──► Planner ──► Plan
+MCP Server ──► ToolDefinition ──► ToolRegistry ──┬──► ToolLoopRunner ──► Agent Tool Session
+                                                 └──► Planner ──► Plan
 ```
 
 ## Plan Engine
@@ -1112,6 +1197,10 @@ The `TemplateResolver` substitutes `{variable}` placeholders in prompts from wor
 - `{topic}` — resolved from initial context or previous node output
 - `{nodeId}` — resolved from the output of node with that ID (legacy mode — no schema declared)
 - `{varName}` — resolved from named state variables written via `writes` (schema mode)
+
+Template resolution applies only to DSL-authored payloads (`Action.Send` with `rawPayload=false`).
+Agent-originated tool arguments (`rawPayload=true`) bypass resolution entirely to prevent template
+exfiltration – an LLM-generated argument containing `{secret}` must not expand from workflow context.
 
 ## Human Review
 
@@ -1458,7 +1547,10 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `agent/AgentProvider.java`                              | Provider interface for pluggable AI backends                                                     |
 | `agent/AgentRegistry.java`                              | Agent lookup interface                                                                           |
 | `agent/DefaultAgentRegistry.java`                       | Thread-safe agent registry                                                                       |
+| `agent/ToolCapable.java`                                | Narrow interface for agents that support tool sessions                                           |
+| `agent/ToolSession.java`                                | Call-scoped tool loop session (start/submit/compact/close)                                       |
 | `agent/stub/StubAgentProvider.java`                     | Testing provider (priority 1000 when enabled)                                                    |
+| `agent/stub/StubToolSession.java`                       | Scripted tool session for testing (`---TURN---` syntax)                                          |
 | `execution/WorkflowExecutor.java`                       | Main execution engine                                                                            |
 | `execution/NodeLifecycleCoordinator.java`               | Per-node lifecycle: phase dispatch, pipeline orchestration                                       |
 | `execution/executor/GenericNodeHandler.java`            | Generic node handler interface                                                                   |
@@ -1488,6 +1580,7 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `rubric/RubricEngine.java`                              | Quality evaluation engine                                                                        |
 | `rubric/model/Rubric.java`                              | Rubric definition model                                                                          |
 | `tool/ToolDefinition.java`                              | Protocol-agnostic tool descriptor                                                                |
+| `tool/ToolCallResult.java`                              | Tool execution result record (success/failure factories, `asText()`)                             |
 | `tool/ToolRegistry.java`                                | Tool registration/lookup interface                                                               |
 | `plan/PlanExecutor.java`                                | Iterates plan steps via `StepHandlerRegistry`                                                    |
 | `plan/Plan.java`                                        | Plan model (steps + constraints)                                                                 |
@@ -1506,6 +1599,7 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `execution/EngineVariables.java`                        | SSOT for engine variable names (`score`, `approved`, `recommendation`)                           |
 | `execution/SynchronizedListenerDecorator.java`          | Thread-safe listener wrapper for parallel branch execution                                       |
 | `execution/executor/AgentLifecycleRunner.java`          | Composition-based agent call: prompt enrichment → agent execution → output extraction            |
+| `execution/executor/ToolLoopRunner.java`                | Drives agent-native tool loop (budget enforcement, feed-back, sealed termination)                |
 | `execution/executor/AgenticNodeExecutor.java`           | Drives preparation + execution `PlanPipeline`s for `StandardNode`                                |
 | `execution/parallel/BranchExecutionConfig.java`         | Typed branch metadata on `ExecutionContext` (consensus strategy, yields list)                    |
 | `template/SimpleTemplateResolver.java`                  | `{variable}` substitution                                                                        |

@@ -38,6 +38,7 @@ class WorkflowExecutorActionNodeTest extends WorkflowExecutorTestBase {
                         createCoordinator(registry, ReviewHandler.AUTO_APPROVE, rubricEngine),
                         mockActionExecutor,
                         null,
+                        null,
                         null);
     }
 

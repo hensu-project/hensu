@@ -52,7 +52,8 @@ class WorkflowExecutorSubWorkflowTest extends WorkflowExecutorTestBase {
                         createCoordinator(registry, ReviewHandler.AUTO_APPROVE, rubricEngine),
                         null,
                         new SimpleTemplateResolver(),
-                        repository);
+                        repository,
+                        null);
     }
 
     @Test
@@ -339,6 +340,7 @@ class WorkflowExecutorSubWorkflowTest extends WorkflowExecutorTestBase {
                         agentRegistry,
                         rubricEngine,
                         createCoordinator(registry, ReviewHandler.AUTO_APPROVE, rubricEngine),
+                        null,
                         null,
                         null,
                         null);

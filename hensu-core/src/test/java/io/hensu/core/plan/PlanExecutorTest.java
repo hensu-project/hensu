@@ -50,7 +50,8 @@ class PlanExecutorTest {
                         Instant start = Instant.now();
                         ActionResult result =
                                 mockActionExecutor.execute(
-                                        new Action.Send(action.toolName(), action.arguments()),
+                                        new Action.Send(
+                                                action.toolName(), action.arguments(), false),
                                         context);
                         Duration duration = Duration.between(start, Instant.now());
                         return result.success()

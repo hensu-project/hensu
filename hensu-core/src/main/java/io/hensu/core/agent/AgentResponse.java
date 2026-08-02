@@ -2,6 +2,8 @@ package io.hensu.core.agent;
 
 import io.hensu.core.plan.PlannedStep;
 import java.time.Instant;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -46,7 +48,10 @@ public sealed interface AgentResponse
 
         public TextResponse {
             Objects.requireNonNull(content, "content must not be null");
-            metadata = metadata != null ? Map.copyOf(metadata) : Map.of();
+            metadata =
+                    metadata != null
+                            ? Collections.unmodifiableMap(new HashMap<>(metadata))
+                            : Map.of();
             timestamp = timestamp != null ? timestamp : Instant.now();
         }
 
@@ -75,7 +80,10 @@ public sealed interface AgentResponse
 
         public ToolRequest {
             Objects.requireNonNull(toolName, "toolName must not be null");
-            arguments = arguments != null ? Map.copyOf(arguments) : Map.of();
+            arguments =
+                    arguments != null
+                            ? Collections.unmodifiableMap(new HashMap<>(arguments))
+                            : Map.of();
             reasoning = reasoning != null ? reasoning : "";
             timestamp = timestamp != null ? timestamp : Instant.now();
         }

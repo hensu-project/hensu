@@ -63,13 +63,28 @@ final class AgentLifecycleRunner {
 
         logger.info("Executing agent: " + agentId + " for " + eventSourceId);
 
-        // 3. Listener events + execution
+        // 3. Tool loop engagement: agent declares tools → delegate to ToolLoopRunner
+        if (agent.getConfig() != null && !agent.getConfig().getTools().isEmpty()) {
+            ExecutionListener listener = ctx.getListener();
+            listener.onAgentStart(eventSourceId, agentId, resolved);
+            NodeResult result =
+                    ToolLoopRunner.execute(eventSourceId, agentId, resolved, agent, ctx);
+            AgentResponse syntheticResponse =
+                    result.getStatus() == io.hensu.core.execution.result.ResultStatus.SUCCESS
+                            ? AgentResponse.TextResponse.of(
+                                    String.valueOf(result.getOutput()), result.getMetadata())
+                            : AgentResponse.Error.of(String.valueOf(result.getOutput()));
+            listener.onAgentComplete(eventSourceId, agentId, syntheticResponse);
+            return result;
+        }
+
+        // 4. Standard path: no tools declared
         ExecutionListener listener = ctx.getListener();
         listener.onAgentStart(eventSourceId, agentId, resolved);
         AgentResponse response = agent.execute(resolved, ctx.getState().getContext());
         listener.onAgentComplete(eventSourceId, agentId, response);
 
-        // 4. Response conversion
+        // 5. Response conversion
         return toNodeResult(response);
     }
 

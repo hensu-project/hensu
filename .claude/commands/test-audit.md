@@ -11,7 +11,7 @@ Token rule: see `01-model-coordination.md` §2. Never inline test code or diffs.
    - Files/dirs → `@path` (glob-friendly).
    - Uncommitted tests → `git diff -- '*Test*' '*test*' > .claude/tmp/tests.patch` then `@.claude/tmp/tests.patch`.
 
-2. **Query Gemini** (`mcp__gemini__ask-gemini`, `gemini-3.1-pro-preview`):
+2. **Query Gemini** (`mcp__gemini__ask-gemini`, `gemini-3.6-flash`):
 > Cynical Researcher. Read referenced test paths. Question: "Can this catch a real prod bug?"
 > Repo has ~1000 tests; net delta must be ≤ 0. Prefer DROP.
 > Classify:

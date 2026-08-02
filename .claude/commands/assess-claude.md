@@ -13,7 +13,7 @@ Token rule: see `01-model-coordination.md` §2. Never read files into your own c
    - Uncommitted → `git diff > .claude/tmp/subject.patch` then `@.claude/tmp/subject.patch`.
    - Add ≤2 lines rationale.
 
-2. **Query Gemini** (`mcp__gemini__ask-gemini`, `gemini-3.1-pro-preview`):
+2. **Query Gemini** (`mcp__gemini__ask-gemini`, `gemini-3.6-flash`):
 > Cynical Researcher. Read referenced paths. Audit against:
 > (1) Correctness — edge cases, concurrency, error paths.
 > (2) Hensu invariants — GraalVM native (no reflection/classpath scanning/ThreadLocal), virtual-thread safety (no pinning `synchronized`), multi-tenant ScopedValue isolation.

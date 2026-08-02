@@ -39,7 +39,7 @@ public class ToolCallStepHandler implements StepHandler<PlanStepAction.ToolCall>
     public StepResult handle(
             PlannedStep step, PlanStepAction.ToolCall action, Map<String, Object> context) {
         Instant start = Instant.now();
-        Action mcpAction = new Action.Send(action.toolName(), action.arguments());
+        Action mcpAction = new Action.Send(action.toolName(), action.arguments(), false);
         ActionResult result = actionExecutor.execute(mcpAction, context);
         Duration duration = Duration.between(start, Instant.now());
 

@@ -48,6 +48,7 @@ fun riskAssessmentWorkflow() = workflow("risk-assessment") {
             role = "Senior credit risk analyst specialising in SMB lending decisions"
             model = Models.GEMINI_3_1_FLASH_LITE
             temperature = 0.2
+            tools = listOf("fetch_customer_data", "calculate_risk_score")
         }
     }
 
@@ -63,17 +64,10 @@ fun riskAssessmentWorkflow() = workflow("risk-assessment") {
                 Customer ID : {customerId}
                 Request type: {requestType}
 
-                Use the available tools in this order:
-                1. Call fetch_customer_data to retrieve the customer's full financial profile.
-                2. Call calculate_risk_score to compute the composite risk score and breakdown.
-                3. Synthesise a recommendation using both the raw data and the risk assessment.
+                Retrieve the customer's financial profile, compute their risk score,
+                and synthesise a recommendation covering positive factors, risk factors,
+                any conditions, and a summary paragraph for the credit committee.
             """.trimIndent()
-
-            planning {
-                mode = PlanningMode.DYNAMIC
-                maxSteps = 5
-                maxDuration = Duration.ofMinutes(3)
-            }
 
             review {
                 mode = ReviewMode.REQUIRED

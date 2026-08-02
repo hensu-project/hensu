@@ -9,9 +9,13 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentResponse;
+import io.hensu.core.agent.ToolCapable;
+import io.hensu.core.agent.ToolSession;
+import io.hensu.core.tool.ToolDefinition;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Logger;
 
 /// LangChain4j implementation of {@link Agent}.
@@ -28,7 +32,7 @@ import java.util.logging.Logger;
 ///
 /// @see LangChain4jProvider for agent creation
 /// @see Agent for the contract
-public class LangChain4jAgent implements Agent {
+public class LangChain4jAgent implements Agent, ToolCapable {
 
     private static final Logger logger = Logger.getLogger(LangChain4jAgent.class.getName());
 
@@ -36,6 +40,7 @@ public class LangChain4jAgent implements Agent {
     private final AgentConfig config;
     private final ChatModel model;
     private final List<ChatMessage> conversationHistory;
+    private final ReentrantLock historyLock = new ReentrantLock();
 
     /// Creates a new agent wrapping the given chat model.
     ///
@@ -78,8 +83,13 @@ public class LangChain4jAgent implements Agent {
             logger.fine("Agent '" + id + "' output:\n" + output);
 
             if (config.isMaintainContext()) {
-                conversationHistory.add(UserMessage.from(prompt));
-                conversationHistory.add(aiMessage);
+                historyLock.lock();
+                try {
+                    conversationHistory.add(UserMessage.from(prompt));
+                    conversationHistory.add(aiMessage);
+                } finally {
+                    historyLock.unlock();
+                }
             }
 
             Map<String, Object> metadata = buildMetadata(response, startTime);
@@ -101,6 +111,36 @@ public class LangChain4jAgent implements Agent {
     @Override
     public AgentConfig getConfig() {
         return config;
+    }
+
+    @Override
+    public ToolSession openToolSession(
+            String prompt, Map<String, Object> context, List<ToolDefinition> tools) {
+        return new LangChain4jToolSession(this, model, config, prompt, context, tools);
+    }
+
+    /// Appends the final prompt/answer pair to shared conversation history.
+    ///
+    /// Called by {@link LangChain4jToolSession#close()} under the session's control.
+    void appendToHistory(UserMessage userMessage, AiMessage aiMessage) {
+        if (!config.isMaintainContext()) return;
+        historyLock.lock();
+        try {
+            conversationHistory.add(userMessage);
+            conversationHistory.add(aiMessage);
+        } finally {
+            historyLock.unlock();
+        }
+    }
+
+    /// Returns a snapshot of the current conversation history for session initialization.
+    List<ChatMessage> getHistorySnapshot() {
+        historyLock.lock();
+        try {
+            return new ArrayList<>(conversationHistory);
+        } finally {
+            historyLock.unlock();
+        }
     }
 
     /// Builds the ordered message list: system prompt, history, then user prompt.
@@ -128,8 +168,9 @@ public class LangChain4jAgent implements Agent {
             }
         }
 
-        if (config.isMaintainContext() && !conversationHistory.isEmpty()) {
-            messages.addAll(conversationHistory);
+        if (config.isMaintainContext()) {
+            List<ChatMessage> snapshot = getHistorySnapshot();
+            messages.addAll(snapshot);
         }
 
         messages.add(UserMessage.from(prompt));

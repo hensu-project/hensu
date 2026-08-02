@@ -59,7 +59,7 @@ class ActionNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMar
      * @param handlerId identifier of the registered action handler
      */
     fun send(handlerId: String) {
-        actions.add(Action.Send(handlerId))
+        actions.add(Action.Send(handlerId, emptyMap(), false))
     }
 
     /**
@@ -88,7 +88,7 @@ class ActionNodeBuilder(private val id: String) : BaseNodeBuilder, TransitionMar
      * @param payload action-specific data passed to the handler
      */
     fun send(handlerId: String, payload: Map<String, Any>) {
-        actions.add(Action.Send(handlerId, payload))
+        actions.add(Action.Send(handlerId, payload, false))
     }
 
     /**

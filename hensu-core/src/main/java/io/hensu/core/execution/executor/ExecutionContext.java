@@ -8,6 +8,7 @@ import io.hensu.core.execution.parallel.BranchExecutionConfig;
 import io.hensu.core.rubric.RubricEngine;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.template.TemplateResolver;
+import io.hensu.core.tool.ToolRegistry;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
 
@@ -55,6 +56,7 @@ public final class ExecutionContext {
     private final ActionExecutor actionExecutor;
     private final RubricEngine rubricEngine;
     private final WorkflowRepository workflowRepository;
+    private final ToolRegistry toolRegistry;
 
     private ExecutionContext(Builder builder) {
         this.state = builder.state;
@@ -68,6 +70,7 @@ public final class ExecutionContext {
         this.actionExecutor = builder.actionExecutor;
         this.rubricEngine = builder.rubricEngine;
         this.workflowRepository = builder.workflowRepository;
+        this.toolRegistry = builder.toolRegistry;
     }
 
     /// Returns the current workflow execution state.
@@ -144,6 +147,13 @@ public final class ExecutionContext {
         return workflowRepository;
     }
 
+    /// Returns the tool registry for resolving available tools.
+    ///
+    /// @return tool registry, or null if not configured
+    public ToolRegistry getToolRegistry() {
+        return toolRegistry;
+    }
+
     /// Returns the branch execution configuration, if executing inside a parallel branch.
     ///
     /// Non-null only during branch execution within {@code ParallelNodeExecutor}.
@@ -183,6 +193,7 @@ public final class ExecutionContext {
                 .actionExecutor(this.actionExecutor)
                 .rubricEngine(this.rubricEngine)
                 .workflowRepository(this.workflowRepository)
+                .toolRegistry(this.toolRegistry)
                 .build();
     }
 
@@ -206,6 +217,7 @@ public final class ExecutionContext {
                 .actionExecutor(this.actionExecutor)
                 .rubricEngine(this.rubricEngine)
                 .workflowRepository(this.workflowRepository)
+                .toolRegistry(this.toolRegistry)
                 .build();
     }
 
@@ -229,6 +241,7 @@ public final class ExecutionContext {
                 .actionExecutor(this.actionExecutor)
                 .rubricEngine(this.rubricEngine)
                 .workflowRepository(this.workflowRepository)
+                .toolRegistry(this.toolRegistry)
                 .build();
     }
 
@@ -249,6 +262,7 @@ public final class ExecutionContext {
         private ActionExecutor actionExecutor;
         private RubricEngine rubricEngine;
         private WorkflowRepository workflowRepository;
+        private ToolRegistry toolRegistry;
 
         private Builder() {}
 
@@ -304,6 +318,11 @@ public final class ExecutionContext {
 
         public Builder workflowRepository(WorkflowRepository workflowRepository) {
             this.workflowRepository = workflowRepository;
+            return this;
+        }
+
+        public Builder toolRegistry(ToolRegistry toolRegistry) {
+            this.toolRegistry = toolRegistry;
             return this;
         }
 

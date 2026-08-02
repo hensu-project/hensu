@@ -1,5 +1,7 @@
 package io.hensu.core.execution.action;
 
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 
 /// Actions that can be executed when an action node is reached.
@@ -38,21 +40,21 @@ public abstract sealed class Action {
     public static final class Send extends Action {
         private final String handlerId;
         private final Map<String, Object> payload;
+        private final boolean rawPayload;
 
-        /// Creates a send action with no payload.
-        ///
-        /// @param handlerId the registered action handler ID, not null or blank
-        public Send(String handlerId) {
-            this(handlerId, Map.of());
-        }
-
-        /// Creates a send action with payload data.
+        /// Creates a send action with payload and raw-payload flag.
         ///
         /// @param handlerId the registered action handler ID, not null or blank
         /// @param payload action-specific data passed to the handler, not null
-        public Send(String handlerId, Map<String, Object> payload) {
+        /// @param rawPayload `true` for agent-originated payloads that must NOT be
+        ///        template-resolved; `false` for DSL-authored payloads
+        public Send(String handlerId, Map<String, Object> payload, boolean rawPayload) {
             this.handlerId = handlerId;
-            this.payload = payload != null ? Map.copyOf(payload) : Map.of();
+            this.payload =
+                    payload != null
+                            ? Collections.unmodifiableMap(new HashMap<>(payload))
+                            : Map.of();
+            this.rawPayload = rawPayload;
         }
 
         /// Returns the action handler ID.
@@ -67,6 +69,13 @@ public abstract sealed class Action {
         /// @return immutable payload map, never null (may be empty)
         public Map<String, Object> getPayload() {
             return payload;
+        }
+
+        /// Returns whether this payload is agent-originated and must skip template resolution.
+        ///
+        /// @return `true` if the payload should not be template-resolved
+        public boolean isRawPayload() {
+            return rawPayload;
         }
     }
 
@@ -98,12 +107,11 @@ public abstract sealed class Action {
     public static Action fromString(String str) {
         if (str.startsWith("send:")) {
             String handlerId = str.substring("send:".length()).trim();
-            return new Send(handlerId);
+            return new Send(handlerId, Map.of(), false);
         } else if (str.startsWith("exec:")) {
             return new Execute(str.substring("exec:".length()).trim());
         } else {
-            // Default: treat as send action with message payload
-            return new Send("default", Map.of("message", str));
+            return new Send("default", Map.of("message", str), false);
         }
     }
 }

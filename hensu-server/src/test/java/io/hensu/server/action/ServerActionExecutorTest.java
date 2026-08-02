@@ -35,7 +35,7 @@ class ServerActionExecutorTest {
 
             executor.registerHandler(handler);
 
-            Action.Send send = new Action.Send("slack", Map.of("message", "hello"));
+            Action.Send send = new Action.Send("slack", Map.of("message", "hello"), false);
             ActionResult result = executor.execute(send, Map.of());
 
             assertThat(result.success()).isTrue();
@@ -45,7 +45,7 @@ class ServerActionExecutorTest {
 
         @Test
         void shouldReturnFailureWhenHandlerNotFound() {
-            Action.Send send = new Action.Send("unknown");
+            Action.Send send = new Action.Send("unknown", Map.of(), false);
             ActionResult result = executor.execute(send, Map.of());
 
             assertThat(result.success()).isFalse();
@@ -60,7 +60,7 @@ class ServerActionExecutorTest {
 
             executor.registerHandler(handler);
 
-            Action.Send send = new Action.Send("notify", Map.of("msg", "{greeting}"));
+            Action.Send send = new Action.Send("notify", Map.of("msg", "{greeting}"), false);
             executor.execute(send, Map.of("greeting", "hello world"));
 
             verify(handler).execute(eq(Map.of("msg", "hello world")), any());
@@ -74,10 +74,44 @@ class ServerActionExecutorTest {
 
             executor.registerHandler(handler);
 
-            Action.Send send = new Action.Send("notify", Map.of("count", 42));
+            Action.Send send = new Action.Send("notify", Map.of("count", 42), false);
             executor.execute(send, Map.of());
 
             verify(handler).execute(eq(Map.of("count", 42)), any());
+        }
+    }
+
+    @Nested
+    class RawPayload {
+
+        @Test
+        void shouldNotResolveTemplatesWhenRawPayloadTrue() {
+            ActionHandler handler = mock(ActionHandler.class);
+            when(handler.getHandlerId()).thenReturn("notify");
+            when(handler.execute(any(), any())).thenReturn(ActionResult.success("ok"));
+
+            executor.registerHandler(handler);
+
+            // Agent-originated payload with template-like content
+            Action.Send send = new Action.Send("notify", Map.of("msg", "{greeting}"), true);
+            executor.execute(send, Map.of("greeting", "hello world"));
+
+            // Raw payload should NOT be resolved — {greeting} should pass through verbatim
+            verify(handler).execute(eq(Map.of("msg", "{greeting}")), any());
+        }
+
+        @Test
+        void shouldResolveTemplatesWhenRawPayloadFalse() {
+            ActionHandler handler = mock(ActionHandler.class);
+            when(handler.getHandlerId()).thenReturn("notify");
+            when(handler.execute(any(), any())).thenReturn(ActionResult.success("ok"));
+
+            executor.registerHandler(handler);
+
+            Action.Send send = new Action.Send("notify", Map.of("msg", "{greeting}"), false);
+            executor.execute(send, Map.of("greeting", "hello world"));
+
+            verify(handler).execute(eq(Map.of("msg", "hello world")), any());
         }
     }
 

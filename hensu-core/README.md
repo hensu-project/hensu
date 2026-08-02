@@ -10,7 +10,8 @@ The `hensu-core` module is the execution engine at the heart of Hensu. It provid
 - **Agent Abstraction** — Provider-agnostic AI agent interface with pluggable backends
 - **Rubric Engine** — Quality evaluation with weighted criteria, score-based routing, and LLM-based assessment
 - **Plan Engine** — Static or LLM-generated step-by-step plan execution within nodes
-- **Tool Registry** — Protocol-agnostic tool descriptors for plan generation and MCP integration
+- **Agent Tool Loop** — Native tool execution via `ToolCapable`/`ToolSession` with budget enforcement and sealed-hierarchy termination
+- **Tool Registry** — Protocol-agnostic tool descriptors for agent tool loops, plan generation, and MCP integration
 - **Human Review** — Optional or required review checkpoints at any workflow step
 - **Pause / Resume** — Phase-aware suspend and resume for long-running executions with out-of-band review support
 - **Action System** — Extensible action dispatch (send, execute) with pluggable executors
@@ -32,7 +33,7 @@ flowchart TD
         end
         subgraph nodes["Node Executors"]
             direction LR
-            std(["Standard"]) ~~~ par(["Parallel"]) ~~~ fj(["Fork/Join"]) ~~~ loop(["Loop"]) ~~~ act(["Action"]) ~~~ gen(["Generic"]) ~~~ sub(["SubWorkflow"])
+            std(["Standard"]) ~~~ par(["Parallel"]) ~~~ fj(["Fork/Join"]) ~~~ act(["Action"]) ~~~ gen(["Generic"]) ~~~ sub(["SubWorkflow"])
         end
         subgraph mid["Infrastructure"]
             direction LR
@@ -62,7 +63,6 @@ flowchart TD
     style std fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style par fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style fj fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style loop fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style act fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style gen fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style sub fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
@@ -221,8 +221,7 @@ flowchart LR
 
 ## Tool Registry
 
-Protocol-agnostic tool descriptors used by plan generation and execution. The core defines tool shapes; actual
-invocation happens through `ActionHandler` implementations at the application layer.
+Protocol-agnostic tool descriptors used by agent-native tool loops, plan generation, and MCP integration. The core defines tool shapes; actual invocation happens through `ActionExecutor` at the application layer.
 
 ```java
 // Register tools
@@ -244,8 +243,7 @@ registry.register(ToolDefinition.of("analyze", "Analyze data",
 | `ToolRegistry`        | Interface for tool registration and lookup                       |
 | `DefaultToolRegistry` | Thread-safe ConcurrentHashMap implementation                     |
 
-The server layer populates the tool registry from MCP server connections. Tools discovered via MCP become available for
-plan generation and execution.
+The server layer populates the tool registry from MCP server connections. Tools discovered via MCP become available for agent tool loops and plan generation. When a node declares tools and its agent implements `ToolCapable`, `ToolLoopRunner` resolves declared tool names against the registry, filters to the agent's declared subset, and passes full schemas into the tool session.
 
 ## Module Structure
 
@@ -261,9 +259,12 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── AgentProvider.java         # Provider interface for pluggable AI backends
 │   ├── AgentRegistry.java         # Agent lookup interface
 │   ├── DefaultAgentRegistry.java  # Thread-safe ConcurrentHashMap implementation
+│   ├── ToolCapable.java           # Narrow interface for agents that support tool sessions
+│   ├── ToolSession.java           # Call-scoped tool loop session (start/submit/compact/close)
 │   └── stub/
 │       ├── StubAgentProvider.java # Testing provider (priority 1000 when enabled)
 │       ├── StubAgent.java         # Mock agent returning stub responses
+│       ├── StubToolSession.java   # Scripted tool session for testing (---TURN--- syntax)
 │       └── StubResponseRegistry.java
 ├── execution/
 │   ├── WorkflowExecutor.java          # Main graph traversal engine (execute + executeFrom for resume)
@@ -275,6 +276,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── NodeResult.java                # Primary return type for all node executors
 │   │   ├── ExecutionContext.java           # Per-execution context carrier (state + tenant)
 │   │   ├── AgentLifecycleRunner.java      # Composition-based agent call: enrich → execute → extract
+│   │   ├── ToolLoopRunner.java           # Drives agent-native tool loop (budget, feed-back, sealed termination)
 │   │   ├── AgenticNodeExecutor.java       # Drives preparation + execution PlanPipelines for StandardNode
 │   │   ├── StandardNodeExecutor.java      # LLM prompt execution (no planning)
 │   │   ├── ParallelNodeExecutor.java      # Concurrent branch execution
@@ -375,6 +377,7 @@ hensu-core/src/main/java/io/hensu/core/
 │       └── ScoreExtractingEvaluator.java # Reads score engine variable from context; accumulates recommendation feedback
 ├── tool/                          # Protocol-agnostic tool descriptors
 │   ├── ToolDefinition.java        # Tool shape (name, params, return type)
+│   ├── ToolCallResult.java        # Tool execution result (success/failure factories, asText())
 │   ├── ToolRegistry.java          # Tool registration/lookup interface
 │   └── DefaultToolRegistry.java   # Thread-safe ConcurrentHashMap implementation
 ├── plan/                          # Agentic planning engine

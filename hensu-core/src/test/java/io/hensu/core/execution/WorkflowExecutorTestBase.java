@@ -51,6 +51,7 @@ abstract class WorkflowExecutorTestBase {
                         createCoordinator(registry, ReviewHandler.AUTO_APPROVE, rubricEngine),
                         null,
                         new SimpleTemplateResolver(),
+                        null,
                         null);
     }
 

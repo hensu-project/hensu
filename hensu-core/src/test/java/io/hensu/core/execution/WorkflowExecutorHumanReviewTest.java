@@ -44,6 +44,7 @@ class WorkflowExecutorHumanReviewTest extends WorkflowExecutorTestBase {
                         createCoordinator(registry, mockReviewHandler, rubricEngine),
                         null,
                         new SimpleTemplateResolver(),
+                        null,
                         null);
     }
 
@@ -240,6 +241,7 @@ class WorkflowExecutorHumanReviewTest extends WorkflowExecutorTestBase {
                                         new DefaultNodeExecutorRegistry(),
                                         agentRegistry,
                                         rubricEngine,
+                                        null,
                                         null,
                                         null,
                                         null,

@@ -12,4 +12,6 @@ dependencies {
     implementation("dev.langchain4j:langchain4j-anthropic")
     implementation("dev.langchain4j:langchain4j-open-ai")
     implementation("dev.langchain4j:langchain4j-google-ai-gemini")
+
+    implementation("com.fasterxml.jackson.core:jackson-databind")
 }

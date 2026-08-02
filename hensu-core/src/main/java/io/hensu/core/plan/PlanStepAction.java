@@ -1,5 +1,7 @@
 package io.hensu.core.plan;
 
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -32,7 +34,10 @@ public sealed interface PlanStepAction permits PlanStepAction.ToolCall, PlanStep
             if (toolName.isBlank()) {
                 throw new IllegalArgumentException("toolName must not be blank");
             }
-            arguments = arguments != null ? Map.copyOf(arguments) : Map.of();
+            arguments =
+                    arguments != null
+                            ? Collections.unmodifiableMap(new HashMap<>(arguments))
+                            : Map.of();
         }
     }
 
