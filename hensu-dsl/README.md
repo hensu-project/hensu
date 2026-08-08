@@ -67,7 +67,7 @@ fun myWorkflow() = workflow("ContentPipeline") {
 ./gradlew hensu-dsl:runWorkflow -Pworkflow=path/to/workflow.kt -Pargs="--stub --verbose"
 
 # Via CLI (recommended)
-./hensu run workflow.kt -d working-dir
+hensu run my-workflow -d working-dir
 ```
 
 ### Compile to JSON
@@ -76,10 +76,10 @@ The DSL compiles workflows to JSON for server deployment:
 
 ```bash
 # Compile DSL → JSON
-./hensu build workflow.kt -d working-dir
+hensu build my-workflow -d working-dir
 
 # Push compiled JSON to server
-./hensu push my-workflow --server http://localhost:8080
+hensu push my-workflow --server http://localhost:8080
 ```
 
 ## DSL Reference
@@ -94,10 +94,8 @@ See [DSL Reference](../docs/dsl-reference.md) for the complete syntax reference 
 - State variables (`writes()` + `{placeholder}` syntax), branch outputs (`yields()`), join boundary filter (`exports()`)
 - State schema (`state { }` block with typed `input`/`variable` declarations and load-time validation)
 - Approval routing (`onApproval goto` / `onRejection goto`)
-- Plan failure routing (`onPlanFailure goto`)
 - Rubric-driven quality gates
 - Human review configuration
-- Planning (static `plan { }` and dynamic `planning { }`)
 - External prompt files (`.md` from `prompts/` directory)
 
 ## Module Structure
@@ -128,8 +126,6 @@ hensu-dsl/src/main/kotlin/io/hensu/dsl/
 │   ├── ReviseBuilder.kt          # Bounded `revise` retry/escalation chain builder
 │   ├── RetryBuilder.kt           # Retry configuration
 │   ├── ReviewConfigBuilder.kt    # Human review settings
-│   ├── PlanBuilder.kt            # Agentic planning config
-│   ├── PlanningConfigBuilder.kt  # Planning constraints
 │   ├── ObservabilityBuilder.kt   # Logging and tracing config
 │   ├── Models.kt                 # Model constants (CLAUDE_SONNET_4_5, GPT_4O, etc.)
 │   └── DslMarkers.kt             # DSL scope markers

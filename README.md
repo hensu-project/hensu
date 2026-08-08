@@ -145,8 +145,8 @@ fun contentPipeline() = workflow("content-pipeline") {
 ```
 
 The [DSL Reference](docs/dsl-reference.md) covers condition-based routing (`onCondition` —
-bounded self-revising work loops), tool-equipped agents, parallel branches, consensus, dynamic
-planning, fork/join, and sub-workflows.
+bounded self-revising work loops), tool-equipped agents, parallel branches, consensus, fork/join,
+and sub-workflows.
 
 ---
 
@@ -179,8 +179,6 @@ planning, fork/join, and sub-workflows.
   and route on thresholds — self-correcting loops without custom parsing code.
 - **Agent-native tool loop.** Agents implementing `ToolCapable` drive tool calls directly via
   `ToolSession` — budget-bounded by `maxToolCalls`, with `rawPayload` safety on LLM-generated arguments.
-- **Agentic planning.** Static (predefined) or dynamic (LLM-generated) execution plans within nodes,
-  with mid-plan review gates.
 - **Time-travel backtracking.** Rewind to any previous node mid-flight, optionally edit the prompt
   in `$EDITOR`, and re-execute. Full audit trail via `ExecutionHistory`.
 - **Human review.** Optional or required approval checkpoints at any workflow step.

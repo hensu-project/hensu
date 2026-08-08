@@ -1,13 +1,11 @@
 package io.hensu.dsl.builders
 
-import io.hensu.core.plan.PlanningMode
 import io.hensu.core.workflow.transition.ApprovalTransition
 import io.hensu.dsl.WorkingDirectory
 import java.nio.file.Files
 import java.nio.file.Path
 import org.assertj.core.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -72,25 +70,5 @@ class NodeBuilderTest {
             }
             .isInstanceOf(IllegalArgumentException::class.java)
             .hasMessageContaining("reserved engine variable")
-    }
-
-    @Nested
-    inner class PlanningDefaults {
-        @Test
-        fun `should default to disabled planning`() {
-            val builder = StandardNodeBuilder("no-plan-node", workingDir)
-
-            builder.apply {
-                agent = "agent1"
-                prompt = "Simple prompt"
-                onSuccess goto "next"
-            }
-
-            val node = builder.build()
-
-            assertThat(node.hasPlanningEnabled()).isFalse()
-            assertThat(node.planningConfig.mode()).isEqualTo(PlanningMode.DISABLED)
-            assertThat(node.staticPlan).isNull()
-        }
     }
 }

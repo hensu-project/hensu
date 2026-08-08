@@ -15,8 +15,7 @@ import java.io.Serial;
 /// ```
 /// NodeType       Additional fields
 /// ———————————————+————————————————————————————————————————————————————————————————————————
-/// STANDARD       │ agentId, prompt, rubric, reviewConfig, transitionRules,
-///                │ writes, planningConfig, staticPlan, planFailureTarget
+/// STANDARD       │ agentId, prompt, rubric, reviewConfig, transitionRules, writes
 /// END            │ status
 /// ACTION         │ actions, transitionRules
 /// GENERIC        │ executorType, config, transitionRules, rubric
@@ -78,13 +77,6 @@ class NodeSerializer extends StdSerializer<Node> {
         if (!n.getWrites().isEmpty()) {
             provider.defaultSerializeField("writes", n.getWrites(), gen);
         }
-        if (n.getPlanningConfig().isEnabled()) {
-            gen.writeObjectField("planningConfig", n.getPlanningConfig());
-        }
-        if (n.getStaticPlan() != null) {
-            gen.writeObjectField("staticPlan", n.getStaticPlan());
-        }
-        writeIfNotNull(gen, "planFailureTarget", n.getPlanFailureTarget());
     }
 
     private void writeEndNode(EndNode n, JsonGenerator gen) throws IOException {

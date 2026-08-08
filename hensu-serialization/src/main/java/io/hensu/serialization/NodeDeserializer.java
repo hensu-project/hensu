@@ -12,8 +12,6 @@ import io.hensu.core.execution.parallel.Branch;
 import io.hensu.core.execution.parallel.ConsensusConfig;
 import io.hensu.core.execution.parallel.ConsensusStrategy;
 import io.hensu.core.execution.result.ExitStatus;
-import io.hensu.core.plan.Plan;
-import io.hensu.core.plan.PlanningConfig;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.review.ReviewMode;
 import io.hensu.core.rubric.RubricParser;
@@ -35,11 +33,6 @@ import java.util.Map;
 /// - `ReviewConfig` (mode + two booleans)
 /// - `ConsensusConfig` (judgeAgentId, strategy, threshold)
 /// - `Branch` (id, agentId, prompt, rubric, weight)
-///
-/// Complex types that contain `Duration` or deeply nested structures delegate to `treeToValue`
-/// and require reflection registration in `CoreModelNativeConfig` in `hensu-server`:
-/// - `PlanningConfig` (contains `PlanConstraints` which contains `java.time.Duration`)
-/// - `Plan` (contains `List<PlannedStep>` and `PlanConstraints`)
 ///
 /// @implNote Package-private. Registered by {@link HensuJacksonModule}.
 /// @see NodeSerializer for the inverse operation
@@ -103,8 +96,7 @@ class NodeDeserializer extends StdDeserializer<Node> {
                         .prompt(textOrNull(root, "prompt"))
                         .rubric(parseRubric(id, textOrNull(root, "rubric")))
                         .transitionRules(
-                                readValue(mapper, root, "transitionRules", TRANSITION_LIST))
-                        .planFailureTarget(textOrNull(root, "planFailureTarget"));
+                                readValue(mapper, root, "transitionRules", TRANSITION_LIST));
 
         if (root.has("reviewConfig")) {
             JsonNode rc = root.get("reviewConfig");
@@ -116,12 +108,6 @@ class NodeDeserializer extends StdDeserializer<Node> {
         }
         if (root.has("writes")) {
             b.writes(readValue(mapper, root, "writes", STRING_LIST));
-        }
-        if (root.has("planningConfig")) {
-            b.planningConfig(mapper.treeToValue(root.get("planningConfig"), PlanningConfig.class));
-        }
-        if (root.has("staticPlan")) {
-            b.staticPlan(mapper.treeToValue(root.get("staticPlan"), Plan.class));
         }
         return b.build();
     }

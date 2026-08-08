@@ -1,7 +1,5 @@
 package io.hensu.core.workflow.node;
 
-import io.hensu.core.plan.Plan;
-import io.hensu.core.plan.PlanningConfig;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.rubric.model.Rubric;
 import io.hensu.core.workflow.transition.TransitionRule;
@@ -38,11 +36,6 @@ public final class StandardNode extends Node {
     private final List<TransitionRule> transitionRules;
     private final List<String> writes;
 
-    // Planning support
-    private final PlanningConfig planningConfig;
-    private final Plan staticPlan; // null if dynamic or disabled
-    private final String planFailureTarget; // Node to transition to on plan failure
-
     private StandardNode(Builder builder) {
         super(builder.id);
         // agentId and prompt can be null for nodes that use other execution strategies
@@ -52,11 +45,6 @@ public final class StandardNode extends Node {
         this.reviewConfig = builder.reviewConfig;
         this.transitionRules = List.copyOf(builder.transitionRules);
         this.writes = builder.writes != null ? List.copyOf(builder.writes) : List.of();
-        // Planning support
-        this.planningConfig =
-                builder.planningConfig != null ? builder.planningConfig : PlanningConfig.disabled();
-        this.staticPlan = builder.staticPlan;
-        this.planFailureTarget = builder.planFailureTarget;
     }
 
     /// Creates a new node builder.
@@ -124,38 +112,6 @@ public final class StandardNode extends Node {
         return writes;
     }
 
-    /// Returns the planning configuration.
-    ///
-    /// Determines how this node handles plan generation and execution.
-    ///
-    /// @return planning config, never null (defaults to DISABLED mode)
-    public PlanningConfig getPlanningConfig() {
-        return planningConfig;
-    }
-
-    /// Returns the static plan defined in DSL.
-    ///
-    /// Only applicable when planning mode is STATIC.
-    ///
-    /// @return static plan, or null if dynamic or disabled
-    public Plan getStaticPlan() {
-        return staticPlan;
-    }
-
-    /// Returns the target node for plan failure transitions.
-    ///
-    /// @return target node ID, or null if not configured
-    public String getPlanFailureTarget() {
-        return planFailureTarget;
-    }
-
-    /// Returns whether this node has planning enabled.
-    ///
-    /// @return true if planning mode is not DISABLED
-    public boolean hasPlanningEnabled() {
-        return planningConfig.isEnabled();
-    }
-
     /// Builder for constructing immutable StandardNode instances.
     ///
     /// Required fields: `id`, `transitionRules`
@@ -167,9 +123,6 @@ public final class StandardNode extends Node {
         private ReviewConfig reviewConfig;
         private List<TransitionRule> transitionRules;
         private List<String> writes;
-        private PlanningConfig planningConfig;
-        private Plan staticPlan;
-        private String planFailureTarget;
 
         private Builder() {}
 
@@ -233,33 +186,6 @@ public final class StandardNode extends Node {
         /// @return this builder for chaining
         public Builder writes(List<String> writes) {
             this.writes = writes;
-            return this;
-        }
-
-        /// Sets the planning configuration.
-        ///
-        /// @param planningConfig planning settings, may be null (defaults to DISABLED)
-        /// @return this builder for chaining
-        public Builder planningConfig(PlanningConfig planningConfig) {
-            this.planningConfig = planningConfig;
-            return this;
-        }
-
-        /// Sets the static plan for STATIC planning mode.
-        ///
-        /// @param staticPlan predefined plan from DSL, may be null
-        /// @return this builder for chaining
-        public Builder staticPlan(Plan staticPlan) {
-            this.staticPlan = staticPlan;
-            return this;
-        }
-
-        /// Sets the target node for plan failure transitions.
-        ///
-        /// @param planFailureTarget node ID to transition to on plan failure, may be null
-        /// @return this builder for chaining
-        public Builder planFailureTarget(String planFailureTarget) {
-            this.planFailureTarget = planFailureTarget;
             return this;
         }
 

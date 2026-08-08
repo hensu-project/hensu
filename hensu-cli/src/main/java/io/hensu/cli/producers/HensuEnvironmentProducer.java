@@ -11,8 +11,6 @@ import io.hensu.core.execution.executor.GenericNodeHandler;
 import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.workflow.InMemoryWorkflowRepository;
 import io.hensu.core.workflow.WorkflowRepository;
-import io.hensu.serialization.WorkflowSerializer;
-import io.hensu.serialization.plan.JacksonPlanResponseParser;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.Produces;
@@ -98,8 +96,6 @@ public class HensuEnvironmentProducer {
                         .reviewHandler(reviewHandler)
                         .actionExecutor(actionExecutor)
                         .workflowRepository(workflowRepository)
-                        .planResponseParser(
-                                new JacksonPlanResponseParser(WorkflowSerializer.createMapper()))
                         .build();
 
         logger.info("Configured HensuEnvironment with CLIActionExecutor");

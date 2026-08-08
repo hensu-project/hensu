@@ -9,8 +9,7 @@ The `hensu-server` module extends `hensu-core` with:
 - **REST API** for workflow definition management and execution
 - **Multi-Tenant Isolation** using Java 25 ScopedValues
 - **MCP Gateway** for external tool integration (server never executes locally)
-- **Dynamic Planning** via `hensu-core` plan pipeline (`LlmPlanner`, `PlanPipeline`, `StepHandlerRegistry`)
-- **Human-in-the-Loop** support with plan review workflows
+- **Human-in-the-Loop** support with review workflows
 - **SSE Streaming** for real-time execution monitoring
 
 ## Architecture
@@ -25,7 +24,7 @@ flowchart TD
         direction TB
         subgraph api["Interface Layer"]
             direction LR
-            rest(["REST API\n(Workflows + Executions)"]) ~~~ mcpgw(["MCP Gateway\n(JSON-RPC)"]) ~~~ agex(["Agentic Executor\n(Plan + Execute)"])
+            rest(["REST API\n(Workflows + Executions)"]) ~~~ mcpgw(["MCP Gateway\n(JSON-RPC)"])
         end
         subgraph runtime["Server Runtime"]
             direction LR
@@ -33,8 +32,8 @@ flowchart TD
         end
         subgraph core["hensu-core (HensuEnvironment)"]
             direction LR
-            we(["WorkflowExecutor"]) ~~~ ar(["AgentRegistry"]) ~~~ pe(["PlanExecutor"])
-            re(["RubricEngine"]) ~~~ wr(["WorkflowRepository"]) ~~~ sr(["StateRepository"])
+            we(["WorkflowExecutor"]) ~~~ ar(["AgentRegistry"]) ~~~ re(["RubricEngine"])
+            wr(["WorkflowRepository"]) ~~~ sr(["StateRepository"]) ~~~ tr(["ToolRegistry"])
         end
         api --> runtime --> core
     end
@@ -45,15 +44,14 @@ flowchart TD
     style core fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style rest fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style mcpgw fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style agex fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style sae fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style tc fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style we fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style ar fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style pe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style re fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style wr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style sr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style tr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
 
     linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
@@ -167,7 +165,6 @@ Runtime operations for starting and managing workflow executions (client integra
 | `GET`  | `/api/v1/executions/{executionId}`          | Get execution status                               |
 | `GET`  | `/api/v1/executions/{executionId}/events`   | Subscribe to execution events (SSE stream)         |
 | `POST` | `/api/v1/executions/{executionId}/resume`   | Resume paused execution                            |
-| `GET`  | `/api/v1/executions/{executionId}/plan`     | Get pending plan for review                        |
 | `GET`  | `/api/v1/executions/{executionId}/result`   | Get final output (public context, `_`-keys hidden) |
 | `GET`  | `/api/v1/executions/paused`                 | List paused executions                             |
 
@@ -240,34 +237,9 @@ See the [Server Developer Guide — Input Validation](../docs/developer-guide-se
 ### Execution Event Types
 
 - `execution.started` - Execution began
-- `plan.created` - Plan was generated (static or dynamic)
-- `step.started` - Step execution began
-- `step.completed` - Step finished (success or failure)
-- `plan.revised` - Plan was modified after failure
-- `plan.completed` - Plan execution finished
 - `execution.paused` - Awaiting human review
 - `execution.completed` - Workflow finished
 - `execution.error` - Error occurred
-
-### Example: Plan Review Workflow
-
-```bash
-# 1. Start execution (pauses for plan review)
-curl -X POST http://localhost:8080/api/v1/executions \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"workflowId": "research", "context": {"topic": "quantum computing"}}'
-
-# 2. Check pending plan
-curl http://localhost:8080/api/v1/executions/exec-123/plan \
-  -H "Authorization: Bearer $TOKEN"
-
-# Response: {"planId": "plan-456", "totalSteps": 5, "currentStep": 0}
-
-# 3. Approve and resume
-curl -X POST http://localhost:8080/api/v1/executions/exec-123/resume \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"approved": true}'
-```
 
 ## Key Components
 
@@ -346,10 +318,6 @@ quarkus.http.host=0.0.0.0
 hensu.mcp.connection-timeout=30s
 hensu.mcp.read-timeout=60s
 hensu.mcp.pool-size=10
-# Planning Configuration
-hensu.planning.default-max-steps=10
-hensu.planning.default-max-replans=3
-hensu.planning.default-timeout=5m
 # PostgreSQL
 # Dev: docker-compose (set HENSU_DB_USER, HENSU_DB_PASSWORD, HENSU_DB_NAME in .env)
 # Prod: set HENSU_DB_URL, HENSU_DB_USER, HENSU_DB_PASSWORD as environment variables
@@ -421,7 +389,7 @@ hensu-server/
 │   │   ├── ServerBootstrap.java                   # Startup registrations
 │   │   └── ServerConfiguration.java               # CDI delegation + server beans
 │   ├── execution/                         # Server-side execution listeners
-│   │   ├── LoggingExecutionListener.java  # Structured log output for plan/step events + transition warnings
+│   │   ├── LoggingExecutionListener.java  # Structured log output for node lifecycle events + transition warnings
 │   │   └── CompositeExecutionListener.java # Combines multiple ExecutionListeners
 │   ├── dev/                               # Dev-only handlers (excluded from prod image)
 │   │   └── SleepHandler.java              # Simulates long-running node for crash-recovery tests
@@ -460,12 +428,11 @@ hensu-server/
 │   │   ├── ExecutionOutput.java                 # DTO
 │   │   ├── ExecutionStatus.java                 # DTO for execution status (with correlationId)
 │   │   ├── ExecutionSummary.java                # DTO for paused-list (with correlationId)
-│   │   ├── PlanInfo.java                        # DTO for plan review
 │   │   ├── ExecutionNotFoundException.java
 │   │   ├── WorkflowNotFoundException.java
 │   │   └── WorkflowExecutionException.java
 │   ├── review/                # Server-side review handling
-│   │   └── InteractiveReviewHandler.java  # @ApplicationScoped default ReviewHandler for plan reviews
+│   │   └── InteractiveReviewHandler.java  # @ApplicationScoped default ReviewHandler for workflow reviews
 │   ├── streaming/             # SSE event streaming
 │   │   ├── ExecutionEvent.java
 │   │   └── ExecutionEventBroadcaster.java

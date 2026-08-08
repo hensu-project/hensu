@@ -8,7 +8,7 @@
  * - Score-based transitions: Different paths based on evaluation scores
  *
  * Usage:
- *   ./hensu run -d working-dir self-evaluation.kt --context '{"topic": "AI Safety", "stub_scenario": "low_score"}'
+ *   hensu run self-evaluation -d working-dir -c '{"topic": "AI Safety", "stub_scenario": "low_score"}'
  *
  * Scenarios (set via stub_scenario in context):
  *   - "default"     : Normal flow, scores pass (85+)

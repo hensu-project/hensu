@@ -10,8 +10,8 @@ import org.jboss.logging.Logger;
 
 /// Server bootstrap that registers server-specific components on startup.
 ///
-/// Core components (AgentRegistry, NodeExecutorRegistry, WorkflowExecutor,
-/// AgenticNodeExecutor) are fully wired by {@link HensuEnvironmentProducer}
+/// Core components (AgentRegistry, NodeExecutorRegistry, WorkflowExecutor)
+/// are fully wired by {@link HensuEnvironmentProducer}
 /// via {@link io.hensu.core.HensuFactory}. This bootstrap registers
 /// server-specific action handlers on those components.
 ///
@@ -21,7 +21,7 @@ import org.jboss.logging.Logger;
 /// ### Execution Order
 /// Runs during Quarkus startup event, after HensuEnvironment is initialized.
 ///
-/// @see HensuEnvironmentProducer for core component and planning setup
+/// @see HensuEnvironmentProducer for core component setup
 /// @see McpSidecar for MCP tool integration
 @ApplicationScoped
 public class ServerBootstrap {

@@ -105,7 +105,6 @@ class ExecutionLeaseTest extends JdbcRepositoryTestBase {
                 Map.of(),
                 new ExecutionHistory(),
                 null,
-                null,
                 Instant.now(),
                 "checkpoint");
     }

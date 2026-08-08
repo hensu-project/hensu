@@ -6,9 +6,7 @@ import io.hensu.core.HensuEnvironment;
 import io.hensu.core.HensuFactory;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.GenericNodeHandler;
-import io.hensu.core.plan.PlanObserver;
 import io.hensu.core.review.ReviewHandler;
-import io.hensu.serialization.plan.JacksonPlanResponseParser;
 import io.hensu.server.mcp.TenantToolRegistry;
 import io.hensu.server.persistence.ExecutionLeaseManager;
 import io.hensu.server.persistence.JdbcWorkflowRepository;
@@ -69,8 +67,6 @@ public class HensuEnvironmentProducer {
 
     @Inject ExecutionLeaseManager leaseManager;
 
-    @Inject Instance<PlanObserver> planObservers;
-
     @Inject TenantToolRegistry tenantToolRegistry;
 
     /// Produces the Hensu runtime environment for CDI injection.
@@ -90,8 +86,6 @@ public class HensuEnvironmentProducer {
                         .loadCredentials(properties)
                         .agentProviders(List.of(new LangChain4jProvider()))
                         .actionExecutor(actionExecutor)
-                        .planObservers(planObservers.stream().toList())
-                        .planResponseParser(new JacksonPlanResponseParser(objectMapper))
                         .toolRegistry(tenantToolRegistry);
 
         boolean dsActive =

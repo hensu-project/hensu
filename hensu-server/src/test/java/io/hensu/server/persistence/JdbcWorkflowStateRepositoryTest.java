@@ -75,7 +75,6 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         Map.of(),
                         new ExecutionHistory(),
                         null,
-                        null,
                         Instant.now(),
                         "completed");
 
@@ -110,7 +109,6 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         Map.of(),
                         new ExecutionHistory(),
                         null,
-                        null,
                         Instant.now(),
                         "completed");
         stateRepo.save(TENANT, completed);
@@ -133,7 +131,6 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         Map.of(),
                         new ExecutionHistory(),
                         null,
-                        null,
                         Instant.now(),
                         "paused");
         stateRepo.save(TENANT, paused);
@@ -155,7 +152,6 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         Map.of(),
                         new ExecutionHistory(),
                         null,
-                        null,
                         Instant.now(),
                         "paused");
         stateRepo.save(TENANT, paused);
@@ -173,7 +169,6 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         Map.of(),
                         new ExecutionHistory(),
                         null,
-                        null,
                         Instant.now(),
                         "completed");
         stateRepo.save(TENANT, completed);
@@ -189,7 +184,6 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         Map.of(),
                         new ExecutionHistory(),
                         null,
-                        null,
                         Instant.now(),
                         "failed");
         stateRepo.save(TENANT, failed);
@@ -203,7 +197,6 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         Map.of(),
                         Map.of(),
                         new ExecutionHistory(),
-                        null,
                         null,
                         Instant.now(),
                         "rejected");
@@ -263,7 +256,6 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         Map.of(),
                         history,
                         null,
-                        null,
                         Instant.now(),
                         "checkpoint");
 
@@ -291,7 +283,6 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                 Map.of("topic", "AI"),
                 Map.of(),
                 new ExecutionHistory(),
-                null,
                 null,
                 Instant.now(),
                 "checkpoint");

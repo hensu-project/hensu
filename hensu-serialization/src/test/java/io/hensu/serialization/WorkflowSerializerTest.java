@@ -9,11 +9,6 @@ import io.hensu.core.execution.parallel.Branch;
 import io.hensu.core.execution.parallel.ConsensusConfig;
 import io.hensu.core.execution.parallel.ConsensusStrategy;
 import io.hensu.core.execution.result.ExitStatus;
-import io.hensu.core.plan.Plan;
-import io.hensu.core.plan.PlanStepAction;
-import io.hensu.core.plan.PlannedStep;
-import io.hensu.core.plan.PlannedStep.StepStatus;
-import io.hensu.core.plan.PlanningConfig;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.review.ReviewMode;
 import io.hensu.core.rubric.RubricParser;
@@ -390,126 +385,6 @@ class WorkflowSerializerTest {
                 (ApprovalTransition) restoredStart.getTransitionRules().get(1);
         assertThat(rejectionRule.expected()).isFalse();
         assertThat(rejectionRule.targetNode()).isEqualTo("improve");
-    }
-
-    @Test
-    void roundTrip_planningConfig() {
-        StandardNode start =
-                StandardNode.builder()
-                        .id("start")
-                        .agentId("planner")
-                        .planningConfig(PlanningConfig.forStaticWithReview())
-                        .staticPlan(
-                                Plan.staticPlan(
-                                        "start",
-                                        List.of(
-                                                PlannedStep.pending(
-                                                        0, "search", Map.of(), "Search"))))
-                        .transitionRules(List.of(new SuccessTransition("done")))
-                        .build();
-        EndNode end = EndNode.builder().id("done").status(ExitStatus.SUCCESS).build();
-
-        Workflow workflow =
-                Workflow.builder()
-                        .id("test")
-                        .startNode("start")
-                        .nodes(Map.of("start", start, "done", end))
-                        .build();
-
-        Workflow restored = WorkflowSerializer.fromJson(WorkflowSerializer.toJson(workflow));
-
-        StandardNode sn = (StandardNode) restored.getNodes().get("start");
-        assertThat(sn.getPlanningConfig().isStatic()).isTrue();
-        assertThat(sn.getPlanningConfig().review()).isTrue();
-        assertThat(sn.getStaticPlan().steps()).hasSize(1);
-        assertThat(sn.getStaticPlan().steps().getFirst().toolName()).isEqualTo("search");
-    }
-
-    @Test
-    void roundTrip_planStep_toolCallWithArguments() {
-        StandardNode start =
-                StandardNode.builder()
-                        .id("start")
-                        .agentId("agent")
-                        .planningConfig(PlanningConfig.forStaticWithReview())
-                        .staticPlan(
-                                Plan.staticPlan(
-                                        "start",
-                                        List.of(
-                                                PlannedStep.pending(
-                                                        0,
-                                                        "fetch_order",
-                                                        Map.of("orderId", "42", "retry", true),
-                                                        "Fetch the order"))))
-                        .transitionRules(List.of(new SuccessTransition("done")))
-                        .build();
-        EndNode end = EndNode.builder().id("done").status(ExitStatus.SUCCESS).build();
-
-        Workflow restored =
-                WorkflowSerializer.fromJson(
-                        WorkflowSerializer.toJson(
-                                Workflow.builder()
-                                        .id("test")
-                                        .startNode("start")
-                                        .nodes(Map.of("start", start, "done", end))
-                                        .build()));
-
-        PlannedStep step =
-                ((StandardNode) restored.getNodes().get("start"))
-                        .getStaticPlan()
-                        .steps()
-                        .getFirst();
-        assertThat(step.toolName()).isEqualTo("fetch_order");
-        assertThat(step.description()).isEqualTo("Fetch the order");
-        assertThat(step.arguments()).containsEntry("orderId", "42");
-        assertThat(step.arguments()).containsEntry("retry", true);
-    }
-
-    @Test
-    void roundTrip_planStep_synthesize() {
-        // Synthesize with null agentId (as stored before executor enrichment)
-        // and a ToolCall step — verifies multistep plan order and action type dispatch.
-        StandardNode start =
-                StandardNode.builder()
-                        .id("start")
-                        .agentId("agent")
-                        .planningConfig(PlanningConfig.forStaticWithReview())
-                        .staticPlan(
-                                Plan.staticPlan(
-                                        "start",
-                                        List.of(
-                                                PlannedStep.simple(0, "search", "Search docs"),
-                                                new PlannedStep(
-                                                        1,
-                                                        new PlanStepAction.Synthesize(
-                                                                null, "Summarize the results"),
-                                                        "Synthesize",
-                                                        StepStatus.PENDING))))
-                        .transitionRules(List.of(new SuccessTransition("done")))
-                        .build();
-        EndNode end = EndNode.builder().id("done").status(ExitStatus.SUCCESS).build();
-
-        Workflow restored =
-                WorkflowSerializer.fromJson(
-                        WorkflowSerializer.toJson(
-                                Workflow.builder()
-                                        .id("test")
-                                        .startNode("start")
-                                        .nodes(Map.of("start", start, "done", end))
-                                        .build()));
-
-        Plan plan = ((StandardNode) restored.getNodes().get("start")).getStaticPlan();
-        assertThat(plan.steps()).hasSize(2);
-
-        PlannedStep toolStep = plan.steps().getFirst();
-        assertThat(toolStep.action()).isInstanceOf(PlanStepAction.ToolCall.class);
-        assertThat(toolStep.toolName()).isEqualTo("search");
-
-        PlannedStep synthStep = plan.steps().get(1);
-        assertThat(synthStep.action()).isInstanceOf(PlanStepAction.Synthesize.class);
-        PlanStepAction.Synthesize synth = (PlanStepAction.Synthesize) synthStep.action();
-        assertThat(synth.agentId()).isNull();
-        assertThat(synth.prompt()).isEqualTo("Summarize the results");
     }
 
     @Test

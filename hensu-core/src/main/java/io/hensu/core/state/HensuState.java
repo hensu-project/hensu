@@ -2,7 +2,6 @@ package io.hensu.core.state;
 
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionStep;
-import io.hensu.core.plan.Plan;
 import io.hensu.core.resume.ResumeInput;
 import io.hensu.core.rubric.evaluator.RubricEvaluation;
 import java.util.Collections;
@@ -41,7 +40,6 @@ public final class HensuState {
     private final String executionId;
 
     // Mutable execution state (modified during workflow execution)
-    private Plan activePlan;
     private RubricEvaluation rubricEvaluation;
     private String currentNode;
     private final Map<String, Integer> retryCounters;
@@ -60,7 +58,6 @@ public final class HensuState {
         this.currentNode = Objects.requireNonNull(builder.currentNode);
         this.context = new HashMap<>(builder.context);
         this.history = builder.history;
-        this.activePlan = builder.activePlan;
         this.rubricEvaluation = builder.rubricEvaluation;
         this.retryCounters = new HashMap<>(builder.retryCounters);
         this.phase = builder.phase != null ? builder.phase : ExecutionPhase.INITIAL;
@@ -94,14 +91,6 @@ public final class HensuState {
 
     public ExecutionHistory getHistory() {
         return history;
-    }
-
-    public Plan getActivePlan() {
-        return activePlan;
-    }
-
-    public void setActivePlan(Plan activePlan) {
-        this.activePlan = activePlan;
     }
 
     public RubricEvaluation getRubricEvaluation() {
@@ -271,7 +260,6 @@ public final class HensuState {
                 .workflowId(workflowId)
                 .context(context)
                 .history(history)
-                .activePlan(activePlan)
                 .rubricEvaluation(rubricEvaluation)
                 .retryCounters(retryCounters)
                 .phase(phase);
@@ -283,7 +271,6 @@ public final class HensuState {
         public String currentNode;
         private Map<String, Object> context = Map.of();
         private ExecutionHistory history = new ExecutionHistory();
-        private Plan activePlan;
         private RubricEvaluation rubricEvaluation;
         private Map<String, Integer> retryCounters = new HashMap<>();
         private ExecutionPhase phase = ExecutionPhase.INITIAL;
@@ -312,11 +299,6 @@ public final class HensuState {
 
         public Builder history(ExecutionHistory history) {
             this.history = history;
-            return this;
-        }
-
-        public Builder activePlan(Plan activePlan) {
-            this.activePlan = activePlan;
             return this;
         }
 

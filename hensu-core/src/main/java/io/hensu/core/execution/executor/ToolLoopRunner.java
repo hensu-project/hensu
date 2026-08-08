@@ -209,11 +209,6 @@ final class ToolLoopRunner {
                             ResultStatus.FAILURE,
                             "Unexpected ToolRequest after loop exit",
                             Map.of());
-            case AgentResponse.PlanProposal p ->
-                    new NodeResult(
-                            ResultStatus.SUCCESS,
-                            "Plan with " + p.steps().size() + " steps",
-                            Map.of("steps", p.steps()));
         };
     }
 }

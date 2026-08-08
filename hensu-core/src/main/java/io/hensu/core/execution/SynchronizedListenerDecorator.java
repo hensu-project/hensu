@@ -2,10 +2,8 @@ package io.hensu.core.execution;
 
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.execution.executor.NodeResult;
-import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.node.Node;
-import java.util.List;
 
 /// Thread-safe decorator that serialises {@link ExecutionListener} callbacks.
 ///
@@ -52,16 +50,6 @@ public final class SynchronizedListenerDecorator implements ExecutionListener {
     @Override
     public synchronized void onNodeComplete(Node node, NodeResult result) {
         delegate.onNodeComplete(node, result);
-    }
-
-    @Override
-    public synchronized void onPlannerStart(String nodeId, String planningPrompt) {
-        delegate.onPlannerStart(nodeId, planningPrompt);
-    }
-
-    @Override
-    public synchronized void onPlannerComplete(String nodeId, List<PlannedStep> steps) {
-        delegate.onPlannerComplete(nodeId, steps);
     }
 
     @Override

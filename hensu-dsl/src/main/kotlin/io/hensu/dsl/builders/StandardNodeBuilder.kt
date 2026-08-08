@@ -1,8 +1,6 @@
 package io.hensu.dsl.builders
 
 import io.hensu.core.execution.EngineVariables
-import io.hensu.core.plan.Plan
-import io.hensu.core.plan.PlanningConfig
 import io.hensu.core.review.ReviewConfig
 import io.hensu.core.review.ReviewMode
 import io.hensu.core.rubric.RubricParser
@@ -58,11 +56,6 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
     private var writes: List<String> = emptyList()
     private val transitionBuilder = TransitionBuilder()
     private var reviewConfig: ReviewConfig? = null
-
-    // Planning support
-    private var staticPlan: Plan? = null
-    private var planningConfig: PlanningConfig = PlanningConfig.disabled()
-    private var planFailureTarget: String? = null
 
     /**
      * Define transition on success. Usage: `onSuccess goto "next_node"` or `onSuccess goto
@@ -203,68 +196,6 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
         reviewConfig = builder.build()
     }
 
-    /**
-     * Defines a static execution plan for this node.
-     *
-     * Static plans are predefined sequences of tool invocations that are executed step-by-step
-     * without LLM involvement.
-     *
-     * Example:
-     * ```kotlin
-     * plan {
-     *     step("get_order") {
-     *         args("id" to "{orderId}")
-     *         description = "Fetch order details"
-     *     }
-     *     step("validate_order") {
-     *         description = "Validate order data"
-     *     }
-     * }
-     * ```
-     *
-     * @param block configuration block for plan steps
-     */
-    fun plan(block: PlanBuilder.() -> Unit) {
-        val builder = PlanBuilder()
-        builder.apply(block)
-        staticPlan = builder.build(id)
-        planningConfig = PlanningConfig.forStatic()
-    }
-
-    /**
-     * Configures dynamic planning behavior for this node.
-     *
-     * Dynamic planning uses an LLM to generate execution plans at runtime based on the node's goal
-     * and available tools.
-     *
-     * Example:
-     * ```kotlin
-     * planning {
-     *     mode = PlanningMode.DYNAMIC
-     *     maxSteps = 15
-     *     maxReplans = 5
-     *     allowReplan = true
-     *     review = true
-     * }
-     * ```
-     *
-     * @param block configuration block for planning settings
-     */
-    fun planning(block: PlanningConfigBuilder.() -> Unit) {
-        val builder = PlanningConfigBuilder()
-        builder.apply(block)
-        planningConfig = builder.build()
-    }
-
-    /** Marker for plan failure transitions. */
-    val onPlanFailure: OnPlanFailure
-        get() = OnPlanFailure
-
-    /** Define transition on plan failure. Usage: onPlanFailure goto "error-handler" */
-    infix fun OnPlanFailure.goto(targetNode: String) {
-        planFailureTarget = targetNode
-    }
-
     override fun build(): StandardNode {
         validateTransitions(transitionBuilder.build())
         return StandardNode.builder()
@@ -277,9 +208,6 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
             .reviewConfig(reviewConfig)
             .transitionRules(transitionBuilder.build())
             .writes(writes)
-            .planningConfig(planningConfig)
-            .staticPlan(staticPlan)
-            .planFailureTarget(planFailureTarget)
             .build()
     }
 

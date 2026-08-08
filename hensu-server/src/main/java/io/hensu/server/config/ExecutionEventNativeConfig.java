@@ -23,14 +23,8 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 @RegisterForReflection(
         targets = {
             ExecutionEvent.ExecutionStarted.class,
-            ExecutionEvent.PlanCreated.class,
-            ExecutionEvent.StepStarted.class,
-            ExecutionEvent.StepCompleted.class,
-            ExecutionEvent.PlanRevised.class,
-            ExecutionEvent.PlanCompleted.class,
             ExecutionEvent.ExecutionPaused.class,
             ExecutionEvent.ExecutionCompleted.class,
-            ExecutionEvent.ExecutionError.class,
-            ExecutionEvent.StepInfo.class
+            ExecutionEvent.ExecutionError.class
         })
 public class ExecutionEventNativeConfig {}

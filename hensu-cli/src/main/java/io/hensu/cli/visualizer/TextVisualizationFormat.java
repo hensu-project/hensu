@@ -199,15 +199,6 @@ public class TextVisualizationFormat implements VisualizationFormat {
                                     "rubric",
                                     standardNode.getRubric().getCriteria().size() + " criteria"));
                 }
-                if (standardNode.hasPlanningEnabled()) {
-                    sb.append(
-                            String.format(
-                                    "%s%s  %-9s %s%n",
-                                    indent,
-                                    styles.boxMid(),
-                                    "planning",
-                                    standardNode.getPlanningConfig().mode()));
-                }
                 if (standardNode.getReviewConfig() != null) {
                     sb.append(
                             String.format(

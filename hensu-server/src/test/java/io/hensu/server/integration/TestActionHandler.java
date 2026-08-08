@@ -13,8 +13,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /// Test {@link ActionHandler} for the `"test-tool"` handler ID.
 ///
 /// Records all received payloads and returns a configurable result, allowing
-/// integration tests to verify plan execution and action dispatch without
-/// real side effects.
+/// integration tests to verify action dispatch without real side effects.
 ///
 /// {@snippet :
 /// testActionHandler.setNextResult(ActionResult.success("done", Map.of("key", "value")));
@@ -31,7 +30,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /// and a volatile field for the next result.
 ///
 /// @see io.hensu.server.action.ServerActionExecutor for action dispatch
-/// @see io.hensu.core.plan.PlanExecutor for plan step execution
 @ApplicationScoped
 public class TestActionHandler implements ActionHandler {
 

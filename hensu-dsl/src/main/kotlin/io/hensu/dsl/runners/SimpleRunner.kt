@@ -144,9 +144,6 @@ private fun createVerboseListener(): ExecutionListener {
                     is AgentResponse.TextResponse -> "OK" to response.content()
                     is AgentResponse.ToolRequest ->
                         "TOOL" to "Tool: ${response.toolName()} - ${response.reasoning()}"
-                    is AgentResponse.PlanProposal ->
-                        "PLAN" to
-                            "Plan with ${response.steps().size} steps - ${response.reasoning()}"
                     is AgentResponse.Error -> "FAIL" to response.message()
                 }
             println("+-------------------------------------------------------------")

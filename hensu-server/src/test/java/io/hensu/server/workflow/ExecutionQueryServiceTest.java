@@ -4,8 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import io.hensu.core.plan.Plan;
-import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.WorkflowStateRepository;
@@ -29,37 +27,6 @@ class ExecutionQueryServiceTest {
     }
 
     @Test
-    void shouldReturnPlanInfoWithCorrectFieldOrderWhenPlanActive() {
-        Plan active =
-                Plan.staticPlan(
-                        "review-node",
-                        List.of(
-                                PlannedStep.pending(0, "tool-a", Map.of(), "first"),
-                                PlannedStep.pending(1, "tool-b", Map.of(), "second"),
-                                PlannedStep.pending(2, "tool-c", Map.of(), "third")));
-        HensuSnapshot withPlan =
-                new HensuSnapshot(
-                        "wf-1",
-                        "exec-1",
-                        "review-node",
-                        Map.of(),
-                        Map.of(),
-                        null,
-                        active,
-                        null,
-                        Instant.now(),
-                        null);
-        when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
-                .thenReturn(Optional.of(withPlan));
-
-        PlanInfo info = service.getPendingPlan("tenant-1", "exec-1").orElseThrow();
-
-        assertThat(info.planId()).isEqualTo(active.id());
-        assertThat(info.totalSteps()).isEqualTo(3);
-        assertThat(info.currentStep()).isEqualTo(0);
-    }
-
-    @Test
     void shouldFilterUnderscorePrefixedKeysFromOutput() {
         Map<String, Object> mixed = new HashMap<>();
         mixed.put("_tenant_id", "tenant-1");
@@ -74,7 +41,6 @@ class ExecutionQueryServiceTest {
                         null,
                         mixed,
                         Map.of(),
-                        null,
                         null,
                         null,
                         Instant.now(),
@@ -92,7 +58,7 @@ class ExecutionQueryServiceTest {
     }
 
     @Test
-    void shouldIncludeCorrelationIdWhenPhasIsAwaiting() {
+    void shouldIncludeCorrelationIdWhenPhaseIsAwaiting() {
         ExecutionPhase.Awaiting awaiting =
                 new ExecutionPhase.Awaiting(
                         "draft", "ReviewPostProcessor", null, "corr-42", Instant.now());
@@ -103,7 +69,6 @@ class ExecutionQueryServiceTest {
                         "draft",
                         Map.of(),
                         Map.of(),
-                        null,
                         null,
                         awaiting,
                         Instant.now(),
@@ -126,7 +91,6 @@ class ExecutionQueryServiceTest {
                         null,
                         Map.of(),
                         Map.of(),
-                        null,
                         null,
                         null,
                         Instant.now(),
@@ -153,7 +117,6 @@ class ExecutionQueryServiceTest {
                         Map.of(),
                         Map.of(),
                         null,
-                        null,
                         awaiting,
                         Instant.now(),
                         "paused");
@@ -177,7 +140,6 @@ class ExecutionQueryServiceTest {
                         null,
                         internalOnly,
                         Map.of(),
-                        null,
                         null,
                         null,
                         Instant.now(),

@@ -60,7 +60,7 @@ flowchart TD
 
     subgraph core["hensu-core"]
         direction LR
-        we(["WorkflowExecutor"]) ~~~ ar(["AgentRegistry"]) ~~~ pp(["PlanPipeline"]) ~~~ shr(["StepHandlerRegistry"]) ~~~ tr(["ToolRegistry"])
+        we(["WorkflowExecutor"]) ~~~ ar(["AgentRegistry"]) ~~~ tr(["ToolRegistry"])
     end
 
     server --> core
@@ -83,8 +83,6 @@ flowchart TD
     style tenant fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style we fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style ar fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style pp fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style shr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style tr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
 
     linkStyle default stroke:#0A84FF, stroke-width:1px
@@ -195,9 +193,7 @@ public HensuEnvironment hensuEnvironment() {
             .loadCredentials(properties)
             .agentProviders(List.of(new LangChain4jProvider()))
             .actionExecutor(actionExecutor)   // ServerActionExecutor (send-action dispatcher)
-            .toolRegistry(tenantToolRegistry) // MCP-discovered tools for agent tool loops + planning
-            .planObservers(planObservers.stream().toList())
-            .planResponseParser(new JacksonPlanResponseParser(objectMapper));
+            .toolRegistry(tenantToolRegistry); // MCP-discovered tools for agent tool loops
 
     // Conditional persistence: JDBC when DataSource available, in-memory otherwise
     boolean dsActive = config.getOptionalValue("quarkus.datasource.active", Boolean.class)
@@ -329,7 +325,7 @@ io.hensu.server/
 │   └── SleepHandler             # Simulates long-running node for crash-recovery tests
 │
 ├── execution/             # Server-side execution listeners
-│   ├── LoggingExecutionListener   # Logs plan/step lifecycle events + transition warnings
+│   ├── LoggingExecutionListener   # Logs node lifecycle events + transition warnings
 │   └── CompositeExecutionListener # Combines multiple ExecutionListeners
 │
 ├── mcp/                   # MCP protocol implementation
@@ -366,13 +362,13 @@ io.hensu.server/
 │   ├── WorkflowContextUtil          # Filters internal (_-prefixed) keys from context
 │   ├── ExecutionHeartbeatJob        # Periodic heartbeat emission (@Scheduled)
 │   ├── WorkflowRecoveryJob          # Orphaned execution sweeper (@Scheduled)
-│   ├── ExecutionStartResult / ExecutionOutput / ExecutionSummary / PlanInfo   # DTOs
+│   ├── ExecutionStartResult / ExecutionOutput / ExecutionSummary   # DTOs
 │   ├── ExecutionStatus              # DTO for execution status (with correlationId)
 │   └── {Execution,Workflow}{NotFound,Execution}Exception   # Domain exceptions
 │
 ├── streaming/             # Execution event streaming
 │   ├── ExecutionEvent           # Event DTOs (sealed interface)
-│   └── ExecutionEventBroadcaster # PlanObserver + broadcaster
+│   └── ExecutionEventBroadcaster # Event broadcaster
 │
 ├── review/                # Server-side review handling
 │   └── InteractiveReviewHandler  # @ApplicationScoped default ReviewHandler for plan reviews
@@ -696,19 +692,7 @@ public sealed interface ExecutionEvent {
 }
 ```
 
-2. Update `ExecutionEventBroadcaster.convertEvent()` if mapping from `PlanEvent`:
-
-```java
-private ExecutionEvent convertEvent(String executionId, PlanEvent event) {
-    return switch (event) {
-        // ... existing cases ...
-        case PlanEvent.MyNewPlanEvent e -> ExecutionEvent.MyNewEvent.now(
-                executionId, e.customField());
-    };
-}
-```
-
-3. Publish directly where needed:
+2. Publish directly where needed:
 
 ```java
 broadcaster.publish(executionId, ExecutionEvent.MyNewEvent.now(executionId, "value"));
@@ -717,7 +701,7 @@ broadcaster.publish(executionId, ExecutionEvent.MyNewEvent.now(executionId, "val
 ### Execution Context Routing (ScopedValue)
 
 `ExecutionEventBroadcaster` uses a `ScopedValue` — not `ThreadLocal` — to carry the current execution ID into
-`PlanObserver` callbacks. This is mandatory for correctness with virtual threads (Project Loom).
+listener callbacks. This is mandatory for correctness with virtual threads (Project Loom).
 
 Wrap execution blocks with `runAs()`:
 
@@ -733,10 +717,6 @@ eventBroadcaster.runAs(executionId, () -> {
 
 **Do not** call `broadcaster.setCurrentExecution()` — that method no longer exists. ScopedValue is structurally
 scoped: the binding is automatically released when `runAs()` returns, even on exception paths.
-
-If you need to route `PlanEvent` callbacks from a background thread (e.g. an async agent) to the right execution,
-call `broadcaster.registerPlan(planId, executionId)` **before** execution starts. The broadcaster will prefer the
-plan→execution map over the ScopedValue when both are present.
 
 ### execution.completed Event — Output Field
 
@@ -876,9 +856,7 @@ MCP tools are discovered at runtime — no server code changes are required to s
 - **No server changes**: `McpSidecar.execute()` resolves tool names dynamically from the JSON-RPC
   payload. Adding a new tool on the MCP server side is sufficient; no `McpSidecar` update is needed.
 - **Consumers**: `TenantToolRegistry` is wired into `HensuFactory` via `HensuEnvironmentProducer`,
-  making discovered tools available to both `ToolLoopRunner` (agent-native tool loops) and
-  `PlanExecutor` (plan-based tool execution). Before PR4, the tool registry was never wired in the
-  server context — planning ran against an empty registry.
+  making discovered tools available to `ToolLoopRunner` (agent-native tool loops).
 
 ---
 
@@ -1073,16 +1051,15 @@ void resetActionHandler() {
 }
 
 @Test
-void shouldDispatchPlanSteps() {
-    Workflow workflow = loadWorkflow("plan-static.json");
-    registerStub("execute", "Plan execution complete");
+void shouldDispatchActions() {
+    Workflow workflow = loadWorkflow("action-workflow.json");
+    registerStub("process", "Processing complete");
 
     pushAndExecute(workflow, Map.of("task", "test"));
 
     List<Map<String, Object>> payloads = testActionHandler.getReceivedPayloads();
-    assertThat(payloads).hasSize(2);
-    assertThat(payloads.getFirst()).containsEntry("action", "search");
-    assertThat(payloads.get(1)).containsEntry("action", "process");
+    assertThat(payloads).isNotEmpty();
+    assertThat(payloads.getFirst()).containsEntry("action", "notify");
 }
 ```
 
@@ -1429,7 +1406,7 @@ Registrations are split across five dedicated classes to keep each concern isola
 
 4. **Simple immutable types with custom deser but default ser** — `WorkflowStateSchema` and `StateVariableDeclaration` use a custom deserializer (`WorkflowStateSchemaDeserializer`) that extracts fields manually. However, Jackson's default serializer reads `getVariables()` reflectively, so both classes must be registered.
 
-5. **Record types embedded in builder classes** — When a `record` is a field inside a mixin-registered builder type, Jackson reaches it via its canonical constructor and component accessors. GraalVM cannot trace those calls statically. Register the record and every nested record transitively. No mixin or custom deserializer is needed — registration alone is sufficient. Current types: `ReviewConfig`, `HensuSnapshot`, and `Plan` (the active micro-plan embedded in `HensuSnapshot.activePlan`).
+5. **Record types embedded in builder classes** — When a `record` is a field inside a mixin-registered builder type, Jackson reaches it via its canonical constructor and component accessors. GraalVM cannot trace those calls statically. Register the record and every nested record transitively. No mixin or custom deserializer is needed — registration alone is sufficient. Current types: `ReviewConfig` and `HensuSnapshot`.
 
 **When to add vs. fix:** if the class is a simple record with no `Duration`/nested-complex fields, fix the deserializer. If it contains `Duration` or deeply nested types, add it here. For records embedded in builder types, always register them. For types in pattern 3, registration is needed only because the serialization path uses default Jackson. See [hensu-serialization Developer Guide](developer-guide-serialization.md#the-treetovalue-rule) for the full rule.
 
@@ -1507,11 +1484,6 @@ quarkus.http.host=0.0.0.0
 hensu.mcp.connection-timeout=30s
 hensu.mcp.read-timeout=60s
 hensu.mcp.pool-size=10
-
-# Planning Configuration
-hensu.planning.default-max-steps=10
-hensu.planning.default-max-replans=3
-hensu.planning.default-timeout=5m
 
 # PostgreSQL (Dev Services auto-starts a container in dev/test mode)
 quarkus.datasource.db-kind=postgresql

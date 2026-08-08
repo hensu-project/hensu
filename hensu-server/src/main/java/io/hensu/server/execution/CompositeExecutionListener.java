@@ -3,10 +3,8 @@ package io.hensu.server.execution;
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.executor.NodeResult;
-import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.node.Node;
-import java.util.List;
 
 /// Fans out all execution lifecycle events to an ordered set of delegates.
 ///
@@ -68,15 +66,5 @@ public final class CompositeExecutionListener implements ExecutionListener {
     @Override
     public void onCheckpoint(HensuState state) {
         for (ExecutionListener d : delegates) d.onCheckpoint(state);
-    }
-
-    @Override
-    public void onPlannerStart(String nodeId, String planningPrompt) {
-        for (ExecutionListener d : delegates) d.onPlannerStart(nodeId, planningPrompt);
-    }
-
-    @Override
-    public void onPlannerComplete(String nodeId, List<PlannedStep> steps) {
-        for (ExecutionListener d : delegates) d.onPlannerComplete(nodeId, steps);
     }
 }

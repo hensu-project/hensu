@@ -82,8 +82,8 @@ public class DemoRunner implements CommandLineRunner {
             LOG.error("""
                     Failed to start execution. Is hensu-server running at {}?
                     Make sure the '{}' workflow is pushed first:
-                      ./hensu build risk-assessment -d integrations/spring-reference-client/working-dir
-                      ./hensu push {} --server {}
+                      hensu build risk-assessment -d integrations/spring-reference-client/working-dir
+                      hensu push {} --server {}
                     """,
                     props.serverUrl(), workflowId, workflowId, props.serverUrl(), e);
             return;

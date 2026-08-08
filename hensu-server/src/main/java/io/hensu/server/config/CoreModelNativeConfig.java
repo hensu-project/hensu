@@ -8,10 +8,6 @@ import io.hensu.core.execution.parallel.ConsensusStrategy;
 import io.hensu.core.execution.result.BacktrackEvent;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionStep;
-import io.hensu.core.plan.Plan;
-import io.hensu.core.plan.PlanConstraints;
-import io.hensu.core.plan.PlannedStep;
-import io.hensu.core.plan.PlanningConfig;
 import io.hensu.core.review.ReviewConfig;
 import io.hensu.core.rubric.model.DoubleRange;
 import io.hensu.core.rubric.model.ScoreCondition;
@@ -23,7 +19,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 
 /// GraalVM native image reflection registrations for `hensu-core` domain model classes.
 ///
-/// Five patterns require explicit registration:
+/// Four patterns require explicit registration:
 ///
 /// ### 1. Jackson `@JsonPOJOBuilder` mixin pattern
 /// {@link io.hensu.serialization.HensuJacksonModule} maps each of these types to a builder mixin.
@@ -37,20 +33,14 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 /// - `BacktrackEvent` / `BacktrackEvent.Builder`
 /// - `ExecutionHistory`
 ///
-/// ### 2. `treeToValue` delegation in custom deserializers
-/// `io.hensu.serialization.NodeDeserializer` delegates `PlanningConfig` and `Plan`
-/// deserialization to `mapper.treeToValue()` because their nested `Duration` / `PlannedStep`
-/// fields make manual `JsonNode` extraction error-prone. These types must be registered so
-/// Jackson's POJO reflection can reach their fields at runtime.
-///
-/// ### 3. Nested types deserialized manually but serialized by default Jackson
+/// ### 2. Nested types deserialized manually but serialized by default Jackson
 /// `NodeDeserializer` extracts `ConsensusConfig`, `Branch`, `ScoreCondition`, and
 /// `DoubleRange` manually via `JsonNode` – no reflection needed for deserialization.
 /// However, `WorkflowSerializer.toJson()` uses Jackson's default `BeanSerializer` for
 /// the entire `Workflow` graph, which reads record component accessors reflectively.
 /// All types reachable from `Workflow` must be registered for serialization to work.
 ///
-/// ### 4. Serialization of simple immutable types
+/// ### 3. Serialization of simple immutable types
 /// `WorkflowStateSchema` uses a custom deserializer (`WorkflowStateSchemaDeserializer`) that
 /// extracts fields manually — no reflection required for deserialization. However, Jackson's
 /// default **serializer** still reads `getVariables()` reflectively, so both classes must be
@@ -59,7 +49,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 /// - `WorkflowStateSchema` — typed schema embedded in `Workflow`; serialized via `getVariables()`
 /// - `StateVariableDeclaration` — plain record; component accessors called during serialization
 ///
-/// ### 5. Plain records (canonical constructor + component accessors)
+/// ### 4. Plain records (canonical constructor + component accessors)
 /// Records expose state via canonical constructors and component accessors. GraalVM cannot
 /// trace these statically when Jackson uses default POJO machinery. Affected types:
 ///
@@ -88,11 +78,6 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
             BacktrackEvent.class,
             BacktrackEvent.Builder.class,
             ExecutionHistory.class,
-            // --- treeToValue delegation (Duration nesting) ---
-            PlanningConfig.class,
-            PlanConstraints.class,
-            Plan.class,
-            PlannedStep.class,
             // --- Nested types: manual deser, default Jackson ser ---
             Branch.class,
             ConsensusConfig.class,

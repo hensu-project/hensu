@@ -9,7 +9,6 @@ import io.hensu.server.workflow.ExecutionOutput;
 import io.hensu.server.workflow.ExecutionStartResult;
 import io.hensu.server.workflow.ExecutionStatus;
 import io.hensu.server.workflow.ExecutionSummary;
-import io.hensu.server.workflow.PlanInfo;
 import io.hensu.server.workflow.WorkflowNotFoundException;
 import io.hensu.server.workflow.WorkflowService;
 import jakarta.inject.Inject;
@@ -33,7 +32,7 @@ import org.jboss.logging.Logger;
 /// Provides endpoints for:
 /// - Starting workflow executions
 /// - Resuming paused executions
-/// - Querying execution status, plans, and final output
+/// - Querying execution status and final output
 ///
 /// Response bodies are typed records serialized by Jackson. Nullable fields
 /// ({@code currentNodeId}, {@code correlationId}) are omitted from JSON
@@ -179,41 +178,6 @@ public class ExecutionResource {
             workflowService.resumeExecution(tenantId, executionId, resumeInput);
 
             return Response.ok().entity(ResumeResponse.RESUMED).build();
-        } catch (ExecutionNotFoundException e) {
-            LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
-            throw new NotFoundException(e.getMessage());
-        }
-    }
-
-    /// Gets the pending plan for an execution awaiting review.
-    ///
-    /// ### Request
-    /// ```
-    /// GET /api/v1/executions/{executionId}/plan
-    /// Authorization: Bearer <jwt>
-    /// ```
-    ///
-    /// ### Response (200 OK)
-    /// ```json
-    /// {"planId": "plan-123", "totalSteps": 5, "currentStep": 2}
-    /// ```
-    @GET
-    @Path("/{executionId}/plan")
-    public Response getPlan(@PathParam("executionId") @ValidId String executionId) {
-
-        String tenantId = tenantResolver.tenantId();
-
-        try {
-            PlanInfo planInfo =
-                    workflowService
-                            .getPendingPlan(tenantId, executionId)
-                            .orElseThrow(
-                                    () ->
-                                            new NotFoundException(
-                                                    "No pending plan for execution: "
-                                                            + executionId));
-
-            return Response.ok().entity(planInfo).build();
         } catch (ExecutionNotFoundException e) {
             LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());

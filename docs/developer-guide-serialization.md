@@ -39,7 +39,7 @@ flowchart TD
         ws(["WorkflowSerializer\n(creates ObjectMapper)"])
         subgraph module["HensuJacksonModule"]
             direction LR
-            poly(["addSerializer/Deserializer\n(Node, TransitionRule,\nAction, PlanStepAction,\nExecutionPhase)"]) ~~~ schema(["addDeserializer\n(WorkflowStateSchema\n– no mixin)"]) ~~~ mixins(["setMixInAnnotations\n(Workflow, AgentConfig,\nExecutionStep, …)"])
+            poly(["addSerializer/Deserializer\n(Node, TransitionRule,\nAction, ExecutionPhase)"]) ~~~ schema(["addDeserializer\n(WorkflowStateSchema\n– no mixin)"]) ~~~ mixins(["setMixInAnnotations\n(Workflow, AgentConfig,\nExecutionStep, …)"])
         end
         subgraph mixin["mixin/"]
             direction LR
@@ -123,7 +123,6 @@ Used in two distinct cases:
 | `Node`           | `NodeSerializer`            | `NodeDeserializer`            |
 | `TransitionRule` | `TransitionRuleSerializer`  | `TransitionRuleDeserializer`  |
 | `Action`         | `ActionSerializer`          | `ActionDeserializer`          |
-| `PlanStepAction` | `PlanStepActionSerializer`  | `PlanStepActionDeserializer`  |
 | `ExecutionPhase` | `ExecutionPhaseSerializer`  | `ExecutionPhaseDeserializer`  |
 
 **Case B — Native-image performance** where the mixin/builder pattern would require registering a private constructor and builder class for reflection, but the type is a single concrete class that can be deserialized more efficiently by direct field extraction:
@@ -191,12 +190,7 @@ If the target class contains a `java.time.Duration`, deeply nested types, or oth
 
 Current exceptions (registered in `CoreModelNativeConfig`):
 
-| Class             | Reason                                                  |
-|-------------------|---------------------------------------------------------|
-| `PlanningConfig`  | Contains `PlanConstraints` (itself contains `Duration`) |
-| `PlanConstraints` | Contains `java.time.Duration`                           |
-| `Plan`            | Contains `List<PlannedStep>` and `PlanConstraints`      |
-| `PlannedStep`     | Contains `Map<String, Object>` and `StepStatus` enum    |
+Currently no exceptions are registered — all types use manual extraction or `convertValue`.
 
 ### The `convertValue` escape hatch
 
@@ -242,7 +236,6 @@ Java records have no inner `Builder` class — Jackson deserializes them via the
 | Class           | Embedded in                      | Reason                                                                     |
 |-----------------|----------------------------------|----------------------------------------------------------------------------|
 | `HensuSnapshot` | `ExecutionStep.Builder.snapshot` | Canonical constructor + component accessors                                |
-| `Plan`          | `HensuSnapshot.activePlan`       | Active micro-plan state; registered via the `treeToValue` exceptions above |
 
 **Parallel execution types** (manually deserialized in `NodeDeserializer`, but serialized via default Jackson `BeanSerializer` in `WorkflowSerializer.toJson()`):
 
@@ -410,10 +403,8 @@ The root rule: **`hensu-core` owns no serialization metadata. `hensu-serializati
 | `NodeSerializer` / `NodeDeserializer`                     | Polymorphic `Node` hierarchy (discriminator: `nodeType`)                                                   |
 | `TransitionRuleSerializer` / `TransitionRuleDeserializer` | Polymorphic `TransitionRule` (discriminator: `type`)                                                       |
 | `ActionSerializer` / `ActionDeserializer`                 | Polymorphic `Action` (discriminator: `type`)                                                               |
-| `PlanStepActionSerializer` / `PlanStepActionDeserializer` | Polymorphic `PlanStepAction` (discriminator: `type`)                                                       |
 | `ExecutionPhaseSerializer` / `ExecutionPhaseDeserializer` | Polymorphic `ExecutionPhase` (discriminator: `type`)                                                       |
 | `WorkflowStateSchemaDeserializer`                         | Direct-extraction deserializer for `WorkflowStateSchema`; avoids mixin reflection overhead in native image |
-| `plan/JacksonPlanResponseParser`                          | Parses LLM JSON responses into `PlannedStep` lists; strips markdown fences                                 |
 | `mixin/*Mixin.java`                                       | `@JsonDeserialize` bridge for builder-pattern types                                                        |
 | `mixin/*BuilderMixin.java`                                | `@JsonPOJOBuilder` configuration for builder inner classes                                                 |
 

@@ -1,7 +1,5 @@
 package io.hensu.server.streaming;
 
-import io.hensu.core.plan.PlanEvent;
-import io.hensu.core.plan.PlanObserver;
 import io.hensu.core.util.LogSanitizer;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.operators.multi.processors.BroadcastProcessor;
@@ -15,8 +13,6 @@ import org.jboss.logging.Logger;
 /// Broadcasts execution events to SSE subscribers.
 ///
 /// Manages per-execution event streams using Mutiny's BroadcastProcessor.
-/// Implements {@link PlanObserver} to receive plan events and convert them
-/// to SSE-friendly {@link ExecutionEvent} DTOs.
 ///
 /// ### Thread Safety
 /// Thread-safe. Uses `ConcurrentHashMap` for subscription management and
@@ -35,7 +31,7 @@ import org.jboss.logging.Logger;
 /// // Subscribe to execution events (in SSE endpoint)
 /// Multi<ExecutionEvent> events = broadcaster.subscribe(executionId);
 ///
-/// // Run execution with scoped context so PlanObserver events are routed correctly
+/// // Run execution with scoped context
 /// broadcaster.runAs(executionId, () -> {
 ///     workflowExecutor.execute(workflow, context, listener);
 ///     return null;
@@ -48,16 +44,13 @@ import org.jboss.logging.Logger;
 /// @see io.hensu.server.api.ExecutionEventResource for SSE endpoint
 /// @see ExecutionEvent for event types
 @ApplicationScoped
-public class ExecutionEventBroadcaster implements PlanObserver {
+public class ExecutionEventBroadcaster {
 
     private static final Logger LOG = Logger.getLogger(ExecutionEventBroadcaster.class);
 
     /// Maps execution ID to broadcast processor.
     private final Map<String, BroadcastProcessor<ExecutionEvent>> processors =
             new ConcurrentHashMap<>();
-
-    /// Maps plan ID to execution ID for event routing.
-    private final Map<String, String> planToExecution = new ConcurrentHashMap<>();
 
     /// ScopedValue carrying the current execution ID within a {@link #runAs} frame.
     static final ScopedValue<String> CURRENT_EXECUTION = ScopedValue.newInstance();
@@ -108,8 +101,8 @@ public class ExecutionEventBroadcaster implements PlanObserver {
     /// Executes a task with the given execution ID bound as the current execution context.
     ///
     /// Binds `executionId` into a `ScopedValue` for the duration of the call so that
-    /// {@link PlanObserver} events fired from within the task are automatically routed
-    /// to the correct SSE stream without manual set/clear bookkeeping.
+    /// events fired from within the task are automatically routed to the correct SSE stream
+    /// without manual set/clear bookkeeping.
     ///
     /// @param executionId the execution context to bind, not null
     /// @param task the task to execute within this context, not null
@@ -120,16 +113,6 @@ public class ExecutionEventBroadcaster implements PlanObserver {
         Objects.requireNonNull(executionId, "executionId must not be null");
         Objects.requireNonNull(task, "task must not be null");
         return ScopedValue.where(CURRENT_EXECUTION, executionId).call(task::call);
-    }
-
-    /// Associates a plan ID with an execution ID for event routing.
-    ///
-    /// @param planId the plan identifier, not null
-    /// @param executionId the execution identifier, not null
-    public void registerPlan(String planId, String executionId) {
-        Objects.requireNonNull(planId, "planId must not be null");
-        Objects.requireNonNull(executionId, "executionId must not be null");
-        planToExecution.put(planId, executionId);
     }
 
     /// Completes the event stream for an execution.
@@ -146,9 +129,6 @@ public class ExecutionEventBroadcaster implements PlanObserver {
                     "Completing broadcast for execution: {0}", LogSanitizer.sanitize(executionId));
             processor.onComplete();
         }
-
-        // Clean up plan mappings
-        planToExecution.entrySet().removeIf(e -> executionId.equals(e.getValue()));
     }
 
     /// Completes the event stream with an error for an execution.
@@ -163,8 +143,6 @@ public class ExecutionEventBroadcaster implements PlanObserver {
             LOG.debugv("Completing broadcast with error for execution: {0}", executionId);
             processor.onError(error);
         }
-
-        planToExecution.entrySet().removeIf(e -> executionId.equals(e.getValue()));
     }
 
     /// Unsubscribes and cleans up an execution stream.
@@ -187,48 +165,5 @@ public class ExecutionEventBroadcaster implements PlanObserver {
     /// @return true if there are subscribers
     public boolean hasSubscribers(String executionId) {
         return processors.containsKey(executionId);
-    }
-
-    // --- PlanObserver implementation ---
-
-    @Override
-    public void onEvent(PlanEvent event) {
-        String executionId = resolveExecutionId(event.planId());
-        if (executionId == null) {
-            LOG.tracev(
-                    "No execution context for plan event: {0}", event.getClass().getSimpleName());
-            return;
-        }
-
-        ExecutionEvent sseEvent = convertEvent(executionId, event);
-        if (sseEvent != null) {
-            publish(executionId, sseEvent);
-        }
-    }
-
-    /// Resolves execution ID from plan ID mapping or the current ScopedValue context.
-    private String resolveExecutionId(String planId) {
-        String executionId = planToExecution.get(planId);
-        if (executionId != null) {
-            return executionId;
-        }
-        return CURRENT_EXECUTION.isBound() ? CURRENT_EXECUTION.get() : null;
-    }
-
-    /// Converts a PlanEvent to an SSE ExecutionEvent.
-    private ExecutionEvent convertEvent(String executionId, PlanEvent event) {
-        return switch (event) {
-            case PlanEvent.PlanCreated e -> {
-                registerPlan(e.planId(), executionId);
-                yield ExecutionEvent.PlanCreated.from(executionId, e);
-            }
-            case PlanEvent.StepStarted e -> ExecutionEvent.StepStarted.from(executionId, e);
-            case PlanEvent.StepCompleted e -> ExecutionEvent.StepCompleted.from(executionId, e);
-            case PlanEvent.PlanRevised e -> ExecutionEvent.PlanRevised.from(executionId, e);
-            case PlanEvent.PlanCompleted e -> ExecutionEvent.PlanCompleted.from(executionId, e);
-            case PlanEvent.PlanPaused e ->
-                    ExecutionEvent.ExecutionPaused.now(
-                            executionId, null, null, e.planId(), null, e.reason(), Map.of());
-        };
     }
 }

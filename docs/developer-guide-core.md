@@ -27,7 +27,6 @@ This guide covers API usage, adapter development, extension points, and testing 
 - [Engine Variable Injection](#engine-variable-injection)
 - [Agent Tool Loop](#agent-tool-loop)
 - [Tool Registry](#tool-registry)
-- [Plan Engine](#plan-engine)
 - [Template Resolution](#template-resolution)
 - [Human Review](#human-review)
 - [Testing](#testing)
@@ -209,8 +208,7 @@ is the foundation for time-travel debugging and backtracking.
 **`TransitionPostProcessor`** — The final step. Evaluates the current node's `TransitionRule` list in order. The first
 rule that returns a valid target node ID wins, and the state is updated to point to that next node. If
 `state.isNodeRedirected()` is true (set by Rubric or Review backtrack), the transition evaluator is skipped — the
-current node was already updated by the backtracking processor. The flag is then reset. Clears
-`state.activePlan` on every transition to prevent stale plans from leaking across nodes. Throws
+current node was already updated by the backtracking processor. The flag is then reset. Throws
 `IllegalStateException` if no rule matches, preventing the workflow from silently getting stuck.
 
 Two further responsibilities live here:
@@ -981,9 +979,59 @@ Inject it via `HensuFactory` or override the server CDI producer.
 
 ## Agent Tool Loop
 
-Agents that implement `ToolCapable` can natively request and receive tool results during execution,
-without routing through the plan subsystem. The loop is driven by `ToolLoopRunner`, dispatched from
-`AgentLifecycleRunner` when a node declares tools.
+Agents that implement `ToolCapable` can natively request and receive tool results during execution.
+The loop is driven by `ToolLoopRunner`, dispatched from `AgentLifecycleRunner` when a node declares
+tools.
+
+### Architecture
+
+```mermaid
+sequenceDiagram
+    participant SNE as StandardNodeExecutor
+    participant ALR as AgentLifecycleRunner
+    participant TLR as ToolLoopRunner
+    participant TS as ToolSession
+    participant AE as ActionExecutor
+
+    SNE->>ALR: execute(nodeId, agentId, prompt, node, ctx)
+    ALR->>ALR: EngineVariablePromptEnricher.enrich()
+    ALR->>ALR: AgentRegistry.getAgent()
+
+    alt Agent declares tools
+        ALR->>TLR: execute(nodeId, agentId, prompt, agent, ctx)
+        TLR->>TLR: resolveTools() via ToolRegistry
+        TLR->>TS: openToolSession(prompt, context, tools)
+        TLR->>TS: start()
+        TS-->>TLR: AgentResponse
+
+        loop while ToolRequest && budget > 0
+            alt Known tool
+                TLR->>AE: execute(Action.Send(rawPayload=true))
+                AE-->>TLR: ActionResult
+                TLR->>TLR: toolCallCount++
+            else Unknown tool (hallucination)
+                TLR->>TLR: ToolCallResult.failure("Unknown tool")
+            end
+            TLR->>TS: submit(ToolCallResult)
+            TS-->>TLR: AgentResponse
+        end
+
+        alt Budget exhausted
+            TLR->>TS: compact()
+            TLR->>TS: submit(failure("budget exhausted"))
+            TS-->>TLR: TextResponse → SUCCESS / ToolRequest → FAILURE
+        end
+
+        TLR->>TS: close()
+        TLR-->>ALR: NodeResult
+
+    else No tools declared
+        ALR->>ALR: agent.execute(prompt, context)
+        ALR->>ALR: toNodeResult(AgentResponse)
+    end
+
+    ALR-->>SNE: NodeResult
+```
 
 ### Protocol
 
@@ -1064,7 +1112,7 @@ The agent can retry or answer – budget bounds the loop.
 
 ## Tool Registry
 
-Protocol-agnostic tool descriptors used by agent tool loops, plan generation, and MCP integration. The core defines tool shapes; actual invocation happens through `ActionHandler` at the application layer.
+Protocol-agnostic tool descriptors used by agent tool loops and MCP integration. The core defines tool shapes; actual invocation happens through `ActionHandler` at the application layer.
 
 ### Registering Tools
 
@@ -1084,111 +1132,11 @@ registry.register(ToolDefinition.of("analyze", "Analyze data",
 
 ### MCP Integration
 
-The server layer populates the tool registry from MCP server connections. Tools discovered via MCP become `ToolDefinition` instances available for agent tool loops and plan generation.
+The server layer populates the tool registry from MCP server connections. Tools discovered via MCP become `ToolDefinition` instances available for agent tool loops.
 
 ```
-MCP Server ──► ToolDefinition ──► ToolRegistry ──┬──► ToolLoopRunner ──► Agent Tool Session
-                                                 └──► Planner ──► Plan
+MCP Server ──► ToolDefinition ──► ToolRegistry ──► ToolLoopRunner ──► Agent Tool Session
 ```
-
-## Plan Engine
-
-The Plan Engine executes multi-step, tool-driven logic within a single `StandardNode`. It is
-built around a **pipeline of processors** (`PlanPipeline`) that operate on a shared mutable
-`PlanContext`, replacing the previous monolithic execution loop with composable,
-single-responsibility stages.
-
-### Planning Modes
-
-| Mode       | Description                                    |
-|------------|------------------------------------------------|
-| `DISABLED` | No planning, direct agent execution (default)  |
-| `STATIC`   | Predefined plan from DSL `plan { }` block      |
-| `DYNAMIC`  | LLM generates plan at runtime via `LlmPlanner` |
-
-### Architecture: PlanPipeline
-
-`AgenticNodeExecutor` drives two sequential `PlanPipeline` instances per node execution — one
-for **plan preparation** and one for **plan execution**:
-
-```mermaid
-flowchart LR
-    subgraph prep["Preparation Pipeline"]
-        direction TB
-        pc(["PlanCreationProcessor\n(Static/LlmPlanner)"]) --> rg(["ReviewGateProcessor\n(pause if review=true)"])
-    end
-
-    ctx(["PlanContext"])
-
-    subgraph exec["Execution Pipeline"]
-        direction TB
-        se(["SynthesizeEnrichment\n(inject agent ID)"]) --> pe(["PlanExecutionProcessor\n(steps + replan)"]) --> prg(["PostExecutionReviewGate\n(pause if configured)"])
-    end
-
-    prep --> ctx --> exec
-
-    style prep fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
-    style exec fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
-    style pc fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style rg fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style ctx fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
-    style se fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style pe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style prg fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-
-    linkStyle default stroke:#0A84FF, stroke-width:1px
-```
-
-Each `PlanProcessor` receives the same `PlanContext` instance and may short-circuit the pipeline
-by returning a terminal result — analogous to how `ProcessorPipeline` works at the node level.
-
-### PlanContext
-
-`PlanContext` is the mutable state carrier that flows through the entire pipeline. It holds:
-
-- The resolved `StandardNode` (prompt, tools, `PlanningConfig`)
-- The active `Plan` (written by `PlanCreationProcessor`, updated on replanning)
-- The `ExecutionContext` (workflow state, tenant context)
-
-Processors read and write `PlanContext` in place rather than passing individual arguments.
-
-### StepHandlerRegistry and StepHandler
-
-`PlanExecutor` dispatches each `PlannedStep` to a registered `StepHandler` based on the step's
-`PlanStepAction` type:
-
-| Handler                 | Action type  | What it does                               |
-|-------------------------|--------------|--------------------------------------------|
-| `ToolCallStepHandler`   | `ToolCall`   | Sends the tool call to `ActionExecutor`    |
-| `SynthesizeStepHandler` | `Synthesize` | Invokes an agent to produce a synthesis    |
-
-This replaces the previous `if/else` dispatch inside the executor with polymorphic lookup.
-Custom handlers can be added to `StepHandlerRegistry` to support new action types without
-modifying core execution logic.
-
-### Observability
-
-Plan execution emits events for monitoring:
-
-| Event           | Description                        |
-|-----------------|------------------------------------|
-| `PlanCreated`   | Plan created and ready to execute  |
-| `StepStarted`   | Individual step execution starting |
-| `StepCompleted` | Step finished (success or failure) |
-| `PlanCompleted` | All steps finished                 |
-
-Register observers via `PlanExecutor.addObserver(PlanObserver)`.
-
-### Plan Persistence and Resume
-
-Dynamic plans generated by `LlmPlanner` are non-deterministic — regenerating a plan after resume would produce different transitions and break execution. To solve this, `HensuState` carries an `activePlan` field that is persisted in snapshots alongside all other state.
-
-`PlanCreationProcessor` handles this in two paths:
-
-1. **Fresh execution** — `state.getActivePlan()` is null. The processor creates a plan via the planner, writes it to both `state.setActivePlan(plan)` and `context.setPlan(plan)`, and continues.
-2. **Resumed execution** — `state.getActivePlan()` is non-null. If the plan's `nodeId` matches the current node, the processor reuses the persisted plan without calling the planner. A `nodeId` mismatch throws `IllegalStateException` — it indicates a bug in plan lifecycle management.
-
-`TransitionPostProcessor` clears `state.setActivePlan(null)` on every transition, preventing stale plans from leaking across nodes.
 
 ## Template Resolution
 
@@ -1582,25 +1530,10 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `tool/ToolDefinition.java`                              | Protocol-agnostic tool descriptor                                                                |
 | `tool/ToolCallResult.java`                              | Tool execution result record (success/failure factories, `asText()`)                             |
 | `tool/ToolRegistry.java`                                | Tool registration/lookup interface                                                               |
-| `plan/PlanExecutor.java`                                | Iterates plan steps via `StepHandlerRegistry`                                                    |
-| `plan/Plan.java`                                        | Plan model (steps + constraints)                                                                 |
-| `plan/PlanPipeline.java`                                | Executes an ordered chain of `PlanProcessor`s                                                    |
-| `plan/PlanProcessor.java`                               | Single-phase processor interface for the plan lifecycle                                          |
-| `plan/PlanContext.java`                                 | Mutable state carrier flowing through the plan pipeline                                          |
-| `plan/StepHandlerRegistry.java`                         | Registry for `StepHandler` lookup by `PlanStepAction` type                                       |
-| `plan/StepHandler.java`                                 | Handler interface for a single `PlanStepAction` type                                             |
-| `plan/PlannedStep.java`                                 | Immutable representation of a single plan step                                                   |
-| `plan/PlanStepAction.java`                              | Sealed type hierarchy: `ToolCall` and `Synthesize`                                               |
-| `plan/ToolCallStepHandler.java`                         | Dispatches `ToolCall` actions to `ActionExecutor`                                                |
-| `plan/SynthesizeStepHandler.java`                       | Invokes an agent for `Synthesize` actions                                                        |
-| `plan/Planner.java`                                     | Planner interface (`createPlan` / `revisePlan`)                                                  |
-| `plan/StaticPlanner.java`                               | Resolves predefined `plan { }` steps from `PlanningConfig`                                       |
-| `plan/LlmPlanner.java`                                  | LLM-based plan generation and revision (`DYNAMIC` mode)                                          |
 | `execution/EngineVariables.java`                        | SSOT for engine variable names (`score`, `approved`, `recommendation`)                           |
 | `execution/SynchronizedListenerDecorator.java`          | Thread-safe listener wrapper for parallel branch execution                                       |
 | `execution/executor/AgentLifecycleRunner.java`          | Composition-based agent call: prompt enrichment → agent execution → output extraction            |
 | `execution/executor/ToolLoopRunner.java`                | Drives agent-native tool loop (budget enforcement, feed-back, sealed termination)                |
-| `execution/executor/AgenticNodeExecutor.java`           | Drives preparation + execution `PlanPipeline`s for `StandardNode`                                |
 | `execution/parallel/BranchExecutionConfig.java`         | Typed branch metadata on `ExecutionContext` (consensus strategy, yields list)                    |
 | `template/SimpleTemplateResolver.java`                  | `{variable}` substitution                                                                        |
 | `review/ReviewHandler.java`                             | Human review interface                                                                           |
