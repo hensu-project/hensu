@@ -6,7 +6,6 @@ import jakarta.inject.Inject;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 
 /// Facade over the execution-side workflow services.
 ///
@@ -47,10 +46,6 @@ public class WorkflowService {
 
     public void resumeExecution(String tenantId, String executionId, ResumeInput resumeInput) {
         stateService.resumeExecution(tenantId, executionId, resumeInput);
-    }
-
-    public Optional<PlanInfo> getPendingPlan(String tenantId, String executionId) {
-        return queryService.getPendingPlan(tenantId, executionId);
     }
 
     public ExecutionStatus getExecutionStatus(String tenantId, String executionId) {

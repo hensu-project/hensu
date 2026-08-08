@@ -9,7 +9,6 @@ The `hensu-core` module is the execution engine at the heart of Hensu. It provid
 - **Workflow Execution** — Directed graph traversal with branching, looping, and parallel execution
 - **Agent Abstraction** — Provider-agnostic AI agent interface with pluggable backends
 - **Rubric Engine** — Quality evaluation with weighted criteria, score-based routing, and LLM-based assessment
-- **Plan Engine** — Static or LLM-generated step-by-step plan execution within nodes
 - **Agent Tool Loop** — Native tool execution via `ToolCapable`/`ToolSession` with budget enforcement and sealed-hierarchy termination
 - **Tool Registry** — Protocol-agnostic tool descriptors for agent tool loops, plan generation, and MCP integration
 - **Human Review** — Optional or required review checkpoints at any workflow step
@@ -37,7 +36,7 @@ flowchart TD
         end
         subgraph mid["Infrastructure"]
             direction LR
-            af(["AgentFactory\n(providers)"]) ~~~ pe(["PlanExecutor\n(step exec)"]) ~~~ ae(["ActionExecutor\n(send/execute)"])
+            af(["AgentFactory\n(providers)"]) ~~~ ae(["ActionExecutor\n(send/execute)"])
         end
         subgraph support["Support"]
             direction LR
@@ -67,7 +66,6 @@ flowchart TD
     style gen fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style sub fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style af fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style pe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style ae fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style tr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style tmpl fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
@@ -146,82 +144,9 @@ flowchart LR
 
 Score-based routing: nodes can use `ScoreTransition` to route based on evaluation scores (e.g., score >= 80 goto "approve", else goto "revise"). Nodes that write a boolean `approved` variable can use `ApprovalTransition` (`onApproval` / `onRejection` in DSL) for binary decision routing. For routing on any other declared output variable — e.g. a self-reported `status` driving a bounded work loop — use `ConditionTransition` (`onCondition` in DSL).
 
-## Plan Engine
-
-Pipeline-driven multi-step execution within a single `StandardNode`. `AgenticNodeExecutor`
-runs two sequential `PlanPipeline` instances sharing a `PlanContext` carrier:
-
-```mermaid
-flowchart LR
-    subgraph prep["Preparation"]
-        direction TB
-        pc(["PlanCreation\n(Static/LLM)"]) --> rg(["ReviewGate\n(pause if review)"])
-    end
-
-    ctx(["PlanContext"])
-
-    subgraph exec["Execution"]
-        direction TB
-        se(["SynthesizeEnrichment\n(inject agentId)"]) --> pe(["PlanExecutionProcessor"])
-        subgraph plan["PlanExecutor"]
-            direction LR
-            steps(["S1 → S2 → S3 …"])
-            subgraph handlers["StepHandlers"]
-                direction LR
-                tch(["ToolCall\n(ActionExec)"]) ~~~ sh(["Synthesize\n(Agent call)"])
-            end
-            steps --> handlers
-        end
-        pe --> plan
-        plan --> prg(["PostReviewGate\n(optional pause)"])
-    end
-
-    prep --> ctx --> exec
-
-    style prep fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
-    style exec fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
-    style plan fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style handlers fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style pc fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style rg fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style ctx fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
-    style se fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style pe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style steps fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style tch fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style sh fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style prg fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-
-    linkStyle default stroke:#0A84FF, stroke-width:1px
-```
-
-**Planning modes:**
-
-| Mode       | Description                                    |
-|------------|------------------------------------------------|
-| `DISABLED` | No planning, direct agent execution (default)  |
-| `STATIC`   | Predefined plan from DSL `plan { }` block      |
-| `DYNAMIC`  | LLM generates plan at runtime via `LlmPlanner` |
-
-**Key types:**
-
-| Type                  | Description                                                  |
-|-----------------------|--------------------------------------------------------------|
-| `Plan`                | Sequence of steps with constraints and metadata              |
-| `PlannedStep`         | Single step carrying a `PlanStepAction`                      |
-| `PlanStepAction`      | Sealed type: `ToolCall` or `Synthesize`                      |
-| `PlanPipeline`        | Executes an ordered chain of `PlanProcessor`s                |
-| `PlanContext`         | Mutable carrier: node, active plan, execution context        |
-| `PlanExecutor`        | Iterates plan steps via `StepHandlerRegistry`, emits events  |
-| `StepHandlerRegistry` | Dispatches each step action to its `StepHandler`             |
-| `Planner`             | Interface: `createPlan` / `revisePlan`                       |
-| `StaticPlanner`       | Resolves predefined DSL steps (`STATIC` mode)                |
-| `LlmPlanner`          | Generates and revises plans via LLM agent (`DYNAMIC` mode)   |
-| `PlanObserver`        | Callback for monitoring plan lifecycle events                |
-
 ## Tool Registry
 
-Protocol-agnostic tool descriptors used by agent-native tool loops, plan generation, and MCP integration. The core defines tool shapes; actual invocation happens through `ActionExecutor` at the application layer.
+Protocol-agnostic tool descriptors used by agent-native tool loops and MCP integration. The core defines tool shapes; actual invocation happens through `ActionExecutor` at the application layer.
 
 ```java
 // Register tools
@@ -243,7 +168,7 @@ registry.register(ToolDefinition.of("analyze", "Analyze data",
 | `ToolRegistry`        | Interface for tool registration and lookup                       |
 | `DefaultToolRegistry` | Thread-safe ConcurrentHashMap implementation                     |
 
-The server layer populates the tool registry from MCP server connections. Tools discovered via MCP become available for agent tool loops and plan generation. When a node declares tools and its agent implements `ToolCapable`, `ToolLoopRunner` resolves declared tool names against the registry, filters to the agent's declared subset, and passes full schemas into the tool session.
+The server layer populates the tool registry from MCP server connections. Tools discovered via MCP become available for agent tool loops. When a node declares tools and its agent implements `ToolCapable`, `ToolLoopRunner` resolves declared tool names against the registry, filters to the agent's declared subset, and passes full schemas into the tool session.
 
 ## Module Structure
 
@@ -277,8 +202,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── ExecutionContext.java           # Per-execution context carrier (state + tenant)
 │   │   ├── AgentLifecycleRunner.java      # Composition-based agent call: enrich → execute → extract
 │   │   ├── ToolLoopRunner.java           # Drives agent-native tool loop (budget, feed-back, sealed termination)
-│   │   ├── AgenticNodeExecutor.java       # Drives preparation + execution PlanPipelines for StandardNode
-│   │   ├── StandardNodeExecutor.java      # LLM prompt execution (no planning)
+│   │   ├── StandardNodeExecutor.java      # LLM prompt execution for StandardNode
 │   │   ├── ParallelNodeExecutor.java      # Concurrent branch execution
 │   │   ├── ForkNodeExecutor.java          # Fork into parallel paths
 │   │   ├── JoinNodeExecutor.java          # Merge parallel results
@@ -380,27 +304,6 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── ToolCallResult.java        # Tool execution result (success/failure factories, asText())
 │   ├── ToolRegistry.java          # Tool registration/lookup interface
 │   └── DefaultToolRegistry.java   # Thread-safe ConcurrentHashMap implementation
-├── plan/                          # Agentic planning engine
-│   ├── Plan.java                  # Plan model (steps + constraints)
-│   ├── PlannedStep.java           # Single step with PlanStepAction
-│   ├── PlanStepAction.java        # Sealed type: ToolCall | Synthesize
-│   ├── PlanPipeline.java          # Executes ordered PlanProcessor chain
-│   ├── PlanProcessor.java         # Single-phase processor interface
-│   ├── PlanContext.java           # Mutable state carrier for plan pipelines
-│   ├── PlanExecutor.java          # Iterates steps via StepHandlerRegistry
-│   ├── StepHandlerRegistry.java   # Interface for PlanStepAction dispatch
-│   ├── DefaultStepHandlerRegistry.java # Default implementation
-│   ├── StepHandler.java           # Handler interface for one action type
-│   ├── ToolCallStepHandler.java   # Handles ToolCall via ActionExecutor
-│   ├── SynthesizeStepHandler.java # Handles Synthesize via agent invocation
-│   ├── Planner.java               # Plan creation/revision interface
-│   ├── StaticPlanner.java         # Resolves DSL plan {} steps (STATIC mode)
-│   ├── LlmPlanner.java            # LLM-based plan generation (DYNAMIC mode)
-│   ├── PlanningMode.java          # DISABLED, STATIC, DYNAMIC
-│   ├── PlanningConfig.java        # Planning constraints configuration
-│   ├── PlanResponseParser.java    # Parses LLM response into PlannedStep list
-│   ├── PlanObserver.java          # Event callback interface
-│   └── PlanEvent.java             # Plan lifecycle events
 ├── review/                        # Human review support
 │   ├── ReviewHandler.java         # Review callback interface
 │   ├── ReviewOutcome.java         # Sealed: Decided(ReviewDecision) | Pending(correlationId)

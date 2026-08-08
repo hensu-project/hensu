@@ -24,7 +24,6 @@ class HensuSnapshotTest {
                         Map.of(),
                         new ExecutionHistory(),
                         null,
-                        null,
                         Instant.now(),
                         "test-checkpoint");
 

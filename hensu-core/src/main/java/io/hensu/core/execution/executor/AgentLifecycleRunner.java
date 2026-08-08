@@ -97,11 +97,6 @@ final class AgentLifecycleRunner {
                             ResultStatus.SUCCESS,
                             "Tool: " + t.toolName(),
                             Map.of("toolName", t.toolName(), "arguments", t.arguments()));
-            case AgentResponse.PlanProposal p ->
-                    new NodeResult(
-                            ResultStatus.SUCCESS,
-                            "Plan with " + p.steps().size() + " steps",
-                            Map.of("steps", p.steps()));
             case AgentResponse.Error e ->
                     new NodeResult(
                             ResultStatus.FAILURE,

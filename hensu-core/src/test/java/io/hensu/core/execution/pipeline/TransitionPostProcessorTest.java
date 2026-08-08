@@ -9,8 +9,6 @@ import io.hensu.core.execution.executor.ExecutionContext;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ResultStatus;
-import io.hensu.core.plan.Plan;
-import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.rubric.model.ComparisonOperator;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.state.HensuState;
@@ -70,22 +68,6 @@ class TransitionPostProcessorTest {
 
         assertThat(ctx.state().getCurrentNode()).isEqualTo("already-redirected");
         assertThat(ctx.state().isNodeRedirected()).isFalse();
-    }
-
-    // — Active plan clearing ————————————————————————————————————————————
-
-    @Test
-    @DisplayName("clears activePlan when transitioning to a different node")
-    void shouldClearActivePlanOnTransition() {
-        var ctx = contextWithTransitions("node-a", List.of(new SuccessTransition("node-b")));
-        Plan plan =
-                Plan.staticPlan(
-                        "node-a", List.of(PlannedStep.pending(0, "tool", Map.of(), "step")));
-        ctx.state().setActivePlan(plan);
-
-        processor.process(ctx);
-
-        assertThat(ctx.state().getActivePlan()).isNull();
     }
 
     // — Engine variable lifecycle ————————————————————————————————————————

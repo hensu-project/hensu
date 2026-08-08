@@ -104,7 +104,6 @@ public class ValidWorkflowValidator implements ConstraintValidator<ValidWorkflow
                 if (sn.getRubric() != null) {
                     rejectDangerousChars(errors, p + ".rubric", sn.getRubric().getRawContent());
                 }
-                optionalSafeId(errors, p + ".planFailureTarget", sn.getPlanFailureTarget());
                 sn.getWrites().forEach(w -> requireSafeId(errors, p + ".writes[]", w));
             }
             case ParallelNode pn -> {

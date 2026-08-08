@@ -1,7 +1,6 @@
 package io.hensu.core.state;
 
 import io.hensu.core.execution.result.ExecutionHistory;
-import io.hensu.core.plan.Plan;
 import java.io.Serializable;
 import java.time.Instant;
 import java.util.Collections;
@@ -36,12 +35,10 @@ import java.util.Objects;
 /// @param context workflow variables and data, not null
 /// @param retryCounters per-node retry budgets keyed by `namespace:nodeId`, not null
 /// @param history execution history including steps and backtracks, not null
-/// @param activePlan current micro-plan state if planning is active, may be null
 /// @param phase execution phase within the current node's lifecycle, not null after construction
 /// @param createdAt when this snapshot was created, not null
 /// @param checkpointReason why this checkpoint was created, may be null
 /// @see HensuState for mutable execution state
-/// @see Plan for active plan within a node
 /// @see ExecutionPhase for phase semantics
 public record HensuSnapshot(
         String workflowId,
@@ -50,7 +47,6 @@ public record HensuSnapshot(
         Map<String, Object> context,
         Map<String, Integer> retryCounters,
         ExecutionHistory history,
-        Plan activePlan,
         ExecutionPhase phase,
         Instant createdAt,
         String checkpointReason)
@@ -99,7 +95,6 @@ public record HensuSnapshot(
                 state.getContext(),
                 state.getRetryCounters(),
                 state.getHistory(),
-                state.getActivePlan(),
                 state.getPhase(),
                 Instant.now(),
                 reason);
@@ -116,16 +111,8 @@ public record HensuSnapshot(
                 .context(context)
                 .retryCounters(retryCounters)
                 .history(history)
-                .activePlan(activePlan)
                 .phase(phase)
                 .build();
-    }
-
-    /// Returns whether this snapshot has an active plan.
-    ///
-    /// @return true if a plan was in progress when snapshot was taken
-    public boolean hasActivePlan() {
-        return activePlan != null;
     }
 
     /// Returns whether the workflow was completed when this snapshot was taken.

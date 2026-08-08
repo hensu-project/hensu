@@ -36,9 +36,6 @@ object onNoConsensus
 /** Marker for fork completion syntax: `onComplete goto "nodeId"`. */
 object onComplete
 
-/** Marker for plan failure syntax: `onPlanFailure goto "nodeId"`. */
-object OnPlanFailure
-
 /** Marker for approval transition syntax: `onApproval goto "nodeId"`. */
 object onApproval
 

@@ -1,10 +1,8 @@
 package io.hensu.core.agent;
 
-import io.hensu.core.plan.PlannedStep;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -13,7 +11,6 @@ import java.util.Objects;
 /// Represents the different types of responses an agent can produce:
 /// - {@link TextResponse}: Standard text output (most common)
 /// - {@link ToolRequest}: Agent requests to call a tool
-/// - {@link PlanProposal}: Agent proposes a multi-step plan
 /// - {@link Error}: Execution failed with an error
 ///
 /// ### Pattern Matching Usage
@@ -22,18 +19,13 @@ import java.util.Objects;
 /// String result = switch (response) {
 ///     case TextResponse t -> t.content();
 ///     case ToolRequest r -> "Tool call: " + r.toolName();
-///     case PlanProposal p -> "Plan with " + p.steps().size() + " steps";
 ///     case Error e -> "Error: " + e.message();
 /// };
 /// }
 ///
 /// @see Agent#execute for the execution entry point
-/// @see io.hensu.core.plan.Planner for plan generation
 public sealed interface AgentResponse
-        permits AgentResponse.TextResponse,
-                AgentResponse.ToolRequest,
-                AgentResponse.PlanProposal,
-                AgentResponse.Error {
+        permits AgentResponse.TextResponse, AgentResponse.ToolRequest, AgentResponse.Error {
 
     /// Returns when this response was created.
     Instant timestamp();
@@ -95,28 +87,6 @@ public sealed interface AgentResponse
         public static ToolRequest of(
                 String toolName, Map<String, Object> arguments, String reasoning) {
             return new ToolRequest(toolName, arguments, reasoning, Instant.now());
-        }
-    }
-
-    /// Agent proposes a multi-step execution plan.
-    ///
-    /// Emitted when an agent generates a plan for achieving a goal.
-    /// The executor can review, modify, or execute the plan.
-    ///
-    /// @param steps the proposed execution steps, not null
-    /// @param reasoning agent's explanation of the plan strategy
-    /// @param timestamp when the response was created, not null
-    record PlanProposal(List<PlannedStep> steps, String reasoning, Instant timestamp)
-            implements AgentResponse {
-
-        public PlanProposal {
-            steps = steps != null ? List.copyOf(steps) : List.of();
-            reasoning = reasoning != null ? reasoning : "";
-            timestamp = timestamp != null ? timestamp : Instant.now();
-        }
-
-        public static PlanProposal of(List<PlannedStep> steps, String reasoning) {
-            return new PlanProposal(steps, reasoning, Instant.now());
         }
     }
 

@@ -201,9 +201,6 @@ public class MermaidVisualizationFormat implements VisualizationFormat {
                                     .append(sn.getRubric().getCriteria().size())
                                     .append(" criteria");
                         }
-                        if (sn.hasPlanningEnabled()) {
-                            lb.append("\\n planning: ").append(sn.getPlanningConfig().mode());
-                        }
                         if (sn.getReviewConfig() != null
                                 && sn.getReviewConfig().getMode() != ReviewMode.DISABLED) {
                             lb.append("\\n review: ").append(sn.getReviewConfig().getMode());

@@ -1,6 +1,5 @@
 package io.hensu.server.workflow;
 
-import io.hensu.core.plan.PlannedStep;
 import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.WorkflowStateRepository;
@@ -8,7 +7,6 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 /// Read-only service for querying execution state.
 ///
@@ -26,27 +24,6 @@ public class ExecutionQueryService {
                 Objects.requireNonNull(stateRepository, "stateRepository must not be null");
     }
 
-    /// Gets the current plan for an execution awaiting review.
-    ///
-    /// @param tenantId the tenant owning the execution, not null
-    /// @param executionId the execution ID, not null
-    /// @return the plan if one is pending review, empty if no plan is active
-    /// @throws ExecutionNotFoundException if execution not found
-    public Optional<PlanInfo> getPendingPlan(String tenantId, String executionId) {
-        HensuSnapshot snapshot = loadSnapshot(tenantId, executionId);
-        if (!snapshot.hasActivePlan()) {
-            return Optional.empty();
-        }
-        var plan = snapshot.activePlan();
-        int currentStep =
-                plan.steps().stream()
-                        .filter(s -> !s.isFinished())
-                        .mapToInt(PlannedStep::index)
-                        .findFirst()
-                        .orElse(plan.stepCount());
-        return Optional.of(new PlanInfo(plan.id(), plan.stepCount(), currentStep));
-    }
-
     /// Gets execution status by ID.
     ///
     /// @param tenantId the tenant owning the execution, not null
@@ -61,7 +38,6 @@ public class ExecutionQueryService {
                 snapshot.workflowId(),
                 status,
                 snapshot.currentNodeId(),
-                snapshot.hasActivePlan(),
                 extractCorrelationId(snapshot));
     }
 

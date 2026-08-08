@@ -18,8 +18,7 @@ import java.util.Set;
 /// - **Precondition**: `context.result()` is non-null (post-execution pipeline)
 /// - **Postcondition**: Always returns {@link ProcessorOutcome#CONTINUE} after setting
 ///   the next node in state
-/// - **Side effects**: Mutates `state.currentNode`, clears `state.activePlan` when
-///   leaving the node
+/// - **Side effects**: Mutates `state.currentNode`
 ///
 /// @implNote Stateless. No constructor dependencies. Safe to reuse across
 /// loop iterations.
@@ -43,8 +42,6 @@ public final class TransitionPostProcessor implements PostNodeExecutionProcessor
         } else {
             state.setCurrentNode(resolveNextNode(context));
         }
-
-        state.setActivePlan(null);
 
         return ProcessorOutcome.CONTINUE;
     }

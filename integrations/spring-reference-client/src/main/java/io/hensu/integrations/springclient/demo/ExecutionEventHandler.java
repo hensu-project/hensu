@@ -93,19 +93,6 @@ public class ExecutionEventHandler {
                     "[{}] Execution started: workflowId={}",
                     executionId, event.get("workflowId"));
 
-            case "plan.created" -> LOG.info(
-                    "[{}] Plan created: planId={}, steps={}",
-                    executionId, event.get("planId"),
-                    event.get("steps") instanceof java.util.List<?> s ? s.size() : "?");
-
-            case "step.started" -> LOG.info(
-                    "[{}] Step started: tool={}, index={}",
-                    executionId, event.get("toolName"), event.get("stepIndex"));
-
-            case "step.completed" -> LOG.info(
-                    "[{}] Step completed: index={}, success={}",
-                    executionId, event.get("stepIndex"), event.get("success"));
-
             case "execution.paused" -> {
                 String corrId = String.valueOf(event.getOrDefault("correlationId", ""));
                 String output = toJson(event.get("output"));

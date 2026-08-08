@@ -58,9 +58,9 @@ The `inmem` profile disables JWT authentication and uses in-memory repositories.
 From the repo root:
 
 ```bash
-./hensu build risk-assessment -d integrations/spring-reference-client/working-dir
+hensu build risk-assessment -d integrations/spring-reference-client/working-dir
 
-./hensu push risk-assessment -d integrations/spring-reference-client/working-dir --server http://localhost:8080
+hensu push risk-assessment -d integrations/spring-reference-client/working-dir --server http://localhost:8080
 ```
 
 ### 3 — Start the reference client

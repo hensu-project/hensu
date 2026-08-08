@@ -7,7 +7,6 @@ import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.BacktrackEvent;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionStep;
-import io.hensu.core.plan.PlanStepAction;
 import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
@@ -76,9 +75,6 @@ public class HensuJacksonModule extends SimpleModule {
 
         addSerializer(Action.class, new ActionSerializer());
         addDeserializer(Action.class, new ActionDeserializer());
-
-        addSerializer(PlanStepAction.class, new PlanStepActionSerializer());
-        addDeserializer(PlanStepAction.class, new PlanStepActionDeserializer());
 
         addSerializer(ExecutionPhase.class, new ExecutionPhaseSerializer());
         addDeserializer(ExecutionPhase.class, new ExecutionPhaseDeserializer());

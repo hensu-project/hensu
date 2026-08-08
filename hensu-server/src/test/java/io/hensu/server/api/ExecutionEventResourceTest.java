@@ -9,7 +9,6 @@ import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.helpers.test.AssertSubscriber;
-import java.time.Instant;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -36,11 +35,10 @@ class ExecutionEventResourceTest {
             ExecutionEvent event1 =
                     ExecutionEvent.ExecutionStarted.now("exec-1", "wf-1", "tenant-1");
             ExecutionEvent event2 =
-                    new ExecutionEvent.StepStarted(
-                            "exec-1", "plan-1", 0, "search", "desc", Instant.now());
+                    ExecutionEvent.ExecutionPaused.now(
+                            "exec-1", "wf-1", "node-1", "corr-1", "review", Map.of());
             ExecutionEvent event3 =
-                    new ExecutionEvent.StepCompleted(
-                            "exec-1", "plan-1", 0, true, "output", null, Instant.now());
+                    ExecutionEvent.ExecutionCompleted.success("exec-1", "wf-1", "end", Map.of());
 
             Multi<ExecutionEvent> mockStream = Multi.createFrom().items(event1, event2, event3);
             when(broadcaster.subscribe("exec-1")).thenReturn(mockStream);
@@ -53,8 +51,8 @@ class ExecutionEventResourceTest {
 
             assertThat(subscriber.getItems()).hasSize(3);
             assertThat(subscriber.getItems().get(0).type()).isEqualTo("execution.started");
-            assertThat(subscriber.getItems().get(1).type()).isEqualTo("step.started");
-            assertThat(subscriber.getItems().get(2).type()).isEqualTo("step.completed");
+            assertThat(subscriber.getItems().get(1).type()).isEqualTo("execution.paused");
+            assertThat(subscriber.getItems().get(2).type()).isEqualTo("execution.completed");
         }
 
         @Test

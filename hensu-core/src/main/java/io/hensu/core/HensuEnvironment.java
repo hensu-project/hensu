@@ -4,8 +4,6 @@ import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
-import io.hensu.core.plan.Planner;
-import io.hensu.core.plan.StepHandlerRegistry;
 import io.hensu.core.rubric.RubricRepository;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.WorkflowRepository;
@@ -42,8 +40,6 @@ public final class HensuEnvironment {
     private final ActionExecutor actionExecutor;
     private final WorkflowRepository workflowRepository;
     private final WorkflowStateRepository workflowStateRepository;
-    private final Planner planner;
-    private final StepHandlerRegistry stepHandlerRegistry;
 
     /// Creates a new Hensu environment with the specified components.
     ///
@@ -62,39 +58,6 @@ public final class HensuEnvironment {
             ActionExecutor actionExecutor,
             WorkflowRepository workflowRepository,
             WorkflowStateRepository workflowStateRepository) {
-        this(
-                workflowExecutor,
-                nodeExecutorRegistry,
-                agentRegistry,
-                rubricRepository,
-                actionExecutor,
-                workflowRepository,
-                workflowStateRepository,
-                null,
-                null);
-    }
-
-    /// Creates a new Hensu environment with planning support.
-    ///
-    /// @param workflowExecutor the executor for running workflows, not null
-    /// @param nodeExecutorRegistry registry of node type executors, not null
-    /// @param agentRegistry registry for AI agent instances, not null
-    /// @param rubricRepository storage for rubric definitions, not null
-    /// @param actionExecutor executor for executable actions, may be null for logging-only mode
-    /// @param workflowRepository tenant-scoped storage for workflow definitions, not null
-    /// @param workflowStateRepository tenant-scoped storage for execution state snapshots, not null
-    /// @param planner the planner configured via {@link HensuFactory.Builder}, may be null
-    /// @param stepHandlerRegistry the step handler registry used for plan execution, may be null
-    HensuEnvironment(
-            WorkflowExecutor workflowExecutor,
-            NodeExecutorRegistry nodeExecutorRegistry,
-            AgentRegistry agentRegistry,
-            RubricRepository rubricRepository,
-            ActionExecutor actionExecutor,
-            WorkflowRepository workflowRepository,
-            WorkflowStateRepository workflowStateRepository,
-            Planner planner,
-            StepHandlerRegistry stepHandlerRegistry) {
         this.workflowExecutor = workflowExecutor;
         this.nodeExecutorRegistry = nodeExecutorRegistry;
         this.agentRegistry = agentRegistry;
@@ -102,8 +65,6 @@ public final class HensuEnvironment {
         this.actionExecutor = actionExecutor;
         this.workflowRepository = workflowRepository;
         this.workflowStateRepository = workflowStateRepository;
-        this.planner = planner;
-        this.stepHandlerRegistry = stepHandlerRegistry;
     }
 
     /// Returns the workflow executor for running workflow definitions.
@@ -159,19 +120,5 @@ public final class HensuEnvironment {
     /// @return the workflow state repository, never null
     public WorkflowStateRepository getWorkflowStateRepository() {
         return workflowStateRepository;
-    }
-
-    /// Returns the planner configured via {@link HensuFactory.Builder}, if any.
-    ///
-    /// @return the planner, or {@code null} when planning was not configured
-    public Planner getPlanner() {
-        return planner;
-    }
-
-    /// Returns the step handler registry used for plan execution, if any.
-    ///
-    /// @return the step handler registry, or {@code null} when planning was not configured
-    public StepHandlerRegistry getStepHandlerRegistry() {
-        return stepHandlerRegistry;
     }
 }

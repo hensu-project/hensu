@@ -27,7 +27,6 @@ class InMemoryWorkflowStateRepositoryTest {
                 Map.of(),
                 null,
                 null,
-                null,
                 Instant.now(),
                 checkpointReason);
     }

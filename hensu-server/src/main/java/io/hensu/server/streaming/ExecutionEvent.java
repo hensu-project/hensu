@@ -1,25 +1,15 @@
 package io.hensu.server.streaming;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import io.hensu.core.plan.PlanEvent;
-import io.hensu.core.plan.PlannedStep;
-import io.hensu.core.plan.StepResult;
 import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 
 /// SSE event types for execution streaming.
 ///
 /// These DTOs are JSON-serialized and sent to SSE clients.
-/// Each event type maps to a corresponding {@link PlanEvent}.
 ///
 /// ### Event Types
 /// - `execution.started` - Execution began
-/// - `plan.created` - Plan was created (static or dynamic)
-/// - `step.started` - Plan step began execution
-/// - `step.completed` - Plan step finished
-/// - `plan.revised` - Plan was modified after failure
-/// - `plan.completed` - Plan execution finished
 /// - `execution.completed` - Entire execution finished
 /// - `execution.paused` - Execution paused for review
 /// - `execution.error` - Error occurred
@@ -33,7 +23,7 @@ public sealed interface ExecutionEvent {
     /// Included in the JSON payload so clients can discriminate event types
     /// without relying on the SSE {@code event:} field.
     ///
-    /// @return event type string, e.g. {@code "step.started"}
+    /// @return event type string, e.g. {@code "execution.started"}
     @JsonProperty("type")
     String type();
 
@@ -41,11 +31,6 @@ public sealed interface ExecutionEvent {
     ///
     /// @return execution identifier, never null
     String executionId();
-
-    /// Returns when the event occurred.
-    ///
-    /// @return event timestamp, never null
-    Instant timestamp();
 
     /// Execution started event.
     record ExecutionStarted(
@@ -62,134 +47,6 @@ public sealed interface ExecutionEvent {
         }
     }
 
-    /// Plan created event.
-    record PlanCreated(
-            String executionId,
-            String planId,
-            String nodeId,
-            String source,
-            List<StepInfo> steps,
-            Instant timestamp)
-            implements ExecutionEvent {
-
-        @Override
-        public String type() {
-            return "plan.created";
-        }
-
-        public static PlanCreated from(String executionId, PlanEvent.PlanCreated event) {
-            List<StepInfo> steps = event.steps().stream().map(StepInfo::from).toList();
-            return new PlanCreated(
-                    executionId,
-                    event.planId(),
-                    event.nodeId(),
-                    event.source().name(),
-                    steps,
-                    event.timestamp());
-        }
-    }
-
-    /// Step started event.
-    record StepStarted(
-            String executionId,
-            String planId,
-            int stepIndex,
-            String toolName,
-            String description,
-            Instant timestamp)
-            implements ExecutionEvent {
-
-        @Override
-        public String type() {
-            return "step.started";
-        }
-
-        public static StepStarted from(String executionId, PlanEvent.StepStarted event) {
-            return new StepStarted(
-                    executionId,
-                    event.planId(),
-                    event.step().index(),
-                    event.step().toolName(),
-                    event.step().description(),
-                    event.timestamp());
-        }
-    }
-
-    /// Step completed event.
-    record StepCompleted(
-            String executionId,
-            String planId,
-            int stepIndex,
-            boolean success,
-            String output,
-            String error,
-            Instant timestamp)
-            implements ExecutionEvent {
-
-        @Override
-        public String type() {
-            return "step.completed";
-        }
-
-        public static StepCompleted from(String executionId, PlanEvent.StepCompleted event) {
-            StepResult result = event.result();
-            return new StepCompleted(
-                    executionId,
-                    event.planId(),
-                    result.stepIndex(),
-                    result.success(),
-                    result.output() != null ? result.output().toString() : null,
-                    result.error(),
-                    event.timestamp());
-        }
-    }
-
-    /// Plan revised event.
-    record PlanRevised(
-            String executionId,
-            String planId,
-            String reason,
-            int previousStepCount,
-            int newStepCount,
-            Instant timestamp)
-            implements ExecutionEvent {
-
-        @Override
-        public String type() {
-            return "plan.revised";
-        }
-
-        public static PlanRevised from(String executionId, PlanEvent.PlanRevised event) {
-            return new PlanRevised(
-                    executionId,
-                    event.planId(),
-                    event.reason(),
-                    event.oldSteps().size(),
-                    event.newSteps().size(),
-                    event.timestamp());
-        }
-    }
-
-    /// Plan completed event.
-    record PlanCompleted(
-            String executionId, String planId, boolean success, String output, Instant timestamp)
-            implements ExecutionEvent {
-
-        @Override
-        public String type() {
-            return "plan.completed";
-        }
-
-        public static PlanCompleted from(String executionId, PlanEvent.PlanCompleted event) {
-            return new PlanCompleted(
-                    executionId,
-                    event.planId(),
-                    event.success(),
-                    event.output(),
-                    event.timestamp());
-        }
-    }
-
     /// Execution paused event (awaiting review or external input).
     ///
     /// Carries the same public context as {@link ExecutionCompleted} so that clients
@@ -201,9 +58,8 @@ public sealed interface ExecutionEvent {
     /// @param executionId   the execution identifier, never null
     /// @param workflowId    the workflow definition identifier, never null
     /// @param nodeId        the node where execution paused, may be null
-    /// @param planId        the active plan identifier, may be null
     /// @param correlationId opaque identifier for this pause point – must be sent
-    ///                      back in the resume request, may be null for plan-level pauses
+    ///                      back in the resume request, may be null
     /// @param reason        why execution paused (e.g. "review"), never null
     /// @param output        public context variables at the point of pause, never null,
     ///                      may be empty
@@ -212,7 +68,6 @@ public sealed interface ExecutionEvent {
             String executionId,
             String workflowId,
             String nodeId,
-            String planId,
             String correlationId,
             String reason,
             Map<String, Object> output,
@@ -229,7 +84,6 @@ public sealed interface ExecutionEvent {
         /// @param executionId   the execution identifier, not null
         /// @param workflowId    the workflow identifier, not null
         /// @param nodeId        the node where execution paused, may be null
-        /// @param planId        the active plan identifier, may be null
         /// @param correlationId opaque pause-point identifier, may be null
         /// @param reason        why execution paused, not null
         /// @param output        public context variables, not null
@@ -238,19 +92,11 @@ public sealed interface ExecutionEvent {
                 String executionId,
                 String workflowId,
                 String nodeId,
-                String planId,
                 String correlationId,
                 String reason,
                 Map<String, Object> output) {
             return new ExecutionPaused(
-                    executionId,
-                    workflowId,
-                    nodeId,
-                    planId,
-                    correlationId,
-                    reason,
-                    output,
-                    Instant.now());
+                    executionId, workflowId, nodeId, correlationId, reason, output, Instant.now());
         }
     }
 
@@ -326,16 +172,6 @@ public sealed interface ExecutionEvent {
         public static ExecutionError now(
                 String executionId, String errorType, String message, String nodeId) {
             return new ExecutionError(executionId, errorType, message, nodeId, Instant.now());
-        }
-    }
-
-    /// Step information DTO.
-    record StepInfo(int index, String toolName, String description, Map<String, Object> arguments) {
-
-        public static StepInfo from(PlannedStep step) {
-            String label = step.isSynthesize() ? "_synthesize" : step.toolName();
-            Map<String, Object> args = step.isSynthesize() ? Map.of() : step.arguments();
-            return new StepInfo(step.index(), label, step.description(), args);
         }
     }
 }

@@ -75,7 +75,6 @@ class ExecutionStateServiceTest {
                 Map.of(),
                 null,
                 null,
-                null,
                 Instant.now(),
                 "paused");
     }

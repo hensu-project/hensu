@@ -151,7 +151,6 @@ public class VerboseExecutionListener implements ExecutionListener {
         return switch (response) {
             case AgentResponse.TextResponse t -> t.content();
             case AgentResponse.ToolRequest t -> "Tool: " + t.toolName() + " - " + t.reasoning();
-            case AgentResponse.PlanProposal p -> "Plan with " + p.steps().size() + " steps";
             case AgentResponse.Error e -> e.message();
         };
     }

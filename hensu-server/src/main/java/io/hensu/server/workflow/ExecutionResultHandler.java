@@ -71,7 +71,6 @@ final class ExecutionResultHandler {
                                 executionId,
                                 workflowId,
                                 pausedState.getCurrentNode(),
-                                null,
                                 correlationId,
                                 "review",
                                 WorkflowContextUtil.publicContext(pausedState.getContext())));
