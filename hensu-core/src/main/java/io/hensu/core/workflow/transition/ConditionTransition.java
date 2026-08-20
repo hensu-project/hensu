@@ -21,6 +21,12 @@ import java.util.Set;
 /// `status == "complete" AND score >= 80` is deliberately inexpressible – have the
 /// agent emit a combined variable instead (e.g. `done`).
 ///
+/// ### Engine variables are inexpressible here
+/// `score`, `approved`, and `recommendation` are rejected at construction. They have dedicated
+/// rules — {@link ScoreTransition} and {@link ApprovalTransition} — whose semantics the engine
+/// relies on when wiring prompts, extraction, and the human review verdict. Routing on them
+/// through a generic condition would look equivalent and behave differently.
+///
 /// ### Type mismatches are loud
 /// A value that cannot be coerced to the predicate's expected form (absent
 /// variable, non-numeric string under a numeric operator, structured JSON object)
@@ -48,6 +54,14 @@ public record ConditionTransition(
         if (variable == null || variable.isBlank()) {
             throw new IllegalArgumentException("variable must not be blank");
         }
+        if (EngineVariables.isEngineVar(variable)) {
+            throw new IllegalArgumentException(
+                    "'"
+                            + variable
+                            + "' is a reserved engine variable and cannot be routed on with a"
+                            + " condition — use onApproval/onRejection for 'approved' and"
+                            + " onScore for 'score'");
+        }
         if (condition == null) {
             throw new IllegalArgumentException("condition must not be null");
         }
@@ -60,7 +74,7 @@ public record ConditionTransition(
     /// captures both from the agent's JSON response and the feedback pipeline can
     /// carry the agent's justification into retry prompts.
     @Override
-    public Set<String> requiredEngineVars() {
+    public Set<String> requiredRoutingVars() {
         return Set.of(variable, EngineVariables.RECOMMENDATION);
     }
 

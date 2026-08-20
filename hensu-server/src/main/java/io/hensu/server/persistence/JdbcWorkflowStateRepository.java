@@ -73,16 +73,20 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
             """;
 
     /// Only returns executions that are safely paused for human review.
-    /// {@code server_node_id IS NULL} excludes active checkpoints;
-    /// {@code checkpoint_reason = 'paused'} excludes terminal states
-    /// (completed, failed, rejected) that also have a null server lease.
+    ///
+    /// The filter is the durable {@link io.hensu.core.state.ExecutionPhase}, not the
+    /// `checkpoint_reason` label. Resume looks a row up by id and acts on its phase, so any row
+    /// written with `checkpoint_reason = 'checkpoint'` while awaiting a review was resumable but
+    /// invisible here — an execution genuinely waiting on a human that no operator could find.
+    /// `server_node_id IS NULL` still excludes rows leased by a live node.
     private static final String SQL_FIND_PAUSED =
             """
             SELECT execution_id, workflow_id, current_node_id, context, retry_counters, history,
                    phase, checkpoint_reason, created_at
             FROM runtime.execution_states
             WHERE tenant_id = ? AND current_node_id IS NOT NULL
-                  AND server_node_id IS NULL AND checkpoint_reason = 'paused'
+                  AND server_node_id IS NULL
+                  AND phase ->> 'type' = 'awaiting_post_processor'
             ORDER BY created_at
             """;
 

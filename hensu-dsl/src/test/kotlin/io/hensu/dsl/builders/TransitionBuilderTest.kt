@@ -170,6 +170,38 @@ class TransitionBuilderTest {
     }
 
     @Test
+    fun `should reject onCondition on an engine variable`() {
+        // Routing on 'approved' through a generic condition looks equivalent to onApproval but
+        // bypasses the semantics the engine wires prompts, extraction, and the human review
+        // verdict against — so it is refused where the author wrote it.
+        assertThatThrownBy {
+                workflow("EngineVarCondition", workingDir) {
+                    agents {
+                        agent("agent1") {
+                            role = "Test"
+                            model = "test"
+                        }
+                    }
+
+                    graph {
+                        start at "worker"
+
+                        node("worker") {
+                            agent = "agent1"
+                            prompt = "Test"
+
+                            onCondition("approved") { whenValue equalTo true goto "deploy" }
+                        }
+
+                        end("deploy")
+                    }
+                }
+            }
+            .hasMessageContaining("reserved engine variable")
+            .hasMessageContaining("onApproval")
+    }
+
+    @Test
     fun `should reject overlapping condition arms`() {
         // greaterThanOrEqual 0.5 and greaterThan 0.7 both match 0.8; first-match-wins would
         // silently mask

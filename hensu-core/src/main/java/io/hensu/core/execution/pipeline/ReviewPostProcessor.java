@@ -10,10 +10,12 @@ import io.hensu.core.review.ReviewDecision;
 import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.review.ReviewMode;
 import io.hensu.core.review.ReviewOutcome;
+import io.hensu.core.review.ReviewVerdict;
 import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.util.LogSanitizer;
 import io.hensu.core.workflow.node.StandardNode;
+import io.hensu.core.workflow.transition.ApprovalArms;
 import java.util.Map;
 import java.util.logging.Logger;
 
@@ -21,21 +23,45 @@ import java.util.logging.Logger;
 ///
 /// Invokes the {@link ReviewHandler} when a {@link StandardNode} has a non-null
 /// {@link ReviewConfig}, then maps the {@link ReviewDecision} to a pipeline outcome:
-/// - {@link ReviewDecision.Approve} — merges context edits, returns CONTINUE
-/// - {@link ReviewDecision.Backtrack} — merges context edits, resets position, returns CONTINUE
-/// - {@link ReviewDecision.Reject} — returns Terminal(Rejected)
+///
+/// | Decision | Verdict recorded | Outcome |
+/// |---|---|---|
+/// | {@link ReviewDecision.Approve} | approved, no reason | CONTINUE — the graph routes |
+/// | {@link ReviewDecision.Backtrack} | rejected, with reason | CONTINUE — position reset |
+/// | {@link ReviewDecision.Reject}, `onRejection` arm declared | rejected, with reason | CONTINUE —
+///                                                                               the graph routes |
+/// | {@link ReviewDecision.Reject}, no such arm | none | Terminal(Rejected) |
+///
+/// ### The reviewer's decision travels on its own channel
+/// The verdict is recorded as a {@link ReviewVerdict} on the state, never as an engine
+/// variable. The `approved` engine variable says what the *agent* concluded about its own
+/// output — {@link OutputExtractionPostProcessor} writes it — and this processor leaves it
+/// untouched. Authority is expressed where the decision is read instead:
+/// {@link io.hensu.core.workflow.transition.ApprovalTransition} routes on the verdict whenever
+/// one is present and falls back to the agent's `approved` otherwise. A human approval
+/// therefore overrides an agent's self-rejection without either value overwriting the other,
+/// and without the outcome depending on the order of the processor pipeline.
+///
+/// {@link TransitionPostProcessor} owns the rest of the verdict's lifecycle: it promotes the
+/// reviewer's reason to {@link io.hensu.core.execution.EngineVariables#RECOMMENDATION} when the
+/// matched transition carries feedback, and clears the verdict once routing is resolved.
+///
+/// The automatic approvals implied by {@link ReviewMode#DISABLED} and by
+/// {@link ReviewMode#OPTIONAL} on a successful result are engine defaults rather than reviewer
+/// verdicts, so they record no verdict at all and the graph routes on agent output as usual.
 ///
 /// ### Contracts
 /// - **Precondition**: `context.result()` is non-null (post-execution pipeline)
 /// - **Postcondition**: Returns CONTINUE or Terminal
-/// - **Side effects**: May merge context edits from reviewer, appends
-///   backtrack events to history on Backtrack decisions
+/// - **Side effects**: May merge context edits from the reviewer, sets the state's
+///   {@link ReviewVerdict}, appends backtrack events to history on Backtrack decisions
 ///
 /// @implNote Receives {@link ReviewHandler} via constructor injection. Stateless
 /// beyond the injected handler reference.
 ///
 /// @see ReviewHandler for review callback contract
 /// @see ReviewDecision for possible review outcomes
+/// @see ReviewVerdict for the verdict channel and its transient lifetime
 public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
 
     public static final String PROCESSOR_ID = "ReviewPostProcessor";
@@ -83,48 +109,51 @@ public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
             ExecutionPhase.validateCorrelation(state.getPhase(), applyReview);
             state.setResumeInput(null);
             logger.info("Applying delivered review decision for node: " + node.getId());
-            return handleDecision(applyReview.decision(), node.getId(), context);
+            return handleDecision(applyReview.decision(), standardNode, context);
+        }
+
+        if (isAutoApproved(reviewConfig, context)) {
+            return ProcessorOutcome.CONTINUE;
         }
 
         ReviewOutcome outcome = requestReview(standardNode, context);
 
         return switch (outcome) {
             case ReviewOutcome.Decided(var decision) ->
-                    handleDecision(decision, node.getId(), context);
+                    handleDecision(decision, standardNode, context);
             case ReviewOutcome.Pending(var correlationId) ->
                     new ProcessorOutcome.SuspendForExternal(
                             "ReviewPostProcessor", context.result(), correlationId);
         };
     }
 
+    /// Reports whether the engine approves this node without consulting a reviewer.
+    ///
+    /// These are configuration defaults rather than human verdicts, so the caller returns
+    /// CONTINUE without recording a verdict — claiming a reviewer approved a node whose review
+    /// is disabled or optional would silently reroute it away from what the agent decided.
+    ///
+    /// @param config the node's review configuration, not null
+    /// @param context the pipeline context carrying the node result, not null
+    /// @return true when no human review is required for this execution
+    private boolean isAutoApproved(ReviewConfig config, ProcessorContext context) {
+        return config.getMode() == ReviewMode.DISABLED
+                || (config.getMode() == ReviewMode.OPTIONAL
+                        && context.result().getStatus() == ResultStatus.SUCCESS);
+    }
+
     private ProcessorOutcome handleDecision(
-            ReviewDecision decision, String nodeId, ProcessorContext context) {
+            ReviewDecision decision, StandardNode node, ProcessorContext context) {
         return switch (decision) {
             case ReviewDecision.Approve approve -> handleApprove(approve, context);
-            case ReviewDecision.Backtrack backtrack -> handleBacktrack(backtrack, nodeId, context);
-            case ReviewDecision.Reject reject -> {
-                logger.info(
-                        "Rejecting node: "
-                                + LogSanitizer.sanitize(nodeId)
-                                + " due to: "
-                                + LogSanitizer.sanitize(reject.getReason()));
-                yield ProcessorOutcome.terminal(
-                        new ExecutionResult.Rejected(reject.getReason(), context.state()));
-            }
+            case ReviewDecision.Backtrack backtrack ->
+                    handleBacktrack(backtrack, node.getId(), context);
+            case ReviewDecision.Reject reject -> handleReject(reject, node, context);
         };
     }
 
     private ReviewOutcome requestReview(StandardNode node, ProcessorContext context) {
         ReviewConfig config = node.getReviewConfig();
-
-        if (config.getMode() == ReviewMode.DISABLED) {
-            return ReviewOutcome.decided(new ReviewDecision.Approve());
-        }
-
-        if (config.getMode() == ReviewMode.OPTIONAL
-                && context.result().getStatus() == ResultStatus.SUCCESS) {
-            return ReviewOutcome.decided(new ReviewDecision.Approve());
-        }
 
         logger.info("Requesting human review for node: " + node.getId());
         return reviewHandler.requestReview(
@@ -141,6 +170,38 @@ public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
         if (approve.hasContextEdits()) {
             mergeContextEdits(approve.contextEdits(), context.state());
         }
+        context.state().setReviewVerdict(ReviewVerdict.approval());
+        return ProcessorOutcome.CONTINUE;
+    }
+
+    /// Applies a rejection, either by routing it through the graph or by aborting execution.
+    ///
+    /// When the node declares an `onRejection` arm — bare or decorated by
+    /// {@link io.hensu.core.workflow.transition.BoundedTransition} — the rejection becomes a
+    /// {@link ReviewVerdict} on the state and the pipeline continues, so
+    /// {@link TransitionPostProcessor} resolves that arm and the workflow ends wherever the
+    /// author routed it. A node with no rejection arm has nowhere to route, so the rejection
+    /// terminates the workflow instead.
+    ///
+    /// @param reject the reviewer's rejection, not null
+    /// @param node the node under review, not null
+    /// @param context the pipeline context, not null
+    /// @return CONTINUE when the graph routes the rejection, Terminal(Rejected) otherwise
+    private ProcessorOutcome handleReject(
+            ReviewDecision.Reject reject, StandardNode node, ProcessorContext context) {
+
+        logger.info(
+                "Rejecting node: "
+                        + LogSanitizer.sanitize(node.getId())
+                        + " due to: "
+                        + LogSanitizer.sanitize(reject.getReason()));
+
+        if (!ApprovalArms.declares(node.getTransitionRules(), false)) {
+            return ProcessorOutcome.terminal(
+                    new ExecutionResult.Rejected(reject.getReason(), context.state()));
+        }
+
+        context.state().setReviewVerdict(ReviewVerdict.rejection(reject.getReason()));
         return ProcessorOutcome.CONTINUE;
     }
 
@@ -152,6 +213,11 @@ public final class ReviewPostProcessor implements PostNodeExecutionProcessor {
         if (backtrack.hasContextEdits()) {
             mergeContextEdits(backtrack.contextEdits(), state);
         }
+
+        // The reason is feedback for the node being returned to. TransitionPostProcessor
+        // promotes it to `recommendation` on the redirected branch, so the reviewer's words
+        // reach the retried node through the same single owner as every other feedback path.
+        state.setReviewVerdict(ReviewVerdict.rejection(backtrack.getReason()));
 
         String targetStep = backtrack.getTargetStep();
         state.setCurrentNode(targetStep);

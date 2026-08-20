@@ -1,6 +1,7 @@
 package io.hensu.core.workflow.transition;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
@@ -12,6 +13,8 @@ import io.hensu.core.workflow.transition.Condition.Op;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -97,5 +100,16 @@ class ConditionTransitionTest {
             context.put("status", value);
         }
         return new HensuState(context, "test-workflow", "current-node", new ExecutionHistory());
+    }
+
+    @Test
+    @DisplayName("rejects an engine variable — onApproval and onScore own those semantics")
+    void rejectsEngineVariable() {
+        assertThatThrownBy(
+                        () ->
+                                new ConditionTransition(
+                                        "approved", new Condition.Equals("true"), "next"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("onApproval");
     }
 }

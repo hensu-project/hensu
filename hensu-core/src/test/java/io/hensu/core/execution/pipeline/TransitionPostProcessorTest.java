@@ -9,6 +9,7 @@ import io.hensu.core.execution.executor.ExecutionContext;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ResultStatus;
+import io.hensu.core.review.ReviewVerdict;
 import io.hensu.core.rubric.model.ComparisonOperator;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.state.HensuState;
@@ -266,7 +267,7 @@ class TransitionPostProcessorTest {
         @DisplayName("forward transition clears the declared condition variable — no stale routing")
         void forwardClearsDeclaredConditionVariable() {
             // "status" is not in the hardcoded score/approved pair; if the clear-set
-            // is not derived from requiredEngineVars(), the value written here leaks
+            // is not derived from requiredRoutingVars(), the value written here leaks
             // into a later node routing a ConditionTransition on the same name and
             // fires it prematurely (ticket #88 defect 2).
             var rule =
@@ -388,6 +389,78 @@ class TransitionPostProcessorTest {
             processor.process(ctx);
 
             assertThat(ctx.state().getContext()).doesNotContainKey(EngineVariables.RECOMMENDATION);
+        }
+    }
+
+    // — Review verdict lifecycle —————————————————————————————————————————
+
+    @Nested
+    @DisplayName("Review verdict lifecycle")
+    class VerdictLifecycle {
+
+        @Test
+        @DisplayName("promotes the reviewer's reason over the agent's recommendation on feedback")
+        void promotesReasonOnWithFeedback() {
+            var ctx =
+                    contextWithTransitions(
+                            "node", List.of(new ApprovalTransition(false, "fix", true)));
+            ctx.state().getContext().put(EngineVariables.RECOMMENDATION, "agent's own note");
+            ctx.state().setReviewVerdict(ReviewVerdict.rejection("cite the source"));
+
+            processor.process(ctx);
+
+            assertThat(ctx.state().getContext())
+                    .containsEntry(EngineVariables.RECOMMENDATION, "cite the source");
+        }
+
+        @Test
+        @DisplayName("promotes the reviewer's reason on a backtrack redirect")
+        void promotesReasonOnRedirect() {
+            var ctx = contextWithTransitions("node", List.of(new SuccessTransition("next")));
+            ctx.state().setNodeRedirected(true);
+            ctx.state().setReviewVerdict(ReviewVerdict.rejection("add the risk table"));
+
+            processor.process(ctx);
+
+            assertThat(ctx.state().getContext())
+                    .containsEntry(EngineVariables.RECOMMENDATION, "add the risk table");
+        }
+
+        @Test
+        @DisplayName("a blank reason leaves existing feedback intact rather than blanking it")
+        void blankReasonDoesNotOverwrite() {
+            var ctx = contextWithTransitions("node", List.of(new SuccessTransition("next")));
+            ctx.state().getContext().put(EngineVariables.RECOMMENDATION, "rubric note");
+            ctx.state().setNodeRedirected(true);
+            ctx.state().setReviewVerdict(ReviewVerdict.rejection("   "));
+
+            processor.process(ctx);
+
+            assertThat(ctx.state().getContext())
+                    .containsEntry(EngineVariables.RECOMMENDATION, "rubric note");
+        }
+
+        @Test
+        @DisplayName("clears the verdict after routing so it cannot leak into the next node")
+        void clearsVerdictAfterRouting() {
+            var ctx = contextWithTransitions("node", List.of(new SuccessTransition("next")));
+            ctx.state().setReviewVerdict(ReviewVerdict.approval());
+
+            processor.process(ctx);
+
+            assertThat(ctx.state().getReviewVerdict()).isNull();
+        }
+
+        @Test
+        @DisplayName("clears the verdict even when no rule matches and routing throws")
+        void clearsVerdictWhenRoutingThrows() {
+            var ctx = contextWithTransitions("orphan", List.of());
+            ctx.state().setReviewVerdict(ReviewVerdict.approval());
+
+            assertThatThrownBy(() -> processor.process(ctx))
+                    .isInstanceOf(IllegalStateException.class);
+
+            assertThat(ctx.state().getReviewVerdict()).isNull();
         }
     }
 

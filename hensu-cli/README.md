@@ -148,7 +148,8 @@ execution and sends a `review_request` frame to the attached client. The termina
 node output and prompts for a decision:
 
 - **Approve** — accept the output and continue to the next node.
-- **Reject** — reject the output and fail the execution.
+- **Reject** — reject the output. The decision is routed like any other: on a node declaring
+  `onRejection`, the workflow continues to that target; on a node without one, the execution ends.
 - **Backtrack** — jump back to a previous node. You can optionally edit the prompt context in
   `$EDITOR` (via `ContextEditor`) before the node re-executes.
 

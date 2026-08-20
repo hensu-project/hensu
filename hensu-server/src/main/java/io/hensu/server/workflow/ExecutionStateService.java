@@ -94,6 +94,13 @@ public class ExecutionStateService {
             TenantInfo tenant = TenantInfo.simple(tenantId);
             String workflowId = snapshot.workflowId();
 
+            // Validated before the try below, whose catch marks the execution failed. A resume
+            // request that does not fit the persisted phase is a bad request, not a broken
+            // execution: the execution stays paused and resumable, and the caller gets a 400
+            // from IllegalArgumentExceptionMapper. The lease is already held and the finally
+            // block still releases it.
+            ExecutionPhase.validateCorrelation(snapshot.phase(), resumeInput);
+
             try {
                 eventBroadcaster.runAs(
                         executionId,
@@ -102,8 +109,6 @@ public class ExecutionStateService {
                                     tenant,
                                     () -> {
                                         HensuState state = snapshot.toState();
-                                        ExecutionPhase.validateCorrelation(
-                                                state.getPhase(), resumeInput);
                                         state.setResumeInput(resumeInput);
 
                                         if (resumeInput

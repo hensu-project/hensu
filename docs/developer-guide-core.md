@@ -219,7 +219,7 @@ Two further responsibilities live here:
   silent `false`. Diagnostics are suppressed for failed node results, where the routed variable legitimately never
   existed.
 - **Engine variable lifecycle.** The routing clear-set is derived from the node's rules'
-  `TransitionRule.requiredEngineVars()` (plus the built-in `score`/`approved` pair, minus `recommendation`, which has
+  `TransitionRule.requiredRoutingVars()` (plus the built-in `score`/`approved` pair, minus `recommendation`, which has
   its own feedback lifecycle). Declared condition variables are therefore cleared on every transition, preventing a
   stale value from a previous iteration from firing an exit arm prematurely. No other component clears engine
   variables from the state context.
@@ -347,8 +347,25 @@ When the execution resumes, the caller supplies a `ResumeInput` — a sealed typ
 2. `NodeLifecycleCoordinator` sees `ExecutionPhase.Awaiting` → calls `postPipeline.executePostFrom("ReviewPostProcessor", ctx)`.
 3. `ReviewPostProcessor.process()` checks `state.getResumeInput()` for `ApplyReview` **before** calling `requestReview()` — this prevents an infinite `Pending` loop on resume.
 4. Validates that `correlationId` matches the `Awaiting` phase via `ExecutionPhase.validateCorrelation()`.
-5. Applies the decision (Approve/Backtrack/Reject) and clears `resumeInput`.
-6. Remaining post-processors run normally (NodeComplete → History → Transition).
+5. Applies the decision (Approve/Backtrack/Reject), records a `ReviewVerdict` on the state, and clears `resumeInput`.
+6. Remaining post-processors run normally (NodeComplete → History → Transition). `TransitionPostProcessor` routes on the verdict, promotes its reason to `recommendation` where the transition carries feedback, and clears it.
+
+The phase and the resume input must agree in both directions. `ExecutionPhase.validateCorrelation()` rejects an `ApplyReview` against a non-`Awaiting` phase, and equally rejects a `None` or `ApplyContextEdits` against an `Awaiting` one — an execution paused at a review gate has nothing to resume *with* except a decision, and accepting anything else re-entered the post-pipeline and silently requested the review again. On the server this check runs before the execution record is touched, so a bad request is a 400 that leaves the execution paused and resumable rather than marking it failed.
+
+### The review verdict channel
+
+A reviewer's decision does not travel as an engine variable. `ReviewPostProcessor` records a `ReviewVerdict(approved, reason)` on `HensuState`, and `ApprovalTransition` reads it in preference to the agent-written `approved` when routing. This keeps `approved` to two writers with one meaning — the agent's self-assessment via output extraction, and consensus — and makes "the reviewer decides" a property of the rule that reads the values rather than of the order in which processors write them.
+
+A rejection is routed through the graph whenever the node declares an `onRejection` arm, so `onRejection goto "declined"` is reachable; only a node with no such arm terminates on rejection.
+
+The verdict is transient like `resumeInput`: never persisted, never carried into a fork branch, and cleared by `TransitionPostProcessor` on every exit path.
+
+### Recovery granularity
+
+Two at-least-once boundaries follow from what a checkpoint can record.
+
+- **Forks re-run whole.** `CheckpointPreProcessor` suppresses checkpoints for branch states (`HensuState.isBranchState()`), because a checkpoint holds one cursor and a fork has several. The parent's last checkpoint before the fork still names the fork node, so recovery re-runs every sub-flow — including ones that had already completed, whose agent calls are billed again. Branches record into private `ExecutionHistory` copies; `ForkNodeExecutor` folds them back into the parent in target-declaration order after the join, so the history is complete and reproducible.
+- **Reviews can be re-requested.** A crash between applying a review decision and the next checkpoint loses the verdict, and recovery re-prompts the review. Persisting the verdict would not close that window, only move it earlier.
 
 ### Backtrack prompt override
 
@@ -789,7 +806,7 @@ Key types and semantics:
 - A `TYPE_MISMATCH` (absent variable, non-numeric string under a numeric operator, nested JSON object) never
   matches **and** surfaces through `mismatchDiagnostic()` → `ExecutionListener.onTransitionWarning` — see
   `TransitionPostProcessor` above.
-- `ConditionTransition.requiredEngineVars()` returns the routed variable plus `recommendation`, which drives both
+- `ConditionTransition.requiredRoutingVars()` returns the routed variable plus `recommendation`, which drives both
   prompt injection (the agent is instructed to emit the variable) and the transition clear-set.
 - The DSL validates at build time: the routed variable must be declared in `writes()`, arms must be disjoint
   (`ArmIntervals` in `hensu-dsl`), and no arm may follow the `otherwise` else-arm.
@@ -801,7 +818,7 @@ See the [DSL Reference](dsl-reference.md#condition-based-transitions-oncondition
 
 ### Bounded Revise
 
-`BoundedTransition` decorates a trigger rule (`ApprovalTransition`, `NoConsensusTransition`, a single-condition `ScoreTransition`, a `ConditionTransition` arm, or an `AlwaysTransition` else-arm) with a per-node retry budget and an escalation target. It backs the DSL `revise "producer" retry N otherwise "escalate"` form on `onRejection`, `onNoConsensus`, score arms, and condition arms. Counters are namespaced per node and trigger kind (`approval`, `consensus`, `score`, `condition`) in `HensuState`; `TransitionPostProcessor` increments on a backtrack and resets on any forward move. The decorator is transparent to engine-variable wiring — injectors and output extraction consume `TransitionRule.requiredEngineVars()`, and feedback injection consumes `TransitionRule.retryFeedback()` (`NONE` for failure triggers, `CONSENSUS` for no-consensus, `RECOMMENDATION` otherwise) rather than `instanceof`, so a revise-only node still gets its `approved`/`score`/`recommendation` instructions and decorators keep their semantics. See the [DSL Reference](dsl-reference.md#bounded-revise-revise) for author-facing syntax.
+`BoundedTransition` decorates a trigger rule (`ApprovalTransition`, `NoConsensusTransition`, a single-condition `ScoreTransition`, a `ConditionTransition` arm, or an `AlwaysTransition` else-arm) with a per-node retry budget and an escalation target. It backs the DSL `revise "producer" retry N otherwise "escalate"` form on `onRejection`, `onNoConsensus`, score arms, and condition arms. Counters are namespaced per node and trigger kind (`approval`, `consensus`, `score`, `condition`) in `HensuState`; `TransitionPostProcessor` increments on a backtrack and resets on any forward move. The decorator is transparent to engine-variable wiring — injectors and output extraction consume `TransitionRule.requiredRoutingVars()`, and feedback injection consumes `TransitionRule.retryFeedback()` (`NONE` for failure triggers, `CONSENSUS` for no-consensus, `RECOMMENDATION` otherwise) rather than `instanceof`, so a revise-only node still gets its `approved`/`score`/`recommendation` instructions and decorators keep their semantics. See the [DSL Reference](dsl-reference.md#bounded-revise-revise) for author-facing syntax.
 
 ## State Schema
 
@@ -884,6 +901,7 @@ WorkflowValidator.validate(workflow); // throws IllegalStateException on violati
 | Transition target doesn't exist | `Node 'write' has transition to 'revieww' which does not exist in the workflow` |
 | `writes` name not in schema     | `Node 'write' writes 'draft' which is not declared in state schema`             |
 | Prompt `{var}` not in schema    | `Node 'write' prompt references '{tone}' which is not declared in state schema` |
+| Review node missing an approval arm | `Node 'assess' is under human review and declares an approval arm but no 'onRejection' transition, so a rejection from the reviewer has nowhere to go` |
 
 Validation is a no-op when no schema is declared. Legacy workflows always pass through unchanged.
 
@@ -916,7 +934,7 @@ whenever the context carries a non-blank `recommendation` value (preserved acros
 
 Each remaining injector fires when **either** of two conditions is met:
 1. A transition rule on the node declares the injector's variable via
-   `TransitionRule.requiredEngineVars()` (shared activation logic in the `TransitionVariableInjector` base class —
+   `TransitionRule.requiredRoutingVars()` (shared activation logic in the `TransitionVariableInjector` base class —
    no `instanceof` on rule types, so `BoundedTransition` decorators and `ConditionTransition` arms activate the
    same injectors as their bare counterparts)
 2. The execution context carries a `BranchExecutionConfig` where `needsSelfScoring()` returns true
@@ -1486,67 +1504,69 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 
 ## Key Files Reference
 
-| File                                                    | Description                                                                                      |
-|---------------------------------------------------------|--------------------------------------------------------------------------------------------------|
-| `HensuFactory.java`                                     | Bootstrap and environment creation                                                               |
-| `HensuEnvironment.java`                                 | Container for all core components                                                                |
-| `HensuConfig.java`                                      | Configuration (storage backend)                                                                  |
-| `agent/AgentFactory.java`                               | Creates agents from explicit providers                                                           |
-| `agent/AgentProvider.java`                              | Provider interface for pluggable AI backends                                                     |
-| `agent/AgentRegistry.java`                              | Agent lookup interface                                                                           |
-| `agent/DefaultAgentRegistry.java`                       | Thread-safe agent registry                                                                       |
-| `agent/ToolCapable.java`                                | Narrow interface for agents that support tool sessions                                           |
-| `agent/ToolSession.java`                                | Call-scoped tool loop session (start/submit/compact/close)                                       |
-| `agent/stub/StubAgentProvider.java`                     | Testing provider (priority 1000 when enabled)                                                    |
-| `agent/stub/StubToolSession.java`                       | Scripted tool session for testing (`---TURN---` syntax)                                          |
-| `execution/WorkflowExecutor.java`                       | Main execution engine                                                                            |
-| `execution/NodeLifecycleCoordinator.java`               | Per-node lifecycle: phase dispatch, pipeline orchestration                                       |
-| `execution/executor/GenericNodeHandler.java`            | Generic node handler interface                                                                   |
-| `execution/action/ActionHandler.java`                   | Action handler interface                                                                         |
-| `execution/action/ActionExecutor.java`                  | Action dispatch interface                                                                        |
-| `execution/result/ExecutionResult.java`                 | Workflow execution outcome (Completed, Paused, Rejected, Failure)                                |
-| `workflow/Workflow.java`                                | Core data model                                                                                  |
-| `workflow/WorkflowRepository.java`                      | Workflow definition persistence interface                                                        |
-| `workflow/InMemoryWorkflowRepository.java`              | In-memory workflow repository (default)                                                          |
-| `state/HensuState.java`                                 | Mutable workflow execution state; `branch(node)` creates isolated copies for concurrent branches |
-| `state/HensuSnapshot.java`                              | Immutable state snapshot for persistence                                                         |
-| `state/ExecutionPhase.java`                             | Sealed: `Initial`, `Awaiting`, `Terminal` — tracks position within a node's lifecycle            |
-| `state/WorkflowStateRepository.java`                    | Execution state persistence interface                                                            |
-| `state/InMemoryWorkflowStateRepository.java`            | In-memory state repository (default)                                                             |
-| `workflow/state/WorkflowStateSchema.java`               | Typed state variable schema (optional per-workflow declaration)                                  |
-| `workflow/state/StateVariableDeclaration.java`          | Single variable declaration record (name, type, isInput)                                         |
-| `workflow/state/VarType.java`                           | Variable type enum: STRING, NUMBER, BOOLEAN, LIST_STRING                                         |
-| `workflow/transition/ApprovalTransition.java`           | Boolean approval routing via the `approved` engine variable                                      |
-| `workflow/transition/NoConsensusTransition.java`        | Routes when a parallel node fails to reach consensus                                             |
-| `workflow/transition/BoundedTransition.java`            | Decorates a trigger with a per-node retry budget + escalation target (backs DSL `revise`)        |
-| `workflow/transition/Condition.java`                    | Sealed value predicates (`Equals`, `NotEquals`, `Compare`) with coercion + `TYPE_MISMATCH`       |
-| `workflow/transition/ConditionTransition.java`          | Routes on a declared output variable via a `Condition` predicate (backs DSL `onCondition`)       |
-| `workflow/transition/AlwaysTransition.java`             | Else-arm of `onScore`/`onCondition`: routes every successful result to its target                |
-| `workflow/transition/TransitionRuleChecks.java`         | Shared rule-list validations (duplicate bounded namespaces, bounded-before-exit warning)         |
-| `workflow/validation/SubWorkflowGraphValidator.java`    | Load-time cycle + dangling-reference detector for sub-workflow graphs                            |
-| `workflow/validation/WorkflowValidator.java`            | Load-time validator for transition targets, `writes`, and prompt `{variable}` references         |
-| `rubric/RubricEngine.java`                              | Quality evaluation engine                                                                        |
-| `rubric/model/Rubric.java`                              | Rubric definition model                                                                          |
-| `tool/ToolDefinition.java`                              | Protocol-agnostic tool descriptor                                                                |
-| `tool/ToolCallResult.java`                              | Tool execution result record (success/failure factories, `asText()`)                             |
-| `tool/ToolRegistry.java`                                | Tool registration/lookup interface                                                               |
-| `execution/EngineVariables.java`                        | SSOT for engine variable names (`score`, `approved`, `recommendation`)                           |
-| `execution/SynchronizedListenerDecorator.java`          | Thread-safe listener wrapper for parallel branch execution                                       |
-| `execution/executor/AgentLifecycleRunner.java`          | Composition-based agent call: prompt enrichment → agent execution → output extraction            |
-| `execution/executor/ToolLoopRunner.java`                | Drives agent-native tool loop (budget enforcement, feed-back, sealed termination)                |
-| `execution/parallel/BranchExecutionConfig.java`         | Typed branch metadata on `ExecutionContext` (consensus strategy, yields list)                    |
-| `template/SimpleTemplateResolver.java`                  | `{variable}` substitution                                                                        |
-| `review/ReviewHandler.java`                             | Human review interface                                                                           |
-| `review/ReviewOutcome.java`                             | Sealed: `Decided(ReviewDecision)`, `Pending(correlationId)` — sync vs async review               |
-| `resume/ResumeInput.java`                               | Sealed: `ApplyReview`, `ApplyContextEdits`, `None` — caller-supplied resume input                |
-| `execution/pipeline/ProcessorPipeline.java`             | Orchestrates pre/post processor chains                                                           |
-| `execution/pipeline/ProcessorContext.java`              | Per-iteration context carrier (node + result + execution context)                                |
-| `execution/pipeline/PreNodeExecutionProcessor.java`     | Pre-execution processor interface                                                                |
-| `execution/pipeline/PostNodeExecutionProcessor.java`    | Post-execution processor interface                                                               |
-| `execution/pipeline/NodeExecutionProcessor.java`        | Base processor interface                                                                         |
-| `execution/pipeline/OutputExtractionPostProcessor.java` | Extracts node output into state context                                                          |
-| `execution/pipeline/HistoryPostProcessor.java`          | Records execution steps for audit/backtracking                                                   |
-| `execution/pipeline/ReviewPostProcessor.java`           | Human-in-the-loop review checkpoints                                                             |
-| `execution/pipeline/RubricPostProcessor.java`           | Quality evaluation and auto-backtrack                                                            |
-| `execution/pipeline/ProcessorOutcome.java`              | Sealed: `Continue`, `Terminal`, `SuspendForExternal` — pipeline flow control                     |
-| `execution/pipeline/TransitionPostProcessor.java`       | Evaluates transition rules, sets next node                                                       |
+| File                                                    | Description                                                                                       |
+|---------------------------------------------------------|---------------------------------------------------------------------------------------------------|
+| `HensuFactory.java`                                     | Bootstrap and environment creation                                                                |
+| `HensuEnvironment.java`                                 | Container for all core components                                                                 |
+| `HensuConfig.java`                                      | Configuration (storage backend)                                                                   |
+| `agent/AgentFactory.java`                               | Creates agents from explicit providers                                                            |
+| `agent/AgentProvider.java`                              | Provider interface for pluggable AI backends                                                      |
+| `agent/AgentRegistry.java`                              | Agent lookup interface                                                                            |
+| `agent/DefaultAgentRegistry.java`                       | Thread-safe agent registry                                                                        |
+| `agent/ToolCapable.java`                                | Narrow interface for agents that support tool sessions                                            |
+| `agent/ToolSession.java`                                | Call-scoped tool loop session (start/submit/compact/close)                                        |
+| `agent/stub/StubAgentProvider.java`                     | Testing provider (priority 1000 when enabled)                                                     |
+| `agent/stub/StubToolSession.java`                       | Scripted tool session for testing (`---TURN---` syntax)                                           |
+| `execution/WorkflowExecutor.java`                       | Main execution engine                                                                             |
+| `execution/NodeLifecycleCoordinator.java`               | Per-node lifecycle: phase dispatch, pipeline orchestration                                        |
+| `execution/executor/GenericNodeHandler.java`            | Generic node handler interface                                                                    |
+| `execution/action/ActionHandler.java`                   | Action handler interface                                                                          |
+| `execution/action/ActionExecutor.java`                  | Action dispatch interface                                                                         |
+| `execution/result/ExecutionResult.java`                 | Workflow execution outcome (Completed, Paused, Rejected, Failure)                                 |
+| `workflow/Workflow.java`                                | Core data model                                                                                   |
+| `workflow/WorkflowRepository.java`                      | Workflow definition persistence interface                                                         |
+| `workflow/InMemoryWorkflowRepository.java`              | In-memory workflow repository (default)                                                           |
+| `state/HensuState.java`                                 | Mutable workflow execution state; `branch(node)` creates isolated copies for concurrent branches  |
+| `state/HensuSnapshot.java`                              | Immutable state snapshot for persistence                                                          |
+| `state/ExecutionPhase.java`                             | Sealed: `Initial`, `Awaiting`, `Terminal` — tracks position within a node's lifecycle             |
+| `state/WorkflowStateRepository.java`                    | Execution state persistence interface                                                             |
+| `state/InMemoryWorkflowStateRepository.java`            | In-memory state repository (default)                                                              |
+| `workflow/state/WorkflowStateSchema.java`               | Typed state variable schema (optional per-workflow declaration)                                   |
+| `workflow/state/StateVariableDeclaration.java`          | Single variable declaration record (name, type, isInput)                                          |
+| `workflow/state/VarType.java`                           | Variable type enum: STRING, NUMBER, BOOLEAN, LIST_STRING                                          |
+| `workflow/transition/ApprovalTransition.java`           | Routes on the human reviewer's verdict when one exists, else on the `approved` engine variable    |
+| `workflow/transition/ApprovalArms.java`                 | Reports which approval arms a rule list declares — SSOT for "can a verdict be routed here?"       |
+| `workflow/transition/NoConsensusTransition.java`        | Routes when a parallel node fails to reach consensus                                              |
+| `workflow/transition/BoundedTransition.java`            | Decorates a trigger with a per-node retry budget + escalation target (backs DSL `revise`)         |
+| `workflow/transition/Condition.java`                    | Sealed value predicates (`Equals`, `NotEquals`, `Compare`) with coercion + `TYPE_MISMATCH`        |
+| `workflow/transition/ConditionTransition.java`          | Routes on a declared output variable via a `Condition` predicate (backs DSL `onCondition`)        |
+| `workflow/transition/AlwaysTransition.java`             | Else-arm of `onScore`/`onCondition`: routes every successful result to its target                 |
+| `workflow/transition/TransitionRuleChecks.java`         | Shared rule-list validations (duplicate bounded namespaces, bounded-before-exit warning)          |
+| `workflow/validation/SubWorkflowGraphValidator.java`    | Load-time cycle + dangling-reference detector for sub-workflow graphs                             |
+| `workflow/validation/WorkflowValidator.java`            | Load-time validator for transition targets, `writes`, prompt `{variable}` references, review arms |
+| `rubric/RubricEngine.java`                              | Quality evaluation engine                                                                         |
+| `rubric/model/Rubric.java`                              | Rubric definition model                                                                           |
+| `tool/ToolDefinition.java`                              | Protocol-agnostic tool descriptor                                                                 |
+| `tool/ToolCallResult.java`                              | Tool execution result record (success/failure factories, `asText()`)                              |
+| `tool/ToolRegistry.java`                                | Tool registration/lookup interface                                                                |
+| `execution/EngineVariables.java`                        | SSOT for engine variable names (`score`, `approved`, `recommendation`)                            |
+| `execution/SynchronizedListenerDecorator.java`          | Thread-safe listener wrapper for parallel branch execution                                        |
+| `execution/executor/AgentLifecycleRunner.java`          | Composition-based agent call: prompt enrichment → agent execution → output extraction             |
+| `execution/executor/ToolLoopRunner.java`                | Drives agent-native tool loop (budget enforcement, feed-back, sealed termination)                 |
+| `execution/parallel/BranchExecutionConfig.java`         | Typed branch metadata on `ExecutionContext` (consensus strategy, yields list)                     |
+| `template/SimpleTemplateResolver.java`                  | `{variable}` substitution                                                                         |
+| `review/ReviewHandler.java`                             | Human review interface                                                                            |
+| `review/ReviewOutcome.java`                             | Sealed: `Decided(ReviewDecision)`, `Pending(correlationId)` — sync vs async review                |
+| `review/ReviewVerdict.java`                             | A reviewer's decision and reason, recorded on state and read by `ApprovalTransition`              |
+| `resume/ResumeInput.java`                               | Sealed: `ApplyReview`, `ApplyContextEdits`, `None` — caller-supplied resume input                 |
+| `execution/pipeline/ProcessorPipeline.java`             | Orchestrates pre/post processor chains                                                            |
+| `execution/pipeline/ProcessorContext.java`              | Per-iteration context carrier (node + result + execution context)                                 |
+| `execution/pipeline/PreNodeExecutionProcessor.java`     | Pre-execution processor interface                                                                 |
+| `execution/pipeline/PostNodeExecutionProcessor.java`    | Post-execution processor interface                                                                |
+| `execution/pipeline/NodeExecutionProcessor.java`        | Base processor interface                                                                          |
+| `execution/pipeline/OutputExtractionPostProcessor.java` | Extracts node output into state context                                                           |
+| `execution/pipeline/HistoryPostProcessor.java`          | Records execution steps for audit/backtracking                                                    |
+| `execution/pipeline/ReviewPostProcessor.java`           | Human-in-the-loop review checkpoints                                                              |
+| `execution/pipeline/RubricPostProcessor.java`           | Quality evaluation and auto-backtrack                                                             |
+| `execution/pipeline/ProcessorOutcome.java`              | Sealed: `Continue`, `Terminal`, `SuspendForExternal` — pipeline flow control                      |
+| `execution/pipeline/TransitionPostProcessor.java`       | Evaluates transition rules, sets next node                                                        |

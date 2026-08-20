@@ -24,7 +24,7 @@ import java.util.Set;
 ///
 /// ### Capability Methods
 /// Engine components that need to know *what* a rule routes on MUST call
-/// {@link #requiredEngineVars()} – never {@code instanceof}. This keeps decorators
+/// {@link #requiredRoutingVars()} – never {@code instanceof}. This keeps decorators
 /// (e.g. {@link BoundedTransition}) transparent by construction.
 ///
 /// @implNote Implementations must be immutable and stateless. The same rule
@@ -63,17 +63,20 @@ public sealed interface TransitionRule
     /// @return target node ID if rule applies, null otherwise
     String evaluate(HensuState state, NodeResult result);
 
-    /// Returns the engine variables this rule routes on, which the engine must
-    /// instruct the agent to produce and extract from its output. Decorators
-    /// delegate to their inner rule. Empty for rules that route on execution
-    /// status alone.
+    /// Returns the variables this rule needs present in the state context in order to
+    /// route – engine-managed ones such as `approved` and `score`, or a user-declared
+    /// output variable in the case of {@link ConditionTransition}. The engine instructs
+    /// the agent to produce them and extracts them from its output. Decorators delegate
+    /// to their inner rule. Empty for rules that route on execution status alone.
     ///
-    /// Engine components (prompt injectors, output extraction) MUST consume this
-    /// declaration – never {@code instanceof} on rule types – so decorated rules
-    /// keep their semantics.
+    /// Engine components (prompt injectors, output extraction, engine-variable cleanup)
+    /// MUST consume this declaration – never {@code instanceof} on rule types – so
+    /// decorated rules keep their semantics. It answers "which variables does this rule
+    /// read?", not "is this an approval arm?"; for the latter see
+    /// {@link ApprovalArms}.
     ///
-    /// @return the engine variable names this rule depends on, never null
-    default Set<String> requiredEngineVars() {
+    /// @return the variable names this rule depends on, never null
+    default Set<String> requiredRoutingVars() {
         return Set.of();
     }
 
@@ -124,8 +127,8 @@ public sealed interface TransitionRule
 
     /// Returns the underlying trigger rule. Decorators return their wrapped rule;
     /// plain rules return themselves. Use for components that must evaluate or label
-    /// the inner rule (rubric matching, visualization). For engine-variable wiring
-    /// prefer {@link #requiredEngineVars()}.
+    /// the inner rule (rubric matching, visualization). For routing-variable wiring
+    /// prefer {@link #requiredRoutingVars()}.
     ///
     /// @return the leaf trigger rule, never null
     default TransitionRule trigger() {

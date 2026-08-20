@@ -59,12 +59,24 @@ public sealed interface ExecutionPhase {
     /// and must not be resumed.
     record Terminal() implements ExecutionPhase {}
 
-    /// Validates that a resume input's correlation id matches the awaiting phase.
+    /// Validates that a resume input can be applied to the given phase.
+    ///
+    /// The check runs in both directions:
+    /// - A {@link ResumeInput.ApplyReview} requires an {@link Awaiting} phase with a matching
+    ///   correlation id.
+    /// - An {@link Awaiting} phase requires a review decision. An execution paused at a review
+    ///   gate has nothing else to resume *with*: resuming it with anything else would re-enter
+    ///   the post-pipeline, hit the same review processor, and request the review again — a
+    ///   silent loop that answers every malformed request with a fresh correlation id and an
+    ///   HTTP 200. Rejecting the input names the mistake instead.
+    ///
+    /// Callers must run this before any state is written, so that a rejected input leaves the
+    /// execution paused and resumable rather than marked failed.
     ///
     /// @param phase       current execution phase, not null
     /// @param resumeInput caller-supplied resume input, not null
-    /// @throws IllegalArgumentException if the resume input is {@link ResumeInput.ApplyReview}
-    ///         but the phase is not {@link Awaiting}, or if the correlation ids do not match
+    /// @throws IllegalArgumentException if the input and the phase disagree, or if the
+    ///         correlation ids do not match
     static void validateCorrelation(ExecutionPhase phase, ResumeInput resumeInput) {
         if (resumeInput instanceof ResumeInput.ApplyReview review) {
             if (!(phase instanceof Awaiting awaiting)) {
@@ -79,6 +91,15 @@ public sealed interface ExecutionPhase {
                                 + review.correlationId()
                                 + "'");
             }
+            return;
+        }
+        if (phase instanceof Awaiting awaiting) {
+            throw new IllegalArgumentException(
+                    "Execution is awaiting a review decision for node '"
+                            + awaiting.nodeId()
+                            + "' (correlation id '"
+                            + awaiting.correlationId()
+                            + "'); resume with a decision of approve, reject, or backtrack");
         }
     }
 

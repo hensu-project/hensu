@@ -13,9 +13,11 @@ import java.util.List;
 /// - Audit logging
 /// - State restoration for backtracking
 ///
-/// @implNote **Not thread-safe**. Should only be accessed from a single
-/// workflow execution thread. The `copy()` method creates immutable snapshots
-/// for safe sharing.
+/// @implNote **Mutable and not thread-safe**. The `add*` methods mutate this instance in
+/// place and return `this`, so every holder of the same instance observes the addition. Callers
+/// that need an independent history – a snapshot to hand to another thread, or the "previous"
+/// history behind an immutable state transition – must take an explicit `copy()` first. Access
+/// should be confined to a single workflow execution thread.
 ///
 /// @see ExecutionStep for individual step records
 /// @see BacktrackEvent for backtrack records
@@ -29,10 +31,10 @@ public class ExecutionHistory {
     /// @apiNote **Side effects**: Modifies internal step list
     ///
     /// @param step the step to record, not null
-    /// @return a copy of this history for chaining, never null
+    /// @return this history, for chaining, never null
     public ExecutionHistory addStep(ExecutionStep step) {
         steps.add(step);
-        return copy();
+        return this;
     }
 
     /// Adds a backtrack event to the history.
@@ -40,10 +42,10 @@ public class ExecutionHistory {
     /// @apiNote **Side effects**: Modifies internal backtrack list
     ///
     /// @param backtrack the backtrack event to record, not null
-    /// @return a copy of this history for chaining, never null
+    /// @return this history, for chaining, never null
     public ExecutionHistory addBacktrack(BacktrackEvent backtrack) {
         backtracks.add(backtrack);
-        return copy();
+        return this;
     }
 
     /// Records an automatic backtrack triggered by rubric evaluation.
@@ -54,7 +56,7 @@ public class ExecutionHistory {
     /// @param to target node ID to backtrack to, not null
     /// @param reason explanation for the backtrack, may be null
     /// @param rubricEvaluation the evaluation that triggered backtracking, not null
-    /// @return a copy of this history for chaining, never null
+    /// @return this history, for chaining, never null
     public ExecutionHistory addAutoBacktrack(
             String from, String to, String reason, RubricEvaluation rubricEvaluation) {
         backtracks.add(
@@ -66,7 +68,7 @@ public class ExecutionHistory {
                         .rubricScore(rubricEvaluation.getScore())
                         .timestamp(Instant.now())
                         .build());
-        return copy();
+        return this;
     }
 
     /// Records an explicit jump transition (non-failure backtrack).
@@ -77,7 +79,7 @@ public class ExecutionHistory {
     /// @param to target node ID, not null
     /// @param reason explanation for the jump, may be null
     /// @param rubricEvaluation associated evaluation, not null
-    /// @return a copy of this history for chaining, never null
+    /// @return this history, for chaining, never null
     public ExecutionHistory addJump(
             String from, String to, String reason, RubricEvaluation rubricEvaluation) {
         backtracks.add(
@@ -89,7 +91,7 @@ public class ExecutionHistory {
                         .rubricScore(rubricEvaluation.getScore())
                         .timestamp(Instant.now())
                         .build());
-        return copy();
+        return this;
     }
 
     /// Returns all recorded execution steps.
@@ -106,7 +108,10 @@ public class ExecutionHistory {
         return List.copyOf(backtracks);
     }
 
-    /// Creates a mutable copy of this history.
+    /// Creates an independent, mutable copy of this history.
+    ///
+    /// This is the only way to obtain a history that can be extended without the original
+    /// seeing the additions; the `add*` methods deliberately mutate in place.
     ///
     /// @return a new ExecutionHistory with copied data, never null
     public ExecutionHistory copy() {

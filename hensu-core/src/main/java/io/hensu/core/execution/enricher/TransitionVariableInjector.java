@@ -10,7 +10,7 @@ import io.hensu.core.workflow.node.Node;
 /// and expose them via {@link #engineVariable()} and {@link #instruction()}. This class
 /// provides the shared activation logic: the instruction is appended when at least one
 /// transition rule on the node declares the variable via
-/// {@link io.hensu.core.workflow.transition.TransitionRule#requiredEngineVars()}, or when
+/// {@link io.hensu.core.workflow.transition.TransitionRule#requiredRoutingVars()}, or when
 /// the execution context indicates a consensus branch requiring self-scoring.
 ///
 /// Not all {@link EngineVariableInjector} implementations extend this class –
@@ -34,7 +34,7 @@ abstract class TransitionVariableInjector implements EngineVariableInjector {
     public String inject(String prompt, Node node, ExecutionContext ctx) {
         boolean needs =
                 node.getTransitionRules().stream()
-                                .anyMatch(r -> r.requiredEngineVars().contains(engineVariable()))
+                                .anyMatch(r -> r.requiredRoutingVars().contains(engineVariable()))
                         || (ctx.getBranchConfig() != null
                                 && ctx.getBranchConfig().needsSelfScoring());
         return needs ? prompt + instruction() : prompt;
