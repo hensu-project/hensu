@@ -1,8 +1,8 @@
 package io.hensu.core.state;
 
 import io.hensu.core.execution.result.ExecutionHistory;
-import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.resume.ResumeInput;
+import io.hensu.core.review.ReviewVerdict;
 import io.hensu.core.rubric.evaluator.RubricEvaluation;
 import java.util.Collections;
 import java.util.HashMap;
@@ -51,6 +51,13 @@ public final class HensuState {
     // Transient — set by backtrack processors, consumed by TransitionPostProcessor, never
     // persisted.
     private boolean nodeRedirected;
+
+    // Transient — set by ReviewPostProcessor, consumed by TransitionPostProcessor, never
+    // persisted and never propagated to fork branches.
+    private ReviewVerdict reviewVerdict;
+
+    // Transient — set by branch(), read by CheckpointPreProcessor, never persisted.
+    private boolean branchState;
 
     public HensuState(Builder builder) {
         this.executionId = Objects.requireNonNull(builder.executionId);
@@ -185,35 +192,54 @@ public final class HensuState {
         this.nodeRedirected = nodeRedirected;
     }
 
-    /// Create initial state.
-    public static HensuState create(
-            String executionId, String workflowId, Map<String, Object> context) {
-
-        return new Builder()
-                .executionId(executionId)
-                .workflowId(workflowId)
-                .context(context)
-                .history(new ExecutionHistory())
-                .build();
+    /// Returns the human reviewer's verdict for the node just executed, or null when no
+    /// reviewer decided on it.
+    ///
+    /// Transient — never persisted, never included in snapshots, and never carried into a
+    /// branch state. Set by
+    /// {@link io.hensu.core.execution.pipeline.ReviewPostProcessor} and cleared by
+    /// {@link io.hensu.core.execution.pipeline.TransitionPostProcessor} once routing is
+    /// resolved.
+    ///
+    /// @return the reviewer's verdict, or null when the node was not reviewed by a human
+    public ReviewVerdict getReviewVerdict() {
+        return reviewVerdict;
     }
 
-    /// Add step to history (immutable).
-    public HensuState withAddedStep(ExecutionStep step) {
-        ExecutionHistory newHistory = history.addStep(step);
-
-        return toBuilder().history(newHistory).build();
+    /// Records the human reviewer's verdict for the node just executed.
+    ///
+    /// @param reviewVerdict the reviewer's verdict, or null to clear a consumed one
+    public void setReviewVerdict(ReviewVerdict reviewVerdict) {
+        this.reviewVerdict = reviewVerdict;
     }
 
-    /// Update rubric evaluation (immutable).
-    public HensuState withRubricEvaluation(RubricEvaluation evaluation) {
-        return toBuilder().rubricEvaluation(evaluation).build();
+    /// Returns whether this state was produced by {@link #branch(String)} for concurrent
+    /// sub-flow execution.
+    ///
+    /// Transient — never persisted or included in snapshots. Branch states are excluded from
+    /// checkpointing so that a fork recovers as one atomic unit; see
+    /// {@link io.hensu.core.execution.pipeline.CheckpointPreProcessor}.
+    ///
+    /// @return true when this state belongs to a fork branch rather than the main execution
+    public boolean isBranchState() {
+        return branchState;
     }
 
     /// Creates an isolated state copy for concurrent branch execution.
     ///
-    /// Returns a new `HensuState` with a defensive copy of the context map, positioned
-    /// at `branchNode`. Writes to the branch state do not affect the parent or sibling
-    /// branches. All other fields (`executionId`, `workflowId`, `history`) are preserved.
+    /// Returns a new `HensuState` with defensive copies of the context map, the retry counters,
+    /// and the execution history, positioned at `branchNode`. Writes to the branch state do not
+    /// affect the parent or sibling branches, which matters because every branch runs on its own
+    /// virtual thread and {@link ExecutionHistory} is backed by plain `ArrayList`s.
+    ///
+    /// The caller is responsible for merging each branch's new history entries back into the
+    /// parent history in a deterministic order once all branches have joined; see
+    /// {@link io.hensu.core.execution.executor.ForkNodeExecutor}.
+    ///
+    /// Transient fields are not carried over: the returned state has no resume input, no review
+    /// verdict, and no redirect flag, and is marked as a branch state so that
+    /// {@link io.hensu.core.execution.pipeline.CheckpointPreProcessor} suppresses its
+    /// checkpoints.
     ///
     /// ### Contracts
     /// - **Postcondition**: returned state shares no mutable references with this state
@@ -221,14 +247,17 @@ public final class HensuState {
     /// @param branchNode the node ID where the branch begins, not null
     /// @return new isolated branch state, never null
     public HensuState branch(String branchNode) {
-        return new Builder()
-                .executionId(executionId)
-                .workflowId(workflowId)
-                .currentNode(branchNode)
-                .context(context)
-                .history(history)
-                .retryCounters(retryCounters)
-                .build();
+        HensuState branch =
+                new Builder()
+                        .executionId(executionId)
+                        .workflowId(workflowId)
+                        .currentNode(branchNode)
+                        .context(context)
+                        .history(history.copy())
+                        .retryCounters(retryCounters)
+                        .build();
+        branch.branchState = true;
+        return branch;
     }
 
     /// Creates a snapshot of current state for checkpointing.
@@ -252,17 +281,6 @@ public final class HensuState {
     /// @return restored workflow state, never null
     public static HensuState restore(HensuSnapshot snapshot) {
         return snapshot.toState();
-    }
-
-    private Builder toBuilder() {
-        return new Builder()
-                .executionId(executionId)
-                .workflowId(workflowId)
-                .context(context)
-                .history(history)
-                .rubricEvaluation(rubricEvaluation)
-                .retryCounters(retryCounters)
-                .phase(phase);
     }
 
     public static final class Builder {

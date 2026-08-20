@@ -9,7 +9,9 @@ import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.execution.result.ExecutionResult;
+import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.execution.result.ExitStatus;
+import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.ForkNode;
 import io.hensu.core.workflow.node.JoinNode;
@@ -18,10 +20,14 @@ import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.transition.FailureTransition;
 import io.hensu.core.workflow.transition.SuccessTransition;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -402,6 +408,81 @@ class WorkflowExecutorForkJoinTest extends WorkflowExecutorTestBase {
     // — Helpers ———————————————————————————————————————————————————————————
 
     /// Builds a fork/join workflow where sub-flow nodes transition to join boundary.
+    /// Every sub-flow's work must appear in the parent history, in target-declaration order.
+    ///
+    /// Branches used to append to a shared {@code ExecutionHistory} backed by plain
+    /// {@code ArrayList}s from their own virtual threads. Each branch now records into a private
+    /// copy, so the parent history is only complete if the fork folds those copies back in — and
+    /// it is only reproducible if it does so in declaration order rather than completion order.
+    @Test
+    void shouldMergeBranchHistoriesIntoParentInDeclarationOrder() throws Exception {
+        var agentA = mock(Agent.class);
+        var agentB = mock(Agent.class);
+        when(agentRegistry.getAgent("agent-a")).thenReturn(Optional.of(agentA));
+        when(agentRegistry.getAgent("agent-b")).thenReturn(Optional.of(agentB));
+        // Branch A finishes last, so completion order and declaration order disagree.
+        var branchBDone = new CountDownLatch(1);
+        when(agentA.execute(any(), any()))
+                .thenAnswer(
+                        _ -> {
+                            assertThat(branchBDone.await(5, TimeUnit.SECONDS)).isTrue();
+                            return AgentResponse.TextResponse.of("Result A");
+                        });
+        when(agentB.execute(any(), any()))
+                .thenAnswer(
+                        _ -> {
+                            branchBDone.countDown();
+                            return AgentResponse.TextResponse.of("Result B");
+                        });
+
+        var result =
+                executor.execute(
+                        buildForkJoinWorkflow(MergeStrategy.COLLECT_ALL, false), new HashMap<>());
+
+        var history = ((ExecutionResult.Completed) result).getFinalState().getHistory();
+        var nodeIds = history.getSteps().stream().map(ExecutionStep::getNodeId).toList();
+
+        assertThat(nodeIds).contains("taskA", "taskB");
+        assertThat(nodeIds.indexOf("taskA")).isLessThan(nodeIds.indexOf("taskB"));
+        assertThat(nodeIds).doesNotHaveDuplicates();
+    }
+
+    /// No checkpoint may ever record a cursor inside a sub-flow.
+    ///
+    /// A checkpoint records one node, and a fork has several branches running at once. If
+    /// branches checkpointed, the durable cursor would land wherever the last branch happened
+    /// to be, and recovery would resume inside that one sub-flow with its siblings never having
+    /// run — the join would then wait on results that were never produced. Suppressing branch
+    /// checkpoints makes the fork the atomic resume boundary: recovery re-runs all of it.
+    @Test
+    void shouldNeverCheckpointInsideASubFlow() throws Exception {
+        var agentA = mock(Agent.class);
+        var agentB = mock(Agent.class);
+        when(agentRegistry.getAgent("agent-a")).thenReturn(Optional.of(agentA));
+        when(agentRegistry.getAgent("agent-b")).thenReturn(Optional.of(agentB));
+        when(agentA.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Result A"));
+        when(agentB.execute(any(), any())).thenReturn(AgentResponse.TextResponse.of("Result B"));
+
+        List<String> checkpointedNodes = Collections.synchronizedList(new ArrayList<>());
+        ExecutionListener recorder =
+                new ExecutionListener() {
+                    @Override
+                    public void onCheckpoint(HensuState state) {
+                        checkpointedNodes.add(state.getCurrentNode());
+                    }
+                };
+
+        var result =
+                executor.execute(
+                        buildForkJoinWorkflow(MergeStrategy.COLLECT_ALL, false),
+                        new HashMap<>(),
+                        recorder);
+
+        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
+        assertThat(checkpointedNodes).doesNotContain("taskA", "taskB");
+        assertThat(checkpointedNodes).contains("fork1", "join1");
+    }
+
     private Workflow buildForkJoinWorkflow(MergeStrategy mergeStrategy, boolean failOnAnyError) {
         var agents =
                 Map.of(

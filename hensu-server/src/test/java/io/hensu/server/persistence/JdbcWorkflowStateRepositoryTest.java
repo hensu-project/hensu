@@ -6,6 +6,7 @@ import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.execution.result.ResultStatus;
+import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuSnapshot;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -151,7 +152,7 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
                         Map.of(),
                         Map.of(),
                         new ExecutionHistory(),
-                        null,
+                        awaitingReview("corr-paused"),
                         Instant.now(),
                         "paused");
         stateRepo.save(TENANT, paused);
@@ -205,6 +206,40 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
         List<HensuSnapshot> found = stateRepo.findPaused(TENANT);
         assertThat(found).hasSize(1);
         assertThat(found.getFirst().executionId()).isEqualTo("exec-paused");
+    }
+
+    /// An execution awaiting review is listed whatever its checkpoint label says.
+    ///
+    /// Resume looks a row up by id and acts on its phase, so a row saved with the ordinary
+    /// `checkpoint` reason while awaiting review was resumable but absent from this listing —
+    /// an execution genuinely blocked on a human that no operator could find.
+    @Test
+    void findPaused_listsAwaitingExecutionSavedAsPlainCheckpoint() {
+        HensuSnapshot awaitingCheckpoint =
+                new HensuSnapshot(
+                        "wf-parent",
+                        "exec-awaiting",
+                        "process",
+                        Map.of(),
+                        Map.of(),
+                        new ExecutionHistory(),
+                        awaitingReview("corr-awaiting"),
+                        Instant.now(),
+                        "checkpoint");
+        stateRepo.save(TENANT, awaitingCheckpoint);
+        clearLease();
+
+        List<HensuSnapshot> found = stateRepo.findPaused(TENANT);
+
+        assertThat(found)
+                .singleElement()
+                .satisfies(
+                        s -> {
+                            assertThat(s.executionId()).isEqualTo("exec-awaiting");
+                            assertThat(s.phase()).isInstanceOf(ExecutionPhase.Awaiting.class);
+                        });
+        // and it is resumable by the id the listing reported
+        assertThat(stateRepo.findByExecutionId(TENANT, "exec-awaiting")).isPresent();
     }
 
     @Test
@@ -272,9 +307,34 @@ class JdbcWorkflowStateRepositoryTest extends JdbcRepositoryTestBase {
 
     /// Creates a minimal snapshot with default context and empty history.
     ///
-    /// @param executionId   unique execution identifier, not null
-    /// @param currentNodeId the node where execution is paused, not null
+    /// @param correlationId opaque pause-point identifier, may be null
     /// @return a valid snapshot with {@code checkpoint_reason = "checkpoint"}, never null
+    /// Builds the phase a review pause persists: awaiting a decision on the named correlation.
+    private static ExecutionPhase awaitingReview(String correlationId) {
+        return new ExecutionPhase.Awaiting(
+                "process",
+                "ReviewPostProcessor",
+                new NodeResult(ResultStatus.SUCCESS, "draft", Map.of()),
+                correlationId,
+                Instant.now());
+    }
+
+    /// Releases the lease this node took when saving a non-paused checkpoint, mimicking the
+    /// crash or shutdown that leaves an awaiting execution unowned.
+    private void clearLease() {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps =
+                        conn.prepareStatement(
+                                "UPDATE runtime.execution_states SET server_node_id = NULL"
+                                        + " WHERE tenant_id = ? AND execution_id = ?")) {
+            ps.setString(1, TENANT);
+            ps.setString(2, "exec-awaiting");
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to clear lease for " + "exec-awaiting", e);
+        }
+    }
+
     private static HensuSnapshot makeSnapshot(String executionId, String currentNodeId) {
         return new HensuSnapshot(
                 "wf-parent",

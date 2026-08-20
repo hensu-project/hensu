@@ -1158,8 +1158,12 @@ The `JdbcWorkflowStateRepository.save()` method sets or clears lease columns bas
 | `"checkpoint"`                                         | set to this node's ID | set to `NOW()`      |
 | `"paused"` / `"completed"` / `"failed"` / `"rejected"` | `NULL`                | `NULL`              |
 
-This means `findPaused()` (which filters `WHERE server_node_id IS NULL`) only returns
-human-review checkpoints — active running executions are never surfaced as paused.
+`findPaused()` filters on `server_node_id IS NULL` to exclude executions leased by a live node,
+and on the durable phase — `phase ->> 'type' = 'awaiting_post_processor'` — to select the ones
+genuinely waiting on a human. The phase is the filter rather than the `checkpoint_reason` label
+because resume looks a row up by id and acts on its phase: a row written with
+`checkpoint_reason = 'checkpoint'` while awaiting a review was resumable yet invisible to the
+listing, which is an execution waiting on a person that no operator could find.
 
 ### Configuration
 
@@ -1252,10 +1256,15 @@ which sets the phase to `Awaiting` and checkpoints the state.
 ### Server Resume Flow
 
 1. **REST layer** – `ExecutionResource` receives a `ResumeRequest` and calls `toResumeInput()` to
-   map it to the core sealed type.
-2. **Service layer** – `ExecutionStateService.resumeExecution()` restores the `HensuSnapshot`,
-   converts it to a `HensuState`, sets `state.setResumeInput(resumeInput)`, and calls
-   `executeFrom()`.
+   map it to the core sealed type. Unrecognized fields in the body are collected by
+   `@JsonAnySetter` and rejected here by name, so a body shaped like a review decision but
+   spelled differently cannot degrade into a `None` that re-prompts the review.
+2. **Service layer** – `ExecutionStateService.resumeExecution()` restores the `HensuSnapshot` and
+   calls `ExecutionPhase.validateCorrelation()` against the persisted phase **before** entering
+   the block whose catch marks the execution failed. A request that does not fit the phase is a
+   bad request rather than a broken execution: the caller gets a 400 and the execution stays
+   paused and resumable. On a request that does fit, the snapshot is converted to a `HensuState`,
+   `state.setResumeInput(resumeInput)` is set, and `executeFrom()` is called.
 3. **Executor** – `WorkflowExecutor.executeLoop()` reads the phase. For `Awaiting` it
    re-enters the post-pipeline at the named processor via `ProcessorPipeline.executePostFrom()`.
 4. **Post-processor** – the processor (e.g. `ReviewPostProcessor`) checks
@@ -1274,6 +1283,7 @@ to receive post-resume events.
 
 ```json
 {
+  "correlationId": "required whenever a decision is submitted – from the execution.paused event",
   "decision": "approve | reject | backtrack",
   "reason": "optional – required for reject/backtrack",
   "targetStep": "optional – node ID for backtrack",
@@ -1281,8 +1291,12 @@ to receive post-resume events.
 }
 ```
 
-Omitting `decision` with non-empty `contextEdits` produces `ApplyContextEdits`. An empty or null
-body produces `ResumeInput.None`.
+No other field is accepted: anything else in the body is reported back by name as a 400.
+
+Omitting `decision` with non-empty `contextEdits` produces `ApplyContextEdits`, and an empty or
+null body produces `ResumeInput.None`. Both are refused against an execution paused at a review
+gate, where a decision is the only thing there is to resume with — the 400 names the correlation
+id and the node awaiting review.
 
 ---
 

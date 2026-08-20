@@ -125,8 +125,12 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
      * - Single name: full text response stored under that variable key.
      * - Multiple names: JSON response parsed, each key extracted to the declared variable.
      *
-     * All names must be declared in the workflow `state {}` block or be engine variables (`score`,
-     * `approved`). Validated at workflow load time.
+     * All names must be declared in the workflow `state {}` block. The engine variables `score`,
+     * `approved`, and `recommendation` are reserved and rejected here: the engine infers them from
+     * the node's transition rules and consensus configuration, injects the matching format
+     * instructions into the prompt, and extracts them from the response on its own. Declarations
+     * are validated again at workflow load time, so programmatically built workflows are held to
+     * the same rule.
      *
      * @param names variable names this node writes to
      */
@@ -222,7 +226,7 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
     private fun validateTransitions(rules: List<TransitionRule>) {
         val declared = writes.toSet()
         for (rule in rules) {
-            val custom = rule.requiredEngineVars() - EngineVariables.all()
+            val custom = rule.requiredRoutingVars() - EngineVariables.all()
             for (variable in custom) {
                 require(variable in declared) {
                     "Node '$id': transition routes on variable '$variable' which is not " +

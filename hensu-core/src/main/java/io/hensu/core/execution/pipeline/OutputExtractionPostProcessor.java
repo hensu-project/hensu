@@ -120,7 +120,7 @@ public final class OutputExtractionPostProcessor implements PostNodeExecutionPro
             vars.add(EngineVariables.RECOMMENDATION);
         }
         for (TransitionRule rule : node.getTransitionRules()) {
-            vars.addAll(rule.requiredEngineVars());
+            vars.addAll(rule.requiredRoutingVars());
         }
         return List.copyOf(vars);
     }

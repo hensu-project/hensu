@@ -27,6 +27,8 @@ This document provides a complete reference for the Hensu Kotlin DSL used to def
 - [Engine Variables](#engine-variables)
 - [Rubrics](#rubrics)
 - [Human Review](#human-review)
+  - [Review Decisions and Routing](#review-decisions-and-routing)
+  - [Recovery Semantics](#recovery-semantics)
 - [Available Models](#available-models)
 - [External Prompt Files](#external-prompt-files)
 - [Running Workflows](#running-workflows)
@@ -697,6 +699,10 @@ node("classify") {
 
 Falls through (no match) if the `approved` key is absent or not a boolean. Both transitions are optional — you can use only `onApproval`, only `onRejection`, or combine with `onScore`.
 
+On a node that also declares a `review { }` block, the reviewer outranks the agent: see [Review Decisions and Routing](#review-decisions-and-routing).
+
+`onCondition` cannot be used as a substitute here. The engine variables `score`, `approved`, and `recommendation` are rejected by `onCondition(...)` at build time, because routing on them through a generic predicate would look equivalent to `onApproval` / `onScore` while bypassing the prompt injection, output extraction, and review-verdict handling those arms carry.
+
 ### Bounded Revise (`revise`)
 
 A `revise` transition backtracks to a producer node to fix its output, but bounds the loop with a retry budget. While the budget is unspent the workflow re-runs the producer; once the budget is exhausted it escalates to a fallback node instead of looping forever.
@@ -846,7 +852,7 @@ node("use_facts") {
 2. **Use descriptive names**: Match `writes` names to `{placeholder}` names in downstream prompts
 3. **Request JSON-only output**: Ask the agent to output only JSON for reliable extraction
 4. **Lower temperature**: Use lower temperature (0.3-0.5) for more consistent JSON output
-5. **Never `writes` engine variables**: `score`, `approved`, and `recommendation` are managed by the engine — declaring them in `writes()` produces duplicate instructions in the prompt.
+5. **Never `writes` engine variables**: `score`, `approved`, and `recommendation` are managed by the engine — `writes()` rejects them, at build time in the DSL and again in the load-time validator.
 
 ### Supported JSON Values
 
@@ -860,7 +866,7 @@ Nested objects and arrays are not currently extracted.
 
 Declare a typed schema for all domain-specific state variables at the workflow level. When declared, the schema is validated at load time — `WorkflowBuilder.build()` throws `IllegalStateException` if any `writes` name or prompt `{variable}` is not declared.
 
-Engine variables (`score`, `approved`, `recommendation`) are always implicitly valid — never declare them in the schema or in `writes()`. See [Engine Variables](#engine-variables) for the full contract.
+Engine variables (`score`, `approved`, `recommendation`) are always implicitly valid — never declare them in the schema, and `writes()` rejects them outright. See [Engine Variables](#engine-variables) for the full contract.
 
 ```kotlin
 workflow("ContentPipeline") {
@@ -893,7 +899,7 @@ workflow("ContentPipeline") {
 
 ## Engine Variables
 
-Engine variables are managed entirely by the Hensu engine — they are injected automatically into the LLM prompt and extracted from the JSON response. They are **always implicitly valid** in `{placeholder}` references. Do **not** declare them in `state { }` or `writes()`.
+Engine variables are managed entirely by the Hensu engine — they are injected automatically into the LLM prompt and extracted from the JSON response. They are **always implicitly valid** in `{placeholder}` references, so a prompt may reference `{recommendation}` without declaring it. Declaring one in `writes()` is a build error; declaring one in `state { }` is merely redundant.
 
 | Variable         | Type    | When present                                                                       | Description                                                                                                              |
 |------------------|---------|------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
@@ -1014,6 +1020,43 @@ node("critical-step") {
 | `mode`           | ReviewMode | DISABLED | When to require review            |
 | `allowBacktrack` | Boolean    | false    | Allow returning to previous nodes |
 | `allowEdit`      | Boolean    | false    | Allow editing the output          |
+
+### Review Decisions and Routing
+
+A reviewer's decision drives the graph, and it outranks whatever the agent concluded about its own output.
+
+```kotlin
+node("assess") {
+    agent = "analyst"
+    prompt = "Assess the risk. Output JSON: {\"approved\": true/false}"
+
+    review(ReviewMode.REQUIRED)
+
+    onApproval goto "approved"
+    onRejection goto "declined"
+}
+```
+
+If the analyst emits `"approved": false` and the reviewer approves, the workflow goes to `approved`. The two claims are kept on separate channels — the agent's `approved` variable, and the reviewer's verdict — and `onApproval` / `onRejection` consult the verdict first whenever a human decided. Nothing overwrites anything, and the outcome does not depend on the order in which the engine's processors run.
+
+| Decision  | Effect                                                                           |
+|-----------|----------------------------------------------------------------------------------|
+| Approve   | Routes to `onApproval`. Any submitted context edits are merged first.            |
+| Reject    | Routes to `onRejection` when the node declares one; otherwise ends the workflow. |
+| Backtrack | Returns to the chosen node, carrying the reviewer's reason as feedback.          |
+
+**Rejection is not automatically fatal.** A rejection ends the workflow outright only on a node that declares no `onRejection` arm — there, there is nowhere to route it. Declare the arm and the rejection travels through the graph like any other decision, so `onRejection goto "declined"` actually reaches `declined`.
+
+**The reviewer's reason becomes feedback.** On a backtrack, and on any forward transition marked `withFeedback`, the reason is published as `recommendation` and injected into the next node's prompt, overriding the agent's own justification.
+
+**Give every verdict somewhere to go.** A review node that declares one approval arm must either declare the other or follow it with a catch-all, or the build fails: a verdict with no matching rule would kill the execution at runtime with `No valid transition`. A trailing `onSuccess` or else-arm absorbs the missing verdict, which builds with a warning rather than an error — the ordering matters, since a catch-all placed *before* the arms would swallow both verdicts instead. A review node with no approval arm at all is valid — rejection is terminal there by design.
+
+### Recovery Semantics
+
+Two consequences are worth knowing when running with durable persistence.
+
+- **A fork recovers as a unit.** Checkpoints record a single cursor, so branches of a `fork` are not checkpointed individually. A crash anywhere inside a fork re-runs *every* sub-flow on recovery, including branches that had already finished, and their agent calls are billed again. Sub-flow work must be safe to repeat.
+- **A review can be re-requested.** The reviewer's verdict lives only for the moment between the decision being applied and the outgoing transition being resolved. A crash inside that window recovers to the checkpoint before the review, so the review is requested once more. This is the same at-least-once guarantee that already applies to every node.
 
 ## Available Models
 

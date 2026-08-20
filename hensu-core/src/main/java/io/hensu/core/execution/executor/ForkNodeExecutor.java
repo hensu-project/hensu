@@ -5,7 +5,10 @@ import io.hensu.core.execution.SynchronizedListenerDecorator;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.parallel.BranchResult;
 import io.hensu.core.execution.parallel.FailureMarker;
+import io.hensu.core.execution.result.BacktrackEvent;
+import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionResult;
+import io.hensu.core.execution.result.ExecutionStep;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.util.JsonUtil;
@@ -53,7 +56,14 @@ import java.util.stream.Collectors;
 /// Each sub-flow receives an isolated state copy via {@link HensuState#branch}.
 /// Branch writes never leak to siblings or the parent. After join, the fork
 /// executor reads branch state contexts and merges them according to
-/// {@link MergeStrategy}.
+/// {@link MergeStrategy}, and folds each branch's execution history back into the
+/// parent in target-declaration order.
+///
+/// ### Recovery boundary
+///
+/// Branch states are not checkpointed — see
+/// {@link io.hensu.core.execution.pipeline.CheckpointPreProcessor}. The fork is the
+/// atomic unit of recovery: a crash anywhere inside it re-runs every sub-flow.
 ///
 /// ### Thread-safe listener
 ///
@@ -112,7 +122,13 @@ public class ForkNodeExecutor implements NodeExecutor<ForkNode> {
         // Thread-safe listener for concurrent sub-flow output
         var safeListener = new SynchronizedListenerDecorator(context.getListener());
 
+        // History entries recorded before the fork; everything a branch appends past this
+        // mark is new work to be merged back in branch order once all branches have joined.
+        int parentSteps = state.getHistory().getSteps().size();
+        int parentBacktracks = state.getHistory().getBacktracks().size();
+
         // Fork sub-flows using StructuredTaskScope
+        List<SubFlowOutcome> outcomes;
         List<BranchResult> branchResults;
         var threadFactory = Thread.ofVirtual().name("fork-" + node.getId() + "-", 0).factory();
         try (var scope =
@@ -127,7 +143,7 @@ public class ForkNodeExecutor implements NodeExecutor<ForkNode> {
                                     : cf;
                         })) {
 
-            List<Subtask<BranchResult>> subtasks = new ArrayList<>();
+            List<Subtask<SubFlowOutcome>> subtasks = new ArrayList<>();
 
             for (String targetId : node.getTargets()) {
                 Node targetNode = workflow.getNodes().get(targetId);
@@ -151,8 +167,11 @@ public class ForkNodeExecutor implements NodeExecutor<ForkNode> {
 
             scope.join();
 
-            branchResults = subtasks.stream().map(Subtask::get).toList();
+            outcomes = subtasks.stream().map(Subtask::get).toList();
         }
+
+        mergeBranchHistories(state, outcomes, parentSteps, parentBacktracks);
+        branchResults = outcomes.stream().map(SubFlowOutcome::result).toList();
 
         // Log failures but always proceed to merge — fork always transitions to
         // join. The join passthrough owns the success/failure routing decision.
@@ -222,7 +241,7 @@ public class ForkNodeExecutor implements NodeExecutor<ForkNode> {
     /// **added or mutated** by the sub-flow pipeline are collected. Engine
     /// internals ({@code _}-prefixed keys, {@code current_node}) are always
     /// stripped – they must never reach merge strategies or the LLM.
-    private BranchResult executeSubFlow(
+    private SubFlowOutcome executeSubFlow(
             String targetId,
             String joinNodeId,
             List<String> exports,
@@ -270,24 +289,76 @@ public class ForkNodeExecutor implements NodeExecutor<ForkNode> {
                             ? ResultStatus.SUCCESS
                             : ResultStatus.FAILURE;
 
-            return new BranchResult(
-                    targetId,
-                    new NodeResult(status, yields, Map.of(EXECUTION_TIME_MS, elapsed)),
-                    yields,
-                    1.0);
+            return new SubFlowOutcome(
+                    new BranchResult(
+                            targetId,
+                            new NodeResult(status, yields, Map.of(EXECUTION_TIME_MS, elapsed)),
+                            yields,
+                            1.0),
+                    branchState.getHistory());
 
         } catch (Exception e) {
             long elapsed = System.currentTimeMillis() - startTime;
             logger.warning("Sub-flow failed: " + targetId + " – " + e.getMessage());
 
-            return new BranchResult(
-                    targetId,
-                    new NodeResult(
-                            ResultStatus.FAILURE,
-                            "Sub-flow execution failed: " + e.getMessage(),
-                            Map.of("error", e.getClass().getName(), EXECUTION_TIME_MS, elapsed)),
-                    Map.of(),
-                    1.0);
+            return new SubFlowOutcome(
+                    new BranchResult(
+                            targetId,
+                            new NodeResult(
+                                    ResultStatus.FAILURE,
+                                    "Sub-flow execution failed: " + e.getMessage(),
+                                    Map.of(
+                                            "error",
+                                            e.getClass().getName(),
+                                            EXECUTION_TIME_MS,
+                                            elapsed)),
+                            Map.of(),
+                            1.0),
+                    null);
+        }
+    }
+
+    /// A sub-flow's outcome plus the history it accumulated on its own copy.
+    ///
+    /// @param result the branch result merged by {@link MergeStrategy}
+    /// @param history the branch's execution history, or null when the sub-flow threw before
+    ///     producing one
+    private record SubFlowOutcome(BranchResult result, ExecutionHistory history) {}
+
+    /// Folds each branch's new history entries back into the parent history.
+    ///
+    /// Branches record into private history copies, because {@link ExecutionHistory} is backed
+    /// by plain lists that concurrent sub-flows would otherwise corrupt. That leaves the parent
+    /// history missing everything the fork did, so it is reassembled here — in the order the
+    /// targets were declared, not the order the branches happened to finish, so the same run
+    /// always produces the same history.
+    ///
+    /// Each branch copy starts as a snapshot of the parent, so only entries past the pre-fork
+    /// marks are new.
+    ///
+    /// @param state the parent state whose history is extended, not null
+    /// @param outcomes the branch outcomes in target-declaration order, not null
+    /// @param parentSteps number of steps the parent history held before the fork
+    /// @param parentBacktracks number of backtracks the parent history held before the fork
+    private void mergeBranchHistories(
+            HensuState state,
+            List<SubFlowOutcome> outcomes,
+            int parentSteps,
+            int parentBacktracks) {
+
+        ExecutionHistory parent = state.getHistory();
+        for (SubFlowOutcome outcome : outcomes) {
+            if (outcome.history() == null) {
+                continue;
+            }
+            List<ExecutionStep> steps = outcome.history().getSteps();
+            for (int i = parentSteps; i < steps.size(); i++) {
+                parent.addStep(steps.get(i));
+            }
+            List<BacktrackEvent> backtracks = outcome.history().getBacktracks();
+            for (int i = parentBacktracks; i < backtracks.size(); i++) {
+                parent.addBacktrack(backtracks.get(i));
+            }
         }
     }
 

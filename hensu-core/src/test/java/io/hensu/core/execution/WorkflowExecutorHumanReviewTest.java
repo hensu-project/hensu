@@ -21,6 +21,7 @@ import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.workflow.WorkflowTest;
 import io.hensu.core.workflow.node.StandardNode;
+import io.hensu.core.workflow.transition.ApprovalTransition;
 import io.hensu.core.workflow.transition.SuccessTransition;
 import java.util.HashMap;
 import java.util.List;
@@ -251,6 +252,63 @@ class WorkflowExecutorHumanReviewTest extends WorkflowExecutorTestBase {
     }
 
     // — Helpers ———————————————————————————————————————————————————————————
+
+    // — Verdict routing over a real graph —————————————————————————————————
+
+    /// The reviewer's approval must reach the `onApproval` arm even though the agent rejected
+    /// its own output. Before the verdict channel existed, routing read only the agent's
+    /// `approved` and this workflow ended at the rejection node with the operator's decision
+    /// discarded.
+    @Test
+    void humanApprovalOutranksAgentSelfRejection() throws Exception {
+        when(mockReviewHandler.requestReview(any(), any(), any(), any(), any(), any()))
+                .thenReturn(ReviewOutcome.decided(new ReviewDecision.Approve(null)));
+        when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
+        when(mockAgent.execute(any(), any()))
+                .thenReturn(AgentResponse.TextResponse.of("{\"approved\": false}"));
+
+        var result = executor.execute(workflowWithApprovalArms("verdict-approve"), new HashMap<>());
+
+        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
+        assertThat(((ExecutionResult.Completed) result).finalState().getCurrentNode())
+                .isEqualTo("approved-end");
+    }
+
+    /// The mirror case: a human rejection routes through the graph to the rejection node
+    /// rather than aborting at the review node, so `onRejection goto` is reachable.
+    @Test
+    void humanRejectionRoutesThroughTheGraph() throws Exception {
+        when(mockReviewHandler.requestReview(any(), any(), any(), any(), any(), any()))
+                .thenReturn(ReviewOutcome.decided(new ReviewDecision.Reject("limit too high")));
+        when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
+        when(mockAgent.execute(any(), any()))
+                .thenReturn(AgentResponse.TextResponse.of("{\"approved\": true}"));
+
+        var result = executor.execute(workflowWithApprovalArms("verdict-reject"), new HashMap<>());
+
+        assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
+        assertThat(((ExecutionResult.Completed) result).finalState().getCurrentNode())
+                .isEqualTo("rejected-end");
+    }
+
+    private io.hensu.core.workflow.Workflow workflowWithApprovalArms(String id) {
+        return WorkflowTest.TestWorkflowBuilder.create(id)
+                .agent(agentCfg())
+                .startNode(
+                        StandardNode.builder()
+                                .id("step")
+                                .agentId("test-agent")
+                                .prompt("Work")
+                                .reviewConfig(new ReviewConfig(ReviewMode.REQUIRED, false, false))
+                                .transitionRules(
+                                        List.of(
+                                                new ApprovalTransition(true, "approved-end"),
+                                                new ApprovalTransition(false, "rejected-end")))
+                                .build())
+                .node(end("approved-end"))
+                .node(end("rejected-end"))
+                .build();
+    }
 
     private io.hensu.core.workflow.Workflow workflowWithReview(String id, ReviewMode mode) {
         return WorkflowTest.TestWorkflowBuilder.create(id)

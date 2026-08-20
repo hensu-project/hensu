@@ -2,19 +2,31 @@ package io.hensu.core.workflow.transition;
 
 import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.executor.NodeResult;
+import io.hensu.core.review.ReviewVerdict;
 import io.hensu.core.state.HensuState;
 import java.util.Map;
 import java.util.Set;
 
-/// Boolean approval transition that routes based on the `approved` engine variable.
+/// Boolean approval transition that routes on an approval verdict.
 ///
-/// Reads the `approved` key written by a node via `writes("approved")` and routes to
-/// `targetNode` when the value matches `expected`. Returns `null` (fall-through) if the key
-/// is absent or the value is not a strict boolean — the engine never guesses intent from
-/// free-form text.
+/// Routes to `targetNode` when the verdict matches `expected`, and returns `null`
+/// (fall-through) otherwise. The engine automatically injects a format instruction into the
+/// node's prompt so the agent outputs a JSON boolean for `approved`.
 ///
-/// The engine automatically injects a format instruction into the node's prompt when
-/// `approved` appears in `writes`, ensuring the agent outputs a JSON boolean.
+/// ### Precedence: a human outranks the agent
+/// Two parties can express an approval, and they are read in a fixed order:
+///
+/// 1. A {@link io.hensu.core.review.ReviewVerdict} on the state, set by
+///    {@link io.hensu.core.execution.pipeline.ReviewPostProcessor} when a human reviewed this
+///    node. When present it decides the route outright.
+/// 2. Otherwise, the `approved` engine variable in the state context, which
+///    {@link io.hensu.core.execution.pipeline.OutputExtractionPostProcessor} extracts from the
+///    agent's own output. A non-boolean or absent value falls through — the engine never
+///    guesses intent from free-form text.
+///
+/// Stating the precedence here rather than letting the two writers share one variable is what
+/// makes "the reviewer decides" a property of this rule instead of an accident of processor
+/// ordering.
 ///
 /// ### Usage (DSL)
 /// ```kotlin
@@ -44,12 +56,17 @@ public record ApprovalTransition(boolean expected, String targetNode, boolean wi
     }
 
     @Override
-    public Set<String> requiredEngineVars() {
+    public Set<String> requiredRoutingVars() {
         return Set.of(EngineVariables.APPROVED, EngineVariables.RECOMMENDATION);
     }
 
     @Override
     public String evaluate(HensuState state, NodeResult result) {
+        ReviewVerdict verdict = state.getReviewVerdict();
+        if (verdict != null) {
+            return verdict.approved() == expected ? targetNode : null;
+        }
+
         Map<String, Object> context = state.getContext();
         if (context == null) {
             return null;

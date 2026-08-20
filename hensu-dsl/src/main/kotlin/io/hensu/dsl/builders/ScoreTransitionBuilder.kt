@@ -136,7 +136,7 @@ class ScoreTransitionBuilder {
      *
      * Returns the [ScoreTransition] containing goto conditions (if any) followed by any bounded
      * revise rules and the else-arm. A revise-only score block (no goto arms) emits only the
-     * bounded rules – score extraction still engages because `requiredEngineVars()` flows through
+     * bounded rules – score extraction still engages because `requiredRoutingVars()` flows through
      * the decorator.
      *
      * Validates that no two arms overlap (some score matching both) – first-match-wins ordering

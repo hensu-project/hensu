@@ -2,6 +2,8 @@ package io.hensu.core.state;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.hensu.core.execution.executor.NodeResult;
+import io.hensu.core.execution.result.ResultStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -15,6 +17,29 @@ class InMemoryWorkflowStateRepositoryTest {
     @BeforeEach
     void setUp() {
         repository = new InMemoryWorkflowStateRepository();
+    }
+
+    /// Builds the snapshot a review pause persists: awaiting a decision on the named correlation.
+    private HensuSnapshot awaitingSnapshot(
+            String executionId,
+            String currentNodeId,
+            String checkpointReason,
+            String correlationId) {
+        return new HensuSnapshot(
+                "wf-1",
+                executionId,
+                currentNodeId,
+                Map.of(),
+                Map.of(),
+                null,
+                new ExecutionPhase.Awaiting(
+                        currentNodeId,
+                        "ReviewPostProcessor",
+                        new NodeResult(ResultStatus.SUCCESS, "draft", Map.of()),
+                        correlationId,
+                        Instant.now()),
+                Instant.now(),
+                checkpointReason);
     }
 
     private HensuSnapshot createSnapshot(
@@ -61,9 +86,9 @@ class InMemoryWorkflowStateRepositoryTest {
 
     @Test
     void shouldFilterPausedFromCompleted() {
-        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "node-1", "paused"));
+        repository.save("tenant-1", awaitingSnapshot("exec-1", "node-1", "paused", "corr-1"));
         repository.save("tenant-1", createSnapshot("wf-1", "exec-2", null, "completed"));
-        repository.save("tenant-1", createSnapshot("wf-1", "exec-3", "node-2", "paused"));
+        repository.save("tenant-1", awaitingSnapshot("exec-3", "node-2", "paused", "corr-3"));
 
         List<HensuSnapshot> paused = repository.findPaused("tenant-1");
 
@@ -71,6 +96,29 @@ class InMemoryWorkflowStateRepositoryTest {
         assertThat(paused)
                 .extracting(HensuSnapshot::executionId)
                 .containsExactlyInAnyOrder("exec-1", "exec-3");
+    }
+
+    /// An execution awaiting review is listed whatever its checkpoint label says.
+    ///
+    /// Resume looks a snapshot up by id and acts on its phase, so selecting on the
+    /// `checkpointReason` label instead hid executions that were genuinely blocked on a human
+    /// but had last been saved under the ordinary `checkpoint` reason. This repository must
+    /// answer the same question as the JDBC one.
+    @Test
+    void shouldListAwaitingExecutionSavedAsPlainCheckpoint() {
+        repository.save("tenant-1", awaitingSnapshot("exec-1", "review", "checkpoint", "corr-1"));
+
+        assertThat(repository.findPaused("tenant-1"))
+                .extracting(HensuSnapshot::executionId)
+                .containsExactly("exec-1");
+    }
+
+    /// A running execution is not "paused" merely because its node is mid-flight.
+    @Test
+    void shouldNotListExecutionThatIsMerelyCheckpointed() {
+        repository.save("tenant-1", createSnapshot("wf-1", "exec-1", "work", "checkpoint"));
+
+        assertThat(repository.findPaused("tenant-1")).isEmpty();
     }
 
     @Test

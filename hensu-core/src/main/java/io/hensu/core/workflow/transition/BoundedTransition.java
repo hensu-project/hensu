@@ -26,7 +26,7 @@ import java.util.Set;
 /// @param escalationWithFeedback   when true, recommendation survives the escalation transition
 ///                                 (over budget)
 /// @see TransitionRule#trigger() for unwrapping to the inner rule
-/// @see TransitionRule#requiredEngineVars() for engine-variable delegation
+/// @see TransitionRule#requiredRoutingVars() for engine-variable delegation
 public record BoundedTransition(
         TransitionRule inner,
         String namespace,
@@ -62,8 +62,8 @@ public record BoundedTransition(
     }
 
     @Override
-    public Set<String> requiredEngineVars() {
-        return inner.requiredEngineVars();
+    public Set<String> requiredRoutingVars() {
+        return inner.requiredRoutingVars();
     }
 
     @Override

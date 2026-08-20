@@ -28,11 +28,27 @@ import java.util.Set;
 ///
 /// No other component (executors, enrichers) should remove engine vars from state.
 ///
+/// ### A human verdict is not an engine variable
+/// Engine variables record what the *agent* said about its own output. A human reviewer's
+/// decision is a different kind of claim, and it travels on its own channel: a
+/// {@link io.hensu.core.review.ReviewVerdict} set on
+/// {@link io.hensu.core.state.HensuState} by
+/// {@link io.hensu.core.execution.pipeline.ReviewPostProcessor}, which writes no engine
+/// variable at all. {@code ApprovalTransition} gives the verdict precedence over {@code
+/// approved} when routing, and {@link io.hensu.core.execution.pipeline.TransitionPostProcessor}
+/// promotes the reviewer's reason to {@link #RECOMMENDATION} on transitions that carry
+/// feedback. Keeping the two apart is what lets the statements above stay true without
+/// exception: {@code approved} has exactly two writers, output extraction and consensus, and
+/// "the reviewer decides" is a property of the rule that reads them rather than of the order in
+/// which processors happen to run.
+///
 /// @see io.hensu.core.execution.enricher.ScoreVariableInjector
 /// @see io.hensu.core.execution.enricher.ApprovalVariableInjector
 /// @see io.hensu.core.execution.enricher.RecommendationVariableInjector
 /// @see io.hensu.core.execution.parallel.ConsensusEvaluator
 /// @see io.hensu.core.execution.pipeline.TransitionPostProcessor
+/// @see io.hensu.core.review.ReviewVerdict
+/// @see io.hensu.core.execution.pipeline.ReviewPostProcessor
 public final class EngineVariables {
 
     /// Numeric score (0–100) for quality evaluation and consensus.

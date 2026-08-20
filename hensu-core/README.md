@@ -273,14 +273,15 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── SubWorkflowNode.java   # Delegates to another workflow
 │   │   └── EndNode.java           # Terminal node
 │   ├── transition/
-│   │   ├── TransitionRule.java        # Sealed trigger interface; exposes requiredEngineVars(), retryFeedback(), mismatchDiagnostic()
+│   │   ├── TransitionRule.java        # Sealed trigger interface; exposes requiredRoutingVars(), retryFeedback(), mismatchDiagnostic()
 │   │   ├── TransitionTargets.java     # Primary + escalation target pair
 │   │   ├── TransitionRuleChecks.java  # Shared rule-list validations (duplicate namespaces, arm ordering)
 │   │   ├── SuccessTransition.java     # Routes on successful execution
 │   │   ├── FailureTransition.java     # Routes on execution failure (pure trigger)
 │   │   ├── NoConsensusTransition.java # Routes when a parallel node fails consensus
 │   │   ├── ScoreTransition.java       # Routes on rubric evaluation score
-│   │   ├── ApprovalTransition.java    # Routes on the approved engine variable
+│   │   ├── ApprovalTransition.java    # Routes on the human review verdict, else the approved engine variable
+│   │   ├── ApprovalArms.java          # Reports which approval arms a rule list declares (SSOT for verdict routability)
 │   │   ├── Condition.java             # Sealed value predicates (Equals, NotEquals, Compare) with coercion
 │   │   ├── ConditionTransition.java   # Routes on a declared output variable (backs onCondition)
 │   │   ├── BoundedTransition.java     # Decorates a trigger with retry budget + escalation (backs revise)
@@ -292,7 +293,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   └── VarType.java                  # Type enum: STRING, NUMBER, BOOLEAN, LIST_STRING
 │   └── validation/
 │       ├── SubWorkflowGraphValidator.java # Load-time cycle + dangling-ref detection
-│       └── WorkflowValidator.java        # Load-time validator for transition targets, writes, and prompt {variable} refs
+│       └── WorkflowValidator.java        # Load-time validator for transition targets, writes, prompt {variable} refs, and review arms
 ├── rubric/                        # Quality evaluation engine
 │   ├── RubricEngine.java          # Evaluation orchestrator
 │   ├── model/                     # Rubric, Criterion, ScoreCondition, etc.
@@ -308,6 +309,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── ReviewHandler.java         # Review callback interface
 │   ├── ReviewOutcome.java         # Sealed: Decided(ReviewDecision) | Pending(correlationId)
 │   ├── ReviewDecision.java        # Sealed: Approve | Backtrack | Reject
+│   ├── ReviewVerdict.java         # A reviewer's decision and reason, read by ApprovalTransition
 │   ├── ReviewConfig.java          # Per-node review configuration
 │   └── ReviewMode.java            # DISABLED, OPTIONAL, REQUIRED
 ├── resume/
@@ -349,7 +351,7 @@ hensu-core/src/main/java/io/hensu/core/
 | `FailureTransition`     | Routes on execution failure (pure trigger; no retry budget)                                                                                      |
 | `NoConsensusTransition` | Routes when a parallel node fails to reach consensus                                                                                             |
 | `ScoreTransition`       | Routes based on rubric evaluation score                                                                                                          |
-| `ApprovalTransition`    | Routes on the `approved` boolean engine variable (fall-through if absent)                                                                        |
+| `ApprovalTransition`    | Routes on the human reviewer's verdict when one exists, else on the `approved` boolean engine variable (fall-through if absent)                  |
 | `ConditionTransition`   | Routes on a declared output variable via a typed `Condition` predicate; type mismatches emit a loud transition warning (backs DSL `onCondition`) |
 | `BoundedTransition`     | Decorates a trigger with a per-node retry budget + escalation target (the `revise` / `onFailure retry` mechanism)                                |
 | `AlwaysTransition`      | Else-arm of `onScore` / `onCondition`: routes every **successful** result to its target; failures fall through to `FailureTransition`            |

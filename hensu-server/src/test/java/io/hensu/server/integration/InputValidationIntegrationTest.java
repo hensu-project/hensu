@@ -75,6 +75,52 @@ class InputValidationIntegrationTest {
         assertThat(response.jsonPath().getString("error")).contains("valid identifier");
     }
 
+    /// A review-shaped body spelled the wrong way must be a client error, not a silent no-op.
+    ///
+    /// Posted through the running server this exercises the Quarkus-configured `ObjectMapper`,
+    /// whose `fail-on-unknown-properties=false` is exactly what made the degradation possible:
+    /// the rejection has to come from the DTO itself.
+    @Test
+    void resumeShouldRejectUnrecognizedBodyFields() {
+        Response response =
+                given().contentType(ContentType.JSON)
+                        .body("{\"approved\":true,\"modifications\":{}}")
+                        .when()
+                        .post("/api/v1/executions/exec-1/resume");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(response.jsonPath().getInt("status")).isEqualTo(400);
+        assertThat(response.jsonPath().getString("error")).contains("approved");
+    }
+
+    /// A null-valued unknown field must produce the same named rejection, not an NPE inside
+    /// the record constructor while Jackson is still binding the body.
+    @Test
+    void resumeShouldRejectNullValuedUnrecognizedField() {
+        Response response =
+                given().contentType(ContentType.JSON)
+                        .body("{\"approved\":null}")
+                        .when()
+                        .post("/api/v1/executions/exec-1/resume");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(response.jsonPath().getInt("status")).isEqualTo(400);
+        assertThat(response.jsonPath().getString("error")).contains("approved");
+    }
+
+    @Test
+    void resumeShouldRejectDecisionWithoutCorrelationId() {
+        Response response =
+                given().contentType(ContentType.JSON)
+                        .body("{\"decision\":\"approve\"}")
+                        .when()
+                        .post("/api/v1/executions/exec-1/resume");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(response.jsonPath().getInt("status")).isEqualTo(400);
+        assertThat(response.jsonPath().getString("error")).containsIgnoringCase("correlationId");
+    }
+
     // --- Workflow endpoints ---
 
     @Test

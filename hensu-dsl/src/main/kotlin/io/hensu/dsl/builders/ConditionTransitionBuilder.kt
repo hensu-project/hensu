@@ -1,5 +1,6 @@
 package io.hensu.dsl.builders
 
+import io.hensu.core.execution.EngineVariables
 import io.hensu.core.workflow.transition.AlwaysTransition
 import io.hensu.core.workflow.transition.Condition
 import io.hensu.core.workflow.transition.ConditionTransition
@@ -12,6 +13,10 @@ import io.hensu.core.workflow.transition.TransitionRule
  * Composition across arms is OR-only – a conjunction such as `status == "complete" AND score >= 80`
  * is inexpressible by design; have the agent emit a combined variable instead. Overlapping arms are
  * a build error, and an explicit `otherwise` arm covers every remaining value.
+ *
+ * The engine variables `score`, `approved`, and `recommendation` are rejected: use `onScore` and
+ * `onApproval`/`onRejection`, which carry the semantics the engine wires prompts, output
+ * extraction, and the human review verdict against.
  *
  * Example:
  * ```kotlin
@@ -35,6 +40,13 @@ import io.hensu.core.workflow.transition.TransitionRule
  */
 @WorkflowDsl
 class ConditionTransitionBuilder internal constructor(private val variable: String) {
+
+    init {
+        require(!EngineVariables.isEngineVar(variable)) {
+            "onCondition(\"$variable\"): '$variable' is a reserved engine variable. " +
+                "Use onApproval/onRejection for 'approved' and onScore for 'score'."
+        }
+    }
 
     internal sealed interface Arm
 

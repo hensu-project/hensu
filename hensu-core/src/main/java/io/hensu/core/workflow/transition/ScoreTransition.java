@@ -33,7 +33,7 @@ public record ScoreTransition(List<ScoreCondition> conditions, boolean withFeedb
     }
 
     @Override
-    public Set<String> requiredEngineVars() {
+    public Set<String> requiredRoutingVars() {
         return Set.of(EngineVariables.SCORE, EngineVariables.RECOMMENDATION);
     }
 

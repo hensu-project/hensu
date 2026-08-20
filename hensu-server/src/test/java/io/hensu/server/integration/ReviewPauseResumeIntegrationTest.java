@@ -1,6 +1,7 @@
 package io.hensu.server.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.resume.ResumeInput;
 import io.hensu.core.review.ReviewDecision;
@@ -96,6 +97,95 @@ class ReviewPauseResumeIntegrationTest extends IntegrationTestBase {
                         .findByExecutionId(TEST_TENANT, result.executionId())
                         .orElseThrow();
         assertThat(rejected.checkpointReason()).isEqualTo("rejected");
+    }
+
+    /// A resume that does not answer the pending review must fail loudly and change nothing.
+    ///
+    /// Before this guard the executor re-entered the post-pipeline, hit the review processor
+    /// again, and requested a fresh review: HTTP 200, a new correlation id, and no decision
+    /// applied — a loop the caller could not distinguish from success. The failure must also
+    /// stay a *request* failure: the execution is merely paused, so marking it failed would be
+    /// worse than the loop it replaces.
+    @Test
+    void shouldRejectNonReviewResumeWhileAwaitingAndStayResumable() {
+        Workflow workflow = loadWorkflow("review-approve.json");
+        registerStub("draft", "Draft content about testing");
+        testReviewHandler.enqueueOutcome(ReviewOutcome.pending("corr-3"));
+
+        workflowRepository.save(TEST_TENANT, workflow);
+        ExecutionStartResult result =
+                workflowService.startExecution(
+                        TEST_TENANT, workflow.getId(), Map.of("topic", "testing"));
+
+        awaitCheckpointReason(result.executionId(), "paused");
+
+        assertThatThrownBy(
+                        () ->
+                                workflowService.resumeExecution(
+                                        TEST_TENANT, result.executionId(), ResumeInput.NONE))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        HensuSnapshot afterBadResume =
+                workflowStateRepository
+                        .findByExecutionId(TEST_TENANT, result.executionId())
+                        .orElseThrow();
+        assertThat(afterBadResume.checkpointReason()).isEqualTo("paused");
+        assertThat(afterBadResume.phase()).isInstanceOf(ExecutionPhase.Awaiting.class);
+        assertThat(((ExecutionPhase.Awaiting) afterBadResume.phase()).correlationId())
+                .isEqualTo("corr-3");
+
+        // The rejected request left the execution usable: a correct one still completes it.
+        workflowService.resumeExecution(
+                TEST_TENANT,
+                result.executionId(),
+                new ResumeInput.ApplyReview("corr-3", new ReviewDecision.Approve()));
+
+        awaitCheckpointReason(result.executionId(), "completed");
+    }
+
+    /// A decision that arrives after the review was already answered must not reopen the run.
+    ///
+    /// Webhooks and review UIs retry: the same approval can be submitted twice, and the second
+    /// call lands on an execution whose phase is no longer `Awaiting`. Applying it would drive
+    /// `executeFrom` over a terminal state, so the request must be rejected while the finished
+    /// snapshot — checkpoint reason, phase, and context — stays exactly as the first resume
+    /// left it.
+    @Test
+    void shouldRejectStaleReviewDecisionAfterExecutionCompleted() {
+        Workflow workflow = loadWorkflow("review-approve.json");
+        registerStub("draft", "Draft content about testing");
+        testReviewHandler.enqueueOutcome(ReviewOutcome.pending("corr-4"));
+
+        workflowRepository.save(TEST_TENANT, workflow);
+        ExecutionStartResult result =
+                workflowService.startExecution(
+                        TEST_TENANT, workflow.getId(), Map.of("topic", "testing"));
+
+        awaitCheckpointReason(result.executionId(), "paused");
+
+        var decision = new ResumeInput.ApplyReview("corr-4", new ReviewDecision.Approve());
+        workflowService.resumeExecution(TEST_TENANT, result.executionId(), decision);
+
+        awaitCheckpointReason(result.executionId(), "completed");
+        HensuSnapshot completed =
+                workflowStateRepository
+                        .findByExecutionId(TEST_TENANT, result.executionId())
+                        .orElseThrow();
+
+        assertThatThrownBy(
+                        () ->
+                                workflowService.resumeExecution(
+                                        TEST_TENANT, result.executionId(), decision))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not awaiting review");
+
+        HensuSnapshot afterStaleDecision =
+                workflowStateRepository
+                        .findByExecutionId(TEST_TENANT, result.executionId())
+                        .orElseThrow();
+        assertThat(afterStaleDecision.checkpointReason()).isEqualTo("completed");
+        assertThat(afterStaleDecision.phase()).isInstanceOf(ExecutionPhase.Terminal.class);
+        assertThat(afterStaleDecision.context()).isEqualTo(completed.context());
     }
 
     private void awaitCheckpointReason(String executionId, String expectedReason) {
