@@ -1,7 +1,11 @@
 package io.hensu.server.streaming;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.hensu.core.tool.ToolCallEvent;
+import io.hensu.core.tool.ToolCallStatus;
+import io.hensu.core.tool.ToolResultEvent;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 /// SSE event types for execution streaming.
@@ -13,6 +17,8 @@ import java.util.Map;
 /// - `execution.completed` - Entire execution finished
 /// - `execution.paused` - Execution paused for review
 /// - `execution.error` - Error occurred
+/// - `tool.invoked` - An agent asked to run a tool
+/// - `tool.settled` - A tool invocation finished, whatever the outcome
 ///
 /// @see ExecutionEventBroadcaster for event publishing
 /// @see io.hensu.server.api.ExecutionEventResource for SSE endpoint
@@ -156,6 +162,96 @@ public sealed interface ExecutionEvent {
                 Map<String, Object> output) {
             return new ExecutionCompleted(
                     executionId, workflowId, false, finalNodeId, output, Instant.now());
+        }
+    }
+
+    /// A tool invocation requested by an agent.
+    ///
+    /// Carries the argument *names* only. The values are deliberately absent:
+    /// they can be arbitrarily large, they can carry credentials, and an SSE
+    /// stream is the least controlled sink in the system. Operators who need
+    /// the values read the durable audit record instead.
+    ///
+    /// @param executionId  the execution identifier, never null
+    /// @param nodeId       node whose agent requested the tool, never null
+    /// @param agentId      the requesting agent, never null
+    /// @param toolName     the requested tool, never null
+    /// @param argumentKeys names of the arguments supplied, never null, may be empty
+    /// @param timestamp    when the request was made, never null
+    record ToolInvoked(
+            String executionId,
+            String nodeId,
+            String agentId,
+            String toolName,
+            List<String> argumentKeys,
+            Instant timestamp)
+            implements ExecutionEvent {
+
+        @Override
+        public String type() {
+            return "tool.invoked";
+        }
+
+        /// Creates a tool-request event from an audit record.
+        ///
+        /// @param executionId the execution identifier, not null
+        /// @param event the audit record emitted by the tool loop, not null
+        /// @return new event, never null
+        public static ToolInvoked now(String executionId, ToolCallEvent event) {
+            return new ToolInvoked(
+                    executionId,
+                    event.nodeId(),
+                    event.agentId(),
+                    event.toolName(),
+                    List.copyOf(event.arguments().keySet()),
+                    event.occurredAt());
+        }
+    }
+
+    /// The outcome of a tool invocation.
+    ///
+    /// @param executionId the execution identifier, never null
+    /// @param nodeId      node whose agent requested the tool, never null
+    /// @param agentId     the requesting agent, never null
+    /// @param toolName    the tool that was invoked, never null
+    /// @param status      the outcome, never null
+    /// @param durationMs  wall-clock duration in milliseconds
+    /// @param exitCode    process exit code for tools that run one, may be null
+    /// @param error       error description when the outcome is not success, may be null
+    /// @param timestamp   when the invocation settled, never null
+    record ToolSettled(
+            String executionId,
+            String nodeId,
+            String agentId,
+            String toolName,
+            ToolCallStatus status,
+            long durationMs,
+            Integer exitCode,
+            String error,
+            Instant timestamp)
+            implements ExecutionEvent {
+
+        @Override
+        public String type() {
+            return "tool.settled";
+        }
+
+        /// Creates a tool-outcome event from an audit record.
+        ///
+        /// @param executionId the execution identifier, not null
+        /// @param event the audit record emitted by the tool loop, not null
+        /// @return new event, never null
+        public static ToolSettled now(String executionId, ToolResultEvent event) {
+            return new ToolSettled(
+                    executionId,
+                    event.nodeId(),
+                    event.agentId(),
+                    event.toolName(),
+                    event.status(),
+                    event.durationMs(),
+                    event.exitCode(),
+                    event.error(),
+                    event.occurredAt());
         }
     }
 

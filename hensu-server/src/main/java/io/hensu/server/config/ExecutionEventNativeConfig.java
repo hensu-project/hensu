@@ -25,6 +25,8 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
             ExecutionEvent.ExecutionStarted.class,
             ExecutionEvent.ExecutionPaused.class,
             ExecutionEvent.ExecutionCompleted.class,
-            ExecutionEvent.ExecutionError.class
+            ExecutionEvent.ExecutionError.class,
+            ExecutionEvent.ToolInvoked.class,
+            ExecutionEvent.ToolSettled.class
         })
 public class ExecutionEventNativeConfig {}

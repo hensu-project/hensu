@@ -165,7 +165,11 @@ public class McpToolDiscovery {
             boolean isRequired = required.contains(paramName);
             Object defaultValue = paramSchema.get("default");
 
-            params.add(new ParameterDef(paramName, type, description, isRequired, defaultValue));
+            // MCP's schema has no notion of a secret parameter, so nothing discovered
+            // here is marked sensitive; only locally declared tools can claim that.
+            params.add(
+                    new ParameterDef(
+                            paramName, type, description, isRequired, defaultValue, false));
         }
 
         return params;

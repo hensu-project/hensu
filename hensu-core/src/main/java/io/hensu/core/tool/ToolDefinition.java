@@ -6,13 +6,12 @@ import java.util.Objects;
 /// Describes a callable tool without implementation details.
 ///
 /// Tool definitions are protocol-agnostic descriptors used by:
-/// - Plan generation (LLM or static) to select appropriate tools
-/// - Plan execution to validate tool calls
+/// - Agents, to decide which tool to request
+/// - The tool loop, to validate the tool an agent asked for
 /// - MCP integration at the server layer
 ///
-/// The core module only defines the tool shape; actual invocation
-/// happens through {@link io.hensu.core.execution.action.ActionHandler}
-/// implementations at the server layer.
+/// The core module only defines the tool shape; actual invocation happens
+/// through {@link ToolProvider} implementations contributed by each runtime.
 ///
 /// ### Contracts
 /// - **Precondition**: `name` must not be null or blank
@@ -24,9 +23,9 @@ import java.util.Objects;
 ///     "search",
 ///     "Search for information",
 ///     List.of(
-///         new ParameterDef("query", "string", "Search query", true, null)
+///         new ParameterDef("query", "string", "Search query", true, null, false)
 ///     ),
-///     new ParameterDef("results", "array", "Search results", true, null)
+///     new ParameterDef("results", "array", "Search results", true, null, false)
 /// );
 /// }
 ///
@@ -34,8 +33,8 @@ import java.util.Objects;
 /// @param description human-readable description for LLM context, not null
 /// @param parameters input parameters accepted by the tool, not null (may be empty)
 /// @param returnType description of the tool's output, may be null
-/// @see ToolRegistry for tool registration
-/// @see io.hensu.core.plan.PlannedStep for tool invocation in plans
+/// @see ToolRegistry for tool discovery
+/// @see ToolProvider for tool invocation
 public record ToolDefinition(
         String name, String description, List<ParameterDef> parameters, ParameterDef returnType) {
 
@@ -85,13 +84,25 @@ public record ToolDefinition(
 
     /// Describes a tool parameter or return type.
     ///
+    /// Sensitive parameters are redacted at the source: the tool loop replaces
+    /// their values with a placeholder before the audit record leaves the core,
+    /// so no listener, log or durable sink ever receives the secret while the
+    /// provider still receives the real value.
+    ///
     /// @param name parameter identifier, not null
     /// @param type parameter type (string, number, boolean, object, array), not null
     /// @param description human-readable description, not null
     /// @param required whether the parameter must be provided
     /// @param defaultValue default value if not provided, may be null
+    /// @param sensitive whether the value carries a secret and must never be audited
+    /// @see io.hensu.core.tool.ToolCallEvent#REDACTED for the replacement value
     public record ParameterDef(
-            String name, String type, String description, boolean required, Object defaultValue) {
+            String name,
+            String type,
+            String description,
+            boolean required,
+            Object defaultValue,
+            boolean sensitive) {
 
         /// Compact constructor with validation.
         public ParameterDef {
@@ -107,7 +118,7 @@ public record ToolDefinition(
         /// @param description human-readable description, not null
         /// @return new parameter definition, never null
         public static ParameterDef required(String name, String type, String description) {
-            return new ParameterDef(name, type, description, true, null);
+            return new ParameterDef(name, type, description, true, null, false);
         }
 
         /// Creates an optional parameter definition.
@@ -119,7 +130,7 @@ public record ToolDefinition(
         /// @return new parameter definition, never null
         public static ParameterDef optional(
                 String name, String type, String description, Object defaultValue) {
-            return new ParameterDef(name, type, description, false, defaultValue);
+            return new ParameterDef(name, type, description, false, defaultValue, false);
         }
     }
 }

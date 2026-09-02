@@ -4,14 +4,24 @@ import java.util.Objects;
 
 /// Result of executing a tool call, fed back to the agent for the next round.
 ///
+/// The outcome is typed rather than boolean: an unattended run has to tell a
+/// refusal apart from a broken tool, and the audit trail records the decision
+/// alongside the exit status. {@link #success()} is derived from the status, so
+/// call sites that only care whether the tool worked read unchanged.
+///
 /// @param toolName name of the tool that was invoked, not null
-/// @param success whether the invocation succeeded
+/// @param status the invocation outcome, not null
 /// @param output tool output on success, may be null
-/// @param error error message on failure, may be null
-public record ToolCallResult(String toolName, boolean success, String output, String error) {
+/// @param error error message when the outcome is not success, may be null
+/// @param exitCode process exit code for tools that run one, may be null
+/// @see ToolCallStatus for the outcome vocabulary
+public record ToolCallResult(
+        String toolName, ToolCallStatus status, String output, String error, Integer exitCode) {
 
+    /// Compact constructor with validation.
     public ToolCallResult {
         Objects.requireNonNull(toolName, "toolName must not be null");
+        Objects.requireNonNull(status, "status must not be null");
     }
 
     /// Creates a successful tool call result.
@@ -20,22 +30,63 @@ public record ToolCallResult(String toolName, boolean success, String output, St
     /// @param output tool output text, not null
     /// @return successful result, never null
     public static ToolCallResult success(String toolName, String output) {
-        return new ToolCallResult(toolName, true, output, null);
+        return new ToolCallResult(toolName, ToolCallStatus.SUCCESS, output, null, null);
     }
 
-    /// Creates a failed tool call result.
+    /// Creates a successful tool call result carrying a process exit code.
+    ///
+    /// @param toolName tool that was invoked, not null
+    /// @param output tool output text, not null
+    /// @param exitCode exit code reported by the underlying process, may be null
+    /// @return successful result, never null
+    public static ToolCallResult success(String toolName, String output, Integer exitCode) {
+        return new ToolCallResult(toolName, ToolCallStatus.SUCCESS, output, null, exitCode);
+    }
+
+    /// Creates a failed tool call result, meaning the tool ran and reported failure.
+    ///
+    /// Outcomes that are not the tool's own failure – a refusal, a timeout, an
+    /// unroutable name – use {@link #of} with the matching status instead.
     ///
     /// @param toolName tool that was invoked, not null
     /// @param error error description, not null
     /// @return failure result, never null
     public static ToolCallResult failure(String toolName, String error) {
-        return new ToolCallResult(toolName, false, null, error);
+        return new ToolCallResult(toolName, ToolCallStatus.FAILURE, null, error, null);
     }
 
-    /// Returns the output on success or "ERROR: " + error on failure.
+    /// Creates a result with an explicit status.
+    ///
+    /// @param toolName tool that was invoked, not null
+    /// @param status the outcome, not null
+    /// @param output tool output, may be null
+    /// @param error error description, may be null
+    /// @param exitCode process exit code, may be null
+    /// @return result, never null
+    public static ToolCallResult of(
+            String toolName, ToolCallStatus status, String output, String error, Integer exitCode) {
+        return new ToolCallResult(toolName, status, output, error, exitCode);
+    }
+
+    /// Returns whether the tool ran and reported success.
+    ///
+    /// @return true if the status is {@link ToolCallStatus#SUCCESS}
+    public boolean success() {
+        return status == ToolCallStatus.SUCCESS;
+    }
+
+    /// Returns the text fed back to the agent for this outcome.
+    ///
+    /// Statuses other than success and failure are prefixed with the status
+    /// name, so a model can tell a refusal from a broken tool and stop
+    /// retrying a call that will never be permitted.
     ///
     /// @return text representation for feeding back to the agent, never null
     public String asText() {
-        return success ? (output != null ? output : "") : "ERROR: " + (error != null ? error : "");
+        return switch (status) {
+            case SUCCESS -> output != null ? output : "";
+            case FAILURE -> "ERROR: " + (error != null ? error : "");
+            default -> status.name() + ": " + (error != null ? error : "");
+        };
     }
 }

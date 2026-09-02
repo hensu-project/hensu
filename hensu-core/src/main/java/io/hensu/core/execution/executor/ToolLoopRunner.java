@@ -4,15 +4,20 @@ import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.agent.ToolCapable;
 import io.hensu.core.agent.ToolSession;
-import io.hensu.core.execution.action.Action;
-import io.hensu.core.execution.action.ActionExecutor;
+import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.result.ResultStatus;
+import io.hensu.core.tool.ToolCallEvent;
 import io.hensu.core.tool.ToolCallResult;
+import io.hensu.core.tool.ToolCallStatus;
 import io.hensu.core.tool.ToolDefinition;
+import io.hensu.core.tool.ToolInvoker;
 import io.hensu.core.tool.ToolRegistry;
+import io.hensu.core.tool.ToolResultEvent;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -22,7 +27,9 @@ import java.util.stream.Collectors;
 /// and implements {@link ToolCapable}. Resolves tools from the
 /// {@link ToolRegistry}, opens a {@link ToolSession}, and iterates
 /// tool-request/tool-result rounds until the agent emits a terminal response
-/// or the tool call budget is exhausted.
+/// or the tool call budget is exhausted. Every round is invoked through the
+/// context's {@link ToolInvoker} and reported to the execution listener, so an
+/// unattended run leaves a complete audit trail.
 ///
 /// @implNote Package-private, stateless, no instances. Safe to call from any
 /// thread including Virtual Threads.
@@ -55,21 +62,31 @@ final class ToolLoopRunner {
                     Map.of());
         }
 
-        ActionExecutor actionExecutor = ctx.getActionExecutor();
-        if (actionExecutor == null) {
+        ToolInvoker toolInvoker = ctx.getToolInvoker();
+        if (toolInvoker == null) {
             return new NodeResult(
                     ResultStatus.FAILURE,
-                    "Agent '" + agentId + "' declares tools but no ActionExecutor is configured",
+                    "Agent '" + agentId + "' declares tools but no ToolInvoker is configured",
                     Map.of());
         }
 
-        List<ToolDefinition> availableTools = resolveTools(agent, ctx);
+        List<ToolDefinition> catalog;
+        try {
+            catalog = catalog(ctx);
+        } catch (RuntimeException e) {
+            // Colliding provider catalogs must fail the node, not escape the loop.
+            return new NodeResult(
+                    ResultStatus.FAILURE,
+                    "Tool catalog is unusable for agent '" + agentId + "': " + e.getMessage(),
+                    Map.of());
+        }
+
+        List<ToolDefinition> availableTools = resolveTools(agent, catalog);
         if (availableTools == null) {
             List<String> declared = agent.getConfig().getTools();
-            ToolRegistry registry = ctx.getToolRegistry();
             List<String> available =
-                    registry != null
-                            ? registry.all().stream().map(ToolDefinition::name).toList()
+                    catalog != null
+                            ? catalog.stream().map(ToolDefinition::name).toList()
                             : List.of();
             return new NodeResult(
                     ResultStatus.FAILURE,
@@ -100,13 +117,18 @@ final class ToolLoopRunner {
                 if (toolCallCount >= maxToolCalls) {
                     session.compact();
                     ToolCallResult exhaustion =
-                            ToolCallResult.failure(
+                            ToolCallResult.of(
                                     toolRequest.toolName(),
+                                    ToolCallStatus.BUDGET_EXHAUSTED,
+                                    null,
                                     "Tool call budget exhausted ("
                                             + toolCallCount
                                             + "/"
                                             + maxToolCalls
-                                            + "). Provide your final answer based on the tool results received so far.");
+                                            + "). Provide your final answer based on the tool results received so far.",
+                                    null);
+                    fireCall(ctx, eventSourceId, agentId, toolRequest, availableTools);
+                    fireResult(ctx, eventSourceId, agentId, exhaustion, 0L);
                     response = session.submit(exhaustion);
 
                     if (response instanceof AgentResponse.ToolRequest) {
@@ -123,7 +145,21 @@ final class ToolLoopRunner {
                 }
 
                 ToolCallResult result =
-                        executeTool(toolRequest, availableTools, actionExecutor, ctx);
+                        executeTool(toolRequest, availableTools, ctx, eventSourceId, agentId);
+
+                if (result.status() == ToolCallStatus.CATALOG_ERROR) {
+                    // A misconfigured catalog is an operator problem, not something
+                    // the model should see and retry against. The attempt is audited;
+                    // the node fails so transitions can route around it.
+                    return new NodeResult(
+                            ResultStatus.FAILURE,
+                            "Tool catalog is unusable for agent '"
+                                    + agentId
+                                    + "': "
+                                    + result.error(),
+                            Map.of());
+                }
+
                 toolCallCount++;
                 response = session.submit(result);
             }
@@ -135,17 +171,23 @@ final class ToolLoopRunner {
         }
     }
 
-    private static List<ToolDefinition> resolveTools(Agent agent, ExecutionContext ctx) {
-        List<String> declaredNames = agent.getConfig().getTools();
+    /// Materializes the tool catalog, or null when no registry is configured.
+    ///
+    /// @throws RuntimeException if the registry rejects its own catalog – two
+    ///     providers exposing the same tool name raises IllegalStateException
+    private static List<ToolDefinition> catalog(ExecutionContext ctx) {
         ToolRegistry registry = ctx.getToolRegistry();
+        return registry != null ? registry.all() : null;
+    }
 
-        if (registry == null) {
+    private static List<ToolDefinition> resolveTools(Agent agent, List<ToolDefinition> catalog) {
+        if (catalog == null) {
             return null;
         }
 
-        List<ToolDefinition> allTools = registry.all();
+        List<String> declaredNames = agent.getConfig().getTools();
         Map<String, ToolDefinition> byName =
-                allTools.stream()
+                catalog.stream()
                         .collect(Collectors.toMap(ToolDefinition::name, t -> t, (a, _) -> a));
 
         List<ToolDefinition> resolved = declaredNames.stream().map(byName::get).toList();
@@ -160,8 +202,9 @@ final class ToolLoopRunner {
     private static ToolCallResult executeTool(
             AgentResponse.ToolRequest toolRequest,
             List<ToolDefinition> availableTools,
-            ActionExecutor actionExecutor,
-            ExecutionContext ctx) {
+            ExecutionContext ctx,
+            String eventSourceId,
+            String agentId) {
 
         String toolName = toolRequest.toolName();
 
@@ -171,28 +214,110 @@ final class ToolLoopRunner {
             List<String> available = availableTools.stream().map(ToolDefinition::name).toList();
             logger.warning(
                     "Agent requested unknown tool '" + toolName + "', available: " + available);
-            return ToolCallResult.failure(
-                    toolName, "Unknown tool '" + toolName + "', available: " + available);
+            ToolCallResult unknown =
+                    ToolCallResult.of(
+                            toolName,
+                            ToolCallStatus.UNKNOWN_TOOL,
+                            null,
+                            "Unknown tool '" + toolName + "', available: " + available,
+                            null);
+            fireCall(ctx, eventSourceId, agentId, toolRequest, availableTools);
+            fireResult(ctx, eventSourceId, agentId, unknown, 0L);
+            return unknown;
         }
+
+        fireCall(ctx, eventSourceId, agentId, toolRequest, availableTools);
+        long startNanos = System.nanoTime();
 
         try {
-            Map<String, Object> arguments =
-                    (Map<String, Object>) (Map<?, ?>) toolRequest.arguments();
-            Action.Send send = new Action.Send(toolName, arguments, true);
-            ActionExecutor.ActionResult actionResult =
-                    actionExecutor.execute(send, ctx.getState().getContext());
-
-            if (actionResult.success()) {
-                return ToolCallResult.success(
-                        toolName,
-                        actionResult.output() != null ? actionResult.output().toString() : "");
-            } else {
-                return ToolCallResult.failure(toolName, actionResult.message());
-            }
+            ToolCallResult result =
+                    ctx.getToolInvoker()
+                            .call(toolName, arguments(toolRequest), ctx.getState().getContext());
+            fireResult(ctx, eventSourceId, agentId, result, elapsedMs(startNanos));
+            return result;
         } catch (Exception e) {
             logger.warning("Tool execution failed for '" + toolName + "': " + e.getMessage());
-            return ToolCallResult.failure(toolName, "Execution error: " + e.getMessage());
+            ToolCallResult failure =
+                    ToolCallResult.failure(toolName, "Execution error: " + e.getMessage());
+            fireResult(ctx, eventSourceId, agentId, failure, elapsedMs(startNanos));
+            return failure;
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> arguments(AgentResponse.ToolRequest toolRequest) {
+        return (Map<String, Object>) (Map<?, ?>) toolRequest.arguments();
+    }
+
+    private static long elapsedMs(long startNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+    }
+
+    private static void fireCall(
+            ExecutionContext ctx,
+            String eventSourceId,
+            String agentId,
+            AgentResponse.ToolRequest toolRequest,
+            List<ToolDefinition> availableTools) {
+        ExecutionListener listener = ctx.getListener();
+        listener.onToolCall(
+                ToolCallEvent.now(
+                        eventSourceId,
+                        agentId,
+                        toolRequest.toolName(),
+                        auditable(
+                                arguments(toolRequest), definition(availableTools, toolRequest))));
+    }
+
+    private static void fireResult(
+            ExecutionContext ctx,
+            String eventSourceId,
+            String agentId,
+            ToolCallResult result,
+            long durationMs) {
+        ExecutionListener listener = ctx.getListener();
+        listener.onToolResult(ToolResultEvent.now(eventSourceId, agentId, result, durationMs));
+    }
+
+    private static ToolDefinition definition(
+            List<ToolDefinition> availableTools, AgentResponse.ToolRequest toolRequest) {
+        return availableTools.stream()
+                .filter(tool -> tool.name().equals(toolRequest.toolName()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    /// Replaces the values of sensitive parameters before the arguments are audited.
+    ///
+    /// Redaction happens here rather than in a sink because the loop is the last
+    /// place that holds both the arguments and the schema describing them: the
+    /// provider still receives the real value, and no listener ever sees it.
+    ///
+    /// @param arguments arguments as the agent supplied them, not null
+    /// @param definition the resolved tool, or null for an unresolvable request
+    /// @return arguments safe to audit, never null
+    private static Map<String, Object> auditable(
+            Map<String, Object> arguments, ToolDefinition definition) {
+        if (definition == null || arguments == null || arguments.isEmpty()) {
+            return arguments;
+        }
+
+        List<String> secrets =
+                definition.parameters().stream()
+                        .filter(ToolDefinition.ParameterDef::sensitive)
+                        .map(ToolDefinition.ParameterDef::name)
+                        .toList();
+        if (secrets.isEmpty()) {
+            return arguments;
+        }
+
+        Map<String, Object> redacted = new LinkedHashMap<>(arguments);
+        for (String secret : secrets) {
+            if (redacted.containsKey(secret)) {
+                redacted.put(secret, ToolCallEvent.REDACTED);
+            }
+        }
+        return redacted;
     }
 
     private static NodeResult toNodeResult(AgentResponse response) {

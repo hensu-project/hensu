@@ -8,7 +8,9 @@ import io.hensu.core.execution.parallel.BranchExecutionConfig;
 import io.hensu.core.rubric.RubricEngine;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.template.TemplateResolver;
+import io.hensu.core.tool.ToolInvoker;
 import io.hensu.core.tool.ToolRegistry;
+import io.hensu.core.tool.ToolRouter;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
 
@@ -31,6 +33,7 @@ import io.hensu.core.workflow.WorkflowRepository;
 /// - `actionExecutor` - For command/action execution
 /// - `rubricEngine` - For rubric-based quality evaluation
 /// - `workflowRepository` - For loading sub-workflow definitions
+/// - `toolRouter` - For discovering and invoking the tools an agent requested
 ///
 /// @implNote Immutable after construction. Thread-safe for read access.
 /// Modified copies can be created via {@link #withState}, {@link #withListener},
@@ -57,6 +60,7 @@ public final class ExecutionContext {
     private final RubricEngine rubricEngine;
     private final WorkflowRepository workflowRepository;
     private final ToolRegistry toolRegistry;
+    private final ToolInvoker toolInvoker;
 
     private ExecutionContext(Builder builder) {
         this.state = builder.state;
@@ -71,6 +75,7 @@ public final class ExecutionContext {
         this.rubricEngine = builder.rubricEngine;
         this.workflowRepository = builder.workflowRepository;
         this.toolRegistry = builder.toolRegistry;
+        this.toolInvoker = builder.toolInvoker;
     }
 
     /// Returns the current workflow execution state.
@@ -154,6 +159,18 @@ public final class ExecutionContext {
         return toolRegistry;
     }
 
+    /// Returns the tool invoker for running the tools an agent requested.
+    ///
+    /// Narrower type than {@link #getToolRegistry()} on purpose: the tool loop
+    /// discovers through the registry and executes through the invoker. Both
+    /// are set from one {@link ToolRouter}, so the catalog an agent sees is
+    /// always the catalog it executes against.
+    ///
+    /// @return tool invoker, or null if not configured
+    public ToolInvoker getToolInvoker() {
+        return toolInvoker;
+    }
+
     /// Returns the branch execution configuration, if executing inside a parallel branch.
     ///
     /// Non-null only during branch execution within {@code ParallelNodeExecutor}.
@@ -193,7 +210,7 @@ public final class ExecutionContext {
                 .actionExecutor(this.actionExecutor)
                 .rubricEngine(this.rubricEngine)
                 .workflowRepository(this.workflowRepository)
-                .toolRegistry(this.toolRegistry)
+                .tools(this.toolRegistry, this.toolInvoker)
                 .build();
     }
 
@@ -217,7 +234,7 @@ public final class ExecutionContext {
                 .actionExecutor(this.actionExecutor)
                 .rubricEngine(this.rubricEngine)
                 .workflowRepository(this.workflowRepository)
-                .toolRegistry(this.toolRegistry)
+                .tools(this.toolRegistry, this.toolInvoker)
                 .build();
     }
 
@@ -241,7 +258,7 @@ public final class ExecutionContext {
                 .actionExecutor(this.actionExecutor)
                 .rubricEngine(this.rubricEngine)
                 .workflowRepository(this.workflowRepository)
-                .toolRegistry(this.toolRegistry)
+                .tools(this.toolRegistry, this.toolInvoker)
                 .build();
     }
 
@@ -263,6 +280,7 @@ public final class ExecutionContext {
         private RubricEngine rubricEngine;
         private WorkflowRepository workflowRepository;
         private ToolRegistry toolRegistry;
+        private ToolInvoker toolInvoker;
 
         private Builder() {}
 
@@ -321,8 +339,32 @@ public final class ExecutionContext {
             return this;
         }
 
-        public Builder toolRegistry(ToolRegistry toolRegistry) {
+        /// Wires tool discovery and tool invocation from one router.
+        ///
+        /// Deliberately the only public tool setter: wiring a catalog from one
+        /// source and an invoker from another would hand an agent tools it
+        /// cannot run, and the failure would be indistinguishable from a
+        /// hallucination.
+        ///
+        /// @param toolRouter the router serving both halves, may be null to leave tools unwired
+        /// @return this builder, never null
+        public Builder toolRouter(ToolRouter toolRouter) {
+            this.toolRegistry = toolRouter;
+            this.toolInvoker = toolRouter;
+            return this;
+        }
+
+        /// Copies an existing discovery/invocation pair into this builder.
+        ///
+        /// Package-private: only the `with*` copy methods and the tool loop's
+        /// own tests may set the two halves independently.
+        ///
+        /// @param toolRegistry the discovery half, may be null
+        /// @param toolInvoker the invocation half, may be null
+        /// @return this builder, never null
+        Builder tools(ToolRegistry toolRegistry, ToolInvoker toolInvoker) {
             this.toolRegistry = toolRegistry;
+            this.toolInvoker = toolInvoker;
             return this;
         }
 

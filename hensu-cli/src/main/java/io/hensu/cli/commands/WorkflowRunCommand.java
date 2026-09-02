@@ -77,7 +77,7 @@ class WorkflowRunCommand extends WorkflowCommand {
 
     @Option(
             names = {"-v", "--verbose"},
-            description = "Show agent inputs and outputs")
+            description = "Show agent inputs and outputs, and every tool call")
     private boolean verbose = false;
 
     @Option(

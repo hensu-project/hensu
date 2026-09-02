@@ -10,6 +10,8 @@ import io.hensu.core.state.HensuState;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.util.LogSanitizer;
 import io.hensu.core.workflow.Workflow;
+import io.hensu.server.execution.CompositeExecutionListener;
+import io.hensu.server.execution.ToolStreamingExecutionListener;
 import io.hensu.server.persistence.ExecutionLeaseManager;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
@@ -125,7 +127,7 @@ public class ExecutionStateService {
                                                 workflowExecutor.executeFrom(
                                                         workflow,
                                                         state,
-                                                        checkpointListener(tenantId));
+                                                        resumeListener(tenantId, executionId));
 
                                         ExecutionResultHandler.handle(
                                                 result,
@@ -157,6 +159,21 @@ public class ExecutionStateService {
             eventBroadcaster.complete(executionId);
             leaseManager.release(tenantId, executionId);
         }
+    }
+
+    /// Composes the listener used while a resumed execution runs.
+    ///
+    /// Checkpointing plus the SSE tool trail, so a client that re-subscribed
+    /// after submitting a review sees the same tool events a fresh execution
+    /// streams.
+    ///
+    /// @param tenantId the tenant owning the execution, not null
+    /// @param executionId the execution being resumed, not null
+    /// @return composed listener, never null
+    private ExecutionListener resumeListener(String tenantId, String executionId) {
+        return new CompositeExecutionListener(
+                checkpointListener(tenantId),
+                new ToolStreamingExecutionListener(eventBroadcaster, executionId));
     }
 
     private ExecutionListener checkpointListener(String tenantId) {

@@ -1009,7 +1009,7 @@ sequenceDiagram
     participant ALR as AgentLifecycleRunner
     participant TLR as ToolLoopRunner
     participant TS as ToolSession
-    participant AE as ActionExecutor
+    participant TR as ToolRouter
 
     SNE->>ALR: execute(nodeId, agentId, prompt, node, ctx)
     ALR->>ALR: EngineVariablePromptEnricher.enrich()
@@ -1017,21 +1017,28 @@ sequenceDiagram
 
     alt Agent declares tools
         ALR->>TLR: execute(nodeId, agentId, prompt, agent, ctx)
-        TLR->>TLR: resolveTools() via ToolRegistry
+        TLR->>TR: all() — catalog union, failing providers skipped, duplicates rejected
+        TLR->>TLR: filter to the agent's declared tools
         TLR->>TS: openToolSession(prompt, context, tools)
         TLR->>TS: start()
         TS-->>TLR: AgentResponse
 
         loop while ToolRequest && budget > 0
+            TLR->>TLR: listener.onToolCall(ToolCallEvent)
             alt Known tool
-                TLR->>AE: execute(Action.Send(rawPayload=true))
-                AE-->>TLR: ActionResult
+                TLR->>TR: call(name, arguments, context)
+                TR-->>TLR: ToolCallResult
                 TLR->>TLR: toolCallCount++
             else Unknown tool (hallucination)
-                TLR->>TLR: ToolCallResult.failure("Unknown tool")
+                TLR->>TLR: ToolCallResult UNKNOWN_TOOL
             end
-            TLR->>TS: submit(ToolCallResult)
-            TS-->>TLR: AgentResponse
+            TLR->>TLR: listener.onToolResult(ToolResultEvent)
+            alt status == CATALOG_ERROR
+                TLR->>TLR: NodeResult FAILURE — never submitted to the model
+            else
+                TLR->>TS: submit(ToolCallResult)
+                TS-->>TLR: AgentResponse
+            end
         end
 
         alt Budget exhausted
@@ -1059,7 +1066,8 @@ Three types form the tool session protocol (all in `hensu-core`, zero external d
 |------------------|-----------------------------------------------------------------------------------------------------|
 | `ToolCapable`    | Narrow interface on agents: `openToolSession(prompt, context, tools)` returns a `ToolSession`       |
 | `ToolSession`    | Call-scoped session: `start()`, `submit(ToolCallResult)`, `compact()`, `close()`                    |
-| `ToolCallResult` | Record `(toolName, success, output, error)` with `success()`/`failure()` factories and `asText()`   |
+| `ToolCallResult` | Record `(toolName, status, output, error, exitCode)` with a derived `success()` and `asText()`      |
+| `ToolCallStatus` | Outcome vocabulary: `SUCCESS`, `FAILURE`, `UNKNOWN_TOOL`, `CATALOG_ERROR`, `DENIED`, `TIMEOUT`, …   |
 
 Sessions are call-scoped, not stateful on the agent – `ParallelNodeExecutor` fan-out shares one agent
 instance across branches, so loop state must not live on the agent.
@@ -1084,42 +1092,73 @@ Tools declared but agent not capable → `NodeResult.failure()` (routable via `o
 
 ### Tool Resolution
 
-Tools are resolved via the MCP discovery chain:
-1. `ctx.getToolRegistry().all()` returns all available tools (in server context: `TenantToolRegistry` → `McpToolDiscovery`)
+Tools are resolved through the router's provider catalogs:
+1. `ctx.getToolRegistry().all()` returns the union of every provider's live catalog (in server context: `TenantToolProvider` → `McpToolDiscovery`)
 2. Filter to the agent's declared `tools` names
-3. Unresolvable name → `NodeResult.failure()` with diagnostic listing available tools
-4. Filtered `List<ToolDefinition>` (with full schemas) passed into `openToolSession()`
+3. A provider that throws from `tools()` is logged and skipped, so its tools are absent rather than fatal — one unreachable source fails a node, not the execution
+4. Unresolvable name → `NodeResult.failure()` with diagnostic listing available tools
+5. Two providers exposing the same tool name → `NodeResult.failure()` naming both providers. A collision seen at catalog time throws inside the loop and is caught; one seen only at call time comes back as `CATALOG_ERROR` and fails the node without being submitted to the model, so a configuration error is never something the agent retries against
+6. Filtered `List<ToolDefinition>` (with full schemas) passed into `openToolSession()`
 
 ### Budget Enforcement
 
-`AgentConfig.maxToolCalls` (default 10) caps EXECUTED tool calls – each `Action.Send` counts, so one
+`AgentConfig.maxToolCalls` (default 10) caps EXECUTED tool calls – each invocation counts, so one
 round with N parallel calls from the model counts N (not 1).
 
 On cap exhaustion:
-1. Feed back `ToolCallResult.failure(lastToolName, "Tool call budget exhausted (N/N)...")` via `session.submit()`
+1. Feed back a `BUDGET_EXHAUSTED` result (`"Tool call budget exhausted (N/N)..."`) via `session.submit()`
 2. Model responds with `TextResponse` → **SUCCESS** (accumulated context preserved)
 3. Model responds with `ToolRequest` → **hard FAILURE** ("agent continued requesting tools after budget exhaustion")
 
 No retry, no counter reset. If an agent genuinely needs more budget, raise `maxToolCalls` in the DSL.
 
-### Safety: Raw Payloads
+### Safety: Arguments Are Never Templated
 
-Agent-originated tool arguments are dispatched as `Action.Send(..., rawPayload=true)`. The `rawPayload`
-flag prevents template resolution of LLM-generated content – without it, an argument containing `{secret_key}`
-would be expanded from workflow context (template exfiltration). DSL-authored sends use `rawPayload=false`
-and continue to resolve templates normally.
+Agent-originated tool arguments travel from `ToolLoopRunner` to a `ToolProvider` untouched: the loop
+does not pass them through `TemplateResolver`. Without that guarantee an argument containing
+`{secret_key}` would be expanded from workflow context on its way out (template exfiltration).
+DSL-authored `execute(...)` actions are a separate path and continue to resolve templates normally.
 
 ### Unknown Tools
 
-When an agent requests a tool name that doesn't exist (hallucination), the runner feeds back
-`ToolCallResult.failure(toolName, "Unknown tool 'X', available: [...]")` rather than hard-failing.
-The agent can retry or answer – budget bounds the loop.
+When an agent requests a tool name that doesn't exist (hallucination), the runner feeds back an
+`UNKNOWN_TOOL` result naming the tools the agent is actually permitted, rather than hard-failing.
+The agent can retry or answer – budget bounds the loop. The router's own unknown-tool message
+deliberately does not enumerate its catalog: it sees every tool in the runtime, including those
+outside the agent's declared allowlist, and only the loop knows which of them the agent may see.
 
 ### Session Lifecycle
 
 `ToolLoopRunner` wraps the loop in try/finally:
 - `session.compact()` before the cap-exhaustion final call (maximize context for summarization)
 - `session.close()` in the finally block (release resources, flush final pair to shared history)
+
+### Audit Events
+
+Every tool request is reported to the `ExecutionListener`, so an unattended run leaves a complete
+trail of what the agent asked to run:
+
+| Callback                          | Fires                                                                |
+|-----------------------------------|----------------------------------------------------------------------|
+| `onToolCall(ToolCallEvent)`       | Immediately before dispatch, carrying the agent's arguments          |
+| `onToolResult(ToolResultEvent)`   | Once the invocation settles, carrying status, duration, and output   |
+
+The pair fires for every outcome, not only for tools that ran: a hallucinated name, a provider
+failure, an exception during invocation, and a request the budget rejected are all audited.
+
+Both records are built to be kept. `ToolResultEvent` truncates output at `MAX_OUTPUT_CHARS` (4096)
+and `ToolCallEvent` truncates each argument value at `MAX_ARG_CHARS` (1024), so the trail stays
+cheap enough to always be on. Arguments are copied recursively rather than shallowly, so a provider
+that mutates a nested map or list cannot retroactively edit what the audit says was requested. The
+values of parameters declared `sensitive` on their `ParameterDef` are replaced with
+`ToolCallEvent.REDACTED` before the event leaves the core – the provider still receives the real
+value, and no sink ever sees the secret. Both records carry the `Instant` they occurred, so a
+durable row reflects a source timestamp rather than an insertion time.
+
+Both callbacks are serialized by `SynchronizedListenerDecorator` during parallel branch execution.
+Runtimes consume them: on the server `LoggingExecutionListener` writes them to the log and
+`ToolStreamingExecutionListener` republishes them as SSE events, and on the CLI
+`VerboseExecutionListener` prints them. Both sinks carry argument *names* without their values.
 
 ### Adapter Implementations
 
@@ -1128,32 +1167,37 @@ The agent can retry or answer – budget bounds the loop.
 | LangChain4j    | `LangChain4jToolSession` | Multi-tool queue draining, `ReentrantLock`-guarded history, system-msg merge |
 | Stub (testing) | `StubToolSession`        | Scripted turns via `---TURN---` separator, `[TOOL_CALL]` prefix for requests |
 
-## Tool Registry
+## Tool Seam
 
-Protocol-agnostic tool descriptors used by agent tool loops and MCP integration. The core defines tool shapes; actual invocation happens through `ActionHandler` at the application layer.
+Protocol-agnostic tool descriptors plus the seam each runtime plugs its tool sources into. A `ToolProvider` owns both a catalog and the invocation of the tools in it; a `ToolRouter` composes several providers into the single object the engine wires into an execution context, implementing `ToolRegistry` for discovery and `ToolInvoker` for invocation.
 
-### Registering Tools
+### Contributing Tools
 
 ```java
-ToolRegistry registry = new DefaultToolRegistry();
+// Each runtime supplies its own providers
+ToolProvider commands = new CommandToolProvider(catalog, runner);
+ToolProvider mcp = new McpToolProvider(discovery, pool);
 
-// Simple tool (no parameters)
-registry.register(ToolDefinition.simple("search", "Search the web"));
+ToolRouter router = new ToolRouter(List.of(commands, mcp));
 
-// Tool with parameters
-registry.register(ToolDefinition.of("analyze", "Analyze data",
-    List.of(
-        ParameterDef.required("input", "string", "Data to analyze"),
-        ParameterDef.optional("format", "string", "Output format", "json")
-    )));
+HensuEnvironment env = HensuFactory.builder()
+    .toolRouter(router)
+    .build();
 ```
+
+A provider's catalog may be dynamic – tenant-scoped on the server, lazily started on the CLI – so
+the router delegates `all()` and `call()` live rather than snapshotting at construction. Duplicate
+tool names across providers are a configuration error: the constructor rejects what it can see, and
+because dynamic catalogs are still empty at that point, the check runs again on every catalog
+materialization.
 
 ### MCP Integration
 
-The server layer populates the tool registry from MCP server connections. Tools discovered via MCP become `ToolDefinition` instances available for agent tool loops.
+The server contributes a provider backed by MCP server connections. Tools discovered via MCP become
+`ToolDefinition` instances available for agent tool loops.
 
 ```
-MCP Server ──► ToolDefinition ──► ToolRegistry ──► ToolLoopRunner ──► Agent Tool Session
+MCP Server ──► ToolDefinition ──► ToolProvider ──► ToolRouter ──► ToolLoopRunner ──► Agent Tool Session
 ```
 
 ## Template Resolution
@@ -1547,12 +1591,18 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `rubric/RubricEngine.java`                              | Quality evaluation engine                                                                         |
 | `rubric/model/Rubric.java`                              | Rubric definition model                                                                           |
 | `tool/ToolDefinition.java`                              | Protocol-agnostic tool descriptor                                                                 |
-| `tool/ToolCallResult.java`                              | Tool execution result record (success/failure factories, `asText()`)                              |
-| `tool/ToolRegistry.java`                                | Tool registration/lookup interface                                                                |
+| `tool/ToolCallStatus.java`                              | Outcome vocabulary shared by every layer                                                          |
+| `tool/ToolCallResult.java`                              | Tool execution result record (typed status, exit code, `asText()`)                                |
+| `tool/ToolProvider.java`                                | A runtime's tool source: catalog plus invocation                                                  |
+| `tool/ToolInvoker.java`                                 | Invocation half of the seam, consumed by the tool loop                                            |
+| `tool/ToolRouter.java`                                  | Composes providers; isolates failing ones, rejects duplicate tool names                           |
+| `tool/ToolCallEvent.java`                               | Audit record for a dispatched tool request (bounded, deep-copied, redacted)                       |
+| `tool/ToolResultEvent.java`                             | Audit record for a settled tool invocation (output truncated)                                     |
+| `tool/ToolRegistry.java`                                | Read-only tool discovery interface (`get`, `all`, `contains`, `size`)                             |
 | `execution/EngineVariables.java`                        | SSOT for engine variable names (`score`, `approved`, `recommendation`)                            |
 | `execution/SynchronizedListenerDecorator.java`          | Thread-safe listener wrapper for parallel branch execution                                        |
 | `execution/executor/AgentLifecycleRunner.java`          | Composition-based agent call: prompt enrichment → agent execution → output extraction             |
-| `execution/executor/ToolLoopRunner.java`                | Drives agent-native tool loop (budget enforcement, feed-back, sealed termination)                 |
+| `execution/executor/ToolLoopRunner.java`                | Drives agent-native tool loop (budget enforcement, feed-back, audit events, sealed termination)   |
 | `execution/parallel/BranchExecutionConfig.java`         | Typed branch metadata on `ExecutionContext` (consensus strategy, yields list)                     |
 | `template/SimpleTemplateResolver.java`                  | `{variable}` substitution                                                                         |
 | `review/ReviewHandler.java`                             | Human review interface                                                                            |

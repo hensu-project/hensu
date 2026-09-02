@@ -51,7 +51,12 @@ public class TenantToolRegistry implements ToolRegistry {
                 Objects.requireNonNull(toolDiscovery, "toolDiscovery must not be null");
     }
 
-    @Override
+    /// Registers a base tool visible to every tenant.
+    ///
+    /// Not part of {@link ToolRegistry}, which is discovery-only: base tools are
+    /// this class's own population mechanism.
+    ///
+    /// @param tool the tool definition to register, not null
     public void register(ToolDefinition tool) {
         Objects.requireNonNull(tool, "tool must not be null");
         baseTools.put(tool.name(), tool);
@@ -103,27 +108,6 @@ public class TenantToolRegistry implements ToolRegistry {
         }
 
         return List.copyOf(combined.values());
-    }
-
-    @Override
-    public List<ToolDefinition> forTenant(String tenantId) {
-        Objects.requireNonNull(tenantId, "tenantId must not be null");
-
-        // This method is for explicit tenant queries without context binding
-        // Return base tools only; MCP requires actual connection
-        LOG.debugv("forTenant({0}) called without MCP - returning base tools only", tenantId);
-        return List.copyOf(baseTools.values());
-    }
-
-    @Override
-    public boolean remove(String name) {
-        Objects.requireNonNull(name, "name must not be null");
-        ToolDefinition removed = baseTools.remove(name);
-        if (removed != null) {
-            LOG.debugv("Removed base tool: {0}", name);
-            return true;
-        }
-        return false;
     }
 
     @Override

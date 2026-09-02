@@ -33,7 +33,7 @@ flowchart TD
         subgraph core["hensu-core (HensuEnvironment)"]
             direction LR
             we(["WorkflowExecutor"]) ~~~ ar(["AgentRegistry"]) ~~~ re(["RubricEngine"])
-            wr(["WorkflowRepository"]) ~~~ sr(["StateRepository"]) ~~~ tr(["ToolRegistry"])
+            wr(["WorkflowRepository"]) ~~~ sr(["StateRepository"]) ~~~ tr(["ToolRouter"])
         end
         api --> runtime --> core
     end
@@ -240,6 +240,13 @@ See the [Server Developer Guide — Input Validation](../docs/developer-guide-se
 - `execution.paused` - Awaiting human review
 - `execution.completed` - Workflow finished
 - `execution.error` - Error occurred
+- `tool.invoked` - An agent asked to run a tool
+- `tool.settled` - A tool invocation finished, whatever the outcome
+
+The two tool events carry argument *names* without their values: an SSE stream is the least
+controlled sink in the system, and an argument may be large or carry a credential. They are
+published unconditionally, on both the start and the resume path, so a client following an
+unattended run sees the tool trail without enabling verbose logging.
 
 ## Key Components
 
@@ -249,7 +256,7 @@ The server initializes core infrastructure via CDI:
 
 1. `HensuEnvironmentProducer` creates `HensuEnvironment` via `HensuFactory.builder()`
 2. `ServerConfiguration` delegates core components for CDI injection
-3. `ServerActionExecutor` routes `Action.Send` to registered handlers (MCP and others), skipping template resolution for agent-originated tool calls (`rawPayload`), and rejects `Action.Execute` (local command execution)
+3. `ServerActionExecutor` routes `Action.Send` to registered handlers (MCP and others) and rejects `Action.Execute` (local command execution). Agent tool calls no longer take this path — they go through the `ToolRouter`
 
 See [Server Developer Guide](../docs/developer-guide-server.md) for implementation details.
 
@@ -342,7 +349,7 @@ quarkus.flyway.schemas=runtime
 # hensu.credentials.GOOGLE_API_KEY=AIza...
 # Default tenant (used when JWT tenant_id claim is absent)
 # hensu.tenant.default=default
-# Verbose execution logging (enables LoggingExecutionListener)
+# Verbose execution logging (enables LoggingExecutionListener, including its tool audit lines)
 hensu.verbose.enabled=false
 # Distributed recovery leasing
 hensu.lease.heartbeat-interval=30s
@@ -389,8 +396,9 @@ hensu-server/
 │   │   ├── ServerBootstrap.java                   # Startup registrations
 │   │   └── ServerConfiguration.java               # CDI delegation + server beans
 │   ├── execution/                         # Server-side execution listeners
-│   │   ├── LoggingExecutionListener.java  # Structured log output for node lifecycle events + transition warnings
-│   │   └── CompositeExecutionListener.java # Combines multiple ExecutionListeners
+│   │   ├── LoggingExecutionListener.java  # Structured log output for node lifecycle, tool audit, transition warnings
+│   │   ├── ToolStreamingExecutionListener.java # Republishes tool audit events onto the execution's SSE stream
+│   │   └── CompositeExecutionListener.java # Fans out to delegates; a throwing delegate is logged, not fatal
 │   ├── dev/                               # Dev-only handlers (excluded from prod image)
 │   │   └── SleepHandler.java              # Simulates long-running node for crash-recovery tests
 │   ├── mcp/                               # MCP integration (SSE split-pipe transport)
@@ -403,7 +411,8 @@ hensu-server/
 │   │   ├── McpSidecar.java                # ActionHandler dispatching to MCP tools
 │   │   ├── McpToolDiscovery.java          # Runtime tool schema discovery + cache
 │   │   ├── SseMcpConnection.java
-│   │   └── TenantToolRegistry.java        # Merges base + tenant MCP tools (MCP precedence)
+│   │   ├── TenantToolProvider.java        # Temporary bridge exposing the tenant registry as a ToolProvider
+│   │   └── TenantToolRegistry.java        # Merges base + tenant MCP tools (MCP precedence); discovery only
 │   ├── security/                          # JWT + tenant resolution + error mapping
 │   │   ├── GlobalExceptionMapper.java     # Global @Provider — normalizes errors to JSON
 │   │   └── RequestTenantResolver.java     # Extracts tenant_id claim from JWT

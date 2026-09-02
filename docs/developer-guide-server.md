@@ -60,7 +60,7 @@ flowchart TD
 
     subgraph core["hensu-core"]
         direction LR
-        we(["WorkflowExecutor"]) ~~~ ar(["AgentRegistry"]) ~~~ tr(["ToolRegistry"])
+        we(["WorkflowExecutor"]) ~~~ ar(["AgentRegistry"]) ~~~ tr(["ToolRouter"])
     end
 
     server --> core
@@ -193,7 +193,7 @@ public HensuEnvironment hensuEnvironment() {
             .loadCredentials(properties)
             .agentProviders(List.of(new LangChain4jProvider()))
             .actionExecutor(actionExecutor)   // ServerActionExecutor (send-action dispatcher)
-            .toolRegistry(tenantToolRegistry); // MCP-discovered tools for agent tool loops
+            .toolRouter(new ToolRouter(toolProviders.stream().toList())); // every ToolProvider bean
 
     // Conditional persistence: JDBC when DataSource available, in-memory otherwise
     boolean dsActive = config.getOptionalValue("quarkus.datasource.active", Boolean.class)
@@ -251,7 +251,7 @@ public ObjectMapper objectMapper() {
 
 ### ServerActionExecutor
 
-Server-specific `ActionExecutor` that routes `Action.Send` to registered handlers (such as `McpSidecar`) and rejects `Action.Execute` (local command execution). When `send.isRawPayload()` is true (agent-originated tool calls via `ToolLoopRunner`), template resolution is skipped to prevent exfiltration of workflow context through LLM-generated arguments:
+Server-specific `ActionExecutor` that routes `Action.Send` to registered handlers (such as `McpSidecar`) and rejects `Action.Execute` (local command execution). Agent tool calls no longer reach it — those go through the `ToolRouter`. When `send.isRawPayload()` is true, template resolution is skipped to prevent exfiltration of workflow context through machine-generated arguments:
 
 ```java
 @Override
@@ -325,8 +325,9 @@ io.hensu.server/
 │   └── SleepHandler             # Simulates long-running node for crash-recovery tests
 │
 ├── execution/             # Server-side execution listeners
-│   ├── LoggingExecutionListener   # Logs node lifecycle events + transition warnings
-│   └── CompositeExecutionListener # Combines multiple ExecutionListeners
+│   ├── LoggingExecutionListener   # Logs node lifecycle, tool audit, transition warnings
+│   ├── ToolStreamingExecutionListener # Republishes tool audit events as SSE events
+│   └── CompositeExecutionListener # Fans out to delegates; a throwing delegate is logged, not fatal
 │
 ├── mcp/                   # MCP protocol implementation
 │   ├── JsonRpc                  # JSON-RPC 2.0 message helper
@@ -338,6 +339,7 @@ io.hensu.server/
 │   ├── McpSidecar               # ActionHandler for MCP tools
 │   ├── McpToolDiscovery         # Runtime tool schema discovery + cache
 │   ├── SseMcpConnection         # SSE-based connection impl
+│   ├── TenantToolProvider       # Temporary bridge exposing the tenant registry as a ToolProvider
 │   └── TenantToolRegistry       # Merges base + tenant MCP tools (MCP precedence)
 │
 ├── security/              # JWT + tenant resolution + error mapping
@@ -692,7 +694,18 @@ public sealed interface ExecutionEvent {
 }
 ```
 
-2. Publish directly where needed:
+2. Register the record for reflection in `ExecutionEventNativeConfig`:
+
+```java
+@RegisterForReflection(targets = { /* ... */ ExecutionEvent.MyNewEvent.class })
+```
+
+This step is not optional. Quarkus resolves the JAX-RS return type to the sealed interface but does
+not walk its permitted subtypes for Jackson metadata, so an unregistered record builds cleanly and
+then streams every field as `null` in the native image — only `type()` survives, because its
+explicit `@JsonProperty` is traced at build time.
+
+3. Publish directly where needed:
 
 ```java
 broadcaster.publish(executionId, ExecutionEvent.MyNewEvent.now(executionId, "value"));
@@ -836,6 +849,9 @@ The manual MCP envelope (`send("mcp", mapOf("tool" to "read_file", ...))`) is al
 for explicitness, but unnecessary — the fallback path in `ServerActionExecutor.executeSend()`
 wraps the call automatically when no direct handler is registered for the tool name.
 
+This route serves DSL-authored actions only. Tools an agent chooses for itself go through the
+`ToolRouter` instead, never through the action executor.
+
 Via direct connection:
 
 ```java
@@ -852,11 +868,33 @@ MCP tools are discovered at runtime — no server code changes are required to s
   from cache.
 - **Precedence**: `TenantToolRegistry` merges base (built-in) tools with the tenant's MCP tools.
   On naming collisions, the MCP tool takes precedence — tenants can override built-in tools with
-  their own MCP implementations.
+  their own MCP implementations. This resolution happens inside the registry; collisions *between*
+  providers are a configuration error the `ToolRouter` rejects outright.
 - **No server changes**: `McpSidecar.execute()` resolves tool names dynamically from the JSON-RPC
   payload. Adding a new tool on the MCP server side is sufficient; no `McpSidecar` update is needed.
-- **Consumers**: `TenantToolRegistry` is wired into `HensuFactory` via `HensuEnvironmentProducer`,
-  making discovered tools available to `ToolLoopRunner` (agent-native tool loops).
+- **Consumers**: `TenantToolProvider` adapts the registry to the `ToolProvider` seam and is composed
+  into a `ToolRouter` by `HensuEnvironmentProducer`, making discovered tools available to
+  `ToolLoopRunner` (agent-native tool loops).
+
+### Tool Audit Trail
+
+`ToolLoopRunner` reports every tool request and its outcome to the `ExecutionListener`, and the
+server consumes both callbacks so an unattended run leaves a trail an operator can read:
+
+| Consumer                         | Sink                                                                                                                          |
+|----------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| `LoggingExecutionListener`       | Server log: the request at INFO, the outcome at INFO for `SUCCESS` and WARNING otherwise, with status, duration and exit code |
+| `ToolStreamingExecutionListener` | The execution's SSE stream, as `tool.invoked` and `tool.settled`                                                              |
+
+Both sinks carry argument *names* without their values. Values can be large, can carry credentials,
+and a log file and an open HTTP stream are the least controlled places to put them; the values of
+parameters declared `sensitive` never leave `hensu-core` at all, having been replaced with a
+placeholder by the tool loop. Durable persistence of the full record is not implemented yet.
+
+`WorkflowExecutionService` composes the streaming listener unconditionally — the SSE trail must not
+depend on `hensu.verbose.enabled`, which gates only the log half — and `ExecutionStateService`
+composes it on the resume path, so a client that re-subscribed after submitting a review sees the
+same events a fresh execution streams.
 
 ---
 
