@@ -1,4 +1,4 @@
-package io.hensu.server.mcp;
+package io.hensu.mcp;
 
 import java.time.Duration;
 
@@ -8,8 +8,6 @@ import java.time.Duration;
 /// and connection establishment details.
 ///
 /// @see McpConnection for the connection interface
-/// @see McpConnectionPool for connection management
-// TODO SSE Protocol?
 public interface McpConnectionFactory {
 
     /// Creates a new connection to an MCP server.

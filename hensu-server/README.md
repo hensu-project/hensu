@@ -401,18 +401,13 @@ hensu-server/
 │   │   └── CompositeExecutionListener.java # Fans out to delegates; a throwing delegate is logged, not fatal
 │   ├── dev/                               # Dev-only handlers (excluded from prod image)
 │   │   └── SleepHandler.java              # Simulates long-running node for crash-recovery tests
-│   ├── mcp/                               # MCP integration (SSE split-pipe transport)
-│   │   ├── JsonRpc.java
-│   │   ├── McpConnection.java
-│   │   ├── McpConnectionFactory.java
+│   ├── mcp/                               # Server-side MCP transport (protocol types live in hensu-mcp)
 │   │   ├── McpConnectionPool.java
-│   │   ├── McpException.java
 │   │   ├── McpSessionManager.java
-│   │   ├── McpSidecar.java                # ActionHandler dispatching to MCP tools
+│   │   ├── McpSidecar.java                # ActionHandler for DSL-level send("mcp", …) calls
 │   │   ├── McpToolDiscovery.java          # Runtime tool schema discovery + cache
-│   │   ├── SseMcpConnection.java
-│   │   ├── TenantToolProvider.java        # Temporary bridge exposing the tenant registry as a ToolProvider
-│   │   └── TenantToolRegistry.java        # Merges base + tenant MCP tools (MCP precedence); discovery only
+│   │   ├── McpToolProvider.java           # Exposes the tenant's MCP tools to the ToolProvider seam
+│   │   └── SseMcpConnection.java
 │   ├── security/                          # JWT + tenant resolution + error mapping
 │   │   ├── GlobalExceptionMapper.java     # Global @Provider — normalizes errors to JSON
 │   │   └── RequestTenantResolver.java     # Extracts tenant_id claim from JWT

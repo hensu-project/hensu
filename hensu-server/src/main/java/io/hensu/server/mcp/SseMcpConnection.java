@@ -1,5 +1,8 @@
 package io.hensu.server.mcp;
 
+import io.hensu.mcp.JsonRpc;
+import io.hensu.mcp.McpConnection;
+import io.hensu.mcp.McpException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;

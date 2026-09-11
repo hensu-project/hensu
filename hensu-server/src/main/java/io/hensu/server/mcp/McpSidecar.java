@@ -2,6 +2,8 @@ package io.hensu.server.mcp;
 
 import io.hensu.core.execution.action.ActionExecutor.ActionResult;
 import io.hensu.core.execution.action.ActionHandler;
+import io.hensu.mcp.McpConnection;
+import io.hensu.mcp.McpException;
 import io.hensu.server.tenant.TenantContext;
 import io.hensu.server.tenant.TenantContext.TenantInfo;
 import jakarta.enterprise.context.ApplicationScoped;

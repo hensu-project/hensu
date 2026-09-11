@@ -1093,7 +1093,7 @@ Tools declared but agent not capable → `NodeResult.failure()` (routable via `o
 ### Tool Resolution
 
 Tools are resolved through the router's provider catalogs:
-1. `ctx.getToolRegistry().all()` returns the union of every provider's live catalog (in server context: `TenantToolProvider` → `McpToolDiscovery`)
+1. `ctx.getToolRegistry().all()` returns the union of every provider's live catalog (in server context: `McpToolProvider` → `McpToolDiscovery`)
 2. Filter to the agent's declared `tools` names
 3. A provider that throws from `tools()` is logged and skipped, so its tools are absent rather than fatal — one unreachable source fails a node, not the execution
 4. Unresolvable name → `NodeResult.failure()` with diagnostic listing available tools

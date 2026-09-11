@@ -1,4 +1,4 @@
-package io.hensu.server.mcp;
+package io.hensu.mcp;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

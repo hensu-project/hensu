@@ -1,4 +1,4 @@
-package io.hensu.server.mcp;
+package io.hensu.mcp;
 
 import java.io.Serial;
 

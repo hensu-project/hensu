@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hensu.mcp.JsonRpc;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.helpers.test.AssertSubscriber;
 import java.time.Duration;
@@ -178,11 +179,10 @@ class McpSessionManagerTest {
 
         @Test
         void shouldRemoveClientOnDisconnect() {
-            AssertSubscriber<String> subscriber =
-                    sessionManager
-                            .createSession("client-1")
-                            .subscribe()
-                            .withSubscriber(AssertSubscriber.create(10));
+            sessionManager
+                    .createSession("client-1")
+                    .subscribe()
+                    .withSubscriber(AssertSubscriber.create(10));
 
             assertThat(sessionManager.isConnected("client-1")).isTrue();
 

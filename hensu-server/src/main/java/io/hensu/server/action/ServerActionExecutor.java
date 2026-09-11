@@ -5,7 +5,6 @@ import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.action.ActionHandler;
 import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.template.TemplateResolver;
-import io.hensu.server.mcp.McpSidecar;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.nio.file.Path;
 import java.util.Map;
@@ -15,8 +14,12 @@ import org.jboss.logging.Logger;
 
 /// Server implementation of {@link ActionExecutor}.
 ///
-/// Delegates tool calls to registered {@link ActionHandler} implementations
-/// (e.g., {@link io.hensu.server.mcp.McpSidecar} for MCP protocol).
+/// Delegates `send` actions to registered {@link ActionHandler} implementations
+/// (e.g., {@link io.hensu.server.mcp.McpSidecar} for DSL-level MCP calls).
+///
+/// Agent tool calls do not come through here: they are routed by the engine's
+/// tool seam to a {@link io.hensu.core.tool.ToolProvider}, so an unrecognized
+/// handler id is simply a missing handler.
 ///
 /// ### Server Mode Restrictions
 /// - **Send actions**: Supported - forwards to registered handlers
@@ -70,23 +73,6 @@ public class ServerActionExecutor implements ActionExecutor {
 
         ActionHandler handler = handlers.get(handlerId);
         if (handler == null) {
-            // Fallback: MCP tools are registered under their tool name in ToolRegistry but routed
-            // through the single "mcp" ActionHandler. Wrap the call in the expected MCP envelope.
-            ActionHandler mcpHandler = handlers.get(McpSidecar.HANDLER_ID);
-            if (mcpHandler != null) {
-                LOG.debugv("Routing tool '{0}' through MCP handler", handlerId);
-                Map<String, Object> effectivePayload =
-                        send.isRawPayload()
-                                ? send.getPayload()
-                                : templateResolver.resolvePayload(send.getPayload(), context);
-                Map<String, Object> mcpPayload =
-                        Map.of(
-                                McpSidecar.TOOL_KEY,
-                                handlerId,
-                                McpSidecar.ARGUMENTS_KEY,
-                                effectivePayload);
-                return mcpHandler.execute(mcpPayload, context);
-            }
             LOG.warnv(
                     "Action handler not found: {0}. Registered: {1}", handlerId, handlers.keySet());
             return ActionResult.failure("Action handler not found: " + handlerId);
