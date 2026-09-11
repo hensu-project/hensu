@@ -4,14 +4,20 @@ import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.state.HensuState;
+import io.hensu.core.tool.ToolCallEvent;
+import io.hensu.core.tool.ToolResultEvent;
 import io.hensu.core.workflow.node.Node;
+import java.util.function.Consumer;
+import org.jboss.logging.Logger;
 
 /// Fans out all execution lifecycle events to an ordered set of delegates.
 ///
 /// Allows composing independent listeners — e.g., a checkpoint listener and a
 /// logging listener — without modifying the caller. All delegates are invoked
-/// in declaration order; an exception from one delegate does not prevent the
-/// remaining delegates from receiving the event.
+/// in declaration order, and a delegate that throws is logged and skipped so
+/// the remaining delegates still receive the event. That containment matters
+/// most for the tool audit events: a broken sink must not cost the others their
+/// record of what an unattended agent ran.
 ///
 /// ### Usage
 /// {@snippet :
@@ -29,6 +35,8 @@ import io.hensu.core.workflow.node.Node;
 /// @see LoggingExecutionListener
 public final class CompositeExecutionListener implements ExecutionListener {
 
+    private static final Logger LOG = Logger.getLogger(CompositeExecutionListener.class);
+
     private final ExecutionListener[] delegates;
 
     /// Creates a composite listener that dispatches to all provided delegates in order.
@@ -40,31 +48,59 @@ public final class CompositeExecutionListener implements ExecutionListener {
 
     @Override
     public void onAgentStart(String nodeId, String agentId, String prompt) {
-        for (ExecutionListener d : delegates) d.onAgentStart(nodeId, agentId, prompt);
+        fanOut("onAgentStart", d -> d.onAgentStart(nodeId, agentId, prompt));
     }
 
     @Override
     public void onAgentComplete(String nodeId, String agentId, AgentResponse response) {
-        for (ExecutionListener d : delegates) d.onAgentComplete(nodeId, agentId, response);
+        fanOut("onAgentComplete", d -> d.onAgentComplete(nodeId, agentId, response));
     }
 
     @Override
     public void onNodeStart(Node node) {
-        for (ExecutionListener d : delegates) d.onNodeStart(node);
+        fanOut("onNodeStart", d -> d.onNodeStart(node));
     }
 
     @Override
     public void onNodeComplete(Node node, NodeResult result) {
-        for (ExecutionListener d : delegates) d.onNodeComplete(node, result);
+        fanOut("onNodeComplete", d -> d.onNodeComplete(node, result));
     }
 
     @Override
     public void onTransitionWarning(String nodeId, String message) {
-        for (ExecutionListener d : delegates) d.onTransitionWarning(nodeId, message);
+        fanOut("onTransitionWarning", d -> d.onTransitionWarning(nodeId, message));
     }
 
     @Override
     public void onCheckpoint(HensuState state) {
-        for (ExecutionListener d : delegates) d.onCheckpoint(state);
+        fanOut("onCheckpoint", d -> d.onCheckpoint(state));
+    }
+
+    @Override
+    public void onToolCall(ToolCallEvent event) {
+        fanOut("onToolCall", d -> d.onToolCall(event));
+    }
+
+    @Override
+    public void onToolResult(ToolResultEvent event) {
+        fanOut("onToolResult", d -> d.onToolResult(event));
+    }
+
+    /// Delivers one event to every delegate, containing a delegate that throws.
+    ///
+    /// @param event name of the callback, used only for the failure log line
+    /// @param delivery the callback to apply to each delegate, not null
+    private void fanOut(String event, Consumer<ExecutionListener> delivery) {
+        for (ExecutionListener delegate : delegates) {
+            try {
+                delivery.accept(delegate);
+            } catch (RuntimeException e) {
+                LOG.warnv(
+                        e,
+                        "Execution listener {0} failed handling {1}",
+                        delegate.getClass().getSimpleName(),
+                        event);
+            }
+        }
     }
 }

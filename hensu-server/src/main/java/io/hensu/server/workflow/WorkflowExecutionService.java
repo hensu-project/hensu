@@ -9,6 +9,7 @@ import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.execution.CompositeExecutionListener;
 import io.hensu.server.execution.LoggingExecutionListener;
+import io.hensu.server.execution.ToolStreamingExecutionListener;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import io.hensu.server.tenant.TenantContext;
@@ -136,12 +137,17 @@ public class WorkflowExecutionService {
 
                                     ExecutionListener checkpoint =
                                             trackingCheckpointListener(tenantId, lastCheckpoint);
+                                    ExecutionListener toolStream =
+                                            new ToolStreamingExecutionListener(
+                                                    eventBroadcaster, executionId);
                                     ExecutionListener listener =
                                             verboseEnabled
                                                     ? new CompositeExecutionListener(
                                                             checkpoint,
+                                                            toolStream,
                                                             new LoggingExecutionListener())
-                                                    : checkpoint;
+                                                    : new CompositeExecutionListener(
+                                                            checkpoint, toolStream);
                                     ExecutionResult result =
                                             workflowExecutor.execute(
                                                     workflow, executionContext, listener);

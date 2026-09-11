@@ -124,7 +124,7 @@ options:
   <workflow-name>          Workflow name from workflows/ (default: hensu.workflow.file property)
   -d, --working-dir        Working directory
   -c, --context <value>    Context as a JSON string  '{"key":"value"}'  or path to a JSON/YAML file
-  -v, --verbose            Show agent inputs/outputs and fork/join execution structure
+  -v, --verbose            Show agent inputs/outputs, tool calls, and fork/join execution structure
   -i, --interactive        Enable interactive human review mode with manual backtracking
       --with <name>        Sub-workflow to load alongside the root (repeatable); see Sub-Workflows below
       --no-color           Disable ANSI colored output

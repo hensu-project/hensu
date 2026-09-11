@@ -6,6 +6,9 @@ import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ResultStatus;
+import io.hensu.core.tool.ToolCallEvent;
+import io.hensu.core.tool.ToolCallStatus;
+import io.hensu.core.tool.ToolResultEvent;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.ForkNode;
 import io.hensu.core.workflow.node.JoinNode;
@@ -26,7 +29,13 @@ import java.io.PrintStream;
 /// ┌─ output · nodeId ← agentId · OK ──────────────────────────
 ///   (response content)
 /// └────────────────────────────────────────────────────────────
+///
+/// ⚒ tool · nodeId → search (query)
+///   SUCCESS · 412ms
 /// ```
+///
+/// Tool lines name the arguments but never print their values: a verbose run
+/// is frequently pasted into a bug report, and an argument may carry a secret.
 ///
 /// @implNote **Not thread-safe**. Output may interleave if used with parallel execution.
 /// @see VerboseExecutionListenerFactory
@@ -138,6 +147,31 @@ public class VerboseExecutionListener implements ExecutionListener {
             out.println(styles.separatorBottom(termWidth));
             out.println();
         }
+    }
+
+    @Override
+    public void onToolCall(ToolCallEvent event) {
+        out.println(
+                styles.accent("⚒ tool")
+                        + styles.dim(" · ")
+                        + event.nodeId()
+                        + " "
+                        + styles.arrow()
+                        + " "
+                        + event.toolName()
+                        + styles.dim(" (" + String.join(", ", event.arguments().keySet()) + ")"));
+    }
+
+    @Override
+    public void onToolResult(ToolResultEvent event) {
+        boolean ok = event.status() == ToolCallStatus.SUCCESS;
+        String status = styles.successOrError(event.status().name(), ok);
+        String detail = event.durationMs() + "ms";
+        out.println("  " + status + styles.dim(" · ") + detail);
+        if (!ok && event.error() != null) {
+            out.println("  " + styles.warn(event.error()));
+        }
+        out.println();
     }
 
     @Override

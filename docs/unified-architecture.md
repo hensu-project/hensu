@@ -361,10 +361,10 @@ Zero-dependency Java library. Contains:
 - `ActionExecutor` — Pluggable action dispatch (Send/Execute)
 - `ToolCapable` / `ToolSession` — Narrow interface for agents that support tool sessions; `ToolSession` is call-scoped (not stateful on the agent) for `ParallelNodeExecutor` safety
 - `ToolLoopRunner` — Stateless driver dispatched from `AgentLifecycleRunner` when a node declares tools and the agent implements `ToolCapable`. Iterates the sealed `AgentResponse` hierarchy (`TextResponse` = done, `ToolRequest` = continue, `Error` = done), invoking each tool through the context's `ToolInvoker` and reporting every request and outcome to the `ExecutionListener`. Enforces `AgentConfig.maxToolCalls` budget (default 10, counting executed calls). Cap exhaustion → one final summarization call → `SUCCESS` or hard `FAILURE`
-- `ToolCallResult` — Record `(toolName, success, output, error)` with `success()` / `failure()` factories
+- `ToolCallResult` / `ToolCallStatus` — Record `(toolName, status, output, error, exitCode)` with a derived `success()`; the status is one vocabulary across every layer, so a refusal, a timeout and a broken tool stay distinguishable
 - `ToolProvider` / `ToolInvoker` — Runtime-agnostic tool seam: a provider owns a catalog and the invocation of the tools in it
-- `ToolRouter` — Composes providers into one surface implementing both `ToolRegistry` and `ToolInvoker`; rejects duplicate tool names across providers
-- `ToolRegistry` / `ToolDefinition` — Protocol-agnostic tool descriptors used by agent-native tool loops and MCP integration
+- `ToolRouter` — Composes providers into one surface implementing both `ToolRegistry` and `ToolInvoker`. A provider that throws while reporting its catalog is skipped rather than propagated, so one unreachable source fails a node instead of the execution; duplicate tool names across providers are rejected
+- `ToolRegistry` / `ToolDefinition` — Protocol-agnostic tool descriptors used by agent-native tool loops and MCP integration; the registry is discovery-only
 - `RubricEngine` / `ScoreExtractingEvaluator` — Quality evaluation: reads `score` engine variable
   from context; accumulates feedback into `recommendation`; no JSON parsing
 - `EngineVariables` — SSOT for engine variable names (`score`, `approved`, `recommendation`)
@@ -501,8 +501,12 @@ When a node declares `tools` and its agent implements `ToolCapable`, `AgentLifec
 to `ToolLoopRunner`. The agent drives tool calls directly — the sealed `AgentResponse` hierarchy controls
 flow: `TextResponse` terminates with success, `ToolRequest` continues the loop, `Error` terminates with
 failure. Budget enforced by `AgentConfig.maxToolCalls` (default 10, counting executed calls not round-trips).
-Tools are invoked through the context's `ToolInvoker`, and every request and outcome reaches the
-`ExecutionListener` as a `ToolCallEvent` / `ToolResultEvent` pair.
+Tools are invoked through the context's `ToolInvoker`, wired from the same `ToolRouter` as the
+catalog so an agent can never be handed tools it does not execute against. Every request and
+outcome reaches the `ExecutionListener` as a `ToolCallEvent` / `ToolResultEvent` pair. The records
+are bounded, deep-copied and redacted at the source, and each runtime consumes them: the server
+logs them and republishes them as `tool.invoked` / `tool.settled` SSE events, the CLI prints them
+under `--verbose`.
 
 ```kotlin
 node("research-topic") {
@@ -568,17 +572,17 @@ the prompt, then dispatches to `ToolLoopRunner` when the node declares tools and
 ```mermaid
 flowchart LR
     enrich(["PromptEnricher\n(7 injectors)"]) --> open(["openSession()\n(ToolCapable)"])
-    open --> call(["agent.call()\n→ AgentResponse"])
-    call -->|"TextResponse"| done(["SUCCESS\n(text = output)"])
-    call -->|"ToolRequest"| exec(["invoke tools\n(ToolInvoker + audit)"])
-    exec -->|"budget ok"| call
+    open --> agentcall(["agent.call()\n→ AgentResponse"])
+    agentcall -->|"TextResponse"| done(["SUCCESS\n(text = output)"])
+    agentcall -->|"ToolRequest"| exec(["invoke tools\n(ToolInvoker + audit)"])
+    exec -->|"budget ok"| agentcall
     exec -->|"cap exhausted"| summary(["final summarization\ncall"])
     summary --> done
-    call -->|"Error"| fail(["FAILURE"])
+    agentcall -->|"Error"| fail(["FAILURE"])
 
     style enrich fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style open fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style call fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style agentcall fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
     style done fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style exec fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style summary fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px

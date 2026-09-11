@@ -248,8 +248,7 @@ public class WorkflowExecutor {
                 .actionExecutor(actionExecutor)
                 .workflowRepository(workflowRepository)
                 .rubricEngine(rubricEngine)
-                .toolRegistry(toolRouter)
-                .toolInvoker(toolRouter)
+                .toolRouter(toolRouter)
                 .build();
     }
 

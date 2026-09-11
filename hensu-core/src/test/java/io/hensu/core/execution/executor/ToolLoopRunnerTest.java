@@ -15,6 +15,7 @@ import io.hensu.core.state.HensuState;
 import io.hensu.core.tool.StubToolProvider;
 import io.hensu.core.tool.ToolCallEvent;
 import io.hensu.core.tool.ToolCallResult;
+import io.hensu.core.tool.ToolCallStatus;
 import io.hensu.core.tool.ToolDefinition;
 import io.hensu.core.tool.ToolProvider;
 import io.hensu.core.tool.ToolResultEvent;
@@ -43,6 +44,15 @@ class ToolLoopRunnerTest {
                     List.of(
                             ToolDefinition.ParameterDef.required(
                                     "query", "string", "Search query")));
+
+    private static final ToolDefinition PUBLISH_TOOL =
+            ToolDefinition.of(
+                    "publish",
+                    "Publish a message",
+                    List.of(
+                            ToolDefinition.ParameterDef.required("topic", "string", "Target topic"),
+                            new ToolDefinition.ParameterDef(
+                                    "token", "string", "Publishing credential", true, null, true)));
 
     private StubToolProvider toolProvider;
     private ToolRouter toolRouter;
@@ -106,7 +116,7 @@ class ToolLoopRunnerTest {
                     .singleElement()
                     .satisfies(
                             event -> {
-                                assertThat(event.success()).isTrue();
+                                assertThat(event.status()).isEqualTo(ToolCallStatus.SUCCESS);
                                 assertThat(event.output()).isEqualTo("search results here");
                                 assertThat(event.error()).isNull();
                             });
@@ -209,7 +219,8 @@ class ToolLoopRunnerTest {
                     .last()
                     .satisfies(
                             event -> {
-                                assertThat(event.success()).isFalse();
+                                assertThat(event.status())
+                                        .isEqualTo(ToolCallStatus.BUDGET_EXHAUSTED);
                                 assertThat(event.error()).contains("budget exhausted");
                             });
         }
@@ -247,8 +258,8 @@ class ToolLoopRunnerTest {
                     .extracting(ToolCallEvent::toolName)
                     .containsExactly("nonexistent", "search");
             assertThat(listener.results)
-                    .extracting(ToolResultEvent::success)
-                    .containsExactly(false, true);
+                    .extracting(ToolResultEvent::status)
+                    .containsExactly(ToolCallStatus.UNKNOWN_TOOL, ToolCallStatus.SUCCESS);
         }
     }
 
@@ -283,7 +294,7 @@ class ToolLoopRunnerTest {
                     .singleElement()
                     .satisfies(
                             event -> {
-                                assertThat(event.success()).isFalse();
+                                assertThat(event.status()).isEqualTo(ToolCallStatus.FAILURE);
                                 assertThat(event.error()).isEqualTo("Tool crashed");
                             });
         }
@@ -328,14 +339,15 @@ class ToolLoopRunnerTest {
 
             registerStubResponse(agent, "whatever");
 
-            // Catalog present, but nothing can run the tools it advertises
+            // Catalog present, but nothing can run the tools it advertises. Only the
+            // package-private setter can express that – the public one wires both halves.
             ExecutionContext ctx =
                     ExecutionContext.builder()
                             .state(buildState())
                             .workflow(buildWorkflow())
                             .listener(listener)
                             .agentRegistry(buildAgentRegistry(config, agent))
-                            .toolRegistry(toolRouter)
+                            .tools(toolRouter, null)
                             .build();
 
             NodeResult result = ToolLoopRunner.execute("node1", "test-agent", "Prompt", agent, ctx);
@@ -368,8 +380,7 @@ class ToolLoopRunnerTest {
                             .workflow(buildWorkflow())
                             .listener(listener)
                             .agentRegistry(buildAgentRegistry(config, agent))
-                            .toolRegistry(colliding)
-                            .toolInvoker(colliding)
+                            .toolRouter(colliding)
                             .build();
 
             NodeResult result = ToolLoopRunner.execute("node1", "test-agent", "Prompt", agent, ctx);
@@ -379,6 +390,84 @@ class ToolLoopRunnerTest {
                     .contains("Tool catalog is unusable")
                     .contains("Duplicate tool 'search'");
             assertThat(toolProvider.invocations()).isEmpty();
+        }
+    }
+
+    @Nested
+    class CatalogCollisionAtCallTime {
+
+        @Test
+        void shouldFailTheNodeWithoutFeedingTheCollisionBackToTheModel() {
+            // A provider whose membership check answers for a tool its catalog does
+            // not list: the loop's catalog read sees one owner, the call sees two.
+            // Feeding that back would have the model retry a misconfiguration.
+            ToolRouter colliding =
+                    new ToolRouter(List.of(toolProvider, new SilentClaimant("search")));
+
+            AgentConfig config = agentConfig(List.of("search"));
+            StubAgent agent = new StubAgent("test-agent", config);
+            registerStubResponse(
+                    agent, "[TOOL_CALL] search query=test\n---TURN---\nModel recovered somehow");
+
+            ExecutionContext ctx =
+                    ExecutionContext.builder()
+                            .state(buildState())
+                            .workflow(buildWorkflow())
+                            .listener(listener)
+                            .agentRegistry(buildAgentRegistry(config, agent))
+                            .toolRouter(colliding)
+                            .build();
+
+            NodeResult result = ToolLoopRunner.execute("node1", "test-agent", "Search", agent, ctx);
+
+            // The script's follow-up turn is only reachable through session.submit
+            assertThat(result.getStatus()).isEqualTo(ResultStatus.FAILURE);
+            assertThat(result.getOutput().toString())
+                    .contains("Tool catalog is unusable")
+                    .contains("Duplicate tool 'search'");
+            assertThat(toolProvider.invocations()).isEmpty();
+            // ...and the attempt is still audited
+            assertThat(listener.calls).hasSize(1);
+            assertThat(listener.results)
+                    .singleElement()
+                    .satisfies(
+                            event ->
+                                    assertThat(event.status())
+                                            .isEqualTo(ToolCallStatus.CATALOG_ERROR));
+        }
+    }
+
+    @Nested
+    class SensitiveArguments {
+
+        @Test
+        void shouldRedactSensitiveArgumentsFromTheAuditButNotFromTheProvider() {
+            StubToolProvider publisher =
+                    StubToolProvider.alwaysSucceeding("published", PUBLISH_TOOL);
+            toolRouter = new ToolRouter(List.of(publisher));
+
+            AgentConfig config = agentConfig(List.of("publish"));
+            StubAgent agent = new StubAgent("test-agent", config);
+            registerStubResponse(
+                    agent, "[TOOL_CALL] publish topic=news token=s3cret\n---TURN---\nPublished");
+
+            ToolLoopRunner.execute(
+                    "node1", "test-agent", "Publish", agent, buildContext(config, agent));
+
+            assertThat(listener.calls)
+                    .singleElement()
+                    .satisfies(
+                            event -> {
+                                assertThat(event.arguments())
+                                        .containsEntry("token", ToolCallEvent.REDACTED);
+                                assertThat(event.arguments()).containsEntry("topic", "news");
+                            });
+            assertThat(publisher.invocations())
+                    .singleElement()
+                    .satisfies(
+                            invocation ->
+                                    assertThat(invocation.arguments())
+                                            .containsEntry("token", "s3cret"));
         }
     }
 
@@ -425,7 +514,9 @@ class ToolLoopRunnerTest {
                     .isEqualTo(2);
             assertThat(recording.calls.stream().filter(e -> e.nodeId().equals("branch-b")).count())
                     .isEqualTo(2);
-            assertThat(recording.results).allSatisfy(event -> assertThat(event.success()).isTrue());
+            assertThat(recording.results)
+                    .allSatisfy(
+                            event -> assertThat(event.status()).isEqualTo(ToolCallStatus.SUCCESS));
         }
 
         private Runnable branch(
@@ -445,8 +536,7 @@ class ToolLoopRunnerTest {
                                     .workflow(buildWorkflow())
                                     .listener(shared)
                                     .agentRegistry(buildAgentRegistry(config, agent))
-                                    .toolRegistry(toolRouter)
-                                    .toolInvoker(toolRouter)
+                                    .toolRouter(toolRouter)
                                     .build();
                     ToolLoopRunner.execute(nodeId, agentId, "Search", agent, ctx);
                 } catch (InterruptedException e) {
@@ -459,6 +549,33 @@ class ToolLoopRunnerTest {
     }
 
     // ——— Helpers ———————————————————————————————————————————————————————
+
+    /// Provider claiming a tool it never advertises, so only the call-time check
+    /// sees the collision – the shape a half-refreshed dynamic catalog takes.
+    private static final class SilentClaimant implements ToolProvider {
+
+        private final String claimed;
+
+        SilentClaimant(String claimed) {
+            this.claimed = claimed;
+        }
+
+        @Override
+        public List<ToolDefinition> tools() {
+            return List.of();
+        }
+
+        @Override
+        public boolean provides(String toolName) {
+            return claimed.equals(toolName);
+        }
+
+        @Override
+        public ToolCallResult call(
+                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+            return ToolCallResult.success(toolName, "claimed");
+        }
+    }
 
     /// Provider reporting an empty catalog until armed, mimicking a source whose
     /// tools only appear after construction.
@@ -535,8 +652,7 @@ class ToolLoopRunnerTest {
                 .workflow(buildWorkflow())
                 .listener(listener)
                 .agentRegistry(buildAgentRegistry(config, agent))
-                .toolRegistry(toolRouter)
-                .toolInvoker(toolRouter)
+                .toolRouter(toolRouter)
                 .build();
     }
 

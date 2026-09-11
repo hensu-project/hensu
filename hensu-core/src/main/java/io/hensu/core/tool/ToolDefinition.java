@@ -23,9 +23,9 @@ import java.util.Objects;
 ///     "search",
 ///     "Search for information",
 ///     List.of(
-///         new ParameterDef("query", "string", "Search query", true, null)
+///         new ParameterDef("query", "string", "Search query", true, null, false)
 ///     ),
-///     new ParameterDef("results", "array", "Search results", true, null)
+///     new ParameterDef("results", "array", "Search results", true, null, false)
 /// );
 /// }
 ///
@@ -84,13 +84,25 @@ public record ToolDefinition(
 
     /// Describes a tool parameter or return type.
     ///
+    /// Sensitive parameters are redacted at the source: the tool loop replaces
+    /// their values with a placeholder before the audit record leaves the core,
+    /// so no listener, log or durable sink ever receives the secret while the
+    /// provider still receives the real value.
+    ///
     /// @param name parameter identifier, not null
     /// @param type parameter type (string, number, boolean, object, array), not null
     /// @param description human-readable description, not null
     /// @param required whether the parameter must be provided
     /// @param defaultValue default value if not provided, may be null
+    /// @param sensitive whether the value carries a secret and must never be audited
+    /// @see io.hensu.core.tool.ToolCallEvent#REDACTED for the replacement value
     public record ParameterDef(
-            String name, String type, String description, boolean required, Object defaultValue) {
+            String name,
+            String type,
+            String description,
+            boolean required,
+            Object defaultValue,
+            boolean sensitive) {
 
         /// Compact constructor with validation.
         public ParameterDef {
@@ -106,7 +118,7 @@ public record ToolDefinition(
         /// @param description human-readable description, not null
         /// @return new parameter definition, never null
         public static ParameterDef required(String name, String type, String description) {
-            return new ParameterDef(name, type, description, true, null);
+            return new ParameterDef(name, type, description, true, null, false);
         }
 
         /// Creates an optional parameter definition.
@@ -118,7 +130,7 @@ public record ToolDefinition(
         /// @return new parameter definition, never null
         public static ParameterDef optional(
                 String name, String type, String description, Object defaultValue) {
-            return new ParameterDef(name, type, description, false, defaultValue);
+            return new ParameterDef(name, type, description, false, defaultValue, false);
         }
     }
 }

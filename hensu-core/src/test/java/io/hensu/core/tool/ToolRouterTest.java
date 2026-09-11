@@ -48,7 +48,7 @@ class ToolRouterTest {
         }
 
         @Test
-        void shouldRejectOnCallWhenTwoProvidersClaimTheName() {
+        void shouldReportCatalogErrorOnCallWhenTwoProvidersClaimTheName() {
             LateCatalogProvider first = new LateCatalogProvider();
             LateCatalogProvider second = new LateCatalogProvider();
             ToolRouter router = new ToolRouter(List.of(first, second));
@@ -56,9 +56,10 @@ class ToolRouterTest {
             first.publish(SEARCH);
             second.publish(SEARCH);
 
-            assertThatThrownBy(() -> router.call("search", Map.of(), Map.of()))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("Duplicate tool 'search'");
+            ToolCallResult result = router.call("search", Map.of(), Map.of());
+
+            assertThat(result.status()).isEqualTo(ToolCallStatus.CATALOG_ERROR);
+            assertThat(result.error()).contains("Duplicate tool 'search'");
         }
     }
 
@@ -103,14 +104,17 @@ class ToolRouterTest {
         }
 
         @Test
-        void shouldReportUnknownToolAsFailureListingAvailableTools() {
+        void shouldReportUnknownToolWithoutLeakingTheCatalog() {
+            // The router sees every tool in the runtime, including those outside the
+            // agent's declared allowlist. Enumerating them here would hand the model
+            // a catalog it was never granted, so only the loop names what is permitted.
             ToolRouter router =
                     new ToolRouter(List.of(StubToolProvider.alwaysSucceeding("hits", SEARCH)));
 
             ToolCallResult result = router.call("deploy", Map.of(), Map.of());
 
-            assertThat(result.success()).isFalse();
-            assertThat(result.error()).contains("Unknown tool 'deploy'").contains("search");
+            assertThat(result.status()).isEqualTo(ToolCallStatus.UNKNOWN_TOOL);
+            assertThat(result.error()).contains("Unknown tool 'deploy'").doesNotContain("search");
         }
 
         @Test
@@ -125,23 +129,27 @@ class ToolRouterTest {
 
             ToolCallResult result = router.call("search", Map.of(), Map.of());
 
-            assertThat(result.success()).isFalse();
+            assertThat(result.status()).isEqualTo(ToolCallStatus.FAILURE);
             assertThat(result.error()).contains("StubToolProvider").contains("boom");
         }
-    }
-
-    @Nested
-    class Mutation {
 
         @Test
-        void shouldRejectRemovalRatherThanSilentlyNoOping() {
-            // ToolRegistry.remove is a default returning false: without the router's
-            // override, mutating a provider-backed router would quietly do nothing.
-            ToolRouter router = ToolRouter.empty();
+        void shouldIsolateAProviderThatThrowsWhileReportingItsCatalog() {
+            // One MCP server being down must cost its own tools, nothing else:
+            // propagating here would abort the whole execution rather than one node.
+            ToolRouter router =
+                    new ToolRouter(
+                            List.of(
+                                    new BrokenCatalogProvider(),
+                                    StubToolProvider.alwaysSucceeding("built", BUILD)));
 
-            assertThatThrownBy(() -> router.remove("search"))
-                    .isInstanceOf(UnsupportedOperationException.class)
-                    .hasMessageContaining("add a ToolProvider instead");
+            assertThat(router.all()).extracting(ToolDefinition::name).containsExactly("build");
+            assertThat(router.get("build")).contains(BUILD);
+
+            ToolCallResult result = router.call("build", Map.of(), Map.of());
+
+            assertThat(result.status()).isEqualTo(ToolCallStatus.SUCCESS);
+            assertThat(result.output()).isEqualTo("built");
         }
     }
 
@@ -168,6 +176,21 @@ class ToolRouterTest {
         public ToolCallResult call(
                 String toolName, Map<String, Object> arguments, Map<String, Object> context) {
             return ToolCallResult.success(toolName, "other");
+        }
+    }
+
+    /// Provider whose source is unreachable, so every catalog read throws.
+    private static final class BrokenCatalogProvider implements ToolProvider {
+
+        @Override
+        public List<ToolDefinition> tools() {
+            throw new IllegalStateException("connection refused");
+        }
+
+        @Override
+        public ToolCallResult call(
+                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+            throw new IllegalStateException("connection refused");
         }
     }
 

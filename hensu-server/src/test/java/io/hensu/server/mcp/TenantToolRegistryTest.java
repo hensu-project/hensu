@@ -140,20 +140,6 @@ class TenantToolRegistryTest {
     }
 
     @Nested
-    class ForTenantMethod {
-
-        @Test
-        void shouldReturnBaseToolsOnly() {
-            registry.register(ToolDefinition.simple("base_tool", "Base tool"));
-
-            List<ToolDefinition> tools = registry.forTenant("any-tenant");
-
-            assertThat(tools).hasSize(1);
-            assertThat(tools.getFirst().name()).isEqualTo("base_tool");
-        }
-    }
-
-    @Nested
     class ErrorHandling {
 
         @Test

@@ -155,21 +155,26 @@ ToolRouter router = new ToolRouter(List.of(myCommandProvider, myMcpProvider));
 // Discovery (ToolRegistry) and invocation (ToolInvoker) go through the same object
 List<ToolDefinition> available = router.all();
 ToolCallResult result = router.call("analyze", Map.of("input", "..."), context);
+
+// Every outcome is typed, so a refusal is distinguishable from a broken tool
+if (result.status() == ToolCallStatus.SUCCESS) { /* ... */ }
 ```
 
 **Key types:**
 
-| Type                  | Description                                                          |
-|-----------------------|----------------------------------------------------------------------|
-| `ToolDefinition`      | Tool descriptor with name, description, and parameters               |
-| `ParameterDef`        | Parameter type with name, type, required flag, and default value     |
-| `ToolProvider`        | A runtime's tool source: catalog plus invocation                     |
-| `ToolInvoker`         | Invocation half of the seam, consumed by the tool loop               |
-| `ToolRouter`          | Composes providers; implements both `ToolRegistry` and `ToolInvoker` |
-| `ToolRegistry`        | Interface for tool discovery                                         |
-| `DefaultToolRegistry` | Thread-safe ConcurrentHashMap implementation                         |
+| Type             | Description                                                                     |
+|------------------|---------------------------------------------------------------------------------|
+| `ToolDefinition` | Tool descriptor with name, description, and parameters                          |
+| `ParameterDef`   | Parameter with name, type, required flag, default value, and a `sensitive` flag |
+| `ToolCallStatus` | Outcome vocabulary shared by every layer (success, failure, denial, timeout, …) |
+| `ToolProvider`   | A runtime's tool source: catalog plus invocation                                |
+| `ToolInvoker`    | Invocation half of the seam, consumed by the tool loop                          |
+| `ToolRouter`     | Composes providers; implements both `ToolRegistry` and `ToolInvoker`            |
+| `ToolRegistry`   | Read-only discovery interface: `get`, `all`, `contains`, `size`                 |
 
-The server contributes a provider backed by MCP server connections; the CLI contributes providers for local commands and stdio MCP servers. When a node declares tools and its agent implements `ToolCapable`, `ToolLoopRunner` resolves declared tool names against the router's catalog, filters to the agent's declared subset, and passes full schemas into the tool session. Two providers exposing the same tool name is a configuration error and fails the node.
+The server contributes a provider backed by MCP server connections; the CLI contributes providers for local commands and stdio MCP servers. When a node declares tools and its agent implements `ToolCapable`, `ToolLoopRunner` resolves declared tool names against the router's catalog, filters to the agent's declared subset, and passes full schemas into the tool session.
+
+A provider that throws while reporting its catalog is logged and skipped rather than propagated, so one unreachable tool source costs its own tools instead of aborting the execution. Two providers exposing the same tool name is a configuration error: it fails the node, and never reaches the agent as an ordinary tool failure it might retry against.
 
 ## Module Structure
 
@@ -303,14 +308,14 @@ hensu-core/src/main/java/io/hensu/core/
 │       └── ScoreExtractingEvaluator.java # Reads score engine variable from context; accumulates recommendation feedback
 ├── tool/                          # Protocol-agnostic tool descriptors and the provider seam
 │   ├── ToolDefinition.java        # Tool shape (name, params, return type)
-│   ├── ToolCallResult.java        # Tool execution result (success/failure factories, asText())
+│   ├── ToolCallStatus.java        # Outcome vocabulary shared by every layer
+│   ├── ToolCallResult.java        # Tool execution result (typed status, exit code, asText())
 │   ├── ToolProvider.java          # A runtime's tool source: catalog plus invocation
 │   ├── ToolInvoker.java           # Invocation half of the seam, consumed by the tool loop
-│   ├── ToolRouter.java            # Composes providers; ToolRegistry + ToolInvoker, rejects duplicate names
-│   ├── ToolCallEvent.java         # Audit record for a dispatched tool request
+│   ├── ToolRouter.java            # Composes providers; isolates failing ones, rejects duplicate names
+│   ├── ToolCallEvent.java         # Audit record for a dispatched tool request (bounded, redacted)
 │   ├── ToolResultEvent.java       # Audit record for a settled tool invocation (output truncated)
-│   ├── ToolRegistry.java          # Tool discovery interface
-│   └── DefaultToolRegistry.java   # Thread-safe ConcurrentHashMap implementation
+│   └── ToolRegistry.java          # Read-only tool discovery interface
 ├── review/                        # Human review support
 │   ├── ReviewHandler.java         # Review callback interface
 │   ├── ReviewOutcome.java         # Sealed: Decided(ReviewDecision) | Pending(correlationId)

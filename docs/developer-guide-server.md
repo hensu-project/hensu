@@ -325,8 +325,9 @@ io.hensu.server/
 │   └── SleepHandler             # Simulates long-running node for crash-recovery tests
 │
 ├── execution/             # Server-side execution listeners
-│   ├── LoggingExecutionListener   # Logs node lifecycle events + transition warnings
-│   └── CompositeExecutionListener # Combines multiple ExecutionListeners
+│   ├── LoggingExecutionListener   # Logs node lifecycle, tool audit, transition warnings
+│   ├── ToolStreamingExecutionListener # Republishes tool audit events as SSE events
+│   └── CompositeExecutionListener # Fans out to delegates; a throwing delegate is logged, not fatal
 │
 ├── mcp/                   # MCP protocol implementation
 │   ├── JsonRpc                  # JSON-RPC 2.0 message helper
@@ -693,7 +694,18 @@ public sealed interface ExecutionEvent {
 }
 ```
 
-2. Publish directly where needed:
+2. Register the record for reflection in `ExecutionEventNativeConfig`:
+
+```java
+@RegisterForReflection(targets = { /* ... */ ExecutionEvent.MyNewEvent.class })
+```
+
+This step is not optional. Quarkus resolves the JAX-RS return type to the sealed interface but does
+not walk its permitted subtypes for Jackson metadata, so an unregistered record builds cleanly and
+then streams every field as `null` in the native image — only `type()` survives, because its
+explicit `@JsonProperty` is traced at build time.
+
+3. Publish directly where needed:
 
 ```java
 broadcaster.publish(executionId, ExecutionEvent.MyNewEvent.now(executionId, "value"));
@@ -863,6 +875,26 @@ MCP tools are discovered at runtime — no server code changes are required to s
 - **Consumers**: `TenantToolProvider` adapts the registry to the `ToolProvider` seam and is composed
   into a `ToolRouter` by `HensuEnvironmentProducer`, making discovered tools available to
   `ToolLoopRunner` (agent-native tool loops).
+
+### Tool Audit Trail
+
+`ToolLoopRunner` reports every tool request and its outcome to the `ExecutionListener`, and the
+server consumes both callbacks so an unattended run leaves a trail an operator can read:
+
+| Consumer                         | Sink                                                                                                                          |
+|----------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| `LoggingExecutionListener`       | Server log: the request at INFO, the outcome at INFO for `SUCCESS` and WARNING otherwise, with status, duration and exit code |
+| `ToolStreamingExecutionListener` | The execution's SSE stream, as `tool.invoked` and `tool.settled`                                                              |
+
+Both sinks carry argument *names* without their values. Values can be large, can carry credentials,
+and a log file and an open HTTP stream are the least controlled places to put them; the values of
+parameters declared `sensitive` never leave `hensu-core` at all, having been replaced with a
+placeholder by the tool loop. Durable persistence of the full record is not implemented yet.
+
+`WorkflowExecutionService` composes the streaming listener unconditionally — the SSE trail must not
+depend on `hensu.verbose.enabled`, which gates only the log half — and `ExecutionStateService`
+composes it on the resume path, so a client that re-subscribed after submitting a review sees the
+same events a fresh execution streams.
 
 ---
 
