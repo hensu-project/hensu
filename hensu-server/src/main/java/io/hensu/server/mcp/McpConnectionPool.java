@@ -1,5 +1,9 @@
 package io.hensu.server.mcp;
 
+import io.hensu.mcp.JsonRpc;
+import io.hensu.mcp.McpConnection;
+import io.hensu.mcp.McpConnectionFactory;
+import io.hensu.mcp.McpException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.time.Duration;

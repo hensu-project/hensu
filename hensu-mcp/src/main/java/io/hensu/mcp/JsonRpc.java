@@ -1,12 +1,11 @@
-package io.hensu.server.mcp;
+package io.hensu.mcp;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
 import java.util.Map;
+import java.util.Objects;
 
 /// JSON-RPC 2.0 helper for MCP protocol messages.
 ///
@@ -18,16 +17,21 @@ import java.util.Map;
 /// - **Notification**: Has `method`, `params` - no response expected
 /// - **Response**: Has `id`, `result` or `error`
 ///
-/// @see McpSessionManager for message routing
+/// ### Runtime Neutrality
+/// This helper is a plain object rather than a CDI bean: the CLI constructs one
+/// directly, and the server publishes it through a producer. Parsing stays on
+/// the tree model, so no reflective data binding is introduced.
+///
 /// @see <a href="https://www.jsonrpc.org/specification">JSON-RPC 2.0 Spec</a>
-@ApplicationScoped
 public class JsonRpc {
 
     private final ObjectMapper mapper;
 
-    @Inject
+    /// Creates a helper backed by the given mapper.
+    ///
+    /// @param mapper the mapper used to build and read messages, not null
     public JsonRpc(ObjectMapper mapper) {
-        this.mapper = mapper;
+        this.mapper = Objects.requireNonNull(mapper, "mapper must not be null");
     }
 
     /// Creates a JSON-RPC request (expects a response).

@@ -1,7 +1,9 @@
 package io.hensu.server.mcp;
 
 import io.hensu.core.tool.ToolDefinition;
-import io.hensu.core.tool.ToolDefinition.ParameterDef;
+import io.hensu.mcp.McpConnection;
+import io.hensu.mcp.McpException;
+import io.hensu.mcp.McpSchemaConverter;
 import io.hensu.server.tenant.TenantContext;
 import io.hensu.server.tenant.TenantContext.TenantInfo;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -33,6 +35,7 @@ import org.jboss.logging.Logger;
 /// to force re-discovery when tools change.
 ///
 /// @see McpConnectionPool for connection management
+/// @see McpSchemaConverter for the MCP-to-Hensu schema translation
 /// @see TenantContext for tenant-scoped tool access
 @ApplicationScoped
 public class McpToolDiscovery {
@@ -115,7 +118,7 @@ public class McpToolDiscovery {
 
             List<ToolDefinition> tools = new ArrayList<>(mcpTools.size());
             for (McpConnection.McpToolDescriptor mcpTool : mcpTools) {
-                tools.add(convert(mcpTool));
+                tools.add(McpSchemaConverter.convert(mcpTool));
             }
 
             LOG.infov("Discovered {0} tools from {1}", tools.size(), endpoint);
@@ -124,68 +127,5 @@ public class McpToolDiscovery {
             LOG.warnv("Failed to discover tools from {0}: {1}", endpoint, e.getMessage());
             throw e;
         }
-    }
-
-    /// Converts an MCP tool descriptor to a Hensu ToolDefinition.
-    ///
-    /// @param mcpTool the MCP tool descriptor
-    /// @return the converted tool definition
-    static ToolDefinition convert(McpConnection.McpToolDescriptor mcpTool) {
-        List<ParameterDef> parameters = extractParameters(mcpTool.inputSchema());
-        return new ToolDefinition(mcpTool.name(), mcpTool.description(), parameters, null);
-    }
-
-    /// Extracts parameter definitions from MCP JSON Schema.
-    ///
-    /// MCP tools use JSON Schema for input parameters. This method extracts
-    /// the relevant parts to create ParameterDef objects.
-    private static List<ParameterDef> extractParameters(Map<String, Object> inputSchema) {
-        if (inputSchema == null) {
-            return List.of();
-        }
-
-        Object properties = inputSchema.get("properties");
-        if (!(properties instanceof Map)) {
-            return List.of();
-        }
-
-        Map<String, Object> propsMap = (Map<String, Object>) properties;
-        List<String> required = extractRequiredList(inputSchema);
-
-        List<ParameterDef> params = new ArrayList<>();
-        for (Map.Entry<String, Object> entry : propsMap.entrySet()) {
-            String paramName = entry.getKey();
-            if (!(entry.getValue() instanceof Map)) {
-                continue;
-            }
-            Map<String, Object> paramSchema = (Map<String, Object>) entry.getValue();
-
-            String type = getString(paramSchema, "type", "string");
-            String description = getString(paramSchema, "description", "");
-            boolean isRequired = required.contains(paramName);
-            Object defaultValue = paramSchema.get("default");
-
-            // MCP's schema has no notion of a secret parameter, so nothing discovered
-            // here is marked sensitive; only locally declared tools can claim that.
-            params.add(
-                    new ParameterDef(
-                            paramName, type, description, isRequired, defaultValue, false));
-        }
-
-        return params;
-    }
-
-    private static List<String> extractRequiredList(Map<String, Object> schema) {
-        Object required = schema.get("required");
-        if (required instanceof List) {
-            return ((List<?>) required)
-                    .stream().filter(String.class::isInstance).map(String.class::cast).toList();
-        }
-        return List.of();
-    }
-
-    private static String getString(Map<String, Object> map, String key, String defaultValue) {
-        Object value = map.get(key);
-        return value != null ? value.toString() : defaultValue;
     }
 }

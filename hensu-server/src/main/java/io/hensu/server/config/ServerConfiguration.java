@@ -7,10 +7,11 @@ import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.WorkflowRepository;
+import io.hensu.mcp.JsonRpc;
+import io.hensu.mcp.McpConnection;
+import io.hensu.mcp.McpConnectionFactory;
+import io.hensu.mcp.McpException;
 import io.hensu.serialization.WorkflowSerializer;
-import io.hensu.server.mcp.McpConnection;
-import io.hensu.server.mcp.McpConnectionFactory;
-import io.hensu.server.mcp.McpException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Singleton;
@@ -23,6 +24,7 @@ import java.time.Duration;
 ///
 /// This class produces:
 /// - Server-specific beans (ObjectMapper)
+/// - Plain objects from the shared `hensu-mcp` module that the server injects ({@link JsonRpc})
 /// - Delegating producers that expose {@link HensuEnvironment} components for direct injection
 @ApplicationScoped
 public class ServerConfiguration {
@@ -76,6 +78,21 @@ public class ServerConfiguration {
     }
 
     // ========== MCP Infrastructure ==========
+
+    /// Exposes the JSON-RPC helper from the shared MCP module as an injectable bean.
+    ///
+    /// {@link JsonRpc} is a plain object rather than a CDI bean so the CLI can
+    /// construct one directly; the server needs an injectable instance, and a
+    /// producer that instantiates the concrete type keeps the native image free
+    /// of dynamic class loading.
+    ///
+    /// @param mapper the server's configured object mapper, not null
+    /// @return the JSON-RPC helper, never null
+    @Produces
+    @Singleton
+    public JsonRpc jsonRpc(ObjectMapper mapper) {
+        return new JsonRpc(mapper);
+    }
 
     @Produces
     @Singleton

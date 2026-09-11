@@ -9,6 +9,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.hensu.core.execution.action.ActionExecutor.ActionResult;
+import io.hensu.mcp.McpConnection;
+import io.hensu.mcp.McpException;
 import io.hensu.server.tenant.TenantContext;
 import io.hensu.server.tenant.TenantContext.TenantInfo;
 import java.util.Map;

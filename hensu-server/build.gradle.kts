@@ -25,6 +25,7 @@ dependencies {
     // Internal Modules
     implementation(project(":hensu-core"))
     implementation(project(":hensu-serialization"))
+    implementation(project(":hensu-mcp"))
     implementation(project(":hensu-langchain4j-adapter"))
 
     // Quarkus LangChain4j extensions — register GraalVM reflection metadata for native image

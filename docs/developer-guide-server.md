@@ -329,18 +329,13 @@ io.hensu.server/
 │   ├── ToolStreamingExecutionListener # Republishes tool audit events as SSE events
 │   └── CompositeExecutionListener # Fans out to delegates; a throwing delegate is logged, not fatal
 │
-├── mcp/                   # MCP protocol implementation
-│   ├── JsonRpc                  # JSON-RPC 2.0 message helper
+├── mcp/                   # Server-side MCP transport (protocol types live in hensu-mcp)
 │   ├── McpSessionManager        # SSE session management
-│   ├── McpConnection            # Connection interface
-│   ├── McpConnectionFactory     # Factory for per-tenant connections
 │   ├── McpConnectionPool        # Connection pooling
-│   ├── McpException             # Checked MCP protocol errors
-│   ├── McpSidecar               # ActionHandler for MCP tools
+│   ├── McpSidecar               # ActionHandler for DSL-level send("mcp", …) calls
 │   ├── McpToolDiscovery         # Runtime tool schema discovery + cache
-│   ├── SseMcpConnection         # SSE-based connection impl
-│   ├── TenantToolProvider       # Temporary bridge exposing the tenant registry as a ToolProvider
-│   └── TenantToolRegistry       # Merges base + tenant MCP tools (MCP precedence)
+│   ├── McpToolProvider          # Exposes the tenant's MCP tools to the ToolProvider seam
+│   └── SseMcpConnection         # SSE-based connection impl
 │
 ├── security/              # JWT + tenant resolution + error mapping
 │   ├── GlobalExceptionMapper    # Global @Provider — normalizes errors to JSON
@@ -866,15 +861,18 @@ MCP tools are discovered at runtime — no server code changes are required to s
 - **Discovery & caching**: `McpToolDiscovery` fetches the tool schema from the tenant's MCP server
   and caches it per endpoint. On the first call, schemas are fetched; subsequent calls are served
   from cache.
-- **Precedence**: `TenantToolRegistry` merges base (built-in) tools with the tenant's MCP tools.
-  On naming collisions, the MCP tool takes precedence — tenants can override built-in tools with
-  their own MCP implementations. This resolution happens inside the registry; collisions *between*
-  providers are a configuration error the `ToolRouter` rejects outright.
+- **Scope**: the catalog a tenant sees is exactly what its own MCP server publishes. Outside a
+  tenant context the catalog is empty, and a discovery failure yields an empty catalog rather than
+  an exception, so one unreachable MCP server fails a node instead of the whole execution.
+  Collisions *between* providers are a configuration error the `ToolRouter` rejects outright.
 - **No server changes**: `McpSidecar.execute()` resolves tool names dynamically from the JSON-RPC
   payload. Adding a new tool on the MCP server side is sufficient; no `McpSidecar` update is needed.
-- **Consumers**: `TenantToolProvider` adapts the registry to the `ToolProvider` seam and is composed
-  into a `ToolRouter` by `HensuEnvironmentProducer`, making discovered tools available to
-  `ToolLoopRunner` (agent-native tool loops).
+- **Rendering**: `McpResultRenderer` (in `hensu-mcp`) flattens the response content blocks into the
+  text the agent reads, and maps the protocol's `isError` flag onto `ToolCallStatus.FAILURE`.
+- **Consumers**: `McpToolProvider` contributes the tenant's tools to the `ToolProvider` seam and is
+  composed into a `ToolRouter` by `HensuEnvironmentProducer`, making discovered tools available to
+  `ToolLoopRunner` (agent-native tool loops). It bounds every call with `hensu.mcp.read-timeout` and
+  reports `ToolCallStatus.TIMEOUT` when that deadline expires.
 
 ### Tool Audit Trail
 

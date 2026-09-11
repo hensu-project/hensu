@@ -9,6 +9,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.hensu.mcp.JsonRpc;
+import io.hensu.mcp.McpConnection;
+import io.hensu.mcp.McpException;
 import io.smallrye.mutiny.Uni;
 import java.util.List;
 import java.util.Map;

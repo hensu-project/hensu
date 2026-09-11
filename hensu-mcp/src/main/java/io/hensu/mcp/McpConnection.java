@@ -1,4 +1,4 @@
-package io.hensu.server.mcp;
+package io.hensu.mcp;
 
 import java.util.List;
 import java.util.Map;
@@ -11,8 +11,10 @@ import java.util.Map;
 /// - Managing connection lifecycle
 ///
 /// Implementations may use different transport protocols (HTTP, stdio, WebSocket).
+/// Each runtime owns its own pooling and lifetime policy; this interface only
+/// describes what a live connection can do.
 ///
-/// @see McpConnectionPool for connection management
+/// @see McpConnectionFactory for establishing connections
 public interface McpConnection {
 
     /// Lists all tools available on the MCP server.

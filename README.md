@@ -272,6 +272,7 @@ flowchart LR
 | **[hensu-cli](hensu-cli/README.md)**                       | `run`, `validate`, `visualize`, `build`, `push`/`pull`/`delete`/`list`. Background daemon for warm starts.        |
 | **[hensu-server](hensu-server/README.md)**                 | Multi-tenant GraalVM native server. SSE split-pipe for MCP tool routing. SSE execution event streaming.           |
 | **[hensu-serialization](hensu-serialization/README.md)**   | Jackson-based JSON serialization shared by the CLI and server.                                                    |
+| **[hensu-mcp](hensu-mcp/README.md)**                       | Runtime-agnostic MCP protocol layer. JSON-RPC messages, schema conversion, result rendering.                      |
 | **[hensu-langchain4j-adapter](hensu-langchain4j-adapter)** | Bridges `hensu-core` Agent abstraction with LangChain4j `ChatModel` implementations.                              |
 
 ---

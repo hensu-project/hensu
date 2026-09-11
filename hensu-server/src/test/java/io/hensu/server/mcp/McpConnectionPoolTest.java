@@ -9,6 +9,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.hensu.mcp.JsonRpc;
+import io.hensu.mcp.McpConnection;
+import io.hensu.mcp.McpConnectionFactory;
+import io.hensu.mcp.McpException;
 import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -18,14 +22,13 @@ class McpConnectionPoolTest {
 
     private McpConnectionFactory connectionFactory;
     private McpSessionManager sessionManager;
-    private JsonRpc jsonRpc;
     private McpConnectionPool pool;
 
     @BeforeEach
     void setUp() {
         connectionFactory = mock(McpConnectionFactory.class);
         sessionManager = mock(McpSessionManager.class);
-        jsonRpc = mock(JsonRpc.class);
+        JsonRpc jsonRpc = mock(JsonRpc.class);
         pool =
                 new McpConnectionPool(
                         connectionFactory,
