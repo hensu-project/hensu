@@ -161,7 +161,8 @@ working-dir/
 ├── prompts/                    # agent prompt templates
 ├── rubrics/                    # markdown scoring criteria
 │   └── content-quality.md
-├── commands.yaml               # the command catalog: everything a local run may execute
+├── commands.yaml               # the command catalog: every binary a local run may execute
+├── mcp.yaml                    # MCP servers this deployment wants launched locally (optional)
 └── build/                      # compiled output of `hensu build`
     └── content-pipeline.json
 ```
@@ -238,8 +239,9 @@ For production setup with JWT auth and PostgreSQL, see the
 - **Rubric evaluation.** Markdown rubrics score outputs and route on thresholds, so a node can send
   weak work back with feedback and no custom parsing code.
 - **Agent-native tool loop.** Agents drive their own tool calls within a per-node budget. Tools come
-  from the runtime – MCP on the server, the command catalog on the CLI – and every call and result
-  reaches the execution listener.
+  from the runtime – MCP on the server, catalog commands and locally launched MCP servers on the CLI –
+  plus built-in file tools the engine always carries, and every call and result reaches the execution
+  listener.
 - **Human review.** Optional or required approval checkpoints at any step, in the terminal or over
   the API.
 - **Time-travel backtracking.** Rewind to any earlier node mid-flight, optionally edit the prompt in
@@ -249,9 +251,11 @@ For production setup with JWT auth and PostgreSQL, see the
 
 ### Local execution (CLI)
 
-- **Only the commands you declared.** `commands.yaml` is the complete set of operations a local run
-  may execute, and each node grants an agent only the subset it needs. Every command runs inside an
-  OS sandbox. How both gates work: [the CLI executes what you granted](#the-cli-executes-what-you-granted).
+- **Only the commands you declared.** `commands.yaml` is the complete set of binaries a local run may
+  execute, `mcp.yaml` the complete set of servers it may launch, and each node grants an agent only
+  the subset it needs. Every command runs inside an OS sandbox; the built-in file tools launch nothing
+  and are confined to the working directory instead. How both gates work:
+  [the CLI executes what you granted](#the-cli-executes-what-you-granted).
 - **Warm starts.** `hensu daemon start` keeps a JVM and Kotlin compiler resident, so `hensu run`
   starts in milliseconds. Detach with `Ctrl+C`, re-attach with `hensu attach`; output is never lost.
 - **Run management.** `hensu ps` lists live executions, `hensu attach` follows one, `hensu cancel`
@@ -421,6 +425,7 @@ process tree reaches.
 | **The catalog is immune**         | `commands.yaml` and `mcp.yaml` are re-bound read-only *after* the writable subtrees, so a command granted `write: ["."]` still cannot rewrite the allowlist that decides what it may run.                                                                                          |
 | **Hermetic environment**          | The child's environment is built from an allowlist rather than inherited. A credential that was never copied cannot leak.                                                                                                                                                          |
 | **A declared escape hatch**       | A *rung* (`rung: true`) is the one entry whose command line the agent writes, for the operations no catalog can enumerate. It does not exist unless you declare it, and it is pinned to the closed policy with no way for configuration to widen it.                               |
+| **One surface is not a process**  | The built-in file tools launch nothing, so no row above applies to them. They run in-process and are confined by a path guard that walks each segment and re-derives containment from the file it actually opened. They can never write `commands.yaml` or `mcp.yaml`.             |
 
 Full model: [Architecture § Decision 4](docs/unified-architecture.md). Operator reference:
 [Command Catalog](docs/command-catalog.md).

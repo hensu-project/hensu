@@ -1,0 +1,5 @@
+# Legal but warned about: npx cannot resolve a package with no network
+# and no warm cache mounted.
+servers:
+  fetch:
+    command: ["npx", "@modelcontextprotocol/server-fetch"]

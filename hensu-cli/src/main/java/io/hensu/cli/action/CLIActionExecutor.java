@@ -2,6 +2,7 @@ package io.hensu.cli.action;
 
 import io.hensu.cli.sandbox.CommandResult;
 import io.hensu.cli.sandbox.CommandRunner;
+import io.hensu.cli.tool.CommandCatalog;
 import io.hensu.core.execution.action.Action;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.action.ActionHandler;
@@ -10,6 +11,7 @@ import io.hensu.core.execution.action.CommandRegistry;
 import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.template.TemplateResolver;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
@@ -33,7 +35,7 @@ import java.util.logging.Logger;
 ///
 /// ### Action Handler Registration
 /// {@snippet :
-/// CLIActionExecutor executor = new CLIActionExecutor();
+/// CLIActionExecutor executor = new CLIActionExecutor(commandCatalog);
 /// executor.registerHandler(new SlackHandler(webhookUrl));
 /// executor.registerHandler(new GitHubDispatchHandler(token));
 /// }
@@ -56,35 +58,28 @@ public class CLIActionExecutor implements ActionExecutor {
 
     private final TemplateResolver templateResolver = new SimpleTemplateResolver();
     private final Map<String, ActionHandler> handlers = new ConcurrentHashMap<>();
-    private volatile CommandRegistry commandRegistry;
+    private final CommandCatalog catalog;
     private volatile CommandRunner commandRunner;
-    private volatile Path workingDirectory;
 
-    /// Creates an executor with an empty catalog and the host's command runner.
-    public CLIActionExecutor() {
-        this.commandRegistry = new CommandRegistry();
+    /// Creates an executor over the catalog it shares with the tool path.
+    ///
+    /// The catalog is a bean rather than a field here because an agent calling
+    /// a command and a workflow executing one must read the same allowlist. Two
+    /// readers of one security-relevant file are free to disagree about what the
+    /// deployment granted.
+    ///
+    /// @param catalog the shared command catalog, not null
+    @Inject
+    public CLIActionExecutor(CommandCatalog catalog) {
+        this.catalog = catalog;
         this.commandRunner = CommandRunner.forHost();
-        this.workingDirectory = Path.of("").toAbsolutePath();
-    }
-
-    /// Load command registry from the specified working directory. Looks for commands.yaml in the
-    /// directory.
-    public void loadCommandRegistry(Path workingDirectory) {
-        try {
-            Path commandsFile = workingDirectory.resolve("commands.yaml");
-            this.commandRegistry = CommandRegistry.loadFromFile(commandsFile);
-            logger.info("Loaded command registry from: " + commandsFile);
-        } catch (Exception e) {
-            logger.warning("Failed to load command registry: " + e.getMessage());
-            this.commandRegistry = new CommandRegistry();
-        }
     }
 
     /// Set the command registry directly (for testing or programmatic use).
     ///
     /// @param registry the catalog to use, not null
     public void setCommandRegistry(CommandRegistry registry) {
-        this.commandRegistry = registry;
+        catalog.setRegistry(registry);
     }
 
     /// Set the command runner directly, for tests that need a specific sandbox
@@ -97,8 +92,7 @@ public class CLIActionExecutor implements ActionExecutor {
 
     @Override
     public void setWorkingDirectory(Path workingDirectory) {
-        this.workingDirectory = workingDirectory.toAbsolutePath().normalize();
-        loadCommandRegistry(workingDirectory);
+        catalog.setWorkingDirectory(workingDirectory);
     }
 
     @Override
@@ -149,6 +143,7 @@ public class CLIActionExecutor implements ActionExecutor {
     private ActionResult executeCommand(Action.Execute exec, Map<String, Object> context) {
         String commandId = exec.getCommandId();
 
+        CommandRegistry commandRegistry = catalog.registry();
         if (!commandRegistry.hasCommand(commandId)) {
             String msg =
                     "Command not found in registry: '"
@@ -161,7 +156,7 @@ public class CLIActionExecutor implements ActionExecutor {
         }
 
         CommandDefinition definition = commandRegistry.getCommand(commandId);
-        CommandResult result = commandRunner.run(definition, context, workingDirectory);
+        CommandResult result = commandRunner.run(definition, context, catalog.workingDirectory());
 
         if (result.success()) {
             return ActionResult.success("Command completed successfully", result.output());

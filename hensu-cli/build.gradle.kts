@@ -13,6 +13,7 @@ dependencies {
     implementation(project(":hensu-dsl"))
     implementation(project(":hensu-serialization"))
     implementation(project(":hensu-langchain4j-adapter"))
+    implementation(project(":hensu-mcp"))
 
     // Quarkus LangChain4j extensions — register GraalVM reflection metadata for native image
     implementation(platform("io.quarkus.platform:quarkus-langchain4j-bom:3.35.2"))
@@ -32,5 +33,6 @@ dependencies {
     runtimeOnly("org.jetbrains.kotlin:kotlin-compiler-embeddable:$kotlinVersion")
 
     testImplementation("io.quarkus:quarkus-junit5")
+    testImplementation(testFixtures(project(":hensu-mcp")))
     testImplementation("org.mockito:mockito-junit-jupiter:5.15.2")
 }

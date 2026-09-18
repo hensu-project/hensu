@@ -44,6 +44,23 @@ public interface ToolProvider {
     /// @return tool descriptors, never null (may be empty)
     List<ToolDefinition> tools();
 
+    /// Returns the catalog this provider can report without starting anything.
+    ///
+    /// {@link ToolRouter}'s constructor reads this rather than {@link #tools()},
+    /// because building a router must not have side effects. A provider whose
+    /// catalog exists only after a launch – a local MCP server started on first
+    /// use – overrides this to report what it already has, so wiring the engine
+    /// starts no processes and a run that never calls a tool launches nothing.
+    ///
+    /// The consequence is that a lazy provider contributes nothing to the
+    /// construction-time duplicate check. That check is best-effort by design;
+    /// the authoritative one runs on every catalog materialization.
+    ///
+    /// @return the tools already known, never null (may be empty)
+    default List<ToolDefinition> settledTools() {
+        return tools();
+    }
+
     /// Returns whether this provider can invoke the named tool.
     ///
     /// The default answers from {@link #tools()}, so the predicate cannot drift

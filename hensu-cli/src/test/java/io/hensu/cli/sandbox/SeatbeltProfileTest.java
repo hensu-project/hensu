@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.hensu.core.execution.action.CommandDefinition;
+import io.hensu.core.execution.action.ProtectedConfigFiles;
 import io.hensu.core.execution.action.SandboxPolicy;
 import io.hensu.core.tool.ToolCallStatus;
 import java.io.IOException;
@@ -65,7 +66,7 @@ class SeatbeltProfileTest {
         assertThat(allowWrites).isNotNegative();
         // SBPL resolves by last match, so the ordering is the guarantee.
         assertThat(denyCatalog).isGreaterThan(allowWrites);
-        for (String configFile : CommandRunner.PROTECTED_CONFIG_FILES) {
+        for (String configFile : ProtectedConfigFiles.NAMES) {
             assertThat(profile.substring(denyCatalog))
                     .contains("(literal \"" + workingDir.resolve(configFile) + "\")");
         }

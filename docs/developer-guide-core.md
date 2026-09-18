@@ -690,7 +690,7 @@ public class SlackHandler implements ActionHandler {
 #### Manual Registration
 
 ```java
-CLIActionExecutor executor = new CLIActionExecutor();
+CLIActionExecutor executor = new CLIActionExecutor(commandCatalog);
 
 String slackUrl = System.getenv("SLACK_WEBHOOK_URL");
 executor.registerHandler(new SlackHandler(slackUrl));
@@ -1017,7 +1017,7 @@ sequenceDiagram
 
     alt Agent declares tools
         ALR->>TLR: execute(nodeId, agentId, prompt, agent, ctx)
-        TLR->>TR: all() — catalog union, failing providers skipped, duplicates rejected
+        TLR->>TR: all() — catalog union, failing providers skipped, duplicates rejected (built-ins yield)
         TLR->>TLR: filter to the agent's declared tools
         TLR->>TS: openToolSession(prompt, context, tools)
         TLR->>TS: start()
@@ -1097,7 +1097,7 @@ Tools are resolved through the router's provider catalogs:
 2. Filter to the agent's declared `tools` names
 3. A provider that throws from `tools()` is logged and skipped, so its tools are absent rather than fatal — one unreachable source fails a node, not the execution
 4. Unresolvable name → `NodeResult.failure()` with diagnostic listing available tools
-5. Two providers exposing the same tool name → `NodeResult.failure()` naming both providers. A collision seen at catalog time throws inside the loop and is caught; one seen only at call time comes back as `CATALOG_ERROR` and fails the node without being submitted to the model, so a configuration error is never something the agent retries against
+5. Two providers exposing the same tool name → `NodeResult.failure()` naming both providers. A collision seen at catalog time throws inside the loop and is caught; one seen only at call time comes back as `CATALOG_ERROR` and fails the node without being submitted to the model, so a configuration error is never something the agent retries against. A name a `BuiltInToolProvider` shares with a configured provider is the exception: the built-in drops it and logs a warning naming the winner, because nobody opted into the built-in and the deployment did opt into what it declared
 6. Filtered `List<ToolDefinition>` (with full schemas) passed into `openToolSession()`
 
 ### Budget Enforcement
@@ -1191,10 +1191,21 @@ tool names across providers are a configuration error: the constructor rejects w
 because dynamic catalogs are still empty at that point, the check runs again on every catalog
 materialization.
 
+The constructor reads `settledTools()` rather than `tools()` for exactly that reason. A provider
+whose catalog costs something to produce – a CLI provider that would have to launch every MCP server
+it manages – reports only what is already running, so wiring the environment never starts a process.
+`all()` remains the authoritative check.
+
+Built-ins are the one asymmetry in it. A `BuiltInToolProvider` is present without anyone asking for
+it, so a name a configured provider also claims is dropped from the built-in's catalog with a
+warning rather than failing the node: a deployment that declares a filesystem MCP server should get
+that server. Two configured providers, or two built-ins, still collide.
+
 ### MCP Integration
 
-The server contributes a provider backed by MCP server connections. Tools discovered via MCP become
-`ToolDefinition` instances available for agent tool loops.
+The server contributes a provider backed by MCP server connections, and the CLI one backed by stdio
+servers it launches itself. Tools discovered via MCP become `ToolDefinition` instances available for
+agent tool loops.
 
 ```
 MCP Server ──► ToolDefinition ──► ToolProvider ──► ToolRouter ──► ToolLoopRunner ──► Agent Tool Session
@@ -1595,7 +1606,14 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `tool/ToolCallResult.java`                              | Tool execution result record (typed status, exit code, `asText()`)                                |
 | `tool/ToolProvider.java`                                | A runtime's tool source: catalog plus invocation                                                  |
 | `tool/ToolInvoker.java`                                 | Invocation half of the seam, consumed by the tool loop                                            |
-| `tool/ToolRouter.java`                                  | Composes providers; isolates failing ones, rejects duplicate tool names                           |
+| `tool/ToolRouter.java`                                  | Composes providers; isolates failing ones, rejects duplicate names except a contested built-in    |
+| `tool/BuiltInToolProvider.java`                         | Marker for a provider nobody opted into, which yields a contested name instead of failing         |
+| `tool/PreviewCapable.java`                              | Optional: describes what a call would do, for an approval gate to show a human                    |
+| `tool/ToolPreview.java`                                 | The rendered description a preview returns                                                        |
+| `tool/file/FileToolProvider.java`                       | Built-in file tools: `read_file`, `list_dir`, `glob`, `grep`, `write_file`, `edit_file`           |
+| `tool/file/PathGuard.java`                              | Segment-wise containment walk; opens with `NOFOLLOW_LINKS` and re-derives containment after       |
+| `execution/action/HermeticEnvironment.java`             | Environment allowlist every launched process starts from                                          |
+| `execution/action/ProtectedConfigFiles.java`            | The catalog files no tool may write                                                               |
 | `tool/ToolCallEvent.java`                               | Audit record for a dispatched tool request (bounded, deep-copied, redacted)                       |
 | `tool/ToolResultEvent.java`                             | Audit record for a settled tool invocation (output truncated)                                     |
 | `tool/ToolRegistry.java`                                | Read-only tool discovery interface (`get`, `all`, `contains`, `size`)                             |

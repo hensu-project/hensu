@@ -153,6 +153,50 @@ class ToolRouterTest {
         }
     }
 
+    @Nested
+    class BuiltInPrecedence {
+
+        @Test
+        void shouldDropABuiltInNameAConfiguredProviderAlreadyPublishes() {
+            // An engine upgrade that adds read_file must not break a deployment
+            // whose filesystem MCP server already publishes it.
+            StubToolProvider configured = StubToolProvider.alwaysSucceeding("configured", SEARCH);
+            StubBuiltInProvider builtIn = new StubBuiltInProvider(SEARCH, BUILD);
+            ToolRouter router = new ToolRouter(List.of(configured, builtIn));
+
+            assertThat(router.all())
+                    .extracting(ToolDefinition::name)
+                    .containsExactly("search", "build");
+            assertThat(router.get("search")).isPresent();
+        }
+
+        @Test
+        void shouldRouteACollidingNameToTheConfiguredProvider() {
+            StubToolProvider configured = StubToolProvider.alwaysSucceeding("configured", SEARCH);
+            StubBuiltInProvider builtIn = new StubBuiltInProvider(SEARCH);
+            ToolRouter router = new ToolRouter(List.of(builtIn, configured));
+
+            ToolCallResult result = router.call("search", Map.of(), Map.of());
+
+            assertThat(result.status()).isEqualTo(ToolCallStatus.SUCCESS);
+            assertThat(result.output()).isEqualTo("configured");
+        }
+
+        @Test
+        void shouldStillAbortWhenTwoBuiltInsCollide() {
+            // Two built-ins colliding is an engine bug, not a deployment's problem,
+            // so it keeps failing loudly.
+            assertThatThrownBy(
+                            () ->
+                                    new ToolRouter(
+                                            List.of(
+                                                    new StubBuiltInProvider(SEARCH),
+                                                    new StubBuiltInProvider(SEARCH))))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Duplicate tool 'search'");
+        }
+    }
+
     /// Second provider type, so duplicate messages can name two distinct classes.
     private static final class OtherStubProvider implements ToolProvider {
 
@@ -218,6 +262,32 @@ class ToolRouterTest {
         public ToolCallResult call(
                 String toolName, Map<String, Object> arguments, Map<String, Object> context) {
             return ToolCallResult.success(toolName, "late");
+        }
+    }
+
+    /// Built-in provider, which yields its names to any configured provider.
+    private static final class StubBuiltInProvider implements BuiltInToolProvider {
+
+        private final List<ToolDefinition> tools;
+
+        StubBuiltInProvider(ToolDefinition... tools) {
+            this.tools = List.of(tools);
+        }
+
+        @Override
+        public List<ToolDefinition> tools() {
+            return tools;
+        }
+
+        @Override
+        public boolean provides(String toolName) {
+            return tools.stream().anyMatch(t -> t.name().equals(toolName));
+        }
+
+        @Override
+        public ToolCallResult call(
+                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+            return ToolCallResult.success(toolName, "built-in");
         }
     }
 }

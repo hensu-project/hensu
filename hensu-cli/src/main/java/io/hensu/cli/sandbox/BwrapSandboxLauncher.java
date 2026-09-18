@@ -1,5 +1,6 @@
 package io.hensu.cli.sandbox;
 
+import io.hensu.core.execution.action.ProtectedConfigFiles;
 import io.hensu.core.execution.action.SandboxPolicy;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -130,7 +131,7 @@ public final class BwrapSandboxLauncher implements SandboxLauncher {
         wrapped.add(workingDir.toString());
 
         // Last mount wins: re-mask the catalog after any write: subtree covering it.
-        for (String configFile : CommandRunner.PROTECTED_CONFIG_FILES) {
+        for (String configFile : ProtectedConfigFiles.NAMES) {
             Path config = workingDir.resolve(configFile);
             if (Files.exists(config)) {
                 bind(wrapped, "--ro-bind", config, config);

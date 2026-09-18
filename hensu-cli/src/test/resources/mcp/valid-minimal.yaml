@@ -1,0 +1,3 @@
+servers:
+  echo:
+    command: ["/bin/echo"]

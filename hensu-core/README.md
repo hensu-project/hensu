@@ -11,6 +11,7 @@ The `hensu-core` module is the execution engine at the heart of Hensu. It provid
 - **Rubric Engine** — Quality evaluation with weighted criteria, score-based routing, and LLM-based assessment
 - **Agent Tool Loop** — Native tool execution via `ToolCapable`/`ToolSession` with budget enforcement and sealed-hierarchy termination
 - **Tool Seam** — Protocol-agnostic tool descriptors plus the provider/router seam that feeds agent tool loops
+- **Built-In File Tools** — Reading, searching and editing files as an engine capability, confined to one root, needing no command catalog
 - **Human Review** — Optional or required review checkpoints at any workflow step
 - **Pause / Resume** — Phase-aware suspend and resume for long-running executions with out-of-band review support
 - **Action System** — Extensible action dispatch (send, execute) with pluggable executors
@@ -162,19 +163,24 @@ if (result.status() == ToolCallStatus.SUCCESS) { /* ... */ }
 
 **Key types:**
 
-| Type             | Description                                                                     |
-|------------------|---------------------------------------------------------------------------------|
-| `ToolDefinition` | Tool descriptor with name, description, and parameters                          |
-| `ParameterDef`   | Parameter with name, type, required flag, default value, and a `sensitive` flag |
-| `ToolCallStatus` | Outcome vocabulary shared by every layer (success, failure, denial, timeout, …) |
-| `ToolProvider`   | A runtime's tool source: catalog plus invocation                                |
-| `ToolInvoker`    | Invocation half of the seam, consumed by the tool loop                          |
-| `ToolRouter`     | Composes providers; implements both `ToolRegistry` and `ToolInvoker`            |
-| `ToolRegistry`   | Read-only discovery interface: `get`, `all`, `contains`, `size`                 |
+| Type                  | Description                                                                                        |
+|-----------------------|----------------------------------------------------------------------------------------------------|
+| `ToolDefinition`      | Tool descriptor with name, description, and parameters                                             |
+| `ParameterDef`        | Parameter with name, type, required flag, default value, and a `sensitive` flag                    |
+| `ToolCallStatus`      | Outcome vocabulary shared by every layer (success, failure, denial, timeout, …)                    |
+| `ToolProvider`        | A runtime's tool source: catalog plus invocation; `settledTools()` reports what is already live    |
+| `ToolInvoker`         | Invocation half of the seam, consumed by the tool loop                                             |
+| `ToolRouter`          | Composes providers; implements both `ToolRegistry` and `ToolInvoker`                               |
+| `ToolRegistry`        | Read-only discovery interface: `get`, `all`, `contains`, `size`                                    |
+| `BuiltInToolProvider` | Marker for a provider nobody opted into, which yields a contested name rather than failing startup |
+| `PreviewCapable`      | Optional: describes what a call would do, for an approval gate to show a human                     |
+| `ToolPreview`         | The rendered description a preview returns                                                         |
 
-The server contributes a provider backed by MCP server connections; the CLI contributes providers for local commands and stdio MCP servers. When a node declares tools and its agent implements `ToolCapable`, `ToolLoopRunner` resolves declared tool names against the router's catalog, filters to the agent's declared subset, and passes full schemas into the tool session.
+`FileToolProvider` ships with the engine – six file tools that need no catalog and no launch, which a runtime registers like any other provider; the server contributes a provider backed by MCP server connections; the CLI contributes providers for local commands and stdio MCP servers. When a node declares tools and its agent implements `ToolCapable`, `ToolLoopRunner` resolves declared tool names against the router's catalog, filters to the agent's declared subset, and passes full schemas into the tool session.
 
 A provider that throws while reporting its catalog is logged and skipped rather than propagated, so one unreachable tool source costs its own tools instead of aborting the execution. Two providers exposing the same tool name is a configuration error: it fails the node, and never reaches the agent as an ordinary tool failure it might retry against.
+
+A `BuiltInToolProvider` is exempt in one direction. Nobody opted into a built-in tool, so a name a configured provider also claims is dropped from the built-in's catalog and a warning names the winner — a deployment that declares a filesystem MCP server gets that server, not a startup failure. Two configured providers, or two built-ins, still collide.
 
 ## Module Structure
 
@@ -245,7 +251,9 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── action/
 │   │   ├── Action.java            # Sealed interface: Send | Execute
 │   │   ├── ActionExecutor.java    # Action dispatch interface
-│   │   └── ActionHandler.java     # Per-action-type handler
+│   │   ├── ActionHandler.java     # Per-action-type handler
+│   │   ├── HermeticEnvironment.java   # Environment allowlist every launched process starts from
+│   │   └── ProtectedConfigFiles.java  # The catalog files no tool may write
 │   ├── result/
 │   │   ├── ExecutionResult.java   # Workflow execution outcome
 │   │   ├── ExecutionHistory.java  # Step-by-step execution trace
@@ -315,7 +323,14 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── ToolRouter.java            # Composes providers; isolates failing ones, rejects duplicate names
 │   ├── ToolCallEvent.java         # Audit record for a dispatched tool request (bounded, redacted)
 │   ├── ToolResultEvent.java       # Audit record for a settled tool invocation (output truncated)
-│   └── ToolRegistry.java          # Read-only tool discovery interface
+│   ├── ToolRegistry.java          # Read-only tool discovery interface
+│   ├── BuiltInToolProvider.java   # Marker: present without being asked for, so it yields a contested name
+│   ├── PreviewCapable.java        # Optional: describe a call before it runs
+│   ├── ToolPreview.java           # What a preview returns
+│   └── file/                      # Built-in file tools, confined to one root
+│       ├── FileToolProvider.java  # read_file, list_dir, glob, grep, write_file, edit_file
+│       ├── PathGuard.java         # Segment-wise containment walk, hostile to symlink races
+│       └── FileToolException.java # Typed refusal carrying a ToolCallStatus
 ├── review/                        # Human review support
 │   ├── ReviewHandler.java         # Review callback interface
 │   ├── ReviewOutcome.java         # Sealed: Decided(ReviewDecision) | Pending(correlationId)

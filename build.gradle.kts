@@ -49,6 +49,22 @@ subprojects {
         jvmArgs(jvm25Args)
     }
 
+    // Javadoc needs the same preview flag the compiler gets, or every reference to
+    // StructuredTaskScope is an error, and it needs the three API-documentation tags
+    // registered explicitly: the standard doclet still reports them as unknown.
+    tasks.withType<Javadoc> {
+        (options as StandardJavadocDocletOptions).apply {
+            encoding = "UTF-8"
+            source = "25"
+            addBooleanOption("-enable-preview", true)
+            tags(
+                "apiNote:a:API Note:",
+                "implSpec:a:Implementation Requirements:",
+                "implNote:a:Implementation Note:"
+            )
+        }
+    }
+
     tasks.test {
         jvmArgs(jvm25Args)
         useJUnitPlatform()

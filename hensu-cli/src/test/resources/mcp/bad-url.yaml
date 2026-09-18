@@ -1,0 +1,4 @@
+# HTTP endpoints are a named follow-up, not a silent failure.
+servers:
+  remote:
+    url: "https://mcp.example.com/sse"

@@ -495,6 +495,7 @@ launchctl load -w ~/Library/LaunchAgents/io.hensu.daemon.plist
     │   +— templates/
     +— build/                              # Output of `hensu build` (JSON artifacts)
     +— commands.yaml                       # Command catalog: the allowlist of what may run
+    +— mcp.yaml                            # MCP servers this deployment wants launched locally
     ```
 
 ## Configuration
@@ -572,7 +573,7 @@ The CLI supports two action types that nodes can trigger during execution, imple
   (e.g. `"slack"`, `"github-dispatch"`). Register handlers programmatically:
 
   ```java
-  CLIActionExecutor executor = new CLIActionExecutor();
+  CLIActionExecutor executor = new CLIActionExecutor(commandCatalog);
   executor.registerHandler(new SlackHandler(webhookUrl));
   executor.registerHandler(new GitHubDispatchHandler(token));
   ```
@@ -592,6 +593,31 @@ The CLI supports two action types that nodes can trigger during execution, imple
 
 Send payloads support `{variable}` template syntax, resolved from the current workflow
 context at execution time.
+
+---
+
+## What an Agent Can Reach
+
+A node's `tools = listOf(...)` is the grant: an agent sees the tools its own node names and
+nothing else. Three sources contribute names, composed into one surface the agent cannot tell
+apart:
+
+| Source              | Declared in     | Visible when                                                                |
+|---------------------|-----------------|-----------------------------------------------------------------------------|
+| Catalog commands    | `commands.yaml` | the entry carries a `tool:` block                                           |
+| Local MCP servers   | `mcp.yaml`      | the server launched and answered `tools/list`                               |
+| Built-in file tools | nothing         | always – `read_file`, `list_dir`, `glob`, `grep`, `write_file`, `edit_file` |
+
+A command with no `tool:` block stays usable from a workflow's `execute(...)` and invisible to
+every agent. The built-ins are confined to the working directory and refuse to write
+`commands.yaml` or `mcp.yaml`, which is the same guarantee the sandbox gives a launched command:
+a run cannot rewrite the catalog that decides what it may run. Where a built-in name collides with
+a name a configured MCP server publishes, the configured server wins and the built-in drops out,
+so adding a filesystem server never breaks start-up.
+
+MCP servers are launched lazily, on the first node that resolves its tools, and they run under the
+same containment a command does. A host with no working sandbox backend starts none of them and
+says so, rather than starting them uncontained.
 
 ---
 
