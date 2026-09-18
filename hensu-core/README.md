@@ -330,7 +330,8 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── AgentOutputValidator.java  # LLM output safety checks (control chars, Unicode tricks, size)
 │   ├── JsonUtil.java              # Dependency-free JSON extraction utilities
 │   ├── LogSanitizer.java         # Strips CR/LF from logged values to prevent log injection
-│   └── ShellEscaper.java         # Escapes strings for safe shell interpolation in command templates
+│   ├── MiniYaml.java             # Zero-dependency parser for the configuration YAML subset
+│   └── MiniYamlException.java    # Parse failure carrying the offending source line
 └── state/                         # Execution state and persistence
     ├── HensuState.java            # Mutable runtime state during execution
     ├── HensuSnapshot.java         # Immutable checkpoint record for persistence

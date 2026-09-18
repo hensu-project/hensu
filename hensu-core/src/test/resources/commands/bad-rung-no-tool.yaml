@@ -1,0 +1,6 @@
+# A rung with no tool: block is dead configuration carrying a live capability.
+commands:
+  shell-rung:
+    description: "Diagnostic escape hatch"
+    rung: true
+    timeout: 60000

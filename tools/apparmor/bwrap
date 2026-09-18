@@ -1,0 +1,29 @@
+# AppArmor profile for bubblewrap, required by the sandboxed command execution tests.
+#
+# Ubuntu 24.04 sets kernel.apparmor_restrict_unprivileged_userns=1, which denies user
+# namespace creation to unconfined binaries. Bubblewrap needs that call, so without this
+# profile it fails with "setting up uid map: Permission denied" and every test in
+# SandboxContainmentTest is skipped.
+#
+# flags=(unconfined) confines nothing. The profile exists only to give the binary a label
+# that the userns rule can attach to, matching the style Ubuntu already ships for ch-run,
+# linux-sandbox, crun and buildah. Prefer this over
+# `sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, which lifts the restriction
+# for every binary on the host and does not survive a reboot.
+#
+# Install (both developer machines and CI load this same file):
+#
+#   sudo install -m 644 tools/apparmor/bwrap /etc/apparmor.d/bwrap
+#   sudo apparmor_parser -r /etc/apparmor.d/bwrap
+#
+# Verify with: bwrap --ro-bind / / --unshare-user --dev-bind /dev /dev true
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides. See local/README for details.
+  include if exists <local/bwrap>
+}

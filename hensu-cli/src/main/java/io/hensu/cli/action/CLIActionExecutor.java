@@ -1,37 +1,32 @@
 package io.hensu.cli.action;
 
+import io.hensu.cli.sandbox.CommandResult;
+import io.hensu.cli.sandbox.CommandRunner;
 import io.hensu.core.execution.action.Action;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.action.ActionHandler;
+import io.hensu.core.execution.action.CommandDefinition;
 import io.hensu.core.execution.action.CommandRegistry;
-import io.hensu.core.execution.action.CommandRegistry.CommandDefinition;
 import io.hensu.core.template.SimpleTemplateResolver;
 import io.hensu.core.template.TemplateResolver;
-import io.hensu.core.util.ShellEscaper;
 import jakarta.enterprise.context.ApplicationScoped;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
 /// CLI implementation of {@link ActionExecutor} for mid-workflow actions.
 ///
 /// ### Supported Actions
 /// - **Send** - Delegates to registered {@link ActionHandler} implementations
-/// - **Execute** - Runs shell commands from {@link CommandRegistry}
+/// - **Execute** - Runs a command from {@link CommandRegistry} through {@link CommandRunner}
 ///
 /// ### Security Model
-/// - **Execute**: Commands are loaded from `commands.yaml`, not specified in DSL
+/// - **Execute**: Commands are loaded from `commands.yaml`, not specified in DSL,
+///   and run through the same {@link CommandRunner} agent-invoked tools use – argv
+///   binding, a rebuilt environment and OS containment apply to workflow-authored
+///   actions exactly as they do to agent-chosen ones
 /// - **Send**: All configuration is encapsulated in user-implemented handlers
 ///
 /// Both patterns keep sensitive data (credentials, endpoints) out of workflow files.
@@ -44,7 +39,10 @@ import java.util.logging.Logger;
 /// }
 ///
 /// ### Template Resolution
-/// All action parameters support `{variable}` placeholder syntax, resolved from workflow context.
+/// Send payloads support `{variable}` placeholder syntax, resolved from workflow context.
+/// Execute actions do not: a command's `{param}` placeholders are bound as whole
+/// argv elements by {@link CommandRunner}, from the state variables whose names
+/// match the command's declared parameters.
 ///
 /// @implNote Thread-safe. Uses ConcurrentHashMap for handler storage.
 ///
@@ -59,9 +57,14 @@ public class CLIActionExecutor implements ActionExecutor {
     private final TemplateResolver templateResolver = new SimpleTemplateResolver();
     private final Map<String, ActionHandler> handlers = new ConcurrentHashMap<>();
     private volatile CommandRegistry commandRegistry;
+    private volatile CommandRunner commandRunner;
+    private volatile Path workingDirectory;
 
+    /// Creates an executor with an empty catalog and the host's command runner.
     public CLIActionExecutor() {
         this.commandRegistry = new CommandRegistry();
+        this.commandRunner = CommandRunner.forHost();
+        this.workingDirectory = Path.of("").toAbsolutePath();
     }
 
     /// Load command registry from the specified working directory. Looks for commands.yaml in the
@@ -78,12 +81,23 @@ public class CLIActionExecutor implements ActionExecutor {
     }
 
     /// Set the command registry directly (for testing or programmatic use).
+    ///
+    /// @param registry the catalog to use, not null
     public void setCommandRegistry(CommandRegistry registry) {
         this.commandRegistry = registry;
     }
 
+    /// Set the command runner directly, for tests that need a specific sandbox
+    /// backend or a fixed host environment.
+    ///
+    /// @param runner the runner to execute commands through, not null
+    public void setCommandRunner(CommandRunner runner) {
+        this.commandRunner = runner;
+    }
+
     @Override
     public void setWorkingDirectory(Path workingDirectory) {
+        this.workingDirectory = workingDirectory.toAbsolutePath().normalize();
         loadCommandRegistry(workingDirectory);
     }
 
@@ -146,73 +160,14 @@ public class CLIActionExecutor implements ActionExecutor {
             return ActionResult.failure(msg);
         }
 
-        CommandDefinition cmdDef = commandRegistry.getCommand(commandId);
-        Map<String, Object> shellSafeContext = shellEscapeContext(context);
-        String command = templateResolver.resolve(cmdDef.command(), shellSafeContext);
+        CommandDefinition definition = commandRegistry.getCommand(commandId);
+        CommandResult result = commandRunner.run(definition, context, workingDirectory);
 
-        logger.info("Executing command [" + commandId + "]: " + command);
-
-        try {
-            ProcessBuilder pb = new ProcessBuilder();
-            pb.command(List.of("/bin/sh", "-c", command));
-            pb.environment().putAll(cmdDef.environment());
-            pb.redirectErrorStream(true);
-
-            Process process = pb.start();
-
-            // Drain output asynchronously to prevent pipe-buffer deadlock with timeout
-            Future<String> outputFuture =
-                    PROCESS_IO_EXECUTOR.submit(
-                            () -> {
-                                StringBuilder output = new StringBuilder();
-                                try (BufferedReader reader =
-                                        new BufferedReader(
-                                                new InputStreamReader(
-                                                        process.getInputStream(),
-                                                        StandardCharsets.UTF_8))) {
-                                    String line;
-                                    while ((line = reader.readLine()) != null) {
-                                        output.append(line).append("\n");
-                                        logger.info("[CMD] " + line);
-                                    }
-                                }
-                                return output.toString().trim();
-                            });
-
-            boolean finished = process.waitFor(cmdDef.timeoutMs(), TimeUnit.MILLISECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                outputFuture.cancel(true);
-                return ActionResult.failure("Command timed out after " + cmdDef.timeoutMs() + "ms");
-            }
-
-            String output = outputFuture.get(5, TimeUnit.SECONDS);
-            int exitCode = process.exitValue();
-            if (exitCode == 0) {
-                return ActionResult.success("Command completed successfully", output);
-            } else {
-                return ActionResult.failure("Command failed with exit code: " + exitCode);
-            }
-
-        } catch (Exception e) {
-            logger.severe("Command execution failed: " + e.getMessage());
-            return ActionResult.failure("Command execution failed: " + e.getMessage(), e);
+        if (result.success()) {
+            return ActionResult.success("Command completed successfully", result.output());
         }
-    }
-
-    private static final ExecutorService PROCESS_IO_EXECUTOR =
-            Executors.newVirtualThreadPerTaskExecutor();
-
-    private Map<String, Object> shellEscapeContext(Map<String, Object> context) {
-        Map<String, Object> escaped = new HashMap<>(context.size());
-        for (Map.Entry<String, Object> entry : context.entrySet()) {
-            Object value = entry.getValue();
-            if (value instanceof String s) {
-                escaped.put(entry.getKey(), ShellEscaper.escape(s));
-            } else if (value != null) {
-                escaped.put(entry.getKey(), ShellEscaper.escape(value.toString()));
-            }
-        }
-        return escaped;
+        String message = "Command '" + commandId + "' " + result.status() + ": " + result.message();
+        logger.warning(message);
+        return ActionResult.failure(message);
     }
 }

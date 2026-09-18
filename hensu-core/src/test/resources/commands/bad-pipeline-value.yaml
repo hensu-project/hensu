@@ -1,0 +1,7 @@
+# pipeline: is an acknowledgement with exactly one spelling.
+commands:
+  verify:
+    description: "Format, compile and test in one pass"
+    shell: true
+    command: "/bin/echo building | /usr/bin/tail -40"
+    pipeline: pipefail

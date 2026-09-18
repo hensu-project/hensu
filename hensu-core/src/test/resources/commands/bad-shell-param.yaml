@@ -1,0 +1,9 @@
+commands:
+  greet:
+    shell: true
+    command: "echo {name}"
+    tool:
+      description: "Greet someone"
+      params:
+        name: { type: string }
+    description: "Greet the operator"

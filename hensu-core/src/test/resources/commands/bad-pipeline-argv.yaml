@@ -1,0 +1,6 @@
+# Nothing in argv form runs a pipeline, so there is no status to acknowledge.
+commands:
+  list-files:
+    description: "List the working directory"
+    exec: ["/bin/ls", "-la"]
+    pipeline: last-stage-status

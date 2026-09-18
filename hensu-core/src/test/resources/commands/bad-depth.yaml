@@ -1,0 +1,7 @@
+commands:
+  greet:
+    tool:
+      description: "Greet someone"
+      params:
+        name:
+          type: string

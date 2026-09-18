@@ -1,0 +1,6 @@
+# A pipeline reports its last stage, so this entry would call a failed build a success.
+commands:
+  verify:
+    description: "Format, compile and test in one pass"
+    shell: true
+    command: "/bin/echo building | /usr/bin/tail -40"

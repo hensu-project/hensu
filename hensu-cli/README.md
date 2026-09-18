@@ -494,7 +494,7 @@ launchctl load -w ~/Library/LaunchAgents/io.hensu.daemon.plist
     +— rubrics/                            # Evaluation rubric definitions
     │   +— templates/
     +— build/                              # Output of `hensu build` (JSON artifacts)
-    +— commands.yaml                       # CLI command shortcuts
+    +— commands.yaml                       # Command catalog: the allowlist of what may run
     ```
 
 ## Configuration
@@ -577,12 +577,21 @@ The CLI supports two action types that nodes can trigger during execution, imple
   executor.registerHandler(new GitHubDispatchHandler(token));
   ```
 
-- **Execute** – runs shell commands defined in `commands.yaml` (loaded from the working
+- **Execute** – runs a command defined in `commands.yaml` (loaded from the working
   directory). Commands are looked up by ID from a `CommandRegistry` – the DSL never
-  specifies raw shell strings, keeping credentials out of workflow files.
+  specifies raw shell strings, keeping credentials out of workflow files. A command
+  declares its argv as `exec: ["binary", "arg", "{param}"]`; placeholders bind as whole
+  argv elements from the state variables whose names match the command's declared
+  parameters, so nothing an argument contains is ever parsed as shell syntax. Commands
+  run under OS containment (`bwrap` on Linux, `sandbox-exec` on macOS) with an
+  environment rebuilt from scratch and a private, per-call `$HOME`. Every entry must
+  also carry a `description:` stating why it is in the catalog, so that a later reader
+  can tell an entry that has outlived its caller from one that has not. See the
+  [Command Catalog Guide](../docs/command-catalog.md) for the full grammar, the sandbox
+  policy keys, and a walkthrough of adding a command.
 
-DSL-authored action parameters support `{variable}` template syntax, resolved from the
-current workflow context at execution time.
+Send payloads support `{variable}` template syntax, resolved from the current workflow
+context at execution time.
 
 ---
 

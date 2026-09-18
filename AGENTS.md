@@ -2,11 +2,21 @@
 
 Single Source of Truth for all AI coding agents. You MUST read this before proposing changes or executing commands.
 
-Guides live in [docs/](docs/) — read on demand (core/server developer guides, DSL reference, architecture, javadoc standards).
+Guides live in [docs/](docs/) — read on demand (core/server developer guides, DSL reference, command catalog, architecture, javadoc standards).
 
 ## Build
 
 Standard Gradle wrapper (`./gradlew build`, `./gradlew test`, `./gradlew <module>:test --tests "FooTest"`, `./gradlew hensu-server:quarkusDev`).
+
+On Linux, the sandboxed command execution tests (`SandboxContainmentTest`) need bubblewrap to be
+allowed to create user namespaces, which Ubuntu 24.04 denies by default. They skip until the
+project's AppArmor profile is installed — the same file CI loads:
+
+```bash
+sudo apt-get install -y bubblewrap
+sudo install -m 644 tools/apparmor/bwrap /etc/apparmor.d/bwrap
+sudo apparmor_parser -r /etc/apparmor.d/bwrap
+```
 
 Modules: `hensu-core`, `hensu-dsl`, `hensu-serialization`, `hensu-cli`, `hensu-server`, `hensu-langchain4j-adapter`.
 Dependency flow: `cli → dsl → core`, `cli → serialization → core`, `server → serialization → core`, `langchain4j-adapter → core`.
@@ -31,7 +41,7 @@ Hensu is a modular AI workflow engine on Java 25 + Kotlin DSL. Core design princ
 2. **Client-side compilation**: CLI compiles Kotlin DSL → JSON; server receives pre-compiled JSON (no Kotlin compiler in native image).
 3. **Build-then-push**: `hensu build` compiles to `{working-dir}/build/`; `hensu push` reads compiled JSON (no recompilation).
 4. **Shared serialization**: CLI and server both use `hensu-serialization`; `WorkflowSerializer.createMapper()` is the single `ObjectMapper` factory.
-5. **Server MCP-only**: server never executes bash locally, only MCP requests to external tools.
+5. **Two execution substrates, one boundary rule.** The server never executes anything locally — side effects leave as MCP requests to tenant-owned servers. The CLI does execute locally, through the `commands.yaml` allowlist (`CommandRegistry`) under an OS sandbox (`CommandRunner` + `SandboxLauncher`, bubblewrap or Seatbelt). The rule governing both: **on a path where the agent authors the code being executed, the sandbox is the security boundary and the catalog governs grants, not reachability** — wherever an entry's binary executes *content* the agent can write — an interpreter running a script, a build tool running a build file, a migration runner running migrations — the catalog has already granted arbitrary code execution inside the sandbox, so an `exec:` entry buys no containment there that a `rung:` entry does not. Unattended software development is the sharpest instance of this, not its scope. Everywhere else the catalog is a genuine allowlist. Exactly one code site may build a `/bin/sh` command line (`CommandRunner.bind`); `NoShellOnTheAgentPathTest` fails the build on a second. Do not add a shell path, and do not relax a sandbox policy to make a command work — widen the declared `write:` / `cache:` / `network:` where an operator can see it, or say why the entry should not exist. See `docs/unified-architecture.md` Decision 4.
 6. **Storage in core**: repository interfaces and in-memory defaults live in `hensu-core`. JDBC impls live in `hensu-server/persistence/` as plain classes (not CDI beans). `HensuEnvironmentProducer` conditionally wires JDBC vs in-memory. Server exposes core components via `@Produces @Singleton` — never instantiates directly.
 7. **API separation**: `/api/v1/workflows` (definitions) and `/api/v1/executions` (runtime) are distinct resources.
 8. **JWT authentication**: SmallRye JWT bearer auth. Tenant identity extracted from `tenant_id` claim via `RequestTenantResolver`. CLI sends `Authorization: Bearer <token>` via `--token` or `hensu.server.token` config. JWT is required in every profile **except `inmem`** (integration tests), which disables auth and uses `hensu.tenant.default`. RSA keys live outside the repo (e.g. `~/.hensu/`).

@@ -1,0 +1,4 @@
+commands:
+  greet:
+    exec: ["/bin/echo", "{name}"]
+    description: "Greet the operator"

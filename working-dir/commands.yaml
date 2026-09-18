@@ -1,34 +1,77 @@
 # Command Registry for Executable Actions
-# Commands defined here can be referenced by ID in workflow action nodes.
-# This prevents command injection vulnerabilities by separating command
-# definitions from workflow logic.
+#
+# Commands defined here can be referenced by ID from workflow `execute(...)` actions,
+# and – when they carry a `tool:` block – invoked by agents as tools. The catalog is
+# the allowlist: a workflow never supplies command text, only an ID, so the set of
+# binaries that can run is exactly the set written down here.
+#
+# Forms:
+#   exec: ["binary", "arg", "{param}"]   argv form; placeholders bind as whole tokens
+#   shell: true + command: "…"           fixed human-authored text; parameters arrive
+#                                        as HENSU_PARAM_* environment variables only
+#   rung: true                           the agent writes the command line, under a fixed
+#                                        closed policy. It covers the ad-hoc operations no
+#                                        catalog can enumerate. This sample declares none:
+#                                        a demo has no reason to carry an arbitrary-shell
+#                                        capability. See docs/command-catalog.md
+#
+# Commands may run without a human present unless they say otherwise with
+# `unattended: false`; `approval: required` sends an attended run through review first.
+#
+# Placeholders may only reference parameters declared under `tool: params:`. Every
+# executable is resolved to an absolute path when this file loads, so a command whose
+# binary is missing from this machine fails the whole catalog rather than failing
+# later in front of an agent.
+#
+# Every entry must carry a `description:` saying why it is here. It is written for
+# whoever reads this file next: an allowlist stays an allowlist only while somebody
+# can still tell which entries are still needed. The `tool: description:` beneath it
+# is a different sentence for a different reader – that one goes to the model.
+#
+# Full guide, including the sandbox policy keys and the parameter constraints that keep
+# an argument from reaching an interpreter: docs/command-catalog.md
 
 commands:
-  # Example: echo command for testing
-  echo-result:
-    command: "echo 'Workflow result: {result}'"
-    timeout: 5000
 
-  # Example: list files
+  echo-result:
+    description: "Echo the message a workflow produced, so a run leaves a visible result"
+    exec: ["/bin/echo", "Workflow result: {message}"]
+    timeout: 5000
+    tool:
+      description: "Echo the workflow result back to the operator"
+      params:
+        message: { type: string, required: true, maxLength: 4096 }
+
   list-files:
-    command: "ls -la"
+    description: "List the working directory so an operator can see what a run had access to"
+    exec: ["/bin/ls", "-la"]
     timeout: 10000
 
-  # Example: run Gradle build
-  gradle-build:
-    command: "./gradlew build -x test"
-    timeout: 120000
-    env:
-      CI: "true"
+  count-lines:
+    description: "Count lines of a file the agent names, demonstrating a sandboxed read"
+    exec: ["/usr/bin/wc", "-l", "{path}"]
+    timeout: 10000
+    sandbox:
+      network: false
+    tool:
+      description: "Count the lines of a file inside the working directory"
+      params:
+        path: { type: string, required: true, pattern: "^[A-Za-z0-9_./-]+$", maxLength: 256 }
 
-  # Example: deploy script
   deploy-staging:
-    command: "echo 'Would deploy to staging environment'"
+    description: "Stand-in for a deployment step: irreversible, so it goes through review"
+    exec: ["/bin/echo", "Would deploy to staging environment"]
     timeout: 30000
     env:
       DEPLOY_ENV: "staging"
+    unattended: false
+    approval: required
 
-  # Example: notification command
   send-notification:
-    command: "echo 'Sending notification: {message}'"
+    description: "Notify the operator mid-run without ending the workflow"
+    exec: ["/bin/echo", "Sending notification: {message}"]
     timeout: 5000
+    tool:
+      description: "Send a short notification message"
+      params:
+        message: { type: string, required: true, maxLength: 1024 }
