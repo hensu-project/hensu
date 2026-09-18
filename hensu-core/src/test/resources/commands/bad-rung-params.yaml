@@ -1,0 +1,9 @@
+# A rung's schema is fixed: it takes one parameter and the author does not write it.
+commands:
+  shell-rung:
+    description: "Diagnostic escape hatch"
+    rung: true
+    tool:
+      description: "Run one shell command line"
+      params:
+        script: { type: string, required: true }

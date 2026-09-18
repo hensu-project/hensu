@@ -1,0 +1,5 @@
+# Golden file: the smallest catalog entry the grammar accepts.
+commands:
+  list-files:
+    description: "List the working directory for the report node's file inventory"
+    exec: ["/bin/echo", "hello"]

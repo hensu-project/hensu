@@ -4,7 +4,7 @@
  * Flow: writer drafts an article → rubric scores it (retry if < 70) →
  * reviewer approves (done) or rejects (revise back to writer, up to 3 times).
  *
- * Run: hensu run content-pipeline -d working-dir -v -c "{\"topic\": \"Cold Fusion\"}"
+ * Run: hensu run content-pipeline -d working-dir -v -c "{\"topic\": \"The Antikythera Mechanism\"}"
  *      -v (verbose) shows node inputs and outputs in the console
  */
 fun contentPipeline() = workflow("content-pipeline") {
@@ -30,17 +30,17 @@ fun contentPipeline() = workflow("content-pipeline") {
             writes("draft")
             rubric = "content-quality.md"
             onScore {
-                whenScore lessThan 70.0 goto "write" withFeedback
+                whenScore lessThan 70.0 goto "write" withFeedback   // weak draft: retry with feedback
             }
             onSuccess goto "review"
         }
 
         node("review") {
             agent  = "reviewer"
-            prompt = "Review this article as it must be about dogs: {draft}."
+            prompt = "Review this article: {draft}. Is it good enough to publish?"
             writes("draft")
             onApproval  goto "done"
-            onRejection revise "write" withFeedback retry 3 otherwise "needs-work" withFeedback
+            onRejection revise "write" retry 3 otherwise "needs-work"
         }
 
         end("done", ExitStatus.SUCCESS)

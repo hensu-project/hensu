@@ -384,6 +384,9 @@ action("commit-changes") {
 | `send(handlerId)`          | Send to registered action handler            |
 | `send(handlerId, payload)` | Send with payload data to registered handler |
 
+See the [Command Catalog Guide](command-catalog.md) for declaring the commands `execute(...)`
+refers to.
+
 #### Send Action
 
 The `send()` function delegates to registered `ActionHandler` implementations. Handlers encapsulate all configuration (endpoints, auth, protocols) and can implement any integration: HTTP calls, messaging (Slack, email), event publishing (Kafka, RabbitMQ), etc.

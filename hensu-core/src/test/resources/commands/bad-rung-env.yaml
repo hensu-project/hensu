@@ -1,0 +1,9 @@
+# A rung receives no extra environment; env: would be a grant the floor does not carry.
+commands:
+  shell-rung:
+    description: "Diagnostic escape hatch"
+    rung: true
+    tool:
+      description: "Run one shell command line"
+    env:
+      AWS_PROFILE: "production"

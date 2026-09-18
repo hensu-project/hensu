@@ -43,6 +43,21 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.4.3
 
+      # SandboxContainmentTest is assumption-gated on a working bubblewrap, so without this
+      # step the containment suite skips silently and the only evidence that the sandbox
+      # contains anything is never produced. The profile loaded here is the same file
+      # developers install locally, so CI and a developer machine agree on what the tests
+      # ran against. The final probe fails the step loudly rather than letting the suite
+      # skip its way to a green build.
+      - name: Enable bubblewrap for the sandbox containment tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo install -m 644 tools/apparmor/bwrap /etc/apparmor.d/bwrap
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+          bwrap --ro-bind / / --unshare-user --dev-bind /dev /dev -- /bin/true
+          echo "bubblewrap is usable on this runner"
+
       - name: Build and test all modules
         run: ./gradlew build
 

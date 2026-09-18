@@ -1,0 +1,57 @@
+# Golden file: every key the command grammar supports, in both command forms.
+commands:
+
+  # Argv form: agent-visible, sandboxed, unattended.
+  run-tests:
+    description: "Run the suite so the implementer can check its own work"
+    exec: ["/bin/echo", "test", "{gradle_args}"]
+    timeout: 120000
+    env:
+      CI: "true"
+    tool:
+      description: "Run the project test suite"
+      params:
+        gradle_args: { type: string, required: false, pattern: "^[-A-Za-z0-9=._:]*$", maxLength: 64 }
+    sandbox:
+      network: false
+      write: ["build/", ".gradle/"]
+      cache: ["~/.gradle/caches"]
+    unattended: true
+    approval: none
+
+  # Shell form: fixed human-authored text, parameters arrive as environment variables.
+  summarise-history:
+    description: "Summarise recent commits for the changelog node"
+    shell: true
+    command: "git log --oneline | head -20"   # a pipeline is why shell form exists
+    pipeline: last-stage-status               # and why the author has to acknowledge its status
+    timeout: 30000
+    tool:
+      description: "Summarise recent history"
+      params:
+        token: { type: string, required: true, secret: true }
+        mode: { type: string, enum: ["fast", "slow"] }
+    sandbox:
+      network: true
+    approval: required
+
+  # List parameter occupying its element alone, block-form write list.
+  archive:
+    description: "Bundle build outputs for the release node"
+    exec: ["/bin/echo", "{files}"]
+    tool:
+      description: "Archive the named files"
+      params:
+        files: { type: list, required: true }
+    sandbox:
+      write:
+        - "build/"
+
+  # Rung form: the agent writes the command line, under the fixed closed policy.
+  shell-rung:
+    description: "Ad-hoc operations the catalog cannot enumerate; closed policy, no elevation"
+    rung: true
+    timeout: 60000
+    tool:
+      description: "Run one shell command line in the working directory. No network access."
+    unattended: true

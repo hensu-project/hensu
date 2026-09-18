@@ -1,0 +1,10 @@
+# A rung may not carry a sandbox: block: its policy floor is fixed, not merged.
+commands:
+  shell-rung:
+    description: "Diagnostic escape hatch"
+    rung: true
+    tool:
+      description: "Run one shell command line"
+    sandbox:
+      network: true
+      cache: ["~/.gradle/caches"]

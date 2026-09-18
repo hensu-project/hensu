@@ -1,0 +1,6 @@
+commands:
+  build:
+    exec: ["/bin/echo", "build"]
+    sandbox:
+      write: ["../outside-the-project"]
+    description: "Build the project"

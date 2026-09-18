@@ -1,0 +1,4 @@
+commands:
+  list-files:
+    description: "   "
+    exec: ["/bin/echo", "hello"]

@@ -1,0 +1,8 @@
+# A rung's command line comes from the agent, so the entry declares none itself.
+commands:
+  shell-rung:
+    description: "Diagnostic escape hatch"
+    rung: true
+    exec: ["/bin/echo", "hello"]
+    tool:
+      description: "Run one shell command line"

@@ -1,0 +1,6 @@
+commands:
+  build:
+    exec: ["/bin/echo", "build"]
+    sandbox:
+      cache: ["build/cache"]
+    description: "Build the project"

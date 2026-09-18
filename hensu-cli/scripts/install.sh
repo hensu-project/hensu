@@ -2,7 +2,7 @@
 # install.sh — Hensu CLI installer
 #
 # Usage:
-#   curl -sSL https://github.com/hensu-project/hensu/releases/latest/download/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/hensu-project/hensu/main/hensu-cli/scripts/install.sh | bash
 #   bash install.sh [--prefix /usr/local] [--no-service]
 #
 # Options:
@@ -21,7 +21,7 @@
 #      - macOS:  launchd user agent    (~/Library/LaunchAgents/io.hensu.daemon.plist)
 #
 # Uninstall:
-#   Run scripts/remove.sh  (or bash <(curl -sSL https://github.com/hensu-project/hensu/releases/latest/download/remove.sh))
+#   Run scripts/remove.sh  (or bash <(curl -sSL https://raw.githubusercontent.com/hensu-project/hensu/main/hensu-cli/scripts/remove.sh))
 
 set -euo pipefail
 

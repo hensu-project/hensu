@@ -82,11 +82,12 @@ agent tool use.
 
 See [Core Developer Guide](developer-guide-core.md) for usage patterns.
 
-### 3. Zero-Trust Execution (MCP Only)
+### 3. Zero-Trust Execution (Server: MCP Only)
 
-The server is a **pure orchestrator** — it has no shell, no `eval`, no script runner. All side effects
-(tool calls, database writes, API requests) are routed to tenant-owned MCP servers via the **Split-Pipe**
-transport:
+This decision is about the **server** runtime specifically. The server is a **pure orchestrator** — it
+has no shell, no `eval`, no script runner. All side effects (tool calls, database writes, API requests)
+are routed to tenant-owned MCP servers via the **Split-Pipe** transport. The CLI runtime executes
+locally and answers the same question a different way; see Decision 4.
 
 - **Downstream (SSE):** The Hensu server pushes each JSON-RPC tool request — tagged with a unique request id — over the tenant client's open `/mcp/connect` stream.
 - **Upstream (HTTP POST):** The tenant client relays the request to its own MCP servers, then posts the JSON-RPC result to `/mcp/message`. `McpSessionManager` correlates the response by request id, completing the matching pending future (60 s timeout; futures are cancelled if the client disconnects).
@@ -136,8 +137,108 @@ ports, no firewall rules, no VPN**.
 The server never sees raw credentials or executes user-supplied code. LLM output is treated with
 equal suspicion — `AgentOutputValidator` sanitizes all agent responses for control characters,
 Unicode manipulation, and excessive payload size before the output is written to workflow state.
+That sanitization is runtime-agnostic and applies to the CLI as well.
 
-### 4. Non-Linear Graph Execution
+### 4. Contained Execution (CLI: Catalog and Sandbox)
+
+The CLI runs on the operator's own machine, and that is the product rather than an implementation
+detail: an engine an operator can grant controlled reach into their own host – its files, its
+processes, its network – for whatever the job happens to be. It therefore cannot borrow the server's
+answer of "execute nothing locally". The question is not whether a process runs, but what an
+operator granted it and what contains it.
+
+Two mechanisms answer two different questions, and neither is sufficient alone.
+
+**The catalog** (`commands.yaml`, compiled by `CommandRegistry` at startup) answers *which binary may
+run, with which argument shape*. Entries compile at load time: executables resolve to absolute paths so
+a later `PATH` change cannot swap them, argv templates are checked, and every parameter carries a
+declared schema. One broken entry fails the whole file with its line number — there is no partial load,
+because a half-loaded allowlist is one nobody has reviewed.
+
+**The sandbox** (`SandboxLauncher`, applied by `CommandRunner`) answers *how far the process tree
+reaches*. The per-entry policy compiles to kernel mechanisms — bubblewrap namespaces and bind mounts on
+Linux, an SBPL profile under `sandbox-exec` on macOS — so it constrains children and grandchildren
+rather than inspecting what the agent typed. Each call gets a private `$HOME`, the environment is
+rebuilt from an allowlist instead of inherited, and `commands.yaml` / `mcp.yaml` are re-bound read-only
+*after* the writable subtrees, so a command granted `write: ["."]` still cannot rewrite the catalog that
+decides what it may run.
+
+```mermaid
+flowchart LR
+    subgraph bg [" "]
+        direction LR
+        agent(["Agent tool call"])
+        cat(["Catalog<br/>which binary"])
+        rung(["Rung<br/>agent writes the line"])
+        sbx(["Sandbox<br/>how far it reaches"])
+        proc(["Process tree"])
+    end
+
+    agent --> cat
+    agent --> rung
+    cat --> sbx
+    rung --> sbx
+    sbx --> proc
+
+    style bg    fill:#1c1c1e, stroke:none
+    style agent fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style cat   fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style rung  fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style sbx   fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style proc  fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
+```
+
+Three command forms exist, and one of them is a deliberate exception:
+
+| Form          | Command text written by | What the agent contributes                       |
+|---------------|-------------------------|--------------------------------------------------|
+| `exec:`       | the operator            | argv elements, bound whole — never syntax        |
+| `shell: true` | the operator            | `HENSU_PARAM_*` values, which no shell re-parses |
+| `rung: true`  | **the agent**           | the command line itself                          |
+
+The first two make injection inexpressible rather than filtered: `execve` takes an array, so `&&`,
+`$()`, and `|` inside an argument are inert bytes and there is nothing to escape. The rung gives that
+property up on purpose, and the reasoning belongs here because it is the one place the model is not
+safe purely by construction:
+
+> **On a path where the agent authors the code being executed, the sandbox is the security boundary and
+> the catalog governs grants rather than reachability.**
+
+This is not a claim about software development. Many useful grants hand the agent a binary that
+executes *content*: an interpreter runs a script, a build tool runs a build file, a migration runner
+runs migrations, a query tool runs SQL. Wherever the agent can write that content, the catalog has
+already granted arbitrary code execution inside the sandbox — it arrives as data rather than as a
+command line, which changes how it looks and not what it can do. Refusing a rung on such a path buys
+close to nothing in containment while taxing every honest step.
+
+Unattended software development is the sharpest instance, and the one the policies are designed
+against: the agent's whole job is editing the files a build then executes, and nobody is watching.
+It is an instance of the rule, not its scope.
+
+So the rung exists — it does not exist unless an operator declares it, it carries the
+closed policy pinned in `CommandDefinition`'s constructor rather than merged from configuration, and
+what it costs is legibility rather than containment: anything reached through it is invisible to
+per-entry `unattended:` and `approval:` policy, and its audit record is an opaque command line rather
+than a command id with bound parameters.
+
+On every other path — deploy, release, migrate, anything whose code the agent did not author — the
+catalog is a genuine allowlist and the statement above does not apply. The layer table is read per
+path, not globally.
+
+One structural guard backs all of it: `CommandRunner.bind` is the only place in the tree that builds a
+`/bin/sh` command line, and `NoShellOnTheAgentPathTest` reads the sources and fails the build when a
+second one appears. Containment is never optional — a host with no working backend refuses the command
+rather than running it unsandboxed, unless an operator sets `toolexec.allowUnsandboxed`, which logs
+loudly and is never a default.
+
+Local stdio MCP servers launch under the same supervisor and the same policy schema. There is one
+containment mechanism, not two.
+
+Operator-facing reference: [`docs/command-catalog.md`](command-catalog.md).
+
+### 5. Non-Linear Graph Execution
 
 Workflows are not limited to linear chains. The graph engine supports:
 
@@ -156,7 +257,7 @@ For non-agent steps, `GenericNode` runs custom synchronous logic registered by `
 `ActionNode` dispatches asynchronous tasks to external systems via a registered `ActionHandler`
 (e.g., webhooks, git operations, notifications).
 
-### 5. Structured Concurrency (Preview API)
+### 6. Structured Concurrency (Preview API)
 
 All parallel execution – `ParallelNodeExecutor`, `ForkNodeExecutor` – uses Java's
 `StructuredTaskScope` (preview, JEP 453) instead of raw `ExecutorService`.
@@ -185,7 +286,7 @@ must include the flag.
 Each parallel execution creates and closes its own `StructuredTaskScope` within the node
 executor method, scoped to that single fork/parallel operation. No shared thread pool exists.
 
-### 6. Quality Gates (Rubric Evaluation)
+### 7. Quality Gates (Rubric Evaluation)
 
 Node outputs can be evaluated against markdown rubric definitions before the workflow transitions. The
 `RubricEngine` coordinates evaluation through `ScoreExtractingEvaluator`, which reads the `score`
@@ -196,7 +297,7 @@ engine variable; `FeedbackContextInjector` then surfaces it to the next agent au
 `### Previous Feedback` section whenever the feedback is preserved across the transition (backtracking
 `revise` arms preserve it; a plain forward `goto` clears it unless marked `withFeedback`).
 
-### 7. Storage Architecture
+### 8. Storage Architecture
 
 Repository interfaces and in-memory defaults live in **hensu-core**:
 
@@ -207,7 +308,7 @@ Repository interfaces and in-memory defaults live in **hensu-core**:
 `HensuEnvironment` via `@Produces @Singleton` — it never creates instances directly. Production deployments can
 substitute database-backed implementations through the builder.
 
-### 8. Distributed Execution & Recovery
+### 9. Distributed Execution & Recovery
 
 In a multi-instance deployment, each server node holds a **lease** on the executions it is
 currently running. Leases are tracked via two columns in `hensu.execution_states`:
@@ -256,7 +357,7 @@ is **not terminal** (`isTerminal() == false`): the execution's virtual thread re
 blocked, holding no lease but retaining in-process state. A client `hensu attach` resumes the
 review inline without replaying from a checkpoint.
 
-### 9. REST API Separation
+### 10. REST API Separation
 
 All path/query identifiers are validated by `@ValidId`; workflow request bodies by `@ValidWorkflow`
 (deep-validates the entire object graph for safe identifiers and control-character-free text);
@@ -444,8 +545,9 @@ Developer-facing CLI tool:
 - `hensu ps` / `attach` / `cancel` — Daemon execution management
 - `hensu credentials` (set / list / unset) — API key management
 - Local execution mode (uses full HensuEnvironment with local action executor)
-- `HensuEnvironmentProducer` (CLI variant - wires LangChain4jProvider, bash execution)
+- `HensuEnvironmentProducer` (CLI variant — wires LangChain4jProvider and the sandboxed `CommandRunner`)
 - `DaemonReviewHandler` / `CLIReviewHandler` / `ReviewTerminal` — Human-in-the-loop review over the daemon socket or inline
+- `io.hensu.cli.command` — `CommandRunner` (two-phase prepare/execute), `SandboxLauncher` with bubblewrap and Seatbelt backends, `ProcessProbe`: the contained execution substrate of Decision 4
 
 #### Daemon Architecture
 
@@ -795,7 +897,7 @@ The unified architecture provides:
 1. **Pure Core** — Zero-dependency Java engine, protocol-agnostic
 2. **Build-Then-Push** — Client-side compilation (Kotlin DSL → JSON); server receives pre-compiled artifacts
 3. **Centralized Bootstrap** — `HensuFactory.builder()` as the single entry point for all core infrastructure
-4. **Zero-Trust Execution** — Server has no shell; `Action.Execute` is rejected; side effects route via registered `ActionHandler`s (MCP by default) to tenant clients
+4. **Two Execution Substrates** — The server has no shell and routes every side effect via registered `ActionHandler`s (MCP by default) to tenant clients. The CLI executes locally through the `commands.yaml` allowlist under an OS sandbox; where the agent authors the executed code, the sandbox is the boundary and the catalog governs grants
 5. **Non-Linear Graphs** — Condition-routed loops with bounded revise budgets, conditional branches, fork/join, parallel fan-out with consensus, backtracking
 6. **Structured Concurrency** — `StructuredTaskScope` (preview) for all parallel execution; no `ExecutorService`, no thread pool lifecycle
 7. **Rubric Evaluation** — Quality gates that score outputs and route on thresholds for self-correcting loops
