@@ -10,9 +10,14 @@ engine's `ToolDefinition`, and the rendering of a `tools/call` response into tex
 read.
 
 Transport stays with whoever owns it. The server reaches tenant MCP servers over an SSE
-split-pipe and pools those connections; the CLI will launch stdio servers as child processes. Both
-speak the same protocol above that line, so everything above it lives here and neither runtime
-reimplements it. The server is the only consumer today — the CLI side is not wired yet.
+split-pipe and pools those connections; the CLI launches stdio servers as child processes through
+`StdioMcpConnection`. Both speak the same protocol above that line, so everything above it lives
+here and neither runtime reimplements it.
+
+The stdio client lives here rather than in the CLI because it is protocol work, but it must not
+drag a sandbox implementation into a module the server also compiles against. It therefore takes
+the containment it applies to a launch as a `UnaryOperator<List<String>>`, and the CLI passes its
+own `SandboxLauncher` in.
 
 The module carries no CDI annotations and no framework types. Its classes are plain objects the
 server publishes through producers and the CLI constructs directly.
@@ -24,6 +29,7 @@ flowchart LR
         rpc(["JsonRpc\n(message format)"])
         conv(["McpSchemaConverter\n(schema to ToolDefinition)"])
         rend(["McpResultRenderer\n(response to text)"])
+        spec(["McpServerSpec\n(declared server)"])
     end
 
     subgraph server["hensu-server"]
@@ -31,9 +37,9 @@ flowchart LR
         sse(["SSE split-pipe\n(tenant servers)"])
     end
 
-    subgraph cli["hensu-cli (planned)"]
+    subgraph cli["hensu-cli"]
         direction TB
-        stdio(["stdio\n(child processes)"])
+        stdio(["StdioMcpConnection\n(child processes)"])
     end
 
     sse --> shared
@@ -46,6 +52,7 @@ flowchart LR
     style rpc   fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style conv  fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style rend  fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style spec  fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style sse   fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style stdio fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
 
@@ -103,6 +110,29 @@ Non-text blocks carry bytes a text completion cannot consume, so only the block 
 locates it survive. A response setting `isError: true` becomes `ToolCallStatus.FAILURE` carrying
 the rendered text as its error message, so the agent sees what went wrong.
 
+### `StdioMcpConnection` — a server process this run owns
+
+```java
+McpConnection connection = StdioMcpConnection.open(
+        spec, workingDirectory, launcher::wrapForServer, System.getenv());
+```
+
+Launches the declared argv, speaks line-delimited JSON-RPC over the child's standard input and
+output, and kills the process tree on `close()`. Four properties follow from the server outliving
+any single call:
+
+- **Containment is applied once, at launch.** A long-lived process cannot be sandboxed per request,
+  so the caller supplies the wrapper and decides — before starting anything — what happens when no
+  backend is available.
+- **The environment is hermetic.** The child starts empty and receives
+  `HermeticEnvironment.PASSTHROUGH` plus the server's own `env:`. Nothing that authenticates the
+  operator reaches an MCP server.
+- **Each request carries its own deadline.** `McpServerSpec.requestTimeoutMs` bounds every
+  `initialize`, `tools/list` and `tools/call`; a lapsed request drops its correlation entry and
+  raises `McpException` instead of pinning the workflow thread.
+- **Standard error is drained.** A server that logs would otherwise block on a full pipe and look
+  like a hang.
+
 ## Module Structure
 
 ```
@@ -112,15 +142,20 @@ hensu-mcp/src/main/java/io/hensu/mcp/
 ├── McpConnectionFactory.java   # Transport-specific connection establishment
 ├── McpException.java           # Protocol, connection, and tool-invocation failures
 ├── McpSchemaConverter.java     # MCP JSON Schema to ToolDefinition
-└── McpResultRenderer.java      # tools/call response to ToolCallResult
+├── McpResultRenderer.java      # tools/call response to ToolCallResult
+├── McpServerSpec.java          # One locally launched server, as a deployment declared it
+└── StdioMcpConnection.java     # stdio transport: launch, speak JSON-RPC, kill the tree
 ```
+
+Test fixtures live in `src/testFixtures`: `FakeMcpServer` is a real process the stdio tests launch,
+and the CLI reuses it rather than growing a second copy.
 
 ## Consumers
 
-| Runtime                 | Transport                         | Provider                                  | Status  |
-|-------------------------|-----------------------------------|-------------------------------------------|---------|
-| `hensu-server`          | SSE split-pipe, pooled per tenant | `McpToolProvider` — tenant-scoped catalog | wired   |
-| `hensu-cli`             | stdio child processes             | `LocalMcpToolProvider`                    | planned |
+| Runtime        | Transport                         | Provider                                         | Status |
+|----------------|-----------------------------------|--------------------------------------------------|--------|
+| `hensu-server` | SSE split-pipe, pooled per tenant | `McpToolProvider` — tenant-scoped catalog        | wired  |
+| `hensu-cli`    | stdio child processes             | `LocalMcpToolProvider` — servers from `mcp.yaml` | wired  |
 
 Each contributes a `ToolProvider` to the engine's `ToolRouter`, so an agent cannot tell which
 transport produced a result. That is the reason the rendering rules above live in this module

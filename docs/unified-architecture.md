@@ -78,7 +78,7 @@ provider for LLM access. The CLI additionally wires a local bash executor (`CLIA
 `ServerActionExecutor` that dispatches `Action.Send` to any registered `ActionHandler` (falling back to MCP for
 unrecognized handlers) while rejecting `Action.Execute` (local bash), and delegates all components via CDI producers.
 Each runtime also supplies its own `ToolProvider` instances, composed into the `ToolRouter` the engine calls for
-agent tool use.
+agent tool use. The engine ships one of its own, `FileToolProvider`, whose file tools need no catalog and no launch.
 
 See [Core Developer Guide](developer-guide-core.md) for usage patterns.
 
@@ -154,6 +154,11 @@ run, with which argument shape*. Entries compile at load time: executables resol
 a later `PATH` change cannot swap them, argv templates are checked, and every parameter carries a
 declared schema. One broken entry fails the whole file with its line number — there is no partial load,
 because a half-loaded allowlist is one nobody has reviewed.
+
+**`mcp.yaml`** is the same grant for a server rather than a binary: a declaration the operator wrote,
+naming what may be launched and how far it reaches. It differs where a long-lived process forces it to —
+containment is decided once, at launch, because a process that outlives the call cannot be contained per
+call — and a server that is not installed is a runtime absence the run reports, not a load failure.
 
 **The sandbox** (`SandboxLauncher`, applied by `CommandRunner`) answers *how far the process tree
 reaches*. The per-entry policy compiles to kernel mechanisms — bubblewrap namespaces and bind mounts on
@@ -463,8 +468,9 @@ Zero-dependency Java library. Contains:
 - `ToolCapable` / `ToolSession` — Narrow interface for agents that support tool sessions; `ToolSession` is call-scoped (not stateful on the agent) for `ParallelNodeExecutor` safety
 - `ToolLoopRunner` — Stateless driver dispatched from `AgentLifecycleRunner` when a node declares tools and the agent implements `ToolCapable`. Iterates the sealed `AgentResponse` hierarchy (`TextResponse` = done, `ToolRequest` = continue, `Error` = done), invoking each tool through the context's `ToolInvoker` and reporting every request and outcome to the `ExecutionListener`. Enforces `AgentConfig.maxToolCalls` budget (default 10, counting executed calls). Cap exhaustion → one final summarization call → `SUCCESS` or hard `FAILURE`
 - `ToolCallResult` / `ToolCallStatus` — Record `(toolName, status, output, error, exitCode)` with a derived `success()`; the status is one vocabulary across every layer, so a refusal, a timeout and a broken tool stay distinguishable
-- `ToolProvider` / `ToolInvoker` — Runtime-agnostic tool seam: a provider owns a catalog and the invocation of the tools in it
-- `ToolRouter` — Composes providers into one surface implementing both `ToolRegistry` and `ToolInvoker`. A provider that throws while reporting its catalog is skipped rather than propagated, so one unreachable source fails a node instead of the execution; duplicate tool names across providers are rejected
+- `ToolProvider` / `ToolInvoker` — Runtime-agnostic tool seam: a provider owns a catalog and the invocation of the tools in it. `settledTools()` reports only what is already live, so composing a router never forces a lazy provider to start what it manages
+- `BuiltInToolProvider` — Marker for a provider present without anyone opting into it: the engine's own file tools, which yield a contested name instead of failing start-up
+- `ToolRouter` — Composes providers into one surface implementing both `ToolRegistry` and `ToolInvoker`. A provider that throws while reporting its catalog is skipped rather than propagated, so one unreachable source fails a node instead of the execution; duplicate tool names across configured providers are rejected, while a built-in name a configured provider also claims is dropped with a warning
 - `ToolRegistry` / `ToolDefinition` — Protocol-agnostic tool descriptors used by agent-native tool loops and MCP integration; the registry is discovery-only
 - `RubricEngine` / `ScoreExtractingEvaluator` — Quality evaluation: reads `score` engine variable
   from context; accumulates feedback into `recommendation`; no JSON parsing
@@ -897,7 +903,7 @@ The unified architecture provides:
 1. **Pure Core** — Zero-dependency Java engine, protocol-agnostic
 2. **Build-Then-Push** — Client-side compilation (Kotlin DSL → JSON); server receives pre-compiled artifacts
 3. **Centralized Bootstrap** — `HensuFactory.builder()` as the single entry point for all core infrastructure
-4. **Two Execution Substrates** — The server has no shell and routes every side effect via registered `ActionHandler`s (MCP by default) to tenant clients. The CLI executes locally through the `commands.yaml` allowlist under an OS sandbox; where the agent authors the executed code, the sandbox is the boundary and the catalog governs grants
+4. **Two Execution Substrates** — The server has no shell and routes every side effect via registered `ActionHandler`s (MCP by default) to tenant clients. The CLI executes locally through the `commands.yaml` allowlist under an OS sandbox; where the agent authors the executed code, the sandbox is the boundary and the catalog governs grants. Its agent-facing surface is three sources — catalog commands, `mcp.yaml` servers, and built-in file tools that run in-process and are contained by `PathGuard` rather than by the kernel
 5. **Non-Linear Graphs** — Condition-routed loops with bounded revise budgets, conditional branches, fork/join, parallel fan-out with consensus, backtracking
 6. **Structured Concurrency** — `StructuredTaskScope` (preview) for all parallel execution; no `ExecutorService`, no thread pool lifecycle
 7. **Rubric Evaluation** — Quality gates that score outputs and route on thresholds for self-correcting loops

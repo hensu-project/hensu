@@ -1,0 +1,17 @@
+# Every key the grammar accepts, on two servers.
+servers:
+  filesystem:
+    command: ["/usr/local/bin/mcp-server-filesystem", "{workdir}"]
+    timeout: 45000
+    unattended: true
+    approval: none
+    env:
+      LOG_LEVEL: warn
+    sandbox:
+      network: false
+      write: ["."]
+  fetch:
+    command: ["npx", "@modelcontextprotocol/server-fetch"]
+    approval: required
+    sandbox:
+      network: true

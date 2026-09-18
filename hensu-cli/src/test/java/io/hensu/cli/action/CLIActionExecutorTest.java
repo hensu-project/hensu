@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.hensu.cli.sandbox.CommandRunner;
 import io.hensu.cli.sandbox.UnavailableSandboxLauncher;
+import io.hensu.cli.tool.CommandCatalog;
 import io.hensu.core.execution.action.Action;
 import io.hensu.core.execution.action.ActionExecutor.ActionResult;
 import io.hensu.core.execution.action.ActionHandler;
@@ -23,7 +24,7 @@ class CLIActionExecutorTest {
 
     @BeforeEach
     void setUp() {
-        executor = new CLIActionExecutor();
+        executor = new CLIActionExecutor(new CommandCatalog());
         // These tests cover the action path's own behaviour – catalog lookup, argv
         // binding, timeouts – so containment is switched off rather than depending
         // on whether this host has a working sandbox backend. Containment itself is

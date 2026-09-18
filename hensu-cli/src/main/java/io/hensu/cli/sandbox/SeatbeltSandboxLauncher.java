@@ -1,5 +1,6 @@
 package io.hensu.cli.sandbox;
 
+import io.hensu.core.execution.action.ProtectedConfigFiles;
 import io.hensu.core.execution.action.SandboxPolicy;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -176,7 +177,7 @@ public final class SeatbeltSandboxLauncher implements SandboxLauncher {
         // SBPL resolves by last match, so this deny overrides any write: subtree
         // that happens to cover the catalog the command was selected from.
         profile.append("(deny file-write*");
-        for (String configFile : CommandRunner.PROTECTED_CONFIG_FILES) {
+        for (String configFile : ProtectedConfigFiles.NAMES) {
             profile.append(" (literal ")
                     .append(quote(workingDir.resolve(configFile).toString()))
                     .append(')');

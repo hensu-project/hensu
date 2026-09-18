@@ -864,7 +864,8 @@ MCP tools are discovered at runtime — no server code changes are required to s
 - **Scope**: the catalog a tenant sees is exactly what its own MCP server publishes. Outside a
   tenant context the catalog is empty, and a discovery failure yields an empty catalog rather than
   an exception, so one unreachable MCP server fails a node instead of the whole execution.
-  Collisions *between* providers are a configuration error the `ToolRouter` rejects outright.
+  Collisions *between* configured providers are a configuration error the `ToolRouter` rejects
+  outright; only a built-in provider yields a contested name, and the server registers none.
 - **No server changes**: `McpSidecar.execute()` resolves tool names dynamically from the JSON-RPC
   payload. Adding a new tool on the MCP server side is sufficient; no `McpSidecar` update is needed.
 - **Rendering**: `McpResultRenderer` (in `hensu-mcp`) flattens the response content blocks into the

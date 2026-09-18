@@ -1,0 +1,4 @@
+servers:
+  filesystem:
+    command: ["/bin/echo"]
+    retries: 3

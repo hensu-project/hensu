@@ -20,6 +20,7 @@ in a workflow, a prompt, or an agent response ever supplies command text.
 - [Approval and unattended runs](#approval-and-unattended-runs)
 - [Exposing a command to agents](#exposing-a-command-to-agents)
 - [The environment a command receives](#the-environment-a-command-receives)
+- [MCP servers (`mcp.yaml`)](#mcp-servers-mcpyaml)
 - [Failure modes](#failure-modes)
 - [Host setup](#host-setup)
 
@@ -582,6 +583,70 @@ catalog loads, not by one silently overwriting the other at run time.
 
 ---
 
+## MCP servers (`mcp.yaml`)
+
+An MCP server is the other way a deployment hands tools to an agent, and it sits beside the catalog
+in the same directory:
+
+```yaml
+servers:
+  filesystem:
+    command: ["/usr/local/bin/mcp-server-filesystem", "{workdir}"]
+    timeout: 30000        # per-request ms, default 30000
+    unattended: true      # default false
+    approval: required    # default none
+    env:
+      LOG_LEVEL: warn
+    sandbox:
+      network: false
+      write: ["."]
+```
+
+| Key          | Meaning                                                                                                                                                                    |
+|--------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `command`    | The launch argv, required. `{workdir}` is the only placeholder, expanding to the absolute working directory as one whole token                                             |
+| `timeout`    | Milliseconds one request may take, default 30000. It covers both legs: a server that stops reading its standard input fails the call as surely as one that stops answering |
+| `unattended` | Whether an automated run may use this server, **default false**                                                                                                            |
+| `approval`   | `required` or `none`, default `none`                                                                                                                                       |
+| `env`        | Variables added to the hermetic base. The `HENSU_PARAM_` namespace is reserved                                                                                             |
+| `sandbox`    | `network`, `write` and `cache`, read exactly as [above](#sandbox-policy)                                                                                                   |
+| `url`        | Reserved. An HTTP endpoint is rejected at load, because the CLI launches servers rather than dialling them                                                                 |
+
+### Where it differs from a command
+
+The grammar is smaller on purpose: a server is one decision, not a family of parameterised
+invocations. Four differences follow from a process that outlives the call:
+
+- **Containment is decided once, at launch.** There is no per-call sandbox, so a host with no
+  working backend starts no servers at all and says so, rather than starting them uncontained.
+- **`unattended` defaults to false, the opposite of a command's default.** A catalog entry is a
+  reviewed invocation; a server is a whole surface whose tool list the operator has not read.
+- **Each server gets its own private `$HOME`**, deleted when the run ends. The working directory is
+  never handed over as a home, because a home is bound writable and that would grant writes the
+  server's own `sandbox:` block never declared.
+- **The executable is not resolved at load.** A catalog entry naming a missing binary fails the
+  whole catalog; a server that is not installed simply does not start, its tools are absent, and the
+  run reports the gap. An MCP server is a runtime dependency of the deployment, not part of the
+  grant the catalog expresses.
+
+Servers start lazily, on the first node whose tools have to be resolved, so a run that never reaches
+an agent never pays for one.
+
+### A package runner needs the network it was denied
+
+`npx some-mcp-server` resolves and downloads on first run, so declaring it under `network: false`
+produces a server that cannot start. That is a warning rather than an error: a warm package cache
+mounted through `cache:` makes the offline form legal, and refusing it outright would outlaw the one
+shape that is both offline and reproducible.
+
+### A missing file is not an error
+
+A malformed `mcp.yaml` is a load error naming the line to fix. An absent one is the normal case — a
+deployment that wired no servers gets no tools from this file, and the built-in file tools plus the
+catalog are unaffected.
+
+---
+
 ## Failure modes
 
 **One bad entry fails the whole catalog.** There is no partial load and no skipping of broken
@@ -639,4 +704,5 @@ tested against. macOS uses `sandbox-exec` and needs no setup.
 - [`docs/dsl-reference.md`](dsl-reference.md) — the `action { execute(...) }` node that calls
   these commands
 - [`working-dir/commands.yaml`](../working-dir/commands.yaml) — a worked catalog
+- [`hensu-mcp/README.md`](../hensu-mcp/README.md) — the MCP client these declarations launch
 - [`hensu-cli/README.md`](../hensu-cli/README.md) — how the CLI locates the working directory

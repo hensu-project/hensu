@@ -1,6 +1,7 @@
 package io.hensu.cli.sandbox;
 
 import io.hensu.core.execution.action.CommandDefinition;
+import io.hensu.core.execution.action.HermeticEnvironment;
 import io.hensu.core.execution.action.ParamSpec;
 import io.hensu.core.execution.action.SandboxPolicy;
 import io.hensu.core.tool.ToolCallStatus;
@@ -78,26 +79,11 @@ import java.util.stream.Stream;
 /// @see CommandResult for the outcome vocabulary
 public final class CommandRunner {
 
-    /// Configuration files masked read-only inside every sandbox.
-    ///
-    /// A command granted a broad `write:` scope must still not be able to rewrite
-    /// the catalog that decides what may run, so these are re-applied read-only
-    /// after the writable subtrees.
-    public static final List<String> PROTECTED_CONFIG_FILES = List.of("commands.yaml", "mcp.yaml");
-
     /// System property an operator sets to run commands without containment.
     ///
     /// Setting it is a visible, logged decision, never a default and never a
     /// silent fallback when a backend is missing.
     public static final String ALLOW_UNSANDBOXED_PROPERTY = "toolexec.allowUnsandboxed";
-
-    /// The only host variables a command inherits.
-    ///
-    /// Everything else – API keys, cloud credentials, session tokens – stays in
-    /// the parent. `HOME` is absent by design: it is always the call's own
-    /// private home, never the operator's.
-    public static final List<String> ENV_PASSTHROUGH =
-            List.of("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR");
 
     private static final Logger logger = Logger.getLogger(CommandRunner.class.getName());
     private static final ExecutorService PROCESS_IO_EXECUTOR =
@@ -114,8 +100,9 @@ public final class CommandRunner {
     /// Creates a runner over an explicit backend and host environment.
     ///
     /// @param launcher the containment backend, not null
-    /// @param hostEnvironment the environment to draw {@link #ENV_PASSTHROUGH}
-    ///     from – `System.getenv()` in production, a fixture in tests, not null
+    /// @param hostEnvironment the environment to draw
+    ///     {@link HermeticEnvironment#PASSTHROUGH} from – `System.getenv()` in
+    ///     production, a fixture in tests, not null
     /// @param allowUnsandboxed whether to run commands when no backend works
     public CommandRunner(
             SandboxLauncher launcher,
@@ -391,13 +378,7 @@ public final class CommandRunner {
             SandboxPolicy policy,
             Path privateHome,
             Map<String, String> parameterVariables) {
-        Map<String, String> environment = new LinkedHashMap<>();
-        for (String key : ENV_PASSTHROUGH) {
-            String value = hostEnvironment.get(key);
-            if (value != null) {
-                environment.put(key, value);
-            }
-        }
+        Map<String, String> environment = HermeticEnvironment.base(hostEnvironment);
         environment.put("HOME", privateHome.toString());
         environment.put("XDG_CACHE_HOME", privateHome.resolve(".cache").toString());
         environment.put("XDG_CONFIG_HOME", privateHome.resolve(".config").toString());

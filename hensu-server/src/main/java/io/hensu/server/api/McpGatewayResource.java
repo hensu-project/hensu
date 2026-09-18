@@ -56,7 +56,7 @@ import org.jboss.resteasy.reactive.RestStreamElementType;
 /// ```
 ///
 /// @see McpSessionManager for session and request management
-/// @see io.hensu.server.mcp.JsonRpc for message formatting
+/// @see io.hensu.mcp.JsonRpc for message formatting
 @Path("/mcp")
 public class McpGatewayResource {
 
