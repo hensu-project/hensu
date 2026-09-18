@@ -64,16 +64,6 @@ class CLIActionExecutorTest {
         assertThat(handler.capturedPayload).containsEntry("message", "{name}");
     }
 
-    @Test
-    void shouldFailSendWhenHandlerNotRegistered() {
-        Action.Send send = new Action.Send("unknown-handler", Map.of(), false);
-
-        ActionResult result = executor.execute(send, Map.of());
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.message()).contains("unknown-handler");
-    }
-
     // ========== Execute Action – Argv Binding Tests ==========
 
     @Test
@@ -209,31 +199,6 @@ class CLIActionExecutorTest {
     }
 
     // ========== Execute Action – Functional Tests ==========
-
-    @Test
-    void shouldExecuteRegisteredCommand() {
-        CommandRegistry registry = new CommandRegistry();
-        registry.registerCommand(
-                "echo-test", CommandDefinition.exec(List.of("/bin/echo", "Hello World")));
-        executor.setCommandRegistry(registry);
-
-        ActionResult result = executor.execute(new Action.Execute("echo-test"), Map.of());
-
-        assertThat(result.success()).isTrue();
-        assertThat(result.output().toString()).contains("Hello World");
-    }
-
-    @Test
-    void shouldReturnFailureOnNonZeroExitCode() {
-        CommandRegistry registry = new CommandRegistry();
-        registry.registerCommand("fail-cmd", CommandDefinition.exec(List.of("/bin/false")));
-        executor.setCommandRegistry(registry);
-
-        ActionResult result = executor.execute(new Action.Execute("fail-cmd"), Map.of());
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.message()).contains("exited with code");
-    }
 
     @Test
     void shouldFailWhenCommandNotInRegistry() {

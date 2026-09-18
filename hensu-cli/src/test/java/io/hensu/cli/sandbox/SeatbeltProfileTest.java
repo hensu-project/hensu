@@ -72,6 +72,27 @@ class SeatbeltProfileTest {
     }
 
     @Test
+    void shouldNeutraliseProfileSyntaxInAPathRatherThanEmitItAsAForm() {
+        Path hostileDir = workingDir.resolve("pro\"ject\\x (allow default)");
+
+        String profile =
+                launcher.buildProfile(
+                        new SandboxPolicy(
+                                false,
+                                List.of(),
+                                List.of("/cache\") (allow file-write* (subpath \"/")),
+                        hostileDir,
+                        privateHome);
+
+        // A quote or a backslash in a path must stay inside its string literal;
+        // escaping it is the whole reason the profile is not raw concatenation.
+        assertThat(profile).contains("pro\\\"ject\\\\x (allow default)");
+        assertThat(profile).contains("/cache\\\") (allow file-write* (subpath \\\"");
+        assertThat(profile).doesNotContain("\") (allow default)");
+        assertThat(profile.lines()).noneMatch(line -> line.trim().startsWith("(allow default)"));
+    }
+
+    @Test
     @EnabledOnOs(OS.MAC)
     void shouldBlockWritesOutsideTheDeclaredSubtrees() throws IOException {
         assumeTrue(
