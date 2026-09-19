@@ -20,6 +20,9 @@ servers:
     # A scratch notebook for the run. See mcp-servers/notes-server.py for what it publishes and why
     # a server rather than a command.
     command: ["/usr/bin/python3", "mcp-servers/notes-server.py"]
+    # `startup` covers the launch and handshake, `timeout` covers each call after it. They are
+    # separate because starting a Python interpreter costs far more than answering a tool call does.
+    startup: 30000
     timeout: 10000
     # Unlike a catalog command, a server defaults to `unattended: false` — the operator has not read
     # its tool list. This one is a local, hermetic example, so an unattended run may use it.

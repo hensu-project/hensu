@@ -46,10 +46,16 @@ import java.util.logging.Logger;
 ///   operator's cloud credentials.
 /// - **Every request has its own deadline, on both legs.** A server that stops
 ///   answering must fail the call rather than pin a workflow thread, so each
-///   in-flight request carries {@link McpServerSpec#requestTimeoutMs()} and its
-///   correlation entry is dropped when that expires. The same deadline covers
-///   the send: a server that stops reading its standard input fills the pipe, and
-///   a caller waiting on a full pipe would otherwise wait forever.
+///   in-flight request carries a deadline and its correlation entry is dropped
+///   when that expires. The same deadline covers the send: a server that stops
+///   reading its standard input fills the pipe, and a caller waiting on a full
+///   pipe would otherwise wait forever.
+/// - **Coming up is not answering.** The handshake is charged to
+///   {@link McpServerSpec#startupTimeoutMs()}, which runs from the fork and so
+///   has to cover whatever the server's runtime costs to boot. Every call after
+///   it is charged to {@link McpServerSpec#requestTimeoutMs()}, against a
+///   process already running. Sharing one budget would make a deployment that
+///   wants calls to fail fast unable to start a server at all.
 /// - **Standard error is drained.** A server that logs to stderr would block on
 ///   a full pipe and look like a hang, so a reader thread consumes it and logs
 ///   it at the connection's own name.
@@ -150,7 +156,7 @@ public final class StdioMcpConnection implements McpConnection {
     /// @throws McpException if the server does not answer within its request timeout
     @Override
     public List<McpToolDescriptor> listTools() {
-        Map<String, Object> result = request("tools/list", Map.of());
+        Map<String, Object> result = request("tools/list", Map.of(), spec.requestTimeoutMs());
         if (!(result.get("tools") instanceof List<?> published)) {
             return List.of();
         }
@@ -183,7 +189,7 @@ public final class StdioMcpConnection implements McpConnection {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("name", toolName);
         params.put("arguments", arguments);
-        return request("tools/call", params);
+        return request("tools/call", params, spec.requestTimeoutMs());
     }
 
     /// Returns a stable identifier for this connection.
@@ -242,16 +248,22 @@ public final class StdioMcpConnection implements McpConnection {
 
     // ---------------------------------------------------------------- protocol
 
+    /// Completes `initialize` under the launch budget rather than the call one.
+    ///
+    /// The clock starts at the fork, not when the server is ready, so this wait
+    /// pays for the server's whole runtime coming up – a package resolve, an
+    /// interpreter start, a class load. Charging that to the per-request budget
+    /// is what made a deployment asking for fast failures unable to start.
     private void handshake() {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("protocolVersion", PROTOCOL_VERSION);
         params.put("capabilities", Map.of());
         params.put("clientInfo", Map.of("name", "hensu", "version", "1"));
-        request("initialize", params);
-        notifyServer("notifications/initialized", Map.of());
+        request("initialize", params, spec.startupTimeoutMs());
+        notifyServer("notifications/initialized", spec.startupTimeoutMs());
     }
 
-    private Map<String, Object> request(String method, Map<String, Object> params) {
+    private Map<String, Object> request(String method, Map<String, Object> params, long timeoutMs) {
         if (closed || !process.isAlive()) {
             throw new McpException("MCP server '" + spec.name() + "' is not running");
         }
@@ -259,9 +271,8 @@ public final class StdioMcpConnection implements McpConnection {
         CompletableFuture<String> answer = new CompletableFuture<>();
         pending.put(id, answer);
         try {
-            write(jsonRpc.createRequest(id, method, params));
-            String response =
-                    answer.orTimeout(spec.requestTimeoutMs(), TimeUnit.MILLISECONDS).join();
+            write(jsonRpc.createRequest(id, method, params), timeoutMs);
+            String response = answer.orTimeout(timeoutMs, TimeUnit.MILLISECONDS).join();
             return jsonRpc.parseResult(response);
         } catch (CompletionException e) {
             throw e.getCause() instanceof TimeoutException
@@ -271,7 +282,7 @@ public final class StdioMcpConnection implements McpConnection {
                                     + "' to server '"
                                     + spec.name()
                                     + "' timed out after "
-                                    + spec.requestTimeoutMs()
+                                    + timeoutMs
                                     + "ms")
                     : asMcpException(method, e.getCause());
         } finally {
@@ -279,8 +290,8 @@ public final class StdioMcpConnection implements McpConnection {
         }
     }
 
-    private void notifyServer(String method, Map<String, Object> params) {
-        write(jsonRpc.createNotification(method, params));
+    private void notifyServer(String method, long timeoutMs) {
+        write(jsonRpc.createNotification(method, Map.of()), timeoutMs);
     }
 
     /// Hands one line to the server under the same deadline as its reply.
@@ -292,7 +303,7 @@ public final class StdioMcpConnection implements McpConnection {
     /// both serializes the framing and lets the caller give up. A server that
     /// cannot take a request is treated as dead rather than slow, because the
     /// bytes already in the pipe make the next request unframeable.
-    private void write(String json) {
+    private void write(String json, long timeoutMs) {
         Future<?> written;
         try {
             written = stdin.submit(() -> writeLine(json));
@@ -300,7 +311,7 @@ public final class StdioMcpConnection implements McpConnection {
             throw new McpException("MCP server '" + spec.name() + "' is not running", e);
         }
         try {
-            written.get(spec.requestTimeoutMs(), TimeUnit.MILLISECONDS);
+            written.get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             written.cancel(true);
             close();
@@ -309,7 +320,7 @@ public final class StdioMcpConnection implements McpConnection {
                             + spec.name()
                             + "' stopped reading its standard input, so the request could not be"
                             + " sent within "
-                            + spec.requestTimeoutMs()
+                            + timeoutMs
                             + "ms");
         } catch (ExecutionException e) {
             throw e.getCause() instanceof McpException mcp
@@ -410,7 +421,6 @@ public final class StdioMcpConnection implements McpConnection {
         pending.clear();
     }
 
-    @SuppressWarnings("unchecked")
     private static Map<String, Object> castSchema(Map<?, ?> schema) {
         return (Map<String, Object>) schema;
     }

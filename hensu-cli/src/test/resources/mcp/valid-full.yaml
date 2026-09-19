@@ -2,6 +2,7 @@
 servers:
   filesystem:
     command: ["/usr/local/bin/mcp-server-filesystem", "{workdir}"]
+    startup: 90000
     timeout: 45000
     unattended: true
     approval: none

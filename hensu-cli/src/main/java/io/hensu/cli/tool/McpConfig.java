@@ -27,6 +27,7 @@ import java.util.regex.Pattern;
 /// servers:
 ///   filesystem:
 ///     command: ["/usr/local/bin/mcp-server-filesystem", "{workdir}"]
+///     startup: 30000        # ms allowed for launch + handshake, optional
 ///     timeout: 30000        # per-request ms, optional
 ///     unattended: true      # optional, default false
 ///     approval: required    # optional, default none
@@ -42,6 +43,15 @@ import java.util.regex.Pattern;
 /// other placeholder exists, and an unknown one is a load error naming its line.
 /// Agent data never reaches a launch argv: an agent picks tools, never servers,
 /// so there is nothing here for a model to influence.
+///
+/// ### `startup:` and `timeout:` are separate on purpose
+/// A server's first answer costs whatever its runtime costs to boot – `npx`
+/// resolving a package, an interpreter starting – while every answer after it
+/// is a round trip to a process already running. An operator who wants a wedged
+/// server to fail a node in a second sets `timeout: 1000`; if that number also
+/// had to cover the launch, the server would never start. `startup:` buys the
+/// launch its own patience and defaults to
+/// {@link McpServerSpec#DEFAULT_STARTUP_TIMEOUT_MS}.
 ///
 /// ### A package runner needs the network it was denied
 /// `npx some-mcp-server` resolves and downloads on first run, so declaring it
@@ -79,7 +89,15 @@ public final class McpConfig {
     private static final Pattern SERVER_ID = Pattern.compile("[A-Za-z0-9_.\\-]+");
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{([A-Za-z0-9_.\\-]+)}");
     private static final Set<String> SERVER_KEYS =
-            Set.of("command", "url", "timeout", "unattended", "approval", "env", "sandbox");
+            Set.of(
+                    "command",
+                    "url",
+                    "startup",
+                    "timeout",
+                    "unattended",
+                    "approval",
+                    "env",
+                    "sandbox");
     private static final Set<String> SANDBOX_KEYS = Set.of("network", "write", "cache");
     private static final Set<String> PACKAGE_RUNNERS = Set.of("npx", "uvx", "pnpx", "bunx");
 
@@ -153,6 +171,9 @@ public final class McpConfig {
                 command,
                 environment(id, entry),
                 sandbox,
+                entry.has("startup")
+                        ? entry.require("startup").asLong()
+                        : McpServerSpec.DEFAULT_STARTUP_TIMEOUT_MS,
                 entry.has("timeout")
                         ? entry.require("timeout").asLong()
                         : McpServerSpec.DEFAULT_REQUEST_TIMEOUT_MS,

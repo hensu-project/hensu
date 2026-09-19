@@ -1,0 +1,5 @@
+# A deployment that wants calls to fail fast and says nothing about startup.
+servers:
+  filesystem:
+    command: ["/usr/local/bin/mcp-server-filesystem"]
+    timeout: 500

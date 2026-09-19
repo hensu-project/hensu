@@ -25,6 +25,11 @@ import java.util.concurrent.CountDownLatch;
 /// - `--deaf-after <method>` – answer that method, then stay alive without ever
 ///   reading standard input again, so the pipe to the server fills and the
 ///   client's send blocks instead of its reply
+/// - `--slow-start <ms>` – sleep that long before answering `initialize`, standing
+///   in for a runtime that is expensive to boot. Real startup cost is whatever
+///   the host's JVM happens to charge, which is not a number a test can assert
+///   against; a declared sleep makes the launch reliably slower than a per-request
+///   budget on every machine
 ///
 /// Calling the tool named `env` reports whether one variable reached the child,
 /// which is how the environment-isolation test reads the launched process.
@@ -44,6 +49,7 @@ public final class FakeMcpServer {
         String swallow = null;
         String exitOn = null;
         String deafAfter = null;
+        long slowStartMs = 0;
         boolean noisy = false;
         for (int i = 0; i < args.length; i++) {
             if ("--swallow".equals(args[i]) && i + 1 < args.length) {
@@ -52,6 +58,8 @@ public final class FakeMcpServer {
                 exitOn = args[++i];
             } else if ("--deaf-after".equals(args[i]) && i + 1 < args.length) {
                 deafAfter = args[++i];
+            } else if ("--slow-start".equals(args[i]) && i + 1 < args.length) {
+                slowStartMs = Long.parseLong(args[++i]);
             } else if ("--noisy".equals(args[i])) {
                 noisy = true;
             }
@@ -78,10 +86,22 @@ public final class FakeMcpServer {
             if (noisy) {
                 err.println("fixture: handling " + method);
             }
+            if (slowStartMs > 0 && "initialize".equals(method)) {
+                sleep(slowStartMs);
+            }
             out.println(respond(id, method, line));
             if (method.equals(deafAfter)) {
                 goDeaf();
             }
+        }
+    }
+
+    /// Spends the declared time before answering, as a slow runtime would.
+    private static void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
