@@ -182,7 +182,7 @@ public final class StdioMcpConnection implements McpConnection {
         Objects.requireNonNull(toolName, "toolName must not be null");
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("name", toolName);
-        params.put("arguments", arguments != null ? arguments : Map.of());
+        params.put("arguments", arguments);
         return request("tools/call", params);
     }
 

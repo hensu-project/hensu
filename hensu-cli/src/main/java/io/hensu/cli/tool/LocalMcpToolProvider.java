@@ -1,5 +1,7 @@
 package io.hensu.cli.tool;
 
+import io.hensu.cli.review.ApprovalOutcome;
+import io.hensu.cli.review.ToolApprovalRequest;
 import io.hensu.cli.sandbox.SandboxLauncher;
 import io.hensu.core.tool.PreviewCapable;
 import io.hensu.core.tool.ToolCallResult;
@@ -77,6 +79,7 @@ public class LocalMcpToolProvider implements ToolProvider, PreviewCapable {
 
     private final CommandCatalog catalog;
     private final SandboxLauncher launcher;
+    private final ToolApprovalGate gate;
     private final Map<String, String> hostEnvironment;
     private final ReentrantLock lock = new ReentrantLock();
 
@@ -85,28 +88,65 @@ public class LocalMcpToolProvider implements ToolProvider, PreviewCapable {
     private volatile Map<String, McpConnection> owners = Map.of();
     private final List<McpConnection> connections = new ArrayList<>();
     private final List<Path> privateHomes = new ArrayList<>();
+    private final ToolSourceNotices notices;
 
     /// Creates a provider over the shared catalog and the platform sandbox.
     ///
     /// @param catalog the shared catalog, which owns the working directory, not null
     @Inject
-    public LocalMcpToolProvider(CommandCatalog catalog) {
-        this(catalog, SandboxLauncher.forCurrentOs(), System.getenv());
+    public LocalMcpToolProvider(
+            CommandCatalog catalog, ToolApprovalGate gate, ToolSourceNotices notices) {
+        this(catalog, SandboxLauncher.forCurrentOs(), gate, System.getenv(), notices);
     }
 
     /// Creates a provider over an explicit backend and host environment.
     ///
     /// @param catalog the shared catalog, not null
     /// @param launcher the containment backend applied at launch, not null
+    /// @param gate the approval policy consulted when containment is unavailable, may be
+    ///     null — a provider built without one never launches an uncontained server
     /// @param hostEnvironment the environment servers draw their hermetic base
     ///     from, not null
     /// @apiNote Test seam, so launch behaviour can be exercised without the
     ///     host's real sandbox or real environment.
     public LocalMcpToolProvider(
-            CommandCatalog catalog, SandboxLauncher launcher, Map<String, String> hostEnvironment) {
+            CommandCatalog catalog,
+            SandboxLauncher launcher,
+            ToolApprovalGate gate,
+            Map<String, String> hostEnvironment) {
+        this(catalog, launcher, gate, hostEnvironment, new ToolSourceNotices());
+    }
+
+    /// Creates a provider that reports its notices to a caller-supplied sink.
+    ///
+    /// @param catalog the shared catalog, not null
+    /// @param launcher the containment backend applied at launch, not null
+    /// @param gate the approval policy consulted when containment is unavailable, may be
+    ///     null — a provider built without one never launches an uncontained server
+    /// @param hostEnvironment the environment servers draw their hermetic base
+    ///     from, not null
+    /// @param notices where the reasons a server offers no tools are recorded, not null
+    public LocalMcpToolProvider(
+            CommandCatalog catalog,
+            SandboxLauncher launcher,
+            ToolApprovalGate gate,
+            Map<String, String> hostEnvironment,
+            ToolSourceNotices notices) {
         this.catalog = Objects.requireNonNull(catalog, "catalog must not be null");
         this.launcher = Objects.requireNonNull(launcher, "launcher must not be null");
+        this.gate = gate;
         this.hostEnvironment = Map.copyOf(hostEnvironment);
+        this.notices = Objects.requireNonNull(notices, "notices must not be null");
+    }
+
+    /// Logs an operator-facing reason and records it where the run can print it.
+    ///
+    /// The CLI ships `quarkus.log.console.level=OFF`, so a warning alone reaches nobody.
+    ///
+    /// @param message the reason a declared tool is not available, not null
+    private void notifyOperator(String message) {
+        logger.warning(message);
+        notices.record(message);
     }
 
     /// Returns the tools of every server that started, launching them on first call.
@@ -166,9 +206,7 @@ public class LocalMcpToolProvider implements ToolProvider, PreviewCapable {
                     toolName, "MCP server '" + name(connection) + "' is not running");
         }
         try {
-            return McpResultRenderer.toResult(
-                    toolName,
-                    connection.callTool(toolName, arguments != null ? arguments : Map.of()));
+            return McpResultRenderer.toResult(toolName, connection.callTool(toolName, arguments));
         } catch (McpException e) {
             if (!connection.isConnected()) {
                 forget(connection);
@@ -205,7 +243,8 @@ public class LocalMcpToolProvider implements ToolProvider, PreviewCapable {
                 List.of(),
                 "server launched with network: "
                         + (spec != null && spec.sandbox().network() ? "on" : "off"),
-                spec != null && spec.unattended());
+                spec != null && spec.unattended(),
+                spec != null && spec.approvalRequired());
     }
 
     /// Returns the declaration behind a published tool.
@@ -262,7 +301,7 @@ public class LocalMcpToolProvider implements ToolProvider, PreviewCapable {
         try {
             declared = McpConfig.load(catalog.workingDirectory());
         } catch (RuntimeException e) {
-            logger.warning(
+            notifyOperator(
                     "Could not read "
                             + McpConfig.FILE_NAME
                             + ", no MCP tools are available: "
@@ -286,15 +325,8 @@ public class LocalMcpToolProvider implements ToolProvider, PreviewCapable {
     }
 
     private Optional<StdioMcpConnection> launch(McpServerSpec spec) {
-        if (!launcher.isAvailable()) {
-            // A long-lived server cannot be contained per call, so an unavailable
-            // backend is decided here, once: the server does not start.
-            logger.warning(
-                    "MCP server '"
-                            + spec.name()
-                            + "' is skipped because no sandbox backend is available ("
-                            + launcher.unavailabilityReason()
-                            + "); its tools are not offered to agents");
+        boolean contained = launcher.isAvailable();
+        if (!contained && !uncontainedLaunchApproved(spec)) {
             return Optional.empty();
         }
 
@@ -302,7 +334,7 @@ public class LocalMcpToolProvider implements ToolProvider, PreviewCapable {
         try {
             privateHome = Files.createTempDirectory("hensu-mcp-" + spec.name() + "-");
         } catch (IOException e) {
-            logger.warning(
+            notifyOperator(
                     "MCP server '"
                             + spec.name()
                             + "' is skipped because it has nowhere to keep a private home: "
@@ -312,9 +344,14 @@ public class LocalMcpToolProvider implements ToolProvider, PreviewCapable {
         privateHomes.add(privateHome);
 
         UnaryOperator<List<String>> wrapper =
-                argv ->
-                        launcher.wrap(
-                                argv, spec.sandbox(), catalog.workingDirectory(), privateHome);
+                contained
+                        ? argv ->
+                                launcher.wrap(
+                                        argv,
+                                        spec.sandbox(),
+                                        catalog.workingDirectory(),
+                                        privateHome)
+                        : UnaryOperator.identity();
         try {
             return Optional.of(
                     StdioMcpConnection.open(
@@ -323,15 +360,68 @@ public class LocalMcpToolProvider implements ToolProvider, PreviewCapable {
                             wrapper,
                             hostEnvironment));
         } catch (McpException e) {
-            logger.log(
-                    Level.WARNING,
+            String message =
                     "MCP server '"
                             + spec.name()
                             + "' did not start, its tools are not offered to agents: "
-                            + e.getMessage(),
-                    e);
+                            + e.getMessage();
+            // The stack trace goes to the logger, the sentence to the operator: a launch
+            // failure is usually a wrong path or a missing binary, and the cause reads
+            // better than the trace.
+            logger.log(Level.WARNING, message, e);
+            notices.record(message);
             return Optional.empty();
         }
+    }
+
+    /// Asks whether a server may start with no containment, because none is available.
+    ///
+    /// This is the one gate the per-call decorator cannot own. A server process outlives
+    /// every call it answers, so "run this uncontained just once" is not a decision that
+    /// can be made per call — it is made here, before the process exists, or not at all.
+    ///
+    /// A run with no reviewer refuses, which leaves the server unstarted and its tools
+    /// absent from the catalog. That absence is loud by design: the next node's
+    /// declared-versus-available diff names the tools, and the warning below names why.
+    ///
+    /// @param spec the server that would launch, not null
+    /// @return true when a reviewer approved starting it without containment
+    private boolean uncontainedLaunchApproved(McpServerSpec spec) {
+        ApprovalOutcome outcome = ApprovalOutcome.NO_REVIEWER;
+        Optional<String> reviewer = gate != null ? gate.attendedReviewer() : Optional.empty();
+        if (reviewer.isPresent()) {
+            outcome =
+                    gate.ask(
+                            new ToolApprovalRequest(
+                                    reviewer.get(),
+                                    "mcp:" + spec.name(),
+                                    spec.name(),
+                                    "launch MCP server '" + spec.name() + "' without containment",
+                                    spec.command(),
+                                    "no sandbox backend: " + launcher.unavailabilityReason(),
+                                    "no working sandbox backend is available, so approving starts"
+                                            + " this server uncontained for the whole run."));
+        }
+        if (outcome == ApprovalOutcome.APPROVED) {
+            notifyOperator(
+                    "MCP server '"
+                            + spec.name()
+                            + "' is starting without containment: a reviewer approved it ("
+                            + launcher.unavailabilityReason()
+                            + ")");
+            return true;
+        }
+        notifyOperator(
+                "MCP server '"
+                        + spec.name()
+                        + "' is skipped because no sandbox backend is available ("
+                        + launcher.unavailabilityReason()
+                        + ") and "
+                        + (outcome == ApprovalOutcome.REJECTED
+                                ? "a reviewer refused starting it uncontained"
+                                : "this run has no reviewer to approve starting it uncontained")
+                        + "; its tools are not offered to agents");
+        return false;
     }
 
     /// Points a server's `HOME` at the writable directory the sandbox binds for it.
@@ -363,7 +453,7 @@ public class LocalMcpToolProvider implements ToolProvider, PreviewCapable {
         try {
             descriptors = connection.listTools();
         } catch (McpException e) {
-            logger.warning(
+            notifyOperator(
                     "MCP server '"
                             + spec.name()
                             + "' did not answer tools/list, its tools are not offered: "
@@ -374,7 +464,7 @@ public class LocalMcpToolProvider implements ToolProvider, PreviewCapable {
         connections.add(connection);
         for (McpConnection.McpToolDescriptor descriptor : descriptors) {
             if (routes.containsKey(descriptor.name())) {
-                logger.warning(
+                notifyOperator(
                         "MCP server '"
                                 + spec.name()
                                 + "' publishes '"
@@ -403,7 +493,7 @@ public class LocalMcpToolProvider implements ToolProvider, PreviewCapable {
         } finally {
             lock.unlock();
         }
-        logger.warning(
+        notifyOperator(
                 "MCP server '"
                         + name(connection)
                         + "' is no longer running; its tools have left the catalog");

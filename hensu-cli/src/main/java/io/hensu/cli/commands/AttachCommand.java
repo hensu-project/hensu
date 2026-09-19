@@ -2,6 +2,7 @@ package io.hensu.cli.commands;
 
 import io.hensu.cli.daemon.DaemonClient;
 import io.hensu.cli.daemon.DaemonFrame;
+import io.hensu.cli.review.ApprovalOutcome;
 import io.hensu.cli.review.DaemonClientReviewer;
 import io.hensu.cli.ui.AnsiStyles;
 import io.hensu.core.review.ReviewDecision;
@@ -68,6 +69,10 @@ public class AttachCommand extends HensuCommand {
                     .attachInteractive(
                             execId,
                             (frame, reply) -> {
+                                if ("tool_approval".equals(frame.type)) {
+                                    handleToolApproval(frame, reply, reviewer);
+                                    return;
+                                }
                                 if ("review_request".equals(frame.type)) {
                                     handleReviewRequest(frame, reply, reviewer);
                                 } else {
@@ -78,6 +83,23 @@ public class AttachCommand extends HensuCommand {
         } catch (IOException e) {
             System.err.println(styles.error("Connection error: " + e.getMessage()));
         }
+    }
+
+    /// Answers one tool-approval frame on behalf of the attached terminal.
+    ///
+    /// @param frame the approval request, not null
+    /// @param reply channel back to the daemon, not null
+    /// @param reviewer the terminal reviewer, not null
+    private void handleToolApproval(
+            DaemonFrame frame,
+            java.util.function.Consumer<DaemonFrame> reply,
+            DaemonClientReviewer reviewer) {
+        ApprovalOutcome outcome = reviewer.approve(frame.execId, frame.toolPayload);
+        reply.accept(
+                DaemonFrame.toolApprovalResponse(
+                        frame.execId,
+                        frame.approvalId,
+                        outcome == ApprovalOutcome.APPROVED ? "approve" : "reject"));
     }
 
     private void handleReviewRequest(

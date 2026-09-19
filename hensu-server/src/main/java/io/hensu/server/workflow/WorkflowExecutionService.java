@@ -1,5 +1,6 @@
 package io.hensu.server.workflow;
 
+import io.hensu.core.execution.CompositeExecutionListener;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.result.ExecutionResult;
@@ -7,9 +8,10 @@ import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.execution.CompositeExecutionListener;
 import io.hensu.server.execution.LoggingExecutionListener;
+import io.hensu.server.execution.ToolAuditListener;
 import io.hensu.server.execution.ToolStreamingExecutionListener;
+import io.hensu.server.persistence.ToolAuditRepository;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import io.hensu.server.tenant.TenantContext;
@@ -47,13 +49,15 @@ public class WorkflowExecutionService {
     private final WorkflowStateRepository stateRepository;
     private final ExecutionEventBroadcaster eventBroadcaster;
     private final WorkflowRegistryService registryService;
+    private final ToolAuditRepository toolAuditRepository;
 
     @Inject
     public WorkflowExecutionService(
             WorkflowExecutor workflowExecutor,
             WorkflowStateRepository stateRepository,
             ExecutionEventBroadcaster eventBroadcaster,
-            WorkflowRegistryService registryService) {
+            WorkflowRegistryService registryService,
+            ToolAuditRepository toolAuditRepository) {
         this.workflowExecutor =
                 Objects.requireNonNull(workflowExecutor, "workflowExecutor must not be null");
         this.stateRepository =
@@ -62,6 +66,8 @@ public class WorkflowExecutionService {
                 Objects.requireNonNull(eventBroadcaster, "eventBroadcaster must not be null");
         this.registryService =
                 Objects.requireNonNull(registryService, "registryService must not be null");
+        this.toolAuditRepository =
+                Objects.requireNonNull(toolAuditRepository, "toolAuditRepository must not be null");
     }
 
     /// Accepts a new workflow execution and dispatches it asynchronously.
@@ -140,14 +146,21 @@ public class WorkflowExecutionService {
                                     ExecutionListener toolStream =
                                             new ToolStreamingExecutionListener(
                                                     eventBroadcaster, executionId);
+                                    // The audit listener is not behind verboseEnabled:
+                                    // the log lines are a debugging aid, the rows are the
+                                    // record.
+                                    ExecutionListener audit =
+                                            new ToolAuditListener(
+                                                    toolAuditRepository, tenantId, executionId);
                                     ExecutionListener listener =
                                             verboseEnabled
                                                     ? new CompositeExecutionListener(
                                                             checkpoint,
                                                             toolStream,
+                                                            audit,
                                                             new LoggingExecutionListener())
                                                     : new CompositeExecutionListener(
-                                                            checkpoint, toolStream);
+                                                            checkpoint, toolStream, audit);
                                     ExecutionResult result =
                                             workflowExecutor.execute(
                                                     workflow, executionContext, listener);

@@ -25,8 +25,10 @@ public interface McpConnection {
 
     /// Calls a tool with the given arguments.
     ///
-    /// @param toolName the name of the tool to call
-    /// @param arguments the tool arguments
+    /// @param toolName the name of the tool to call, not null
+    /// @param arguments the tool arguments, not null (may be empty) – the agent
+    ///     loop and the action handler both normalize an absent argument object to
+    ///     an empty map before a connection is reached
     /// @return the tool result as a map
     /// @throws McpException if the tool call fails
     Map<String, Object> callTool(String toolName, Map<String, Object> arguments)

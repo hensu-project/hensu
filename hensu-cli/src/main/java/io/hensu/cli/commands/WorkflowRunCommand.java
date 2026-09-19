@@ -4,16 +4,24 @@ import io.hensu.cli.daemon.DaemonClient;
 import io.hensu.cli.daemon.DaemonFrame;
 import io.hensu.cli.execution.ExecutionSink;
 import io.hensu.cli.execution.LocalExecutionSink;
+import io.hensu.cli.execution.ToolAuditFileListener;
 import io.hensu.cli.execution.VerboseExecutionListenerFactory;
+import io.hensu.cli.review.ApprovalOutcome;
 import io.hensu.cli.review.CLIReviewHandler;
 import io.hensu.cli.review.DaemonClientReviewer;
+import io.hensu.cli.tool.ToolApprovalGate;
+import io.hensu.cli.tool.ToolSourceNotices;
 import io.hensu.cli.ui.AnsiStyles;
+import io.hensu.cli.ui.CapabilityGapReport;
+import io.hensu.cli.ui.ToolSourceNoticeReport;
 import io.hensu.cli.workflow.SubWorkflowLoader;
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.agent.stub.StubResponseRegistry;
+import io.hensu.core.execution.CompositeExecutionListener;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.result.ExecutionResult;
+import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.serialization.WorkflowSerializer;
 import jakarta.inject.Inject;
@@ -86,6 +94,15 @@ class WorkflowRunCommand extends WorkflowCommand {
     private boolean interactive = false;
 
     @Option(
+            names = {"-u", "--unattended"},
+            description =
+                    """
+                            Declare that no human is present: a tool call needing approval \
+                            becomes a capability gap instead of a prompt (default when \
+                            --interactive is absent)""")
+    private boolean unattended = false;
+
+    @Option(
             names = {"--no-color"},
             description = "Disable colored output",
             negatable = true)
@@ -106,12 +123,19 @@ class WorkflowRunCommand extends WorkflowCommand {
 
     @Inject private HensuEnvironment environment;
     @Inject private VerboseExecutionListenerFactory listenerFactory;
+    @Inject private ToolApprovalGate approvalGate;
+    @Inject private ToolSourceNotices toolNotices;
 
     @Override
     protected void execute() {
         AnsiStyles styles = AnsiStyles.of(color);
 
         try {
+            if (interactive && unattended) {
+                throw new IllegalArgumentException(
+                        "--interactive and --unattended contradict each other: a run either has"
+                                + " a reviewer or it does not");
+            }
             if (interactive) {
                 System.setProperty("hensu.review.interactive", "true");
             }
@@ -139,6 +163,9 @@ class WorkflowRunCommand extends WorkflowCommand {
             // Seed the tenant so SubWorkflowNodeExecutor resolves children from the
             // repository slot the loader just populated.
             context.putIfAbsent("_tenant_id", SubWorkflowLoader.CLI_TENANT);
+            // The engine never learns whether a human is present; the tool layer does, and
+            // only through this one boolean. A run that did not ask for a reviewer has none.
+            context.put(ToolApprovalGate.RUN_MODE_KEY, !interactive);
 
             // — Daemon mode ——————————————————————————————————————————————
             if (!noDaemon && DaemonClient.isAlive()) {
@@ -179,6 +206,10 @@ class WorkflowRunCommand extends WorkflowCommand {
                     loadedSubWorkflows.stream().map(WorkflowSerializer::toJson).toList();
         }
         req.context = context;
+        // The daemon runs in its own JVM with its own catalog; without the run's directory
+        // it would resolve commands.yaml, mcp.yaml and the file tools' root against
+        // wherever the daemon was started.
+        req.workingDir = getWorkingDirectory().root().toString();
         req.verbose = verbose;
         req.color = color;
         req.interactive = interactive;
@@ -214,6 +245,10 @@ class WorkflowRunCommand extends WorkflowCommand {
                             if ("exec_end".equals(frame.type)) completed[0] = true;
                             if ("review_request".equals(frame.type) && reviewer != null) {
                                 handleReviewRequest(frame, reply, reviewer);
+                                return;
+                            }
+                            if ("tool_approval".equals(frame.type) && reviewer != null) {
+                                handleToolApproval(frame, reply, reviewer);
                                 return;
                             }
                             handleDaemonFrame(frame, styles);
@@ -253,6 +288,25 @@ class WorkflowRunCommand extends WorkflowCommand {
                         editedContext));
     }
 
+    /// Answers one tool-approval frame from the daemon.
+    ///
+    /// Reached only on an interactive run: without `--interactive` no reviewer exists on
+    /// this side, the frame is ignored, and the daemon's own timeout refuses the call
+    /// rather than this process approving something nobody saw.
+    ///
+    /// @param frame the approval request, not null
+    /// @param reply channel back to the daemon, not null
+    /// @param reviewer the terminal reviewer, not null
+    private void handleToolApproval(
+            DaemonFrame frame, Consumer<DaemonFrame> reply, DaemonClientReviewer reviewer) {
+        ApprovalOutcome outcome = reviewer.approve(frame.execId, frame.toolPayload);
+        reply.accept(
+                DaemonFrame.toolApprovalResponse(
+                        frame.execId,
+                        frame.approvalId,
+                        outcome == ApprovalOutcome.APPROVED ? "approve" : "reject"));
+    }
+
     private void handleDaemonFrame(DaemonFrame frame, AnsiStyles styles) {
         switch (frame.type) {
             case "out" -> DaemonClient.printOutFrame(frame);
@@ -285,6 +339,8 @@ class WorkflowRunCommand extends WorkflowCommand {
                 ok ? styles.checkmark() : styles.crossmark(),
                 styles.bold(ok ? "Workflow completed successfully" : "Workflow ended"));
         System.out.printf("  status   %s%n", ok ? styles.success(status) : styles.error(status));
+        CapabilityGapReport.print(System.out, styles, frame.capabilityGaps);
+        ToolSourceNoticeReport.print(System.out, styles, frame.toolNotices);
     }
 
     // — Inline path ——————————————————————————————————————————————————————————
@@ -316,13 +372,29 @@ class WorkflowRunCommand extends WorkflowCommand {
         configureStubsDirectory();
         configureActionExecutor();
 
-        WorkflowExecutor workflowExecutor = environment.getWorkflowExecutor();
-        ExecutionListener listener =
-                verbose
-                        ? listenerFactory.create(workflow, out, color, terminalWidth())
-                        : transitionWarningListener(out, styles);
+        // One id for the run, shared by the executor, the review channel and the tool gate.
+        String execId = UUID.randomUUID().toString();
+        context.putIfAbsent("_execution_id", execId);
+        approvalGate.setRunMode(execId, !interactive);
 
-        ExecutionResult result = workflowExecutor.execute(workflow, context, listener);
+        WorkflowExecutor workflowExecutor = environment.getWorkflowExecutor();
+        // The audit sink is composed whatever the verbosity: verbose output is a
+        // debugging aid the operator switches on, the trail is the record.
+        ExecutionListener listener =
+                new CompositeExecutionListener(
+                        verbose
+                                ? listenerFactory.create(workflow, out, color, terminalWidth())
+                                : transitionWarningListener(out, styles),
+                        new ToolAuditFileListener(execId));
+
+        ExecutionResult result;
+        try {
+            result = workflowExecutor.execute(workflow, context, listener);
+        } finally {
+            // The gate answers process-wide decisions from the set of live runs; a run
+            // that ended must leave that set whether it succeeded or threw.
+            approvalGate.endRun(execId);
+        }
 
         if (result instanceof ExecutionResult.Completed completed) {
             out.printf(
@@ -358,6 +430,25 @@ class WorkflowRunCommand extends WorkflowCommand {
             out.printf("%n%s %s%n", styles.crossmark(), styles.bold("Workflow rejected!"));
             out.printf("  Reason: %s%n", rejected.getReason());
         }
+
+        CapabilityGapReport.print(out, styles, finalContext(result));
+        ToolSourceNoticeReport.print(out, styles, toolNotices.all());
+    }
+
+    /// Reads the run's final state context out of whichever terminal shape it produced.
+    ///
+    /// @param result the execution's outcome, not null
+    /// @return the final context, or an empty map when the result carries no state
+    private static Map<String, Object> finalContext(ExecutionResult result) {
+        HensuState state =
+                switch (result) {
+                    case ExecutionResult.Completed c -> c.getFinalState();
+                    case ExecutionResult.Success s -> s.currentState();
+                    case ExecutionResult.Rejected r -> r.state();
+                    case ExecutionResult.Paused p -> p.state();
+                    case ExecutionResult.Failure f -> f.currentState();
+                };
+        return state != null && state.getContext() != null ? state.getContext() : Map.of();
     }
 
     // — Helpers ——————————————————————————————————————————————————————————————

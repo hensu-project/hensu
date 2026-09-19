@@ -1,6 +1,7 @@
 package io.hensu.core.workflow.validation;
 
 import io.hensu.core.execution.EngineVariables;
+import io.hensu.core.tool.CapabilityGaps;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
@@ -89,6 +90,20 @@ public final class WorkflowValidator {
             if (!(node instanceof StandardNode standardNode)) continue;
 
             for (String name : standardNode.getWrites()) {
+                if (CapabilityGaps.RESERVED_KEYS.contains(name)) {
+                    // The engine records refusals there. A node that also declared it
+                    // would let the agent's own output erase the evidence that it was
+                    // blocked, which is the one thing the key exists to preserve.
+                    errors.add(
+                            "Node '"
+                                    + nodeId
+                                    + "' writes '"
+                                    + name
+                                    + "' which the engine owns — it records tool refusals"
+                                    + " there, and a workflow reads it with an ordinary"
+                                    + " condition");
+                    continue;
+                }
                 if (EngineVariables.isEngineVar(name)) {
                     // schema.contains() whitelists engine variables so that prompts may
                     // reference {recommendation}; writes must not claim them.
@@ -277,6 +292,21 @@ public final class WorkflowValidator {
             }
         }
         for (String name : sub.getOutputMapping().keySet()) {
+            if (CapabilityGaps.RESERVED_KEYS.contains(name)) {
+                // Same rule as a standard node's writes: the engine records refusals
+                // there. A sub-workflow result copied over the key would erase the parent
+                // run's evidence that it was blocked. Rejected explicitly rather than
+                // left to the schema check below, so the error says why.
+                errors.add(
+                        "Sub-workflow node '"
+                                + nodeId
+                                + "' writes '"
+                                + name
+                                + "' which the engine owns — it records tool refusals"
+                                + " there, and a workflow reads it with an ordinary"
+                                + " condition");
+                continue;
+            }
             if (!schema.contains(name)) {
                 errors.add(
                         "Sub-workflow node '"

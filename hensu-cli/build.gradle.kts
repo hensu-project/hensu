@@ -7,6 +7,16 @@ configurations.all {
     exclude(group = "dev.langchain4j", module = "langchain4j-http-client-jdk")
 }
 
+// CommittedCatalogTest loads the repository's own working-dir/commands.yaml, which lives outside
+// this module's source tree. Without declaring it, Gradle sees no input change when that file is
+// edited and reports the test task up to date – so a broken catalog would pass the build that was
+// supposed to catch it.
+tasks.test {
+    inputs.files(rootProject.fileTree("working-dir") { include("commands.yaml") })
+        .withPropertyName("committedCommandCatalog")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
 dependencies {
     implementation(platform("io.quarkus.platform:quarkus-bom:3.35.2"))
 

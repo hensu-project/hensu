@@ -5,10 +5,14 @@ import io.hensu.cli.action.CLIActionExecutor;
 import io.hensu.cli.daemon.CredentialsLoader;
 import io.hensu.cli.review.CLIReviewHandler;
 import io.hensu.cli.review.DaemonReviewHandler;
+import io.hensu.cli.tool.ApprovalToolProvider;
+import io.hensu.cli.tool.ToolApprovalGate;
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.HensuFactory;
 import io.hensu.core.execution.executor.GenericNodeHandler;
 import io.hensu.core.review.ReviewHandler;
+import io.hensu.core.tool.ToolProvider;
+import io.hensu.core.tool.ToolRouter;
 import io.hensu.core.workflow.InMemoryWorkflowRepository;
 import io.hensu.core.workflow.WorkflowRepository;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -76,6 +80,10 @@ public class HensuEnvironmentProducer {
 
     @Inject DaemonReviewHandler daemonReviewHandler;
 
+    @Inject Instance<ToolProvider> toolProviders;
+
+    @Inject ToolApprovalGate approvalGate;
+
     /// Produces the Hensu runtime environment for CDI injection.
     ///
     /// Configures virtual threads, loads credentials from `hensu.credentials.*`
@@ -96,6 +104,7 @@ public class HensuEnvironmentProducer {
                         .reviewHandler(reviewHandler)
                         .actionExecutor(actionExecutor)
                         .workflowRepository(workflowRepository)
+                        .toolRouter(gatedToolRouter())
                         .build();
 
         logger.info("Configured HensuEnvironment with CLIActionExecutor");
@@ -104,6 +113,30 @@ public class HensuEnvironmentProducer {
         registerGenericHandlers();
 
         return hensuEnvironment;
+    }
+
+    /// Collects every discovered tool source into one router, behind the approval policy.
+    ///
+    /// Adding a tool source to this runtime is a new `@Singleton ToolProvider` bean and
+    /// nothing else — no edit here, no edit in the engine. Wrapping happens on the way
+    /// past, which is what makes that true: the decorator is not itself a discovered bean,
+    /// so it can neither wrap itself nor be forgotten for a provider added later.
+    ///
+    /// The server producer deliberately does not do this. Its gates would have no
+    /// reviewer to reach and its containment belongs to the tenant's own MCP server, so
+    /// the profile half of the security model is CLI-only and says so.
+    ///
+    /// @return the router handed to the engine, never null
+    private ToolRouter gatedToolRouter() {
+        List<ToolProvider> gated =
+                toolProviders.stream()
+                        .map(
+                                provider ->
+                                        (ToolProvider)
+                                                new ApprovalToolProvider(provider, approvalGate))
+                        .toList();
+        logger.info("Gated " + gated.size() + " tool provider(s) behind the approval policy");
+        return new ToolRouter(gated);
     }
 
     /// Register all CDI-discovered GenericNodeHandler implementations.

@@ -12,7 +12,12 @@ import java.util.Objects;
 ///
 /// Paired with a {@link ToolResultEvent} for every outcome, including tools the
 /// agent hallucinated and invocations that threw: an unattended run must leave a
-/// complete trail of what the agent asked to run.
+/// complete trail of what the agent asked to run. The pairing is by
+/// {@link #callId}, which the tool loop mints per call, rather than by node and
+/// tool name. Those two identify a call only while no two concurrent calls can
+/// share them — which holds today because parallel branches report as
+/// `node/branch` and sub-workflows run sequentially, and which nothing in this
+/// record or in any sink enforces.
 ///
 /// The record is the security-relevant half of that trail, so it is bounded and
 /// self-contained. Argument values are truncated at {@link #MAX_ARG_CHARS} and
@@ -22,6 +27,7 @@ import java.util.Objects;
 /// sensitive} are replaced with {@link #REDACTED} by the tool loop before the
 /// event is constructed, so no sink ever receives the secret.
 ///
+/// @param callId identity of this call, unique for the life of the process, not null
 /// @param nodeId identifier of the node whose agent requested the tool, not null
 /// @param agentId identifier of the requesting agent, not null
 /// @param toolName the tool the agent asked for, not null
@@ -30,6 +36,7 @@ import java.util.Objects;
 /// @see ToolResultEvent for the matching outcome record
 /// @see io.hensu.core.execution.ExecutionListener#onToolCall
 public record ToolCallEvent(
+        String callId,
         String nodeId,
         String agentId,
         String toolName,
@@ -50,6 +57,7 @@ public record ToolCallEvent(
     /// model-produced JSON, where an explicit null is legal – so `Map.copyOf` is
     /// not usable here.
     public ToolCallEvent {
+        Objects.requireNonNull(callId, "callId must not be null");
         Objects.requireNonNull(nodeId, "nodeId must not be null");
         Objects.requireNonNull(agentId, "agentId must not be null");
         Objects.requireNonNull(toolName, "toolName must not be null");
@@ -59,14 +67,19 @@ public record ToolCallEvent(
 
     /// Creates a request record timestamped now.
     ///
+    /// @param callId identity of this call, not null
     /// @param nodeId identifier of the requesting node, not null
     /// @param agentId identifier of the requesting agent, not null
     /// @param toolName the requested tool, not null
     /// @param arguments arguments the agent supplied, may be null
     /// @return new event, never null
     public static ToolCallEvent now(
-            String nodeId, String agentId, String toolName, Map<String, Object> arguments) {
-        return new ToolCallEvent(nodeId, agentId, toolName, arguments, Instant.now());
+            String callId,
+            String nodeId,
+            String agentId,
+            String toolName,
+            Map<String, Object> arguments) {
+        return new ToolCallEvent(callId, nodeId, agentId, toolName, arguments, Instant.now());
     }
 
     private static Map<String, Object> copyBounded(Map<String, Object> source) {

@@ -74,6 +74,51 @@ class ReviewTerminal {
         }
     }
 
+    /// Shows one tool call and blocks until the reviewer approves or refuses it.
+    ///
+    /// The argv is printed one token per line. A reviewer scanning a single wrapped line
+    /// cannot see where one argument ends and the next begins, which is exactly the
+    /// distinction that makes an injected string harmless — so the display preserves it.
+    ///
+    /// End of input is a refusal: a prompt nobody can answer has not been answered.
+    ///
+    /// @param request the call needing a decision, not null
+    /// @return the reviewer's answer, never null
+    ApprovalOutcome runToolApproval(ToolApprovalRequest request) {
+        println("");
+        println(styles.warn("⚠ tool approval") + styles.dim(" · ") + request.nodeId());
+        println("  " + styles.bold(request.toolName()) + styles.dim(" — ") + request.reason());
+        println("  " + styles.gray(request.summary()));
+        if (!request.argv().isEmpty()) {
+            println("");
+            println(styles.dim("  would run:"));
+            request.argv().forEach(token -> println("    " + token));
+        }
+        if (!request.sandboxSummary().isEmpty()) {
+            println("");
+            println(styles.dim("  containment: ") + request.sandboxSummary());
+        }
+
+        while (true) {
+            println("");
+            print("  [A]pprove  [R]eject  > ");
+            String raw = readInput();
+            if (raw == null) {
+                println(styles.warn("  no input — the call is refused"));
+                return ApprovalOutcome.NO_REVIEWER;
+            }
+            switch (raw.toUpperCase()) {
+                case "A" -> {
+                    return ApprovalOutcome.APPROVED;
+                }
+                case "R" -> {
+                    return ApprovalOutcome.REJECTED;
+                }
+                default -> println(styles.warn("  Answer A or R."));
+            }
+        }
+    }
+
     // — Display ———————————————————————————————————————————————————————————————
 
     private void displayHeader(ReviewData data) {

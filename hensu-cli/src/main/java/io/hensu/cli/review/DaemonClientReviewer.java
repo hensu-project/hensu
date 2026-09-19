@@ -38,6 +38,23 @@ public class DaemonClientReviewer {
         return terminal.runReview(toReviewData(payload));
     }
 
+    /// Shows one tool-approval frame on the terminal and returns the answer.
+    ///
+    /// @param execId id of the execution making the call, not null
+    /// @param payload what the daemon asked about, not null
+    /// @return the reviewer's answer, never null
+    public ApprovalOutcome approve(String execId, DaemonFrame.ToolApprovalPayload payload) {
+        return terminal.runToolApproval(
+                new ToolApprovalRequest(
+                        execId,
+                        payload.nodeId() != null ? payload.nodeId() : "unknown",
+                        payload.toolName(),
+                        payload.summary() != null ? payload.summary() : payload.toolName(),
+                        payload.argv() != null ? payload.argv() : List.of(),
+                        payload.sandboxSummary() != null ? payload.sandboxSummary() : "",
+                        payload.reason() != null ? payload.reason() : "approval required"));
+    }
+
     // — Private ———————————————————————————————————————————————————————————————
 
     private ReviewData toReviewData(DaemonFrame.ReviewPayload payload) {

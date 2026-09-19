@@ -3,13 +3,20 @@ package io.hensu.cli.daemon;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import io.hensu.cli.execution.DaemonExecutionSink;
+import io.hensu.cli.execution.ToolAuditFileListener;
 import io.hensu.cli.execution.VerboseExecutionListenerFactory;
+import io.hensu.cli.review.ApprovalOutcome;
 import io.hensu.cli.review.DaemonReviewHandler;
+import io.hensu.cli.tool.ToolApprovalGate;
+import io.hensu.cli.tool.ToolSourceNotices;
 import io.hensu.cli.workflow.SubWorkflowLoader;
 import io.hensu.core.HensuEnvironment;
+import io.hensu.core.execution.CompositeExecutionListener;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.review.ReviewDecision;
+import io.hensu.core.state.HensuState;
+import io.hensu.core.tool.CapabilityGaps;
 import io.hensu.serialization.WorkflowSerializer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -85,6 +92,8 @@ public class DaemonServer {
     @Inject HensuEnvironment environment;
     @Inject VerboseExecutionListenerFactory listenerFactory;
     @Inject DaemonReviewHandler daemonReviewHandler;
+    @Inject ToolApprovalGate approvalGate;
+    @Inject ToolSourceNotices toolNotices;
 
     private final ExecutionStore store = new ExecutionStore();
     private final ObjectMapper mapper =
@@ -254,6 +263,7 @@ public class DaemonServer {
                             try {
                                 runExecution(execution, req, useColor, verbose, termWidth);
                             } finally {
+                                approvalGate.endRun(execId);
                                 if (interactive) {
                                     daemonReviewHandler.unregisterExecution(execId);
                                 }
@@ -393,6 +403,13 @@ public class DaemonServer {
             // Without this, WorkflowExecutor generates its own UUID and
             // DaemonReviewManager cannot correlate the review to this execution.
             context.put("_execution_id", execId);
+            // The tool layer reads human presence from this one key, and from nowhere else.
+            boolean interactive = Boolean.TRUE.equals(req.interactive);
+            context.put(ToolApprovalGate.RUN_MODE_KEY, !interactive);
+            applyWorkingDirectory(req);
+            approvalGate.setRunMode(execId, !interactive);
+            // One run's misconfiguration is not the next run's news.
+            toolNotices.clear();
 
             // Register `--with` subs in the daemon's repository under the run's tenant
             // before the executor starts — SubWorkflowNodeExecutor looks them up there.
@@ -402,9 +419,12 @@ public class DaemonServer {
 
             var sink = new DaemonExecutionSink(execution, mapper);
             ExecutionListener listener =
-                    verbose
-                            ? listenerFactory.create(workflow, sink.out(), useColor, termWidth)
-                            : ExecutionListener.NOOP;
+                    new CompositeExecutionListener(
+                            verbose
+                                    ? listenerFactory.create(
+                                            workflow, sink.out(), useColor, termWidth)
+                                    : ExecutionListener.NOOP,
+                            new ToolAuditFileListener(execId));
 
             execution.markRunning(workflow.getStartNode());
 
@@ -412,7 +432,12 @@ public class DaemonServer {
                     environment.getWorkflowExecutor().execute(workflow, context, listener);
 
             String finalFrame =
-                    mapper.writeValueAsString(DaemonFrame.execEnd(execId, extractStatus(result)));
+                    mapper.writeValueAsString(
+                            DaemonFrame.execEnd(
+                                    execId,
+                                    extractStatus(result),
+                                    capabilityGaps(result),
+                                    toolNotices.all()));
             execution.markCompleted(result, finalFrame);
 
         } catch (InterruptedException e) {
@@ -422,6 +447,26 @@ public class DaemonServer {
             log.warning("Execution " + execId + " failed: " + t.getMessage());
             String errFrame = safeSerialize(DaemonFrame.error(execId, t.getMessage(), true));
             execution.markFailed(t.getMessage(), errFrame);
+        }
+    }
+
+    /// Points the catalog and the built-in file tools at the run's own directory.
+    ///
+    /// The daemon is a long-lived process started wherever the operator happened to be;
+    /// `hensu run -d <dir>` is where the catalog, `mcp.yaml` and the file tools' root
+    /// actually live. Without this the daemon would answer every run from its own cwd.
+    ///
+    /// @param req the run frame, not null
+    /// @apiNote **Side effects**: process-wide, because the catalog is a singleton. Two
+    ///     concurrent daemon runs rooted at different directories are a named boundary of
+    ///     this release, not a supported configuration.
+    private void applyWorkingDirectory(DaemonFrame req) {
+        if (req.workingDir == null || req.workingDir.isBlank()) {
+            return;
+        }
+        var actionExecutor = environment.getActionExecutor();
+        if (actionExecutor != null) {
+            actionExecutor.setWorkingDirectory(java.nio.file.Path.of(req.workingDir));
         }
     }
 
@@ -489,6 +534,12 @@ public class DaemonServer {
                                     frame.reviewId, parseReviewDecision(frame));
                         }
                     }
+                    case "tool_approval_response" -> {
+                        if (frame.approvalId != null) {
+                            daemonReviewHandler.completeToolApproval(
+                                    frame.approvalId, parseApprovalOutcome(frame));
+                        }
+                    }
                     case "cancel" -> {
                         StoredExecution exec = store.get(execId);
                         if (exec != null && !exec.getStatus().isTerminal()) {
@@ -512,6 +563,19 @@ public class DaemonServer {
             // paused at the review checkpoint. A reattaching client can resume the review.
             daemonReviewHandler.suspendExecution(execId);
         }
+    }
+
+    /// Converts a {@code tool_approval_response} frame into an outcome.
+    ///
+    /// Anything that is not an explicit approval is a refusal. A malformed or unknown
+    /// decision string must not become the answer that launches a process.
+    ///
+    /// @param frame a frame with {@code type="tool_approval_response"}, not null
+    /// @return the reviewer's answer, never null
+    private ApprovalOutcome parseApprovalOutcome(DaemonFrame frame) {
+        return "approve".equals(frame.decision)
+                ? ApprovalOutcome.APPROVED
+                : ApprovalOutcome.REJECTED;
     }
 
     /// Converts a {@code review_response} frame into a {@link ReviewDecision}.
@@ -581,6 +645,26 @@ public class DaemonServer {
     private void tryMarkCancelled(StoredExecution execution, String execId) {
         String cancelFrame = safeSerialize(DaemonFrame.execEnd(execId, "CANCELLED"));
         execution.markCancelled(cancelFrame);
+    }
+
+    /// Reads the capability gaps off whichever state the result carries.
+    ///
+    /// Every terminal shape has a state and any of them can have been refused a tool, so
+    /// the summary must not be limited to the successful one: a run that failed *because*
+    /// a capability was missing is exactly the run whose operator needs the section.
+    ///
+    /// @param result the execution's outcome, not null
+    /// @return the gap records, empty when the run recorded none
+    private List<Map<String, Object>> capabilityGaps(ExecutionResult result) {
+        HensuState state =
+                switch (result) {
+                    case ExecutionResult.Completed c -> c.getFinalState();
+                    case ExecutionResult.Success s -> s.currentState();
+                    case ExecutionResult.Rejected r -> r.state();
+                    case ExecutionResult.Paused p -> p.state();
+                    case ExecutionResult.Failure f -> f.currentState();
+                };
+        return state == null ? List.of() : CapabilityGaps.of(state.getContext());
     }
 
     private String extractStatus(ExecutionResult result) {

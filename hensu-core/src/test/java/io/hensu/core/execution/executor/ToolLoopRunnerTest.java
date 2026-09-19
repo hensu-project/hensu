@@ -12,6 +12,7 @@ import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuState;
+import io.hensu.core.tool.CapabilityGaps;
 import io.hensu.core.tool.StubToolProvider;
 import io.hensu.core.tool.ToolCallEvent;
 import io.hensu.core.tool.ToolCallResult;
@@ -620,6 +621,91 @@ class ToolLoopRunnerTest {
         @Override
         public void onToolResult(ToolResultEvent event) {
             results.add(event);
+        }
+    }
+
+    @Nested
+    class CapabilityGapsOnTheState {
+
+        @Test
+        void shouldRecordAGapWhenTheAgentAsksForSomethingItsNodeDoesNotGrant() {
+            AgentConfig config = agentConfig(List.of("search"));
+            StubAgent agent = new StubAgent("test-agent", config);
+            registerStubResponse(
+                    agent, "[TOOL_CALL] deploy environment=prod\n---TURN---\nGiving up");
+
+            HensuState state = buildState();
+            ToolLoopRunner.execute(
+                    "node1", "test-agent", "Ship it", agent, contextOver(config, agent, state));
+
+            assertThat(CapabilityGaps.of(state.getContext()))
+                    .singleElement()
+                    .satisfies(
+                            record -> {
+                                assertThat(record)
+                                        .containsEntry(CapabilityGaps.FIELD_TOOL, "deploy")
+                                        .containsEntry(CapabilityGaps.FIELD_GATE, "UNKNOWN_TOOL")
+                                        .containsEntry(CapabilityGaps.FIELD_NODE, "node1");
+                                assertThat(record.get(CapabilityGaps.FIELD_ARGUMENT_KEYS))
+                                        .asInstanceOf(
+                                                org.assertj.core.api.InstanceOfAssertFactories.list(
+                                                        String.class))
+                                        .containsExactly("environment");
+                            });
+            assertThat(state.getContext().get(CapabilityGaps.COUNT_KEY)).isEqualTo(1);
+        }
+
+        @Test
+        void shouldRecordNoGapWhenTheToolRanAndFailed() {
+            toolProvider =
+                    new StubToolProvider(
+                            List.of(SEARCH_TOOL),
+                            (name, _) -> ToolCallResult.failure(name, "index unreachable"));
+            toolRouter = new ToolRouter(List.of(toolProvider));
+
+            AgentConfig config = agentConfig(List.of("search"));
+            StubAgent agent = new StubAgent("test-agent", config);
+            registerStubResponse(agent, "[TOOL_CALL] search query=test\n---TURN---\nDone");
+
+            HensuState state = buildState();
+            ToolLoopRunner.execute(
+                    "node1", "test-agent", "Find info", agent, contextOver(config, agent, state));
+
+            // The capability was granted and the tool ran. Routing this to a "we are
+            // blocked on capability" arm would send an operator to grow a catalog that
+            // already contains what the run needed.
+            assertThat(state.getContext()).doesNotContainKey(CapabilityGaps.STATE_KEY);
+        }
+
+        @Test
+        void shouldRecordAGapPerRefusalSoTheSummaryCanCount() {
+            AgentConfig config = agentConfig("test-agent", List.of("search"));
+            StubAgent agent = new StubAgent("test-agent", config);
+            registerStubResponse(
+                    agent,
+                    """
+                            [TOOL_CALL] deploy environment=prod
+                            ---TURN---
+                            [TOOL_CALL] deploy environment=staging
+                            ---TURN---
+                            Giving up""");
+
+            HensuState state = buildState();
+            ToolLoopRunner.execute(
+                    "node1", "test-agent", "Ship it", agent, contextOver(config, agent, state));
+
+            assertThat(CapabilityGaps.of(state.getContext())).hasSize(2);
+            assertThat(state.getContext().get(CapabilityGaps.COUNT_KEY)).isEqualTo(2);
+        }
+
+        private ExecutionContext contextOver(AgentConfig config, Agent agent, HensuState state) {
+            return ExecutionContext.builder()
+                    .state(state)
+                    .workflow(buildWorkflow())
+                    .listener(listener)
+                    .agentRegistry(buildAgentRegistry(config, agent))
+                    .toolRouter(toolRouter)
+                    .build();
         }
     }
 

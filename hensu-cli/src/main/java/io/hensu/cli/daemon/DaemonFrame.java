@@ -164,6 +164,9 @@ public final class DaemonFrame {
     @JsonProperty("interactive")
     public Boolean interactive;
 
+    @JsonProperty("working_dir")
+    public String workingDir;
+
     // — Review ——————————————————————————————————————————————————————————————
 
     /// Correlation ID linking a {@code review_request} to its {@code review_response}.
@@ -191,6 +194,26 @@ public final class DaemonFrame {
     // unchanged.
     @JsonProperty("edited_context")
     public Map<String, Object> editedContext;
+
+    // — Capability gaps —————————————————————————————————————————————————————
+
+    @JsonProperty("gaps")
+    public List<Map<String, Object>> capabilityGaps;
+
+    /// Reasons a declared tool source offered no tools, for `exec_end`. May be null.
+    ///
+    /// Travels for the same reason the gaps do: the daemon holds the providers, and the
+    /// completion summary is printed on the client side.
+    @JsonProperty("tool_notices")
+    public List<String> toolNotices;
+
+    // — Tool approval ———————————————————————————————————————————————————————
+
+    @JsonProperty("approval_id")
+    public String approvalId;
+
+    @JsonProperty("tool_payload")
+    public ToolApprovalPayload toolPayload;
 
     // — List response ———————————————————————————————————————————————————————
 
@@ -301,10 +324,42 @@ public final class DaemonFrame {
     /// @param status terminal status string, not null
     /// @return frame, never null
     public static DaemonFrame execEnd(String execId, String status) {
+        return execEnd(execId, status, null);
+    }
+
+    /// Builds the terminal frame, carrying whatever the run was refused.
+    ///
+    /// The gaps travel on the wire because the client has no access to the daemon's final
+    /// state and the completion summary is printed on the client side.
+    ///
+    /// @param execId id of the finished execution, not null
+    /// @param status the run's terminal status, not null
+    /// @param capabilityGaps the run's gap records, may be null or empty
+    /// @return the frame to send, never null
+    public static DaemonFrame execEnd(
+            String execId, String status, List<Map<String, Object>> capabilityGaps) {
+        return execEnd(execId, status, capabilityGaps, null);
+    }
+
+    /// Builds the terminal frame, carrying what was refused and what was never offered.
+    ///
+    /// @param execId id of the finished execution, not null
+    /// @param status the run's terminal status, not null
+    /// @param capabilityGaps the run's gap records, may be null or empty
+    /// @param toolNotices reasons a tool source offered nothing, may be null or empty
+    /// @return the frame to send, never null
+    public static DaemonFrame execEnd(
+            String execId,
+            String status,
+            List<Map<String, Object>> capabilityGaps,
+            List<String> toolNotices) {
         var f = new DaemonFrame();
         f.type = "exec_end";
         f.execId = execId;
         f.status = status;
+        f.capabilityGaps =
+                capabilityGaps == null || capabilityGaps.isEmpty() ? null : capabilityGaps;
+        f.toolNotices = toolNotices == null || toolNotices.isEmpty() ? null : toolNotices;
         return f;
     }
 
@@ -387,6 +442,38 @@ public final class DaemonFrame {
         return f;
     }
 
+    /// Builds the frame asking the attached client to decide about one tool call.
+    ///
+    /// @param execId id of the execution making the call, not null
+    /// @param approvalId correlation id the response must carry back, not null
+    /// @param payload what the reviewer is shown, not null
+    /// @return the frame to send, never null
+    public static DaemonFrame toolApprovalRequest(
+            String execId, String approvalId, ToolApprovalPayload payload) {
+        var f = new DaemonFrame();
+        f.type = "tool_approval";
+        f.execId = execId;
+        f.approvalId = approvalId;
+        f.toolPayload = payload;
+        return f;
+    }
+
+    /// Builds the client's answer to a tool-approval request.
+    ///
+    /// @param execId id of the execution making the call, not null
+    /// @param approvalId correlation id copied from the request, not null
+    /// @param decision `"approve"` or `"reject"`, not null
+    /// @return the frame to send, never null
+    public static DaemonFrame toolApprovalResponse(
+            String execId, String approvalId, String decision) {
+        var f = new DaemonFrame();
+        f.type = "tool_approval_response";
+        f.execId = execId;
+        f.approvalId = approvalId;
+        f.decision = decision;
+        return f;
+    }
+
     // — Nested types ————————————————————————————————————————————————————————
 
     /// Summary of a single execution for {@code ps_response} frames.
@@ -431,6 +518,27 @@ public final class DaemonFrame {
             @JsonProperty("history") List<HistoryStep> historySteps,
             @JsonProperty("workflow_json") String workflowJson,
             @JsonProperty("context") Map<String, Object> context) {}
+
+    /// What a reviewer is shown for one tool call, on the wire.
+    ///
+    /// Mirrors {@link io.hensu.cli.review.ToolApprovalRequest} minus the ids the frame
+    /// already carries. The argv is the resolved one: a reviewer approves tokens, never
+    /// a template.
+    ///
+    /// @param nodeId id of the node whose agent asked
+    /// @param toolName the tool the agent asked for
+    /// @param summary one line naming what would happen
+    /// @param argv the resolved argv, empty for tools that run no process
+    /// @param sandboxSummary the containment that would apply
+    /// @param reason why this call needs a decision
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record ToolApprovalPayload(
+            @JsonProperty("node_id") String nodeId,
+            @JsonProperty("tool") String toolName,
+            @JsonProperty("summary") String summary,
+            @JsonProperty("argv") List<String> argv,
+            @JsonProperty("sandbox") String sandboxSummary,
+            @JsonProperty("reason") String reason) {}
 
     /// Compact step summary for the backtrack selection list in {@link ReviewPayload}.
     ///

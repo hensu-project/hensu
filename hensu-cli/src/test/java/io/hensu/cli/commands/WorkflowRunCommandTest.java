@@ -7,6 +7,8 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.hensu.cli.review.DaemonReviewHandler;
+import io.hensu.cli.tool.ToolApprovalGate;
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.result.ExecutionHistory;
@@ -52,6 +54,7 @@ class WorkflowRunCommandTest extends BaseWorkflowCommandTest {
         injectField(command, "environment", environment);
         injectField(command, "workingDirPath", tempDir);
         injectField(command, "noDaemon", true); // force inline — tests run alongside a live daemon
+        injectField(command, "approvalGate", new ToolApprovalGate(new DaemonReviewHandler()));
         lenient().when(environment.getWorkflowExecutor()).thenReturn(executor);
     }
 

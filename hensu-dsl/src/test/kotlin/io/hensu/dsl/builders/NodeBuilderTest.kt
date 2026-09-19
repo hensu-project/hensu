@@ -71,4 +71,26 @@ class NodeBuilderTest {
             .isInstanceOf(IllegalArgumentException::class.java)
             .hasMessageContaining("reserved engine variable")
     }
+
+    // A workflow with no state {} block never reaches WorkflowValidator's engine-key loop, so this
+    // require is the only thing standing between an author and a node that can erase its own
+    // refusal record. The message is asserted whole because pointing at onCondition is the part
+    // that turns a refusal into a workable instruction.
+    @Test
+    fun `should reject writes that collide with the capability gap keys`() {
+        val builder = StandardNodeBuilder("node1", workingDir)
+
+        assertThatThrownBy {
+                builder.apply {
+                    agent = "agent1"
+                    writes("_capability_gaps")
+                }
+            }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessage(
+                "Node 'node1': writes field '_capability_gaps' is written by the engine \u2013 " +
+                    "it records tool refusals there. Route on it with " +
+                    "onCondition(\"_capability_gap_count\"); never declare it."
+            )
+    }
 }

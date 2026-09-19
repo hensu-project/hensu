@@ -1,10 +1,13 @@
 # Hensu Core
 
-Pure Java workflow execution runtime with zero external dependencies.
+Pure Java workflow execution engine with zero external dependencies.
 
 ## Overview
 
-The `hensu-core` module is the execution engine at the heart of Hensu. It provides:
+The `hensu-core` module is the execution engine at the heart of Hensu. It is a library rather than a
+runtime: it has no main method, no transport, and no opinion about where a side effect lands. Hensu's
+two runtimes — the `hensu-cli` JVM process and the `hensu-server` native image — embed this module
+unchanged and differ in what they wire into it. It provides:
 
 - **Workflow Execution** — Directed graph traversal with branching, looping, and parallel execution
 - **Agent Abstraction** — Provider-agnostic AI agent interface with pluggable backends
@@ -163,24 +166,31 @@ if (result.status() == ToolCallStatus.SUCCESS) { /* ... */ }
 
 **Key types:**
 
-| Type                  | Description                                                                                        |
-|-----------------------|----------------------------------------------------------------------------------------------------|
-| `ToolDefinition`      | Tool descriptor with name, description, and parameters                                             |
-| `ParameterDef`        | Parameter with name, type, required flag, default value, and a `sensitive` flag                    |
-| `ToolCallStatus`      | Outcome vocabulary shared by every layer (success, failure, denial, timeout, …)                    |
-| `ToolProvider`        | A runtime's tool source: catalog plus invocation; `settledTools()` reports what is already live    |
-| `ToolInvoker`         | Invocation half of the seam, consumed by the tool loop                                             |
-| `ToolRouter`          | Composes providers; implements both `ToolRegistry` and `ToolInvoker`                               |
-| `ToolRegistry`        | Read-only discovery interface: `get`, `all`, `contains`, `size`                                    |
-| `BuiltInToolProvider` | Marker for a provider nobody opted into, which yields a contested name rather than failing startup |
-| `PreviewCapable`      | Optional: describes what a call would do, for an approval gate to show a human                     |
-| `ToolPreview`         | The rendered description a preview returns                                                         |
+| Type                    | Description                                                                                        |
+|-------------------------|----------------------------------------------------------------------------------------------------|
+| `ToolDefinition`        | Tool descriptor with name, description, and parameters                                             |
+| `ParameterDef`          | Parameter with name, type, required flag, default value, and a `sensitive` flag                    |
+| `ToolCallStatus`        | Outcome vocabulary shared by every layer (success, failure, denial, timeout, …)                    |
+| `ToolProvider`          | A runtime's tool source: catalog plus invocation; `settledTools()` reports what is already live    |
+| `ToolInvoker`           | Invocation half of the seam, consumed by the tool loop                                             |
+| `ToolRouter`            | Composes providers; implements both `ToolRegistry` and `ToolInvoker`                               |
+| `ToolRegistry`          | Read-only discovery interface: `get`, `all`, `contains`, `size`                                    |
+| `BuiltInToolProvider`   | Marker for a provider nobody opted into, which yields a contested name rather than failing startup |
+| `PreviewCapable`        | Optional: describes what a call would do, for an approval gate to show a human                     |
+| `ToolPreview`           | The rendered description a preview returns                                                         |
+| `ToolProviderDecorator` | Marker for a provider wrapping another, so the router can see the provider underneath              |
+| `UncontainedOnApproval` | Optional: a provider whose calls may run without containment once a reviewer says so               |
+| `CapabilityGaps`        | The reserved state keys recording what a run was refused, and the vocabulary of a refusal          |
 
 `FileToolProvider` ships with the engine – six file tools that need no catalog and no launch, which a runtime registers like any other provider; the server contributes a provider backed by MCP server connections; the CLI contributes providers for local commands and stdio MCP servers. When a node declares tools and its agent implements `ToolCapable`, `ToolLoopRunner` resolves declared tool names against the router's catalog, filters to the agent's declared subset, and passes full schemas into the tool session.
 
 A provider that throws while reporting its catalog is logged and skipped rather than propagated, so one unreachable tool source costs its own tools instead of aborting the execution. Two providers exposing the same tool name is a configuration error: it fails the node, and never reaches the agent as an ordinary tool failure it might retry against.
 
 A `BuiltInToolProvider` is exempt in one direction. Nobody opted into a built-in tool, so a name a configured provider also claims is dropped from the built-in's catalog and a warning names the winner — a deployment that declares a filesystem MCP server gets that server, not a startup failure. Two configured providers, or two built-ins, still collide.
+
+A provider may be wrapped – a runtime that gates calls through a human puts a decorator in front of every source it discovered. The router unwraps through `ToolProviderDecorator` before deciding precedence and before naming a provider in a duplicate-name error, so wrapping does not move a built-in into the configured band and an operator is never asked to reconcile two copies of a decorator they did not configure.
+
+When a call is refused rather than merely unsuccessful, the loop appends a record to the reserved state key `_capability_gaps` and keeps `_capability_gap_count` in step with it, so a graph can route on having been blocked. Both keys are engine-owned: a node that declares either is rejected at build time, because a workflow that can overwrite the record of its own refusal cannot be trusted to report one.
 
 ## Module Structure
 
@@ -323,6 +333,9 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── ToolRouter.java            # Composes providers; isolates failing ones, rejects duplicate names
 │   ├── ToolCallEvent.java         # Audit record for a dispatched tool request (bounded, redacted)
 │   ├── ToolResultEvent.java       # Audit record for a settled tool invocation (output truncated)
+│   ├── CapabilityGaps.java        # Reserved state keys recording what a run was refused
+│   ├── ToolProviderDecorator.java # Marker: wraps another provider, and says which one
+│   ├── UncontainedOnApproval.java # Optional: may run uncontained once a reviewer approves
 │   ├── ToolRegistry.java          # Read-only tool discovery interface
 │   ├── BuiltInToolProvider.java   # Marker: present without being asked for, so it yields a contested name
 │   ├── PreviewCapable.java        # Optional: describe a call before it runs

@@ -1,0 +1,28 @@
+# MCP servers this working directory wants launched locally.
+#
+# A server is the second way an agent gets tools, beside `commands.yaml`. The difference is
+# lifetime: a catalog entry is one invocation, a server is one process answering many calls, so a
+# server can hold state between them. Hensu starts these lazily — on the first node whose tools have
+# to be resolved — and stops them when the run ends.
+#
+# Containment is decided once, at launch, rather than per call. A host with no working sandbox
+# backend starts no server at all and says why, rather than starting one uncontained.
+#
+# `command` is the launch argv. It runs with the working directory as its cwd, so a relative path
+# to a script in this directory is enough. `{workdir}` is the only placeholder and expands as a
+# whole argv element — it cannot be embedded inside a longer string.
+#
+# Full guide: docs/command-catalog.md
+
+servers:
+
+  notes:
+    # A scratch notebook for the run. See mcp-servers/notes-server.py for what it publishes and why
+    # a server rather than a command.
+    command: ["/usr/bin/python3", "mcp-servers/notes-server.py"]
+    timeout: 10000
+    # Unlike a catalog command, a server defaults to `unattended: false` — the operator has not read
+    # its tool list. This one is a local, hermetic example, so an unattended run may use it.
+    unattended: true
+    sandbox:
+      network: false

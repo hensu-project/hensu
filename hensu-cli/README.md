@@ -117,7 +117,7 @@ execution when the daemon is not available.
 
 ```
 hensu run [<workflow-name>] [-d <working-dir>]
-          [-v] [-i] [--no-color] [--no-daemon] [-c <context>]
+          [-v] [-i | -u] [--no-color] [--no-daemon] [-c <context>]
           [--with <sub-workflow>]...
 
 options:
@@ -126,10 +126,33 @@ options:
   -c, --context <value>    Context as a JSON string  '{"key":"value"}'  or path to a JSON/YAML file
   -v, --verbose            Show agent inputs/outputs, tool calls, and fork/join execution structure
   -i, --interactive        Enable interactive human review mode with manual backtracking
+  -u, --unattended         Declare that no human is present (the default; see Run mode below)
       --with <name>        Sub-workflow to load alongside the root (repeatable); see Sub-Workflows below
       --no-color           Disable ANSI colored output
       --no-daemon          Force inline execution even if the daemon is running
 ```
+
+**Run mode:** a run is *attended* when it was started with `--interactive`, and *unattended*
+otherwise. That one boolean is what the tool layer reads — the engine never learns whether a human
+is present. `--unattended` states the default explicitly for a script or a CI job; passing both
+flags is refused, because a run either has a reviewer or it does not.
+
+In an unattended run a command declaring `approval: required` or `unattended: false` launches
+nothing and records a capability gap instead of prompting an absent human. The run's completion
+summary lists those gaps, and a workflow can route on them with
+`onCondition("_capability_gap_count")`. See
+[`docs/cli-tool-execution-security-model.md`](../docs/cli-tool-execution-security-model.md).
+
+**Tool sources:** a capability gap says a call was stopped. A tool can also be missing because the
+source that was supposed to provide it never offered it — `mcp.yaml` did not parse, a declared
+server is not installed, or containment was unavailable and nobody could approve starting a server
+without it. Those reasons print in their own **Tool sources** section of the completion summary, on
+both the inline and the daemon path. A healthy run prints no such section.
+
+**Tool audit:** every settled tool call appends one JSON line to `~/.hensu/tool-audit.log`
+(or `$XDG_DATA_HOME/hensu/tool-audit.log`), including the refused ones, whatever `--verbose` says.
+Each line carries a `call_id`, which is what pairs a call's arguments to its outcome; ids are minted
+per process, so read them together with `execution_id`.
 
 **Ctrl+C behavior:** pressing Ctrl+C *detaches* the client – execution keeps running in the daemon.
 A JVM shutdown hook sends a `detach` frame, then prints the execution ID and re-attach instructions.
@@ -155,7 +178,8 @@ node output and prompts for a decision:
 
 If no client is attached when a review is requested, the execution enters `AWAITING_REVIEW` and
 blocks (cheaply, on a virtual thread) until a client runs `hensu attach <exec-id>` and submits
-the decision. A 30-minute fallback timeout applies.
+the decision. A 30-minute timeout applies, and it rejects rather than approves — an unanswered
+review has not been approved.
 
 ### `hensu validate`
 
@@ -208,7 +232,8 @@ hensu run parent --with child-a --with child-b -d ./my-project
 
 Under the hood:
 
-- Each `--with <name>` resolves to `workflows/<name>.kt` in the working directory.
+- Each `--with <name>` resolves to `workflows/<name>.kt` in the working directory. A name may carry a
+  relative path, so a workflow kept in a subdirectory is named as `subdir/name`.
 - The root plus all `--with` workflows are registered under the CLI tenant
   (`SubWorkflowLoader.CLI_TENANT`) so `SubWorkflowNodeExecutor` can resolve children at runtime.
 - When the daemon handles the execution, the full set is serialized and shipped across the
@@ -489,11 +514,14 @@ launchctl load -w ~/Library/LaunchAgents/io.hensu.daemon.plist
     ```
     working-dir/
     +— workflows/                          # Kotlin DSL workflow definitions
+    │   +— regression/                     # Fixtures that must build and run (this repo's own)
+    │   +— invalid/                        # Fixtures that must fail to build (this repo's own)
     +— stubs/                              # Agent stub responses for local testing
     +— prompts/                            # Input prompt files
     +— rubrics/                            # Evaluation rubric definitions
     │   +— templates/
     +— build/                              # Output of `hensu build` (JSON artifacts)
+    +— mcp-servers/                        # Server scripts mcp.yaml launches (this sample's own)
     +— commands.yaml                       # Command catalog: the allowlist of what may run
     +— mcp.yaml                            # MCP servers this deployment wants launched locally
     ```

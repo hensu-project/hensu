@@ -252,16 +252,15 @@ public final class FileToolProvider implements BuiltInToolProvider, PreviewCapab
     @Override
     public ToolCallResult call(
             String toolName, Map<String, Object> arguments, Map<String, Object> context) {
-        Map<String, Object> args = arguments != null ? arguments : Map.of();
         Deadline deadline = Deadline.starting();
         try {
             return switch (toolName) {
-                case READ_FILE -> readFile(args);
-                case LIST_DIR -> listDir(args);
-                case GLOB -> glob(args, deadline);
-                case GREP -> grep(args, deadline);
-                case WRITE_FILE -> writeFile(args);
-                case EDIT_FILE -> editFile(args);
+                case READ_FILE -> readFile(arguments);
+                case LIST_DIR -> listDir(arguments);
+                case GLOB -> glob(arguments, deadline);
+                case GREP -> grep(arguments, deadline);
+                case WRITE_FILE -> writeFile(arguments);
+                case EDIT_FILE -> editFile(arguments);
                 default ->
                         ToolCallResult.of(
                                 toolName,

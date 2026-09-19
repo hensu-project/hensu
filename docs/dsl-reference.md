@@ -4,6 +4,7 @@ This document provides a complete reference for the Hensu Kotlin DSL used to def
 
 ## Table of Contents
 
+- [Runtime Targets](#runtime-targets)
 - [Workflow Structure](#workflow-structure)
 - [Agents](#agents)
 - [Graph](#graph)
@@ -33,6 +34,28 @@ This document provides a complete reference for the Hensu Kotlin DSL used to def
 - [External Prompt Files](#external-prompt-files)
 - [Running Workflows](#running-workflows)
 - [Complete Example](#complete-example)
+
+## Runtime Targets
+
+The DSL compiles to one JSON artifact, but that artifact can run in either of Hensu's two runtimes,
+and a handful of constructs resolve differently in each. The CLI executes the workflow on the
+operator's own machine; the server executes it for a tenant and has no local shell at all. Decide
+which one you are targeting before you reach for the constructs below.
+
+| DSL construct   | CLI runtime                                                                                                     | Server runtime                                                                                                       |
+|:----------------|:----------------------------------------------------------------------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------|
+| `execute("id")` | Resolved through `commands.yaml` and run under the OS sandbox; an unknown id fails the action                   | **Not supported.** The action fails at runtime with "Server mode does not support local command execution"           |
+| `send("id", …)` | Dispatched to an `ActionHandler` registered in this process; an unknown id fails the action                     | Dispatched to a registered `ActionHandler`, falling back to MCP for an unrecognized one                              |
+| `tools = [...]` | Catalog commands, `mcp.yaml` stdio servers, and built-in file tools — every call passes the approval gate       | Tools offered by the tenant's own MCP servers over the split-pipe transport; ungated, because containment is theirs  |
+| `review(…)`     | Blocks the execution and is answered over the daemon socket or stdin; `AWAITING_REVIEW` is not a terminal state | Checkpoints, drops the lease, reports `paused`, and resumes only when something calls `POST /executions/{id}/resume` |
+
+Everything else — nodes, transitions, rubrics, state schema, consensus, sub-workflows — behaves
+identically, because it is decided by `hensu-core`, which both runtimes embed unchanged.
+
+> **`execute()` is not caught before it runs.** No push-time or load-time validator inspects action
+> nodes, so a workflow using `execute()` uploads to the server with no complaint and fails only when
+> that node executes. If a workflow is meant to run on the server, express its side effects as
+> `send(...)` to a registered handler or as agent tool calls into the tenant's MCP servers.
 
 ## Workflow Structure
 
@@ -112,6 +135,8 @@ agents {
 | `frequencyPenalty` | Double?      | No       | null        | Frequency penalty for repetition (-2.0 to 2.0, OpenAI/DeepSeek only) |
 | `presencePenalty`  | Double?      | No       | null        | Presence penalty for repetition (-2.0 to 2.0, OpenAI/DeepSeek only)  |
 | `timeout`          | Long?        | No       | null        | Request timeout in seconds                                           |
+
+`tools` names tools, not where they come from. The runtime executing the workflow supplies them: the CLI from its command catalog, its `mcp.yaml` servers, and the built-in file tools; the server from the tenant's own MCP servers. A name the target runtime cannot offer simply is not present when the node runs, so a workflow that leans on it will not behave the same in both. See [Runtime Targets](#runtime-targets).
 
 ## Graph
 
@@ -366,6 +391,8 @@ See [Generic Nodes](../docs/developer-guide-core.md#generic-nodes) in the Core D
 
 Action nodes execute commands or send data to external systems mid-workflow, then continue to the next node. Use action nodes to run git commands, send notifications, trigger webhooks, or publish events at any point during workflow execution.
 
+`execute(...)` is CLI-only — the server has no local shell and fails the action at runtime, with nothing rejecting it at push time. `send(...)` works in both. See [Runtime Targets](#runtime-targets).
+
 ```kotlin
 action("commit-changes") {
     execute("git-commit")  // Command ID from commands.yaml
@@ -614,6 +641,34 @@ Each arm ends in `goto "node"` (optionally `withFeedback`) or `revise "producer"
 - **Only successful results are routed.** A failed node bypasses all condition arms and the else-arm, falling through to `onFailure` (or aborting the workflow if none is declared).
 - **Blocks compose by ordering.** Multiple `onCondition { }` / `onScore { }` blocks on one node evaluate as a single first-match-wins list — see [Combining Transition Blocks](#combining-transition-blocks).
 
+#### Routing on a blocked run (`_capability_gap_count`)
+
+Two keys are written by the engine rather than by the agent, and are exempt from the `writes(...)` rule above — declaring either is a build error, because the agent's own output would then be able to erase the evidence that it was blocked. Every declaration site refuses them: a node's `writes(...)`, a parallel branch's `yields(...)`, and a sub-workflow node's `writes(...)`. The load-time validator refuses the same names again, for a workflow that reached it without passing through the DSL:
+
+| Key                     | Value                                                                 | Use                         |
+|-------------------------|-----------------------------------------------------------------------|-----------------------------|
+| `_capability_gaps`      | list of records: tool, refusing gate, asking node, argument key names | inspection, the run summary |
+| `_capability_gap_count` | number of records so far                                              | routing                     |
+
+A tool call that is *refused* — not granted to the node, denied by a reviewer, refused because the run is unattended, or blocked because no sandbox backend works — appends a record and bumps the count. A call that ran and failed does not: the capability was there.
+
+```kotlin
+node("implement") {
+    agent = "implementer"
+    prompt = "Fix the failing test."
+    tools = listOf("read_file", "edit_file", "run-tests")
+
+    onCondition("_capability_gap_count") {
+        whenValue greaterThanOrEqual 1 goto "escalate"
+    }
+    onSuccess goto "review"
+}
+```
+
+Route the gap arm **before** the ordinary arm: first match wins, and a blocked run that reaches `onSuccess` looks like a healthy one. Conditions coerce scalars only, so route on the count and read `_capability_gaps` for the detail. The key is absent until the first refusal, so an arm testing it never matches on a clean run — give the node an ordinary arm to fall through to. That absence is silent: unlike an ordinary variable, whose absence means a typo or a missing `writes(...)` and is reported, a gap key nobody wrote is what a healthy run looks like, so routing on it costs a clean run no warning.
+
+See [`docs/cli-tool-execution-security-model.md`](cli-tool-execution-security-model.md) for what counts as a refusal and why.
+
 ### Else Arm (`otherwise`)
 
 Both `onScore { }` and `onCondition { }` accept one explicit else-arm covering every value no earlier arm matched, so the workflow cannot die with "No valid transition" at runtime:
@@ -855,7 +910,7 @@ node("use_facts") {
 2. **Use descriptive names**: Match `writes` names to `{placeholder}` names in downstream prompts
 3. **Request JSON-only output**: Ask the agent to output only JSON for reliable extraction
 4. **Lower temperature**: Use lower temperature (0.3-0.5) for more consistent JSON output
-5. **Never `writes` engine variables**: `score`, `approved`, and `recommendation` are managed by the engine — `writes()` rejects them, at build time in the DSL and again in the load-time validator.
+5. **Never `writes` engine variables**: `score`, `approved`, and `recommendation` are managed by the engine — `writes()` rejects them, at build time in the DSL and again in the load-time validator. The same holds for the capability-gap keys, at every declaration site: `writes()`, a branch's `yields()`, and a sub-workflow node's `writes()`.
 
 ### Supported JSON Values
 

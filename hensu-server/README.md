@@ -398,7 +398,7 @@ hensu-server/
 │   ├── execution/                         # Server-side execution listeners
 │   │   ├── LoggingExecutionListener.java  # Structured log output for node lifecycle, tool audit, transition warnings
 │   │   ├── ToolStreamingExecutionListener.java # Republishes tool audit events onto the execution's SSE stream
-│   │   └── CompositeExecutionListener.java # Fans out to delegates; a throwing delegate is logged, not fatal
+│   │   └── ToolAuditListener.java         # One durable row per settled tool call; pairs request to outcome by call id
 │   ├── dev/                               # Dev-only handlers (excluded from prod image)
 │   │   └── SleepHandler.java              # Simulates long-running node for crash-recovery tests
 │   ├── mcp/                               # Server-side MCP transport (protocol types live in hensu-mcp)
@@ -416,6 +416,8 @@ hensu-server/
 │   │   ├── JdbcWorkflowStateRepository.java   # Execution state snapshots (JSONB + lease columns)
 │   │   ├── ExecutionLeaseManager.java         # Distributed lease management (@ApplicationScoped)
 │   │   ├── WorkflowPushLock.java              # Cluster-wide push mutex (pg_advisory_xact_lock + JVM fallback)
+│   │   ├── JdbcToolAuditRepository.java       # Tool audit rows (runtime.tool_audit)
+│   │   ├── ToolAuditEntry.java                # One settled tool call: status, argv, arguments, output
 │   │   ├── JdbcSupport.java                   # JDBC helper (queryList, update)
 │   │   └── PersistenceException.java          # Unchecked wrapper for SQLException
 │   ├── workflow/              # Business logic

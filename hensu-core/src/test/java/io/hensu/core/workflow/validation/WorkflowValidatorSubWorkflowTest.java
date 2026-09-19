@@ -66,6 +66,25 @@ class WorkflowValidatorSubWorkflowTest {
                 .hasMessageContaining("not declared in parent state schema");
     }
 
+    @Test
+    void shouldRejectWritesToAnEngineOwnedGapKeyByName() {
+        // The undeclared-key check already refuses this one, because the schema itself
+        // cannot declare a gap key — but it refuses it as a typo. A sub-workflow writing
+        // the key the engine records refusals in erases the parent's evidence that it was
+        // blocked, and the operator has to be told that, not told to declare it.
+        Workflow workflow =
+                workflowWithSchema(
+                        List.of(new StateVariableDeclaration("draft", VarType.STRING, true)),
+                        subWorkflowNode(
+                                Map.of("draft", "draft"),
+                                Map.of("_capability_gaps", "_capability_gaps")));
+
+        assertThatThrownBy(() -> WorkflowValidator.validate(workflow))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("writes '_capability_gaps'")
+                .hasMessageContaining("which the engine owns");
+    }
+
     private static Workflow workflowWithSchema(
             List<StateVariableDeclaration> variables, SubWorkflowNode node) {
         Map<String, Node> nodes = new LinkedHashMap<>();

@@ -58,6 +58,22 @@ public class CLIReviewHandler implements ReviewHandler {
                 terminal.runReview(toReviewData(node, result, state, history, config, workflow)));
     }
 
+    /// Asks the terminal whether one tool call may run.
+    ///
+    /// A run started without `--interactive` has no reviewer at the keyboard, so the
+    /// question is not asked and the call is refused. Prompting anyway would block a
+    /// pipeline on input nobody is there to give.
+    ///
+    /// @param request the call needing a decision, not null
+    /// @return the reviewer's answer, or {@link ApprovalOutcome#NO_REVIEWER} when the run
+    ///     is not interactive, never null
+    public ApprovalOutcome requestToolApproval(ToolApprovalRequest request) {
+        if (!isInteractive()) {
+            return ApprovalOutcome.NO_REVIEWER;
+        }
+        return terminal.runToolApproval(request);
+    }
+
     // — Private ———————————————————————————————————————————————————————————————
 
     private boolean isInteractive() {

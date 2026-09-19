@@ -19,6 +19,7 @@ import io.hensu.core.state.HensuState;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.persistence.ExecutionLeaseManager;
+import io.hensu.server.persistence.InMemoryToolAuditRepository;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import java.time.Instant;
@@ -63,7 +64,8 @@ class ExecutionStateServiceTest {
                         stateRepository,
                         registryService,
                         leaseManager,
-                        eventBroadcaster);
+                        eventBroadcaster,
+                        new InMemoryToolAuditRepository());
     }
 
     private HensuSnapshot pausedSnapshot() {

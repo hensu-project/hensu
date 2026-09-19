@@ -2,7 +2,6 @@ package io.hensu.server.mcp;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -89,16 +88,6 @@ class SseMcpConnectionTest {
 
             assertThat(result).containsEntry("content", "data");
             verify(sessionManager).sendRequest(eq("client-1"), eq("tools/call"), any());
-        }
-
-        @Test
-        void shouldHandleNullArguments() {
-            String responseJson = "{\"result\":{}}";
-            when(sessionManager.sendRequest(eq("client-1"), eq("tools/call"), any()))
-                    .thenReturn(Uni.createFrom().item(responseJson));
-            when(jsonRpc.parseResult(responseJson)).thenReturn(Map.of());
-
-            assertDoesNotThrow(() -> connection.callTool("list_files", null));
         }
 
         @Test

@@ -89,9 +89,11 @@ class WorkingDirectory(private val root: Path) {
     /**
      * Resolves a workflow file path from the workflows directory.
      *
-     * Automatically appends `.kt` extension if not present.
+     * Automatically appends `.kt` extension if not present. Supports relative paths within the
+     * workflows directory (e.g., `regression/regression-capability-gap`), so a deployment may keep
+     * its test fixtures in subdirectories without them being mistaken for examples.
      *
-     * @param name workflow name (with or without .kt extension), not null
+     * @param name workflow name or relative path (with or without .kt extension), not null
      * @return absolute path to the workflow file, never null
      * @throws IllegalArgumentException if the workflow file does not exist
      */

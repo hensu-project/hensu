@@ -6,6 +6,7 @@ import io.hensu.core.agent.ToolCapable;
 import io.hensu.core.agent.ToolSession;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.result.ResultStatus;
+import io.hensu.core.tool.CapabilityGaps;
 import io.hensu.core.tool.ToolCallEvent;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolCallStatus;
@@ -18,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -37,6 +39,16 @@ final class ToolLoopRunner {
 
     private static final Logger logger = Logger.getLogger(ToolLoopRunner.class.getName());
     private static final int DEFAULT_MAX_TOOL_CALLS = 10;
+
+    /// Source of the call identity that pairs a request record with its outcome.
+    ///
+    /// Sinks used to pair on node and tool name. That is correct only as long as no two
+    /// concurrent calls share both, which is a property of the current graph shapes —
+    /// parallel branches report as `node/branch`, sub-workflows run sequentially — and
+    /// not of the audit layer. A minted id makes the pairing correct by construction, so
+    /// a future branch kind cannot silently start attributing one call's arguments to
+    /// another's outcome. The counter is per process, the widest scope any sink observes.
+    private static final AtomicLong CALL_SEQUENCE = new AtomicLong();
 
     private ToolLoopRunner() {}
 
@@ -127,8 +139,9 @@ final class ToolLoopRunner {
                                             + maxToolCalls
                                             + "). Provide your final answer based on the tool results received so far.",
                                     null);
-                    fireCall(ctx, eventSourceId, agentId, toolRequest, availableTools);
-                    fireResult(ctx, eventSourceId, agentId, exhaustion, 0L);
+                    String callId = nextCallId();
+                    fireCall(ctx, callId, eventSourceId, agentId, toolRequest, availableTools);
+                    fireResult(ctx, callId, eventSourceId, agentId, exhaustion, 0L);
                     response = session.submit(exhaustion);
 
                     if (response instanceof AgentResponse.ToolRequest) {
@@ -207,6 +220,7 @@ final class ToolLoopRunner {
             String agentId) {
 
         String toolName = toolRequest.toolName();
+        String callId = nextCallId();
 
         // Unknown tool (hallucination) — feed back, don't hard-fail
         boolean known = availableTools.stream().anyMatch(t -> t.name().equals(toolName));
@@ -221,25 +235,27 @@ final class ToolLoopRunner {
                             null,
                             "Unknown tool '" + toolName + "', available: " + available,
                             null);
-            fireCall(ctx, eventSourceId, agentId, toolRequest, availableTools);
-            fireResult(ctx, eventSourceId, agentId, unknown, 0L);
+            fireCall(ctx, callId, eventSourceId, agentId, toolRequest, availableTools);
+            fireResult(ctx, callId, eventSourceId, agentId, unknown, 0L);
+            recordGap(ctx, eventSourceId, toolRequest, unknown);
             return unknown;
         }
 
-        fireCall(ctx, eventSourceId, agentId, toolRequest, availableTools);
+        fireCall(ctx, callId, eventSourceId, agentId, toolRequest, availableTools);
         long startNanos = System.nanoTime();
 
         try {
             ToolCallResult result =
                     ctx.getToolInvoker()
                             .call(toolName, arguments(toolRequest), ctx.getState().getContext());
-            fireResult(ctx, eventSourceId, agentId, result, elapsedMs(startNanos));
+            fireResult(ctx, callId, eventSourceId, agentId, result, elapsedMs(startNanos));
+            recordGap(ctx, eventSourceId, toolRequest, result);
             return result;
         } catch (Exception e) {
             logger.warning("Tool execution failed for '" + toolName + "': " + e.getMessage());
             ToolCallResult failure =
                     ToolCallResult.failure(toolName, "Execution error: " + e.getMessage());
-            fireResult(ctx, eventSourceId, agentId, failure, elapsedMs(startNanos));
+            fireResult(ctx, callId, eventSourceId, agentId, failure, elapsedMs(startNanos));
             return failure;
         }
     }
@@ -253,8 +269,37 @@ final class ToolLoopRunner {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
     }
 
+    /// Appends a capability-gap record when the call was refused rather than merely
+    /// unsuccessful, so transitions can route on a blocked run.
+    ///
+    /// Argument **key** names only: a `secret:` parameter's value must not survive into
+    /// state that outlives the call. {@link CapabilityGaps#record} decides whether the
+    /// outcome is a gap at all, so every outcome may be handed over.
+    ///
+    /// @param ctx execution context carrying the live state, not null
+    /// @param nodeId id of the node whose agent asked, not null
+    /// @param toolRequest the request the agent made, not null
+    /// @param result the outcome of that request, not null
+    private static void recordGap(
+            ExecutionContext ctx,
+            String nodeId,
+            AgentResponse.ToolRequest toolRequest,
+            ToolCallResult result) {
+        CapabilityGaps.record(
+                ctx.getState().getContext(),
+                nodeId,
+                toolRequest.toolName(),
+                result.status(),
+                arguments(toolRequest).keySet());
+    }
+
+    private static String nextCallId() {
+        return Long.toUnsignedString(CALL_SEQUENCE.incrementAndGet());
+    }
+
     private static void fireCall(
             ExecutionContext ctx,
+            String callId,
             String eventSourceId,
             String agentId,
             AgentResponse.ToolRequest toolRequest,
@@ -262,6 +307,7 @@ final class ToolLoopRunner {
         ExecutionListener listener = ctx.getListener();
         listener.onToolCall(
                 ToolCallEvent.now(
+                        callId,
                         eventSourceId,
                         agentId,
                         toolRequest.toolName(),
@@ -271,12 +317,14 @@ final class ToolLoopRunner {
 
     private static void fireResult(
             ExecutionContext ctx,
+            String callId,
             String eventSourceId,
             String agentId,
             ToolCallResult result,
             long durationMs) {
         ExecutionListener listener = ctx.getListener();
-        listener.onToolResult(ToolResultEvent.now(eventSourceId, agentId, result, durationMs));
+        listener.onToolResult(
+                ToolResultEvent.now(callId, eventSourceId, agentId, result, durationMs));
     }
 
     private static ToolDefinition definition(

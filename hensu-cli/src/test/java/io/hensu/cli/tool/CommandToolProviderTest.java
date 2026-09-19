@@ -197,6 +197,41 @@ class CommandToolProviderTest {
         }
 
         @Test
+        void shouldCarryTheEntrysApprovalPolicySoTheGateNeedNotReadTheCatalog() {
+            // The decorator applying the unattended × approval matrix sees only a preview.
+            // An entry declaring `approval: required` whose preview said otherwise would
+            // run without the reviewer its catalog entry demands.
+            assertThat(
+                            provider.preview("publish-release", Map.of("token", "secret"))
+                                    .approvalRequired())
+                    .isTrue();
+            assertThat(
+                            provider.preview("echo-message", Map.of("message", "hello there"))
+                                    .approvalRequired())
+                    .isFalse();
+        }
+
+        @Test
+        void shouldLeaveNoScratchDirectoryBehindForACallThatWasOnlyDescribed() throws Exception {
+            Path temp = Path.of(System.getProperty("java.io.tmpdir"));
+            long before = countScratchDirectories(temp);
+
+            provider.preview("echo-message", Map.of("message", "hello there"));
+
+            // Preparing builds a private home and the write subtrees. Describing a call a
+            // reviewer may refuse must not leave them behind on every prompt.
+            assertThat(countScratchDirectories(temp)).isEqualTo(before);
+        }
+
+        private long countScratchDirectories(Path temp) throws java.io.IOException {
+            try (var entries = java.nio.file.Files.list(temp)) {
+                return entries.filter(
+                                path -> path.getFileName().toString().startsWith("hensu-tool-"))
+                        .count();
+            }
+        }
+
+        @Test
         void shouldExplainWhyACallCannotBePreparedRatherThanShowABlankArgv() {
             var preview = provider.preview("echo-message", Map.of("message", "hello 42"));
 

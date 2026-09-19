@@ -12,6 +12,7 @@ import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.Workflow;
+import io.hensu.server.persistence.InMemoryToolAuditRepository;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import java.util.Map;
@@ -59,7 +60,11 @@ class WorkflowExecutionServiceTest {
 
         service =
                 new WorkflowExecutionService(
-                        workflowExecutor, stateRepository, eventBroadcaster, registryService);
+                        workflowExecutor,
+                        stateRepository,
+                        eventBroadcaster,
+                        registryService,
+                        new InMemoryToolAuditRepository());
     }
 
     @Test

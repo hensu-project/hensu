@@ -14,6 +14,7 @@ import io.hensu.core.tool.ToolDefinition;
 import io.hensu.core.tool.ToolDefinition.ParameterDef;
 import io.hensu.core.tool.ToolPreview;
 import io.hensu.core.tool.ToolProvider;
+import io.hensu.core.tool.UncontainedOnApproval;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.ArrayList;
@@ -47,10 +48,11 @@ import java.util.Objects;
 /// @see CommandCatalog for the shared catalog
 /// @see CommandRunner for the two-phase execution this delegates to
 @Singleton
-public class CommandToolProvider implements ToolProvider, PreviewCapable {
+public class CommandToolProvider implements ToolProvider, PreviewCapable, UncontainedOnApproval {
 
     private final CommandCatalog catalog;
     private final CommandRunner runner;
+    private final CommandRunner uncontainedRunner;
 
     /// Creates a provider over the shared catalog, running commands on the host.
     ///
@@ -69,6 +71,7 @@ public class CommandToolProvider implements ToolProvider, PreviewCapable {
     public CommandToolProvider(CommandCatalog catalog, CommandRunner runner) {
         this.catalog = Objects.requireNonNull(catalog, "catalog must not be null");
         this.runner = Objects.requireNonNull(runner, "runner must not be null");
+        this.uncontainedRunner = runner.allowingUnsandboxed();
     }
 
     /// Returns the declared commands that opted into agent visibility.
@@ -103,6 +106,32 @@ public class CommandToolProvider implements ToolProvider, PreviewCapable {
     @Override
     public ToolCallResult call(
             String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+        return dispatch(runner, toolName, arguments);
+    }
+
+    /// Runs a command outside the sandbox, after a reviewer approved exactly this call.
+    ///
+    /// Reached only from the approval decorator and only when the preview reported
+    /// {@link ToolCallStatus#SANDBOX_UNAVAILABLE}: on a host whose backend works, the
+    /// contained runner is used and this method is never called.
+    ///
+    /// @param toolName the command id to invoke, not null
+    /// @param arguments arguments the agent supplied, not null (may be empty)
+    /// @param context the workflow state context, not null and unused
+    /// @return the invocation result, never null
+    @Override
+    public ToolCallResult callUncontained(
+            String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+        return dispatch(uncontainedRunner, toolName, arguments);
+    }
+
+    /// Resolves a name against the catalog and runs it on the runner handed in.
+    ///
+    /// The contained and uncontained entry points differ only in that runner, so
+    /// the answer an agent gets for a name the catalog does not publish is written
+    /// here once rather than once per entry point.
+    private ToolCallResult dispatch(
+            CommandRunner with, String toolName, Map<String, Object> arguments) {
         CommandDefinition definition = visible(toolName);
         if (definition == null) {
             return ToolCallResult.of(
@@ -112,12 +141,7 @@ public class CommandToolProvider implements ToolProvider, PreviewCapable {
                     "'" + toolName + "' is not a command this deployment offers to agents",
                     null);
         }
-        CommandResult result =
-                runner.run(
-                        definition,
-                        arguments != null ? arguments : Map.of(),
-                        catalog.workingDirectory());
-        return toToolResult(toolName, result);
+        return toToolResult(toolName, with.run(definition, arguments, catalog.workingDirectory()));
     }
 
     /// Resolves what a command call would run, without running it.
@@ -136,25 +160,33 @@ public class CommandToolProvider implements ToolProvider, PreviewCapable {
         if (definition == null) {
             throw new IllegalArgumentException("Not an agent-visible command: " + toolName);
         }
+        PreparedCommand prepared = null;
         try {
-            PreparedCommand prepared =
-                    runner.prepare(
-                            definition,
-                            arguments != null ? arguments : Map.of(),
-                            catalog.workingDirectory());
+            prepared = runner.prepare(definition, arguments, catalog.workingDirectory());
             return new ToolPreview(
                     toolName + ": " + String.join(" ", prepared.argv()),
                     prepared.argv(),
                     summarize(prepared.policy()),
-                    definition.unattended());
+                    definition.unattended(),
+                    definition.approvalRequired());
         } catch (CommandPrepareException e) {
             // Preparation failing is itself worth showing: "this would not have
-            // run, and here is why" is a better review than a blank argv.
+            // run, and here is why" is a better review than a blank argv. The status
+            // travels with it so the decorator can tell an absent sandbox — which a
+            // reviewer may waive for one call — from a command that is simply broken.
             return new ToolPreview(
                     toolName + ": cannot be prepared – " + e.result().message(),
                     List.of(),
                     summarize(definition.sandbox()),
-                    definition.unattended());
+                    definition.unattended(),
+                    definition.approvalRequired(),
+                    e.result().status());
+        } finally {
+            // Preparing builds a private home and write subtrees; describing a call must
+            // not leave them behind. The invocation that runs is prepared again.
+            if (prepared != null) {
+                runner.discard(prepared);
+            }
         }
     }
 

@@ -3,6 +3,12 @@
 How to declare the commands a Hensu deployment may run, and what each part of the declaration
 buys you.
 
+**This is a CLI-only mechanism.** `commands.yaml` and `mcp.yaml` are read by the `hensu` CLI, the
+runtime that executes workflows on the operator's own machine. The server runtime never reads either
+file and cannot: it has no local shell, so an `execute(...)` action fails there at runtime, and the
+tools an agent sees come from the tenant's own MCP servers instead. Throughout this guide,
+"a deployment" means one CLI install and the working directory it runs in.
+
 Commands live in `commands.yaml` in the working directory. Workflows reference them by ID
 through `execute(...)` actions, and agents call the ones marked agent-visible as tools. Nothing
 in a workflow, a prompt, or an agent response ever supplies command text.
@@ -519,6 +525,50 @@ sandbox's reach.
 The two are orthogonal. A command can be safe unattended and still worth a confirmation when
 somebody is watching, and a command can be approval-gated precisely so it never runs unattended.
 
+### The run decides the other half
+
+A run is attended when it was started with `--interactive`, and unattended otherwise. `--unattended`
+says the same thing explicitly, for a script or a CI job; the two flags contradict each other and
+are refused together.
+
+| Run mode   | Entry declares                       | Outcome                                                              |
+|------------|--------------------------------------|----------------------------------------------------------------------|
+| attended   | `approval: none`                     | runs                                                                 |
+| attended   | `approval: required`                 | routed to the reviewer; approval runs it, rejection returns `DENIED` |
+| unattended | `unattended: true`, `approval: none` | runs                                                                 |
+| unattended | `unattended: false`                  | capability gap; nothing is launched                                  |
+| unattended | `approval: required`                 | capability gap; nothing is launched, whatever `unattended:` says     |
+
+`unattended: false` is not "ask anyway". In a run with no human there is nobody to ask, so the call
+is refused with a typed outcome the workflow can route on — never silently skipped, and never run
+on the assumption that somebody will notice. A run whose review channel disconnects mid-call refuses
+for the same reason: a question that could not be asked is not an approval.
+
+The reviewer sees the fully resolved argv, one token per line, rather than the template. Approving
+`git push --force origin main` approves those five tokens; approving `git {args}` would approve a
+shape and trust the binding, which is the trust the argv-only form exists to avoid.
+
+The same matrix governs the servers in `mcp.yaml`, at the server level — a long-lived server
+process cannot be gated per call.
+
+### A refusal reaches the graph
+
+Every refusal appends a record to the reserved state key `_capability_gaps` and keeps
+`_capability_gap_count` in step, so a workflow can route a blocked run with an ordinary condition:
+
+```kotlin
+onCondition("_capability_gap_count") {
+    whenValue greaterThanOrEqual 1 goto "escalate"
+}
+```
+
+Records carry the tool name, the refusing gate, the asking node and the argument **key** names —
+never their values, so a `secret:` parameter cannot leak into state that outlives the call. The run
+summary prints the aggregate at the end, and omits the section when there is nothing to report.
+
+See [`docs/cli-tool-execution-security-model.md`](cli-tool-execution-security-model.md) for the
+full model.
+
 ---
 
 ## Exposing a command to agents
@@ -602,15 +652,15 @@ servers:
       write: ["."]
 ```
 
-| Key          | Meaning                                                                                                                                                                    |
-|--------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `command`    | The launch argv, required. `{workdir}` is the only placeholder, expanding to the absolute working directory as one whole token                                             |
-| `timeout`    | Milliseconds one request may take, default 30000. It covers both legs: a server that stops reading its standard input fails the call as surely as one that stops answering |
-| `unattended` | Whether an automated run may use this server, **default false**                                                                                                            |
-| `approval`   | `required` or `none`, default `none`                                                                                                                                       |
-| `env`        | Variables added to the hermetic base. The `HENSU_PARAM_` namespace is reserved                                                                                             |
-| `sandbox`    | `network`, `write` and `cache`, read exactly as [above](#sandbox-policy)                                                                                                   |
-| `url`        | Reserved. An HTTP endpoint is rejected at load, because the CLI launches servers rather than dialling them                                                                 |
+| Key          | Meaning                                                                                                                                                                                                                                                                                                       |
+|--------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `command`    | The launch argv, required. A server runs with the working directory as its cwd, so a relative path to a script beside `mcp.yaml` is enough and stays portable. `{workdir}` is the only placeholder, expanding to the absolute working directory as one whole token — it cannot be embedded in a longer string |
+| `timeout`    | Milliseconds one request may take, default 30000. It covers both legs: a server that stops reading its standard input fails the call as surely as one that stops answering                                                                                                                                    |
+| `unattended` | Whether an automated run may use this server, **default false**                                                                                                                                                                                                                                               |
+| `approval`   | `required` or `none`, default `none`                                                                                                                                                                                                                                                                          |
+| `env`        | Variables added to the hermetic base. The `HENSU_PARAM_` namespace is reserved                                                                                                                                                                                                                                |
+| `sandbox`    | `network`, `write` and `cache`, read exactly as [above](#sandbox-policy)                                                                                                                                                                                                                                      |
+| `url`        | Reserved. An HTTP endpoint is rejected at load, because the CLI launches servers rather than dialling them                                                                                                                                                                                                    |
 
 ### Where it differs from a command
 
@@ -641,8 +691,11 @@ shape that is both offline and reproducible.
 
 ### A missing file is not an error
 
-A malformed `mcp.yaml` is a load error naming the line to fix. An absent one is the normal case — a
-deployment that wired no servers gets no tools from this file, and the built-in file tools plus the
+A malformed `mcp.yaml` names the line to fix, in the run's **Tool sources** section. It does not fail
+the run: a provider that aborts an execution is worse than one that offers nothing, so the servers
+stay unstarted, their tools stay absent, and the node that declared one fails on the
+declared-versus-available diff with the reason printed beside it. An absent file is the normal case —
+a deployment that wired no servers gets no tools from this file, and the built-in file tools plus the
 catalog are unaffected.
 
 ---
@@ -670,10 +723,12 @@ line 5: command 'greet' splices placeholder '{name}' into shell text; shell-mode
 line 3: command 'demo' must declare a description explaining why it exists
 ```
 
-**An unavailable sandbox refuses the command.** If no containment backend works on the host, the
-command does not run unsandboxed — it fails. The escape hatch is the system property
-`-Dtoolexec.allowUnsandboxed=true`, which exists for development on hosts that cannot sandbox at
-all. It logs loudly and should never be set in a deployment.
+**An unavailable sandbox demotes the command to approval, and never runs it uncontained.** If no
+containment backend works on the host, an attended run puts the uncontained invocation in front of
+the reviewer and runs it only if they approve; an unattended run has nobody to ask, so the call
+becomes a capability gap and nothing is launched. The deployment-wide escape hatch is the system
+property `-Dtoolexec.allowUnsandboxed=true`, which exists for development on hosts that cannot
+sandbox at all. It logs loudly and should never be set in a deployment.
 
 ---
 
@@ -701,6 +756,9 @@ tested against. macOS uses `sandbox-exec` and needs no setup.
 
 ## See also
 
+- [`docs/cli-tool-execution-security-model.md`](cli-tool-execution-security-model.md) — what each
+  layer of the CLI execution model enforces, the unattended × approval matrix, and the decisions an
+  operator has to make
 - [`docs/dsl-reference.md`](dsl-reference.md) — the `action { execute(...) }` node that calls
   these commands
 - [`working-dir/commands.yaml`](../working-dir/commands.yaml) — a worked catalog

@@ -241,7 +241,8 @@ For production setup with JWT auth and PostgreSQL, see the
 - **Agent-native tool loop.** Agents drive their own tool calls within a per-node budget. Tools come
   from the runtime – MCP on the server, catalog commands and locally launched MCP servers on the CLI –
   plus built-in file tools the engine always carries, and every call and result reaches the execution
-  listener.
+  listener as a paired request/outcome record. What a run was refused is recorded on the state, so a
+  workflow can route on having been blocked instead of failing blind.
 - **Human review.** Optional or required approval checkpoints at any step, in the terminal or over
   the API.
 - **Time-travel backtracking.** Rewind to any earlier node mid-flight, optionally edit the prompt in
