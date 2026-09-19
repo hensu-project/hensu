@@ -55,6 +55,9 @@ public final class ToolRouter implements ToolRegistry, ToolInvoker {
 
     private static final Logger logger = Logger.getLogger(ToolRouter.class.getName());
 
+    /// Upper bound on how many decorators may sit in front of one provider.
+    private static final int MAX_DECORATOR_DEPTH = 16;
+
     private final List<ToolProvider> configured;
     private final List<ToolProvider> builtIns;
 
@@ -66,8 +69,9 @@ public final class ToolRouter implements ToolRegistry, ToolInvoker {
     ///     already expose the same tool name
     public ToolRouter(List<ToolProvider> providers) {
         List<ToolProvider> all = List.copyOf(providers);
-        this.configured = all.stream().filter(p -> !(p instanceof BuiltInToolProvider)).toList();
-        this.builtIns = all.stream().filter(BuiltInToolProvider.class::isInstance).toList();
+        this.configured =
+                all.stream().filter(p -> !(unwrap(p) instanceof BuiltInToolProvider)).toList();
+        this.builtIns = all.stream().filter(p -> unwrap(p) instanceof BuiltInToolProvider).toList();
         collect(ToolProvider::settledTools);
     }
 
@@ -147,11 +151,7 @@ public final class ToolRouter implements ToolRegistry, ToolInvoker {
             return owner.call(toolName, arguments, context);
         } catch (RuntimeException e) {
             return ToolCallResult.failure(
-                    toolName,
-                    "Tool provider "
-                            + owner.getClass().getSimpleName()
-                            + " failed: "
-                            + e.getMessage());
+                    toolName, "Tool provider " + name(owner) + " failed: " + e.getMessage());
         }
     }
 
@@ -213,7 +213,7 @@ public final class ToolRouter implements ToolRegistry, ToolInvoker {
         for (ToolProvider provider : builtIns) {
             for (ToolDefinition tool : offered(provider, view)) {
                 ToolProvider previous = owners.putIfAbsent(tool.name(), provider);
-                if (previous instanceof BuiltInToolProvider) {
+                if (unwrap(previous) instanceof BuiltInToolProvider) {
                     throw new IllegalStateException(
                             duplicateMessage(tool.name(), previous, provider));
                 }
@@ -222,7 +222,7 @@ public final class ToolRouter implements ToolRegistry, ToolInvoker {
                             "Built-in tool '"
                                     + tool.name()
                                     + "' is hidden by "
-                                    + previous.getClass().getSimpleName()
+                                    + name(previous)
                                     + ", which publishes the same name – calls route to the"
                                     + " configured provider");
                     continue;
@@ -242,7 +242,7 @@ public final class ToolRouter implements ToolRegistry, ToolInvoker {
             logger.log(
                     Level.WARNING,
                     "Tool provider "
-                            + provider.getClass().getSimpleName()
+                            + name(provider)
                             + " failed to report its catalog and is skipped: "
                             + e.getMessage(),
                     e);
@@ -258,7 +258,7 @@ public final class ToolRouter implements ToolRegistry, ToolInvoker {
             logger.log(
                     Level.WARNING,
                     "Tool provider "
-                            + provider.getClass().getSimpleName()
+                            + name(provider)
                             + " failed while being asked for '"
                             + toolName
                             + "' and is skipped: "
@@ -273,9 +273,40 @@ public final class ToolRouter implements ToolRegistry, ToolInvoker {
         return "Duplicate tool '"
                 + toolName
                 + "' from "
-                + first.getClass().getSimpleName()
+                + name(first)
                 + " and "
-                + second.getClass().getSimpleName()
+                + name(second)
                 + " – rename one in configuration";
+    }
+
+    /// Walks a decorator chain down to the provider that actually owns the tools.
+    ///
+    /// Precedence and diagnostics are properties of the source, not of whatever a
+    /// deployment wrapped around it. Without this, one approval decorator in front of the
+    /// built-ins would move them into the configured band and every duplicate-name error
+    /// would name the decorator twice.
+    ///
+    /// @param provider a provider, possibly decorated, may be null
+    /// @return the innermost provider, or null when given null
+    public static ToolProvider unwrap(ToolProvider provider) {
+        ToolProvider current = provider;
+        // Bounded rather than while(true): a decorator whose delegate chain cycles is a
+        // wiring bug, and hanging the router is a worse way to report it than giving up.
+        for (int depth = 0; depth < MAX_DECORATOR_DEPTH; depth++) {
+            if (!(current instanceof ToolProviderDecorator decorator)) {
+                return current;
+            }
+            current = decorator.delegate();
+        }
+        logger.warning(
+                "Tool provider decorator chain is deeper than "
+                        + MAX_DECORATOR_DEPTH
+                        + "; treating it as a configured provider");
+        return current;
+    }
+
+    /// Names a provider for a diagnostic, looking through any decorators.
+    private static String name(ToolProvider provider) {
+        return unwrap(provider).getClass().getSimpleName();
     }
 }

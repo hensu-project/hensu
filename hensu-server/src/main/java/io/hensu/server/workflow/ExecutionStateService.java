@@ -1,5 +1,6 @@
 package io.hensu.server.workflow;
 
+import io.hensu.core.execution.CompositeExecutionListener;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.result.ExecutionResult;
@@ -10,9 +11,10 @@ import io.hensu.core.state.HensuState;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.util.LogSanitizer;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.execution.CompositeExecutionListener;
+import io.hensu.server.execution.ToolAuditListener;
 import io.hensu.server.execution.ToolStreamingExecutionListener;
 import io.hensu.server.persistence.ExecutionLeaseManager;
+import io.hensu.server.persistence.ToolAuditRepository;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import io.hensu.server.tenant.TenantContext;
@@ -39,6 +41,7 @@ public class ExecutionStateService {
     private final WorkflowRegistryService registryService;
     private final ExecutionLeaseManager leaseManager;
     private final ExecutionEventBroadcaster eventBroadcaster;
+    private final ToolAuditRepository toolAuditRepository;
 
     @Inject
     public ExecutionStateService(
@@ -46,7 +49,8 @@ public class ExecutionStateService {
             WorkflowStateRepository stateRepository,
             WorkflowRegistryService registryService,
             ExecutionLeaseManager leaseManager,
-            ExecutionEventBroadcaster eventBroadcaster) {
+            ExecutionEventBroadcaster eventBroadcaster,
+            ToolAuditRepository toolAuditRepository) {
         this.workflowExecutor =
                 Objects.requireNonNull(workflowExecutor, "workflowExecutor must not be null");
         this.stateRepository =
@@ -56,6 +60,8 @@ public class ExecutionStateService {
         this.leaseManager = Objects.requireNonNull(leaseManager, "leaseManager must not be null");
         this.eventBroadcaster =
                 Objects.requireNonNull(eventBroadcaster, "eventBroadcaster must not be null");
+        this.toolAuditRepository =
+                Objects.requireNonNull(toolAuditRepository, "toolAuditRepository must not be null");
     }
 
     /// Resumes a paused workflow execution.
@@ -173,7 +179,8 @@ public class ExecutionStateService {
     private ExecutionListener resumeListener(String tenantId, String executionId) {
         return new CompositeExecutionListener(
                 checkpointListener(tenantId),
-                new ToolStreamingExecutionListener(eventBroadcaster, executionId));
+                new ToolStreamingExecutionListener(eventBroadcaster, executionId),
+                new ToolAuditListener(toolAuditRepository, tenantId, executionId));
     }
 
     private ExecutionListener checkpointListener(String tenantId) {

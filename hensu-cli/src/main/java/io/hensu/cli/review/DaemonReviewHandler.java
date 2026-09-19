@@ -44,7 +44,10 @@ import java.util.function.Consumer;
 /// immediately with the same {@code review_id} for correlation.
 ///
 /// If no client reattaches within {@value #REVIEW_TIMEOUT_MINUTES} minutes, the future
-/// times out and the review auto-approves — an acceptable last-resort fallback.
+/// times out and the review is **rejected**. A review exists to put a human in front of a
+/// decision; a timeout means no human was reached, so approving on their behalf would
+/// grant exactly what the checkpoint was there to withhold. Tool approvals fail closed the
+/// same way, to {@link io.hensu.cli.review.ApprovalOutcome#NO_REVIEWER}.
 ///
 /// ### Lifecycle
 /// {@code DaemonServer} must call {@link #registerExecution} before starting the workflow
@@ -79,11 +82,16 @@ public class DaemonReviewHandler implements ReviewHandler {
     /// Stored as a single map entry to guarantee the two are always removed together.
     private record PendingReview(CompletableFuture<ReviewDecision> future, DaemonFrame frame) {}
 
+    private record PendingApproval(
+            CompletableFuture<ApprovalOutcome> future, DaemonFrame frame, String execId) {}
+
     private final ConcurrentHashMap<String, ExecContext> execContexts = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, PendingReview> pendingReviews =
             new ConcurrentHashMap<>();
     /// Tracks which reviewIds belong to each execution for disconnect cleanup.
     private final ConcurrentHashMap<String, Set<String>> execReviewIds = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, PendingApproval> pendingApprovals =
+            new ConcurrentHashMap<>();
     private final CLIReviewHandler cliDelegate = new CLIReviewHandler();
 
     /// Registers a daemon execution so review checkpoints route through the socket.
@@ -112,13 +120,14 @@ public class DaemonReviewHandler implements ReviewHandler {
     public void unregisterExecution(String execId) {
         execContexts.remove(execId);
         cancelPendingReviews(execId);
+        cancelPendingApprovals(execId);
         execReviewIds.remove(execId);
     }
 
     /// Suspends the frame sender for an execution without cancelling pending review futures.
     ///
     /// Called when the client disconnects (Ctrl+C / socket close) but the execution should
-    /// remain paused at the review checkpoint rather than auto-approving. The pending
+    /// remain paused at the review checkpoint rather than resolving it unattended. The pending
     /// {@link PendingReview} entry remains alive; the execution virtual thread continues to
     /// block until either a client reattaches (see {@link #resumeExecution}) or the
     /// {@value #REVIEW_TIMEOUT_MINUTES}-minute timeout fires.
@@ -150,6 +159,11 @@ public class DaemonReviewHandler implements ReviewHandler {
                 frameSender.accept(pending.frame());
             }
         }
+        // A tool call waiting on approval blocks its node exactly as a review does, so a
+        // reattaching client has to see it again or the run stays parked with no prompt.
+        pendingApprovals.values().stream()
+                .filter(pending -> pending.execId().equals(execId))
+                .forEach(pending -> frameSender.accept(pending.frame()));
     }
 
     /// Returns {@code true} if this execution was registered for interactive (daemon) review.
@@ -213,6 +227,58 @@ public class DaemonReviewHandler implements ReviewHandler {
                         state.getExecutionId(), node, result, state, history, config, workflow));
     }
 
+    /// Cancels every tool approval still waiting on this execution, refusing each one.
+    ///
+    /// A cancelled execution has no reviewer left to ask, and the calls were never made,
+    /// so {@link ApprovalOutcome#NO_REVIEWER} is the honest answer. This deliberately
+    /// differs from {@link #cancelPendingReviews}, which approves: a node review is about
+    /// work already done, while a tool approval is about work about to be launched.
+    ///
+    /// @param execId id of the execution being torn down, not null
+    public void cancelPendingApprovals(String execId) {
+        pendingApprovals.forEach(
+                (approvalId, pending) -> {
+                    if (pending.execId().equals(execId)) {
+                        PendingApproval removed = pendingApprovals.remove(approvalId);
+                        if (removed != null) {
+                            removed.future().complete(ApprovalOutcome.NO_REVIEWER);
+                        }
+                    }
+                });
+    }
+
+    /// Completes a tool approval the attached client answered.
+    ///
+    /// @param approvalId correlation id from the request frame, not null
+    /// @param outcome what the reviewer answered, not null
+    public void completeToolApproval(String approvalId, ApprovalOutcome outcome) {
+        PendingApproval pending = pendingApprovals.remove(approvalId);
+        if (pending != null) {
+            pending.future().complete(outcome);
+        }
+    }
+
+    /// Asks a human whether one tool call may run, and blocks until they answer.
+    ///
+    /// Routing mirrors {@link #requestReview}: an execution with an attached daemon
+    /// client is asked over the wire, an inline run started with `--interactive` is asked
+    /// on the terminal, and a run with neither is not asked at all. The last case returns
+    /// {@link ApprovalOutcome#NO_REVIEWER}, never an approval — an unattended run refuses
+    /// rather than escalating, because there is nobody the escalation could reach.
+    ///
+    /// @param request the call needing a decision, not null
+    /// @return the reviewer's answer, or {@link ApprovalOutcome#NO_REVIEWER} when there is
+    ///     no reviewer to ask, never null
+    /// @apiNote **Side effects**: blocks the calling tool loop until the reviewer answers
+    ///     or {@code REVIEW_TIMEOUT_MINUTES} elapses. The call it describes has not run and
+    ///     does not run unless this returns {@link ApprovalOutcome#APPROVED}.
+    public ApprovalOutcome requestToolApproval(ToolApprovalRequest request) {
+        if (!isInteractive(request.executionId())) {
+            return cliDelegate.requestToolApproval(request);
+        }
+        return sendToolApprovalRequest(request);
+    }
+
     // — Private ———————————————————————————————————————————————————————————————
 
     private ReviewDecision sendReviewRequest(
@@ -251,9 +317,17 @@ public class DaemonReviewHandler implements ReviewHandler {
 
         try {
             return future.get(REVIEW_TIMEOUT_MINUTES, TimeUnit.MINUTES);
-        } catch (Exception e) {
+        } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return new ReviewDecision.Approve(null);
+            return new ReviewDecision.Reject("Review interrupted before a reviewer answered");
+        } catch (Exception e) {
+            // A reviewer who never answered has not approved anything. Interrupting the
+            // thread here would be a lie: a timeout is not an interruption, and the flag
+            // would abort the next blocking call the execution makes.
+            return new ReviewDecision.Reject(
+                    "No reviewer answered within "
+                            + REVIEW_TIMEOUT_MINUTES
+                            + " minutes; the review was not approved");
         } finally {
             pendingReviews.remove(reviewId);
             if (ids != null) ids.remove(reviewId);
@@ -302,6 +376,50 @@ public class DaemonReviewHandler implements ReviewHandler {
                 steps,
                 workflowJson,
                 state.getContext());
+    }
+
+    private ApprovalOutcome sendToolApprovalRequest(ToolApprovalRequest request) {
+        String execId = request.executionId();
+        String approvalId = UUID.randomUUID().toString();
+        CompletableFuture<ApprovalOutcome> future = new CompletableFuture<>();
+
+        DaemonFrame frame =
+                DaemonFrame.toolApprovalRequest(
+                        execId,
+                        approvalId,
+                        new DaemonFrame.ToolApprovalPayload(
+                                request.nodeId(),
+                                request.toolName(),
+                                request.summary(),
+                                request.argv(),
+                                request.sandboxSummary(),
+                                request.reason()));
+
+        pendingApprovals.put(approvalId, new PendingApproval(future, frame, execId));
+
+        ExecContext ctx = execContexts.get(execId);
+        if (ctx != null) {
+            ctx.statusNotifier().accept(ExecutionStatus.AWAITING_REVIEW);
+            if (ctx.frameSender() != null) {
+                ctx.frameSender().accept(frame);
+            }
+        }
+
+        try {
+            return future.get(REVIEW_TIMEOUT_MINUTES, TimeUnit.MINUTES);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ApprovalOutcome.NO_REVIEWER;
+        } catch (Exception e) {
+            // A reviewer who never answered has not approved anything.
+            return ApprovalOutcome.NO_REVIEWER;
+        } finally {
+            pendingApprovals.remove(approvalId);
+            ExecContext current = execContexts.get(execId);
+            if (current != null) {
+                current.statusNotifier().accept(ExecutionStatus.RUNNING);
+            }
+        }
     }
 
     private static String resolvePrompt(Workflow workflow, String nodeId) {

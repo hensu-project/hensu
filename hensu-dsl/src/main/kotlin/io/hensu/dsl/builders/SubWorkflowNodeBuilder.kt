@@ -1,6 +1,7 @@
 package io.hensu.dsl.builders
 
 import io.hensu.core.execution.EngineVariables
+import io.hensu.core.tool.CapabilityGaps
 import io.hensu.core.workflow.node.SubWorkflowNode
 import io.hensu.core.workflow.transition.SuccessTransition
 
@@ -66,14 +67,21 @@ class SubWorkflowNodeBuilder(private val id: String) : BaseNodeBuilder, Transiti
     /**
      * Declares state variables the child workflow writes, mirrored back into the parent state.
      *
-     * Each name must be declared in the parent's `state {}` block, must not be an engine variable,
-     * and must not overlap with [imports].
+     * Each name must be declared in the parent's `state {}` block, must not be an engine variable
+     * or a capability gap key, and must not overlap with [imports]. A gap key is written by the
+     * engine inside whichever workflow made the refused call, so mirroring one back would overwrite
+     * the parent's own record.
      */
     fun writes(vararg names: String) {
         for (name in names) {
             require(name.isNotBlank()) { "subWorkflow('$id'): writes name must not be blank" }
             require(!EngineVariables.isEngineVar(name)) {
                 "subWorkflow('$id'): writes field '$name' is a reserved engine variable."
+            }
+            require(name !in CapabilityGaps.RESERVED_KEYS) {
+                "subWorkflow('$id'): writes field '$name' is written by the engine – it records " +
+                    "tool refusals there. Route on it with " +
+                    "onCondition(\"${CapabilityGaps.COUNT_KEY}\"); never declare it."
             }
         }
         require(names.toSet().size == names.size) {

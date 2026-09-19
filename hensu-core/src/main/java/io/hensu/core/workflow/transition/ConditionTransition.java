@@ -4,6 +4,7 @@ import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuState;
+import io.hensu.core.tool.CapabilityGaps;
 import java.util.Map;
 import java.util.Set;
 
@@ -101,6 +102,15 @@ public record ConditionTransition(
     public String mismatchDiagnostic(HensuState state) {
         Object value = contextValue(state);
         if (condition.test(value) != Condition.MatchResult.TYPE_MISMATCH) {
+            return null;
+        }
+        if (value == null && CapabilityGaps.RESERVED_KEYS.contains(variable)) {
+            // Absence is this key's healthy state, not a misrouted workflow. The engine writes it
+            // only when something is actually refused, so a run where nothing was refused has no
+            // value to coerce — and the shape the DSL guide recommends, a gap arm ahead of an
+            // ordinary one, would otherwise report a mismatch on every clean run. A warning that
+            // fires when nothing is wrong is what teaches an operator to stop reading warnings.
+            // A gap key that is present but not a number still reports: that one is a real defect.
             return null;
         }
         String actual =

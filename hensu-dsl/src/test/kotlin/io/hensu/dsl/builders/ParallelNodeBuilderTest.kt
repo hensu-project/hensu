@@ -98,6 +98,31 @@ class ParallelNodeBuilderTest {
                 .hasMessageContaining("reserved engine variable")
         }
 
+        // A branch yields into the parent context on winning consensus, so a yielded gap key would
+        // overwrite the engine's record with whatever one branch's agent happened to emit. The
+        // message is asserted whole: naming the branch is what tells an author which of several
+        // branches to edit.
+        @Test
+        fun `should reject yields that collide with the capability gap keys`() {
+            val builder = ParallelNodeBuilder("parallel-1", workingDir)
+
+            assertThatThrownBy {
+                    builder.apply {
+                        branch("b1") {
+                            agent = "reviewer"
+                            prompt = "Review"
+                            yields("_capability_gap_count")
+                        }
+                    }
+                }
+                .isInstanceOf(IllegalArgumentException::class.java)
+                .hasMessage(
+                    "Branch 'b1': yield field '_capability_gap_count' is written by the engine " +
+                        "\u2013 it records tool refusals there. Route on it with " +
+                        "onCondition(\"_capability_gap_count\"); never declare it."
+                )
+        }
+
         @Test
         fun `should throw when judge decides without judge`() {
             val builder = ParallelNodeBuilder("voting", workingDir)

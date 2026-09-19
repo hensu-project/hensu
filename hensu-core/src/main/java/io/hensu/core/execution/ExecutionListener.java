@@ -70,6 +70,10 @@ public interface ExecutionListener {
     /// The rule reports no match, but the mismatch is never silent – surface this
     /// warning so loop budgets are not burned invisibly.
     ///
+    /// One case is deliberately not a mismatch: an engine-owned capability-gap key that is
+    /// absent. The engine writes those only when a call is refused, so their absence is what a
+    /// healthy run looks like rather than a workflow routing on the wrong name.
+    ///
     /// @param nodeId identifier of the node whose transition rule mismatched, not null
     /// @param message diagnostic naming variable, expected form, and actual value, not null
     default void onTransitionWarning(String nodeId, String message) {}

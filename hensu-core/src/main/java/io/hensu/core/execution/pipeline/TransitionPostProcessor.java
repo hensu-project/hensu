@@ -4,6 +4,7 @@ import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.review.ReviewVerdict;
 import io.hensu.core.state.HensuState;
+import io.hensu.core.tool.CapabilityGaps;
 import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.transition.BoundedTransition;
 import io.hensu.core.workflow.transition.TransitionRule;
@@ -159,6 +160,10 @@ public final class TransitionPostProcessor implements PostNodeExecutionProcessor
         vars.add(EngineVariables.SCORE);
         vars.add(EngineVariables.APPROVED);
         vars.remove(EngineVariables.RECOMMENDATION);
+        // Capability gaps accumulate across the whole run: the completion summary reports
+        // them at the end and a later node may route on the same key. Clearing them on the
+        // way out of the node that recorded one would leave a blocked run looking healthy.
+        vars.removeAll(CapabilityGaps.RESERVED_KEYS);
         return vars;
     }
 

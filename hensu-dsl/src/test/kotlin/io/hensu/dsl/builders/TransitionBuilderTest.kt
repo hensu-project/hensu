@@ -170,6 +170,43 @@ class TransitionBuilderTest {
     }
 
     @Test
+    fun `should allow onCondition on the engine-owned capability gap count`() {
+        // The tool loop records refusals there, so demanding a writes() declaration would
+        // ask the author to promise output the agent must never produce — and the engine
+        // refuses that declaration outright.
+        val workflow =
+            workflow("GapRouting", workingDir) {
+                agents {
+                    agent("agent1") {
+                        role = "Test"
+                        model = "test"
+                    }
+                }
+
+                graph {
+                    start at "worker"
+
+                    node("worker") {
+                        agent = "agent1"
+                        prompt = "Test"
+
+                        onCondition("_capability_gap_count") {
+                            whenValue greaterThanOrEqual 1 goto "escalate"
+                        }
+                        onSuccess goto "deploy"
+                    }
+
+                    end("deploy")
+                    end("escalate")
+                }
+            }
+
+        val worker = workflow.nodes["worker"] as StandardNode
+        assertThat((worker.transitionRules[0] as ConditionTransition).variable())
+            .isEqualTo("_capability_gap_count")
+    }
+
+    @Test
     fun `should reject onCondition on an engine variable`() {
         // Routing on 'approved' through a generic condition looks equivalent to onApproval but
         // bypasses the semantics the engine wires prompts, extraction, and the human review

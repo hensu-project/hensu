@@ -4,6 +4,7 @@ import io.hensu.core.execution.EngineVariables
 import io.hensu.core.review.ReviewConfig
 import io.hensu.core.review.ReviewMode
 import io.hensu.core.rubric.RubricParser
+import io.hensu.core.tool.CapabilityGaps
 import io.hensu.core.workflow.node.StandardNode
 import io.hensu.core.workflow.transition.ApprovalTransition
 import io.hensu.core.workflow.transition.SuccessTransition
@@ -128,9 +129,11 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
      * All names must be declared in the workflow `state {}` block. The engine variables `score`,
      * `approved`, and `recommendation` are reserved and rejected here: the engine infers them from
      * the node's transition rules and consensus configuration, injects the matching format
-     * instructions into the prompt, and extracts them from the response on its own. Declarations
-     * are validated again at workflow load time, so programmatically built workflows are held to
-     * the same rule.
+     * instructions into the prompt, and extracts them from the response on its own. The capability
+     * gap keys are rejected for the same reason – the tool loop writes them while the node runs, so
+     * a node that also declared them would let the agent's own output erase the record of what it
+     * was refused. Declarations are validated again at workflow load time, so programmatically
+     * built workflows are held to the same rule.
      *
      * @param names variable names this node writes to
      */
@@ -139,6 +142,11 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
             require(!EngineVariables.isEngineVar(name)) {
                 "Node '$id': writes field '$name' is a reserved engine variable. " +
                     "Use a different name (e.g. 'review_$name')."
+            }
+            require(name !in CapabilityGaps.RESERVED_KEYS) {
+                "Node '$id': writes field '$name' is written by the engine – it records tool " +
+                    "refusals there. Route on it with onCondition(\"${CapabilityGaps.COUNT_KEY}\"); " +
+                    "never declare it."
             }
         }
         writes = names.toList()
@@ -217,8 +225,8 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
 
     /**
      * Validates the compiled transition rules at build time:
-     * - every custom variable a rule routes on must be declared in [writes] (engine variables are
-     *   inferred from the graph and exempt)
+     * - every custom variable a rule routes on must be declared in [writes] (engine variables and
+     *   the engine-owned capability-gap keys are written by the engine itself and exempt)
      * - two bounded rules must not share a retry-counter namespace on one node
      * - a bounded retry arm ordered before an exit arm is logged as a warning (the exit arm cannot
      *   fire until the budget is exhausted)
@@ -226,7 +234,11 @@ class StandardNodeBuilder(private val id: String, private val workingDirectory: 
     private fun validateTransitions(rules: List<TransitionRule>) {
         val declared = writes.toSet()
         for (rule in rules) {
-            val custom = rule.requiredRoutingVars() - EngineVariables.all()
+            // The capability-gap keys are recorded by the tool loop, not produced by the
+            // agent, so demanding a writes() declaration would ask an author to promise
+            // output the agent must never emit — and the engine refuses that declaration.
+            val custom =
+                rule.requiredRoutingVars() - EngineVariables.all() - CapabilityGaps.RESERVED_KEYS
             for (variable in custom) {
                 require(variable in declared) {
                     "Node '$id': transition routes on variable '$variable' which is not " +

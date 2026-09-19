@@ -108,11 +108,10 @@ public class McpToolProvider implements ToolProvider {
         }
 
         String endpoint = tenant.mcpEndpoint();
-        Map<String, Object> effectiveArgs = arguments != null ? arguments : Map.of();
 
         try {
             return McpResultRenderer.toResult(
-                    toolName, callWithDeadline(toolName, endpoint, effectiveArgs));
+                    toolName, callWithDeadline(toolName, endpoint, arguments));
         } catch (StructuredTaskScope.TimeoutException e) {
             LOG.warnv("MCP tool call {0} exceeded {1}", toolName, callTimeout);
             return ToolCallResult.of(

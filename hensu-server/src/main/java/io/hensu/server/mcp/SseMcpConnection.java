@@ -72,8 +72,7 @@ public class SseMcpConnection implements McpConnection {
         }
 
         // Build MCP tools/call params
-        Map<String, Object> params =
-                Map.of("name", toolName, "arguments", arguments != null ? arguments : Map.of());
+        Map<String, Object> params = Map.of("name", toolName, "arguments", arguments);
 
         // Send request via SSE and BLOCK the virtual thread until response
         // This is efficient in Java 25 - the OS thread is released while waiting

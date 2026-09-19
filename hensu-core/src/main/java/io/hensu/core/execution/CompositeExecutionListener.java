@@ -1,14 +1,14 @@
-package io.hensu.server.execution;
+package io.hensu.core.execution;
 
 import io.hensu.core.agent.AgentResponse;
-import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.tool.ToolCallEvent;
 import io.hensu.core.tool.ToolResultEvent;
 import io.hensu.core.workflow.node.Node;
 import java.util.function.Consumer;
-import org.jboss.logging.Logger;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /// Fans out all execution lifecycle events to an ordered set of delegates.
 ///
@@ -23,7 +23,7 @@ import org.jboss.logging.Logger;
 /// {@snippet :
 /// ExecutionListener composite = new CompositeExecutionListener(
 ///     checkpointListener,
-///     new LoggingExecutionListener()
+///     auditListener
 /// );
 /// workflowExecutor.execute(workflow, initialContext, composite);
 /// }
@@ -31,11 +31,16 @@ import org.jboss.logging.Logger;
 /// @implNote Thread-safe if all delegates are thread-safe. Delegates are
 /// captured at construction and never mutated.
 ///
+/// It lives in the engine rather than in one runtime because both runtimes compose the
+/// same way: the server layers checkpointing, the event stream and the tool audit, and the
+/// CLI layers verbose output and its own audit sink. One fan-out with one containment rule
+/// is the whole of it.
+///
 /// @see ExecutionListener
-/// @see LoggingExecutionListener
 public final class CompositeExecutionListener implements ExecutionListener {
 
-    private static final Logger LOG = Logger.getLogger(CompositeExecutionListener.class);
+    private static final Logger logger =
+            Logger.getLogger(CompositeExecutionListener.class.getName());
 
     private final ExecutionListener[] delegates;
 
@@ -95,11 +100,13 @@ public final class CompositeExecutionListener implements ExecutionListener {
             try {
                 delivery.accept(delegate);
             } catch (RuntimeException e) {
-                LOG.warnv(
-                        e,
-                        "Execution listener {0} failed handling {1}",
-                        delegate.getClass().getSimpleName(),
-                        event);
+                logger.log(
+                        Level.WARNING,
+                        "Execution listener "
+                                + delegate.getClass().getSimpleName()
+                                + " failed handling "
+                                + event,
+                        e);
             }
         }
     }

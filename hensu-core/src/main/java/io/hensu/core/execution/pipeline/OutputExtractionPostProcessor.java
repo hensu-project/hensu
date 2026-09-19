@@ -3,6 +3,7 @@ package io.hensu.core.execution.pipeline;
 import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.state.HensuState;
+import io.hensu.core.tool.CapabilityGaps;
 import io.hensu.core.util.AgentOutputValidator;
 import io.hensu.core.util.JsonUtil;
 import io.hensu.core.workflow.node.GenericNode;
@@ -86,6 +87,11 @@ public final class OutputExtractionPostProcessor implements PostNodeExecutionPro
             if (!writes.isEmpty() || !engineVars.isEmpty()) {
                 Set<String> keySet = new LinkedHashSet<>(writes);
                 keySet.addAll(engineVars);
+                // The engine writes the capability-gap keys during execution, not from
+                // the agent's output. Clearing and re-extracting them would erase a
+                // refusal between the tool loop recording it and a transition routing on
+                // it, and would let an agent that emits the key hide its own blockage.
+                keySet.removeAll(CapabilityGaps.RESERVED_KEYS);
                 List<String> allKeys = new ArrayList<>(keySet);
 
                 // Clear every key about to be re-extracted so a transition rule never

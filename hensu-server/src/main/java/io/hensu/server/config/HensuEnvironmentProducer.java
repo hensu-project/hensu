@@ -10,12 +10,16 @@ import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.tool.ToolProvider;
 import io.hensu.core.tool.ToolRouter;
 import io.hensu.server.persistence.ExecutionLeaseManager;
+import io.hensu.server.persistence.InMemoryToolAuditRepository;
+import io.hensu.server.persistence.JdbcToolAuditRepository;
 import io.hensu.server.persistence.JdbcWorkflowRepository;
 import io.hensu.server.persistence.JdbcWorkflowStateRepository;
+import io.hensu.server.persistence.ToolAuditRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 import java.util.List;
 import java.util.Properties;
 import javax.sql.DataSource;
@@ -117,6 +121,26 @@ public class HensuEnvironmentProducer {
         registerGenericHandlers();
 
         return hensuEnvironment;
+    }
+
+    /// Produces the durable tool audit sink for this deployment.
+    ///
+    /// Composed unconditionally into every execution's listener, so the choice here is
+    /// only *where* the trail goes, never *whether* one is kept: a deployment with a
+    /// database writes rows, and one without keeps them in the process rather than
+    /// discarding them.
+    ///
+    /// @return the audit repository, never null
+    @Produces
+    @Singleton
+    public ToolAuditRepository toolAuditRepository() {
+        boolean dsActive =
+                config.getOptionalValue("quarkus.datasource.active", Boolean.class).orElse(true);
+        if (dsActive && dataSourceInstance.isResolvable()) {
+            return new JdbcToolAuditRepository(dataSourceInstance.get(), objectMapper);
+        }
+        LOG.info("Tool audit is kept in memory: no data source is active");
+        return new InMemoryToolAuditRepository();
     }
 
     /// Register all CDI-discovered GenericNodeHandler implementations.

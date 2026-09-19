@@ -1146,6 +1146,10 @@ trail of what the agent asked to run:
 The pair fires for every outcome, not only for tools that ran: a hallucinated name, a provider
 failure, an exception during invocation, and a request the budget rejected are all audited.
 
+Each record carries a `callId`, minted by the loop once per call, and a sink pairs the request with
+its outcome on that. Node id and tool name would identify a call only while no two concurrent calls
+can share both — true of today's graph shapes, and a property of the graph rather than of the audit.
+
 Both records are built to be kept. `ToolResultEvent` truncates output at `MAX_OUTPUT_CHARS` (4096)
 and `ToolCallEvent` truncates each argument value at `MAX_ARG_CHARS` (1024), so the trail stays
 cheap enough to always be on. Arguments are copied recursively rather than shallowly, so a provider

@@ -67,6 +67,26 @@ commands:
     unattended: false
     approval: required
 
+  gated-echo:
+    description: "Shows approval: required from an agent's side – attended reviews it, unattended refuses"
+    exec: ["/bin/echo", "gated: {message}"]
+    timeout: 5000
+    approval: required
+    tool:
+      description: "Echo a message; a reviewer must approve each call"
+      params:
+        message: { type: string, required: true, maxLength: 256 }
+
+  supervised-echo:
+    description: "Shows unattended: false from an agent's side – never runs with nobody watching"
+    exec: ["/bin/echo", "supervised: {message}"]
+    timeout: 5000
+    unattended: false
+    tool:
+      description: "Echo a message; never runs with nobody watching"
+      params:
+        message: { type: string, required: true, maxLength: 256 }
+
   send-notification:
     description: "Notify the operator mid-run without ending the workflow"
     exec: ["/bin/echo", "Sending notification: {message}"]

@@ -14,7 +14,7 @@ import org.jboss.logging.Logger;
 /// prompt and response visibility without requiring an external trace sink.
 ///
 /// Designed to be composed with a checkpoint listener via
-/// {@link CompositeExecutionListener} and enabled by the
+/// {@link io.hensu.core.execution.CompositeExecutionListener} and enabled by the
 /// `hensu.verbose.enabled` configuration property.
 ///
 /// Tool invocations are logged too, forming the operator-visible half of the
@@ -41,7 +41,7 @@ import org.jboss.logging.Logger;
 /// @implNote **Not thread-safe**. Log statements may interleave if used with
 /// parallel node execution. Use a thread-safe logger appender for production.
 ///
-/// @see CompositeExecutionListener
+/// @see io.hensu.core.execution.CompositeExecutionListener
 /// @see io.hensu.server.workflow.WorkflowService
 public class LoggingExecutionListener implements ExecutionListener {
 

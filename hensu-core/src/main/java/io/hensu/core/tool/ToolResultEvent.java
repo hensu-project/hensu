@@ -1,14 +1,19 @@
 package io.hensu.core.tool;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 
 /// Audit record emitted after a tool invocation settles, whatever the outcome.
+///
+/// Carries the {@link #callId} of the {@link ToolCallEvent} it answers, so a sink
+/// pairing the two never has to guess from node and tool name.
 ///
 /// Tool output is unbounded in principle (a build log, a file dump), so the
 /// record truncates it to {@link #MAX_OUTPUT_CHARS} characters: an audit trail
 /// must stay cheap enough to always be on.
 ///
+/// @param callId identity of the call this outcome answers, not null
 /// @param nodeId identifier of the node whose agent requested the tool, not null
 /// @param agentId identifier of the requesting agent, not null
 /// @param toolName the tool that was invoked, not null
@@ -22,6 +27,7 @@ import java.util.Objects;
 /// @see ToolCallStatus for the outcome vocabulary
 /// @see io.hensu.core.execution.ExecutionListener#onToolResult
 public record ToolResultEvent(
+        String callId,
         String nodeId,
         String agentId,
         String toolName,
@@ -30,6 +36,7 @@ public record ToolResultEvent(
         String output,
         String error,
         Integer exitCode,
+        List<String> argv,
         Instant occurredAt) {
 
     /// Maximum number of output characters retained; longer output is truncated.
@@ -39,6 +46,7 @@ public record ToolResultEvent(
 
     /// Compact constructor truncating oversized output.
     public ToolResultEvent {
+        Objects.requireNonNull(callId, "callId must not be null");
         Objects.requireNonNull(nodeId, "nodeId must not be null");
         Objects.requireNonNull(agentId, "agentId must not be null");
         Objects.requireNonNull(toolName, "toolName must not be null");
@@ -47,19 +55,59 @@ public record ToolResultEvent(
         if (output != null && output.length() > MAX_OUTPUT_CHARS) {
             output = output.substring(0, MAX_OUTPUT_CHARS) + TRUNCATION_MARKER;
         }
+        argv = argv != null ? List.copyOf(argv) : List.of();
+    }
+
+    /// Creates an event for a call that resolved no argv.
+    ///
+    /// @param callId identity of the call this outcome answers, not null
+    /// @param nodeId id of the node whose agent called, not null
+    /// @param agentId id of the calling agent, not null
+    /// @param toolName the tool that was invoked, not null
+    /// @param status the outcome, not null
+    /// @param durationMs how long the call took
+    /// @param output what the tool produced, may be null
+    /// @param error why it did not succeed, may be null
+    /// @param exitCode the process exit code where there was a process, may be null
+    /// @param occurredAt when the call settled, not null
+    public ToolResultEvent(
+            String callId,
+            String nodeId,
+            String agentId,
+            String toolName,
+            ToolCallStatus status,
+            long durationMs,
+            String output,
+            String error,
+            Integer exitCode,
+            Instant occurredAt) {
+        this(
+                callId,
+                nodeId,
+                agentId,
+                toolName,
+                status,
+                durationMs,
+                output,
+                error,
+                exitCode,
+                List.of(),
+                occurredAt);
     }
 
     /// Creates an outcome record timestamped now from a settled result.
     ///
+    /// @param callId identity of the call this outcome answers, not null
     /// @param nodeId identifier of the requesting node, not null
     /// @param agentId identifier of the requesting agent, not null
     /// @param result the settled invocation result, not null
     /// @param durationMs wall-clock duration in milliseconds
     /// @return new event, never null
     public static ToolResultEvent now(
-            String nodeId, String agentId, ToolCallResult result, long durationMs) {
+            String callId, String nodeId, String agentId, ToolCallResult result, long durationMs) {
         Objects.requireNonNull(result, "result must not be null");
         return new ToolResultEvent(
+                callId,
                 nodeId,
                 agentId,
                 result.toolName(),
@@ -68,6 +116,7 @@ public record ToolResultEvent(
                 result.output(),
                 result.error(),
                 result.exitCode(),
+                result.argv(),
                 Instant.now());
     }
 

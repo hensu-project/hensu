@@ -1,8 +1,13 @@
 package io.hensu.cli.tool;
 
+import static org.assertj.core.api.Assertions.as;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.InstanceOfAssertFactories.STRING;
 
+import io.hensu.cli.review.ApprovalOutcome;
+import io.hensu.cli.review.DaemonReviewHandler;
+import io.hensu.cli.review.ToolApprovalRequest;
 import io.hensu.cli.sandbox.SandboxLauncher;
 import io.hensu.cli.sandbox.UnavailableSandboxLauncher;
 import io.hensu.core.execution.action.CommandDefinition;
@@ -67,8 +72,67 @@ class LocalMcpToolProviderTest {
     }
 
     private LocalMcpToolProvider provider(SandboxLauncher backend) {
-        provider = new LocalMcpToolProvider(catalog, backend, System.getenv());
+        provider = new LocalMcpToolProvider(catalog, backend, null, System.getenv());
         return provider;
+    }
+
+    private LocalMcpToolProvider provider(SandboxLauncher backend, ToolSourceNotices notices) {
+        provider = new LocalMcpToolProvider(catalog, backend, null, System.getenv(), notices);
+        return provider;
+    }
+
+    @Nested
+    class WhatTheOperatorIsTold {
+
+        @Test
+        void shouldReportAnUnreadableDeclarationRatherThanLeaveTheToolsQuietlyAbsent()
+                throws IOException {
+            // The CLI ships quarkus.log.console.level=OFF, so the warning this used to
+            // raise reached nobody: the operator saw a node fail on a tool they had
+            // declared, with nothing anywhere saying their mcp.yaml had not parsed.
+            Files.writeString(
+                    workingDirectory.resolve(McpConfig.FILE_NAME),
+                    "servers:\n  fixture:\n    command: [\"/bin/echo\", \"{workdir}/server.py\"]\n");
+            ToolSourceNotices notices = new ToolSourceNotices();
+
+            assertThat(provider(launcher, notices).tools()).isEmpty();
+
+            assertThat(notices.all())
+                    .singleElement(as(STRING))
+                    .contains(McpConfig.FILE_NAME)
+                    .contains("{workdir}");
+        }
+
+        @Test
+        void shouldReportAServerThatCouldNotStart() throws IOException {
+            Files.writeString(
+                    workingDirectory.resolve(McpConfig.FILE_NAME),
+                    """
+                            servers:
+                              fixture:
+                                command: ["/nonexistent/server"]
+                                unattended: true
+                            """);
+            ToolSourceNotices notices = new ToolSourceNotices();
+
+            assertThat(provider(launcher, notices).tools()).isEmpty();
+
+            assertThat(notices.all())
+                    .singleElement(as(STRING))
+                    .contains("fixture")
+                    .contains("did not start");
+        }
+
+        @Test
+        void shouldSayNothingWhenEveryDeclaredServerAnswered() throws IOException {
+            declareFakeServer("fixture");
+            ToolSourceNotices notices = new ToolSourceNotices();
+
+            assertThat(provider(launcher, notices).tools()).isNotEmpty();
+
+            // A section printed on every healthy run is a section nobody reads.
+            assertThat(notices.all()).isEmpty();
+        }
     }
 
     @Nested
@@ -114,6 +178,37 @@ class LocalMcpToolProviderTest {
             declareFakeServer("fixture");
 
             assertThat(provider(new UnavailableSandboxLauncher("test")).tools()).isEmpty();
+        }
+
+        @Test
+        void shouldStartAnUncontainedServerOnlyAfterAReviewerApprovedThatLaunch()
+                throws IOException {
+            declareFakeServer("fixture");
+            ScriptedGate gate = new ScriptedGate(ApprovalOutcome.APPROVED, false);
+
+            LocalMcpToolProvider gated =
+                    new LocalMcpToolProvider(
+                            catalog, new UnavailableSandboxLauncher("test"), gate, System.getenv());
+            provider = gated;
+
+            assertThat(gated.tools()).extracting(ToolDefinition::name).containsExactly("echo");
+            assertThat(gate.asked).hasSize(1);
+        }
+
+        @Test
+        void shouldNotAskAnAbsentReviewerAndSkipTheServerInstead() throws IOException {
+            declareFakeServer("fixture");
+            ScriptedGate gate = new ScriptedGate(ApprovalOutcome.APPROVED, true);
+
+            LocalMcpToolProvider gated =
+                    new LocalMcpToolProvider(
+                            catalog, new UnavailableSandboxLauncher("test"), gate, System.getenv());
+            provider = gated;
+
+            // An unattended run has nobody to approve an uncontained long-lived process,
+            // so the question is not asked and the server does not start.
+            assertThat(gated.tools()).isEmpty();
+            assertThat(gate.asked).isEmpty();
         }
 
         @Test
@@ -256,6 +351,25 @@ class LocalMcpToolProviderTest {
             policies.add(policy);
             homes.add(privateHome);
             return argv;
+        }
+    }
+
+    /// Gate answering with one scripted outcome, recording what it was asked about.
+    private static final class ScriptedGate extends ToolApprovalGate {
+
+        private final ApprovalOutcome outcome;
+        private final List<ToolApprovalRequest> asked = new ArrayList<>();
+
+        ScriptedGate(ApprovalOutcome outcome, boolean unattended) {
+            super(new DaemonReviewHandler());
+            this.outcome = outcome;
+            setRunMode("exec-1", unattended);
+        }
+
+        @Override
+        public ApprovalOutcome ask(ToolApprovalRequest request) {
+            asked.add(request);
+            return outcome;
         }
     }
 }

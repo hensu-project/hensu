@@ -20,11 +20,15 @@ import java.util.Map;
 /// - **Precondition**: `toolName` is one this provider {@link ToolProvider#provides}
 /// - **Postcondition**: the preview describes the call without performing it
 ///
-/// @apiNote **Side effects**: none. A preview must not launch a process, write
-///     a file, or contact a remote system. A provider that has to do work to
-///     answer – resolving a template, expanding parameters – does that work
-///     and may reuse its result, but nothing observable outside the process may
-///     change.
+/// @apiNote **Side effects**: no process is launched, nothing is sent anywhere, and
+///     nothing the call would have changed is changed. A provider that has to do work
+///     to answer – resolving a template, expanding parameters, probing a containment
+///     backend – does that work and must release whatever it allocated for it. The
+///     command path is the one that does allocate: preparing an invocation creates the
+///     `write:` and `cache:` directories the policy declares, because the sandbox binds
+///     them and an absent bind source is a launch failure. Those directories belong to
+///     the operator's own declaration and are created on any run of that entry, so a
+///     preview brings their creation forward rather than adding an effect of its own.
 /// @see ToolPreview for the description produced
 /// @see ToolProvider for the source being described
 public interface PreviewCapable {

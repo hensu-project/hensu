@@ -5,6 +5,7 @@ import io.hensu.core.execution.parallel.Branch
 import io.hensu.core.execution.parallel.ConsensusConfig
 import io.hensu.core.execution.parallel.ConsensusStrategy
 import io.hensu.core.rubric.RubricParser
+import io.hensu.core.tool.CapabilityGaps
 import io.hensu.core.workflow.node.ParallelNode
 import io.hensu.core.workflow.transition.NoConsensusTransition
 import io.hensu.core.workflow.transition.SuccessTransition
@@ -208,7 +209,9 @@ class BranchBuilder(private val id: String, private val workingDirectory: Workin
      * Declares state variable names this branch produces as structured output.
      *
      * Yielded fields are extracted from the agent's JSON response by the processor pipeline and
-     * promoted to the parent context when the branch wins consensus.
+     * promoted to the parent context when the branch wins consensus. Engine variables and the
+     * capability gap keys are rejected: both are written by the engine, so a branch yielding one
+     * would promote the agent's own value over the engine's.
      *
      * Example:
      * ```kotlin
@@ -226,6 +229,11 @@ class BranchBuilder(private val id: String, private val workingDirectory: Workin
             require(!EngineVariables.isEngineVar(field)) {
                 "Branch '$id': yield field '$field' is a reserved engine variable. " +
                     "Use a different name (e.g. 'review_$field')."
+            }
+            require(field !in CapabilityGaps.RESERVED_KEYS) {
+                "Branch '$id': yield field '$field' is written by the engine – it records tool " +
+                    "refusals there. Route on it with onCondition(\"${CapabilityGaps.COUNT_KEY}\"); " +
+                    "never declare it."
             }
         }
         yieldFields.addAll(fields.toList())

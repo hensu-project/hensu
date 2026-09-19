@@ -1,8 +1,7 @@
-package io.hensu.server.execution;
+package io.hensu.core.execution;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.tool.ToolCallEvent;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolResultEvent;
@@ -24,10 +23,15 @@ class CompositeExecutionListenerTest {
         ExecutionListener composite =
                 new CompositeExecutionListener(first, new ThrowingListener(), last);
 
-        composite.onToolCall(ToolCallEvent.now("node1", "agent1", "search", Map.of("q", "hensu")));
+        composite.onToolCall(
+                ToolCallEvent.now("call-1", "node1", "agent1", "search", Map.of("q", "hensu")));
         composite.onToolResult(
                 ToolResultEvent.now(
-                        "node1", "agent1", ToolCallResult.success("search", "hits"), 12L));
+                        "call-1",
+                        "node1",
+                        "agent1",
+                        ToolCallResult.success("search", "hits"),
+                        12L));
 
         assertThat(first.calls).extracting(ToolCallEvent::toolName).containsExactly("search");
         assertThat(last.calls).extracting(ToolCallEvent::toolName).containsExactly("search");

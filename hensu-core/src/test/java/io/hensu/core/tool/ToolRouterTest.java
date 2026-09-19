@@ -197,6 +197,103 @@ class ToolRouterTest {
         }
     }
 
+    @Nested
+    class ThroughDecorators {
+
+        @Test
+        void shouldStillTreatADecoratedBuiltInAsABuiltIn() {
+            // A deployment wraps every discovered provider in its own policy decorator.
+            // If that disguised the built-ins, installing a filesystem MCP server that
+            // publishes read_file would stop being a warning and start being a refusal
+            // to start.
+            StubToolProvider configured = StubToolProvider.alwaysSucceeding("configured", SEARCH);
+            ToolProvider wrappedBuiltIn = new PassThroughDecorator(new StubBuiltInProvider(SEARCH));
+
+            ToolRouter router = new ToolRouter(List.of(wrappedBuiltIn, configured));
+
+            assertThat(router.call("search", Map.of(), Map.of()).output()).isEqualTo("configured");
+        }
+
+        @Test
+        void shouldNameTheProvidersUnderneathWhenTwoDecoratedCatalogsCollide() {
+            ToolProvider first =
+                    new PassThroughDecorator(StubToolProvider.alwaysSucceeding("first", SEARCH));
+            ToolProvider second = new PassThroughDecorator(new OtherStubProvider(SEARCH));
+
+            assertThatThrownBy(() -> new ToolRouter(List.of(first, second)))
+                    .isInstanceOf(IllegalStateException.class)
+                    // Naming the decorator twice would tell an operator nothing about
+                    // which two configuration files to reconcile.
+                    .hasMessageContaining("StubToolProvider")
+                    .hasMessageContaining("OtherStubProvider");
+        }
+
+        @Test
+        void shouldGiveUpRatherThanHangOnADecoratorChainThatCyclesBackOnItself() {
+            CyclicDecorator cyclic = new CyclicDecorator();
+
+            // A miswired decorator is a bug to report, not a reason to spin forever
+            // inside the router's own precedence check.
+            assertThat(ToolRouter.unwrap(cyclic)).isNotNull();
+        }
+    }
+
+    /// Decorator that changes nothing, so tests can assert the router looks through it.
+    private static final class PassThroughDecorator implements ToolProviderDecorator {
+
+        private final ToolProvider delegate;
+
+        PassThroughDecorator(ToolProvider delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public ToolProvider delegate() {
+            return delegate;
+        }
+
+        @Override
+        public List<ToolDefinition> tools() {
+            return delegate.tools();
+        }
+
+        @Override
+        public boolean provides(String toolName) {
+            return delegate.provides(toolName);
+        }
+
+        @Override
+        public ToolCallResult call(
+                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+            return delegate.call(toolName, arguments, context);
+        }
+    }
+
+    /// Decorator whose delegate is itself, standing in for a miswired chain.
+    private static final class CyclicDecorator implements ToolProviderDecorator {
+
+        @Override
+        public ToolProvider delegate() {
+            return this;
+        }
+
+        @Override
+        public List<ToolDefinition> tools() {
+            return List.of();
+        }
+
+        @Override
+        public boolean provides(String toolName) {
+            return false;
+        }
+
+        @Override
+        public ToolCallResult call(
+                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+            return ToolCallResult.failure(toolName, "unreachable");
+        }
+    }
+
     /// Second provider type, so duplicate messages can name two distinct classes.
     private static final class OtherStubProvider implements ToolProvider {
 

@@ -1,15 +1,28 @@
 # Hensu Unified Architecture
 
 **Hensu** separates the **authoring** of AI workflows from their **execution**. Developers describe agent behavior in a
-type-safe Kotlin DSL. A compiler produces portable JSON definitions. A GraalVM native-image server executes them,
-maintaining distributed lease state (`serverNodeId`, heartbeats) across the cluster. No user code ever runs on the server.
+type-safe Kotlin DSL, and a compiler produces portable JSON definitions. The same engine then executes those
+definitions in one of **two runtimes**: a GraalVM native-image server that runs tenant workloads across a cluster, or a
+JVM CLI that runs a workflow on the operator's own machine. Both embed `hensu-core` unchanged, and neither is a
+degraded mode of the other.
 
-**Two layers, strictly decoupled:**
+**Two runtimes, one engine:**
 
-| Layer             | Responsibility                                   | Technology                            |
-|:------------------|:-------------------------------------------------|:--------------------------------------|
-| **Definition**    | Author and compile workflow logic                | Kotlin DSL → JSON artifacts           |
-| **Orchestration** | Execute compiled workflows with tenant isolation | Pure Java core + Quarkus native image |
+| Runtime                     | Executes                                                        | How side effects reach the world                                                                                            | Packaging                                                          |
+|:----------------------------|:----------------------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------|
+| **Server** (`hensu-server`) | Many tenants' workloads, multi-instance, leased and recoverable | Tenant-owned MCP servers over the split-pipe transport. No shell, no `eval`, no user code on the box (Decision 3)           | GraalVM native image (Quarkus)                                     |
+| **CLI** (`hensu-cli`)       | One operator's workloads, on that operator's own host           | A declared command catalog and local MCP servers under an OS sandbox, plus file tools contained by `PathGuard` (Decision 4) | JVM uber-jar plus launcher script – embeds the Kotlin DSL compiler |
+
+The split is load-bearing rather than a packaging detail. It is the entire subject of Decisions 3 and 4, it is why one
+`HensuFactory.builder()` produces two different wirings (Decision 2), and it is why "Hensu executes a workflow" has two
+correct answers. Where a section applies to only one runtime, it says so in its title.
+
+**Authoring and execution stay decoupled:**
+
+| Layer             | Responsibility                    | Technology                                                      |
+|:------------------|:----------------------------------|:----------------------------------------------------------------|
+| **Definition**    | Author and compile workflow logic | Kotlin DSL → JSON artifacts, client-side only                   |
+| **Orchestration** | Execute compiled workflows        | `hensu-core` – pure Java, zero dependencies – in either runtime |
 
 **Workflows operate at two levels:**
 
@@ -67,13 +80,18 @@ flowchart LR
     linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
+This diagram covers the **server** path only, which is why the developer machine appears in it as a build-and-push
+client. It is not the whole picture of what the CLI does: `hensu run` compiles and then executes the workflow in
+process, without a server being involved at all. Compilation is client-side in both runtimes because the Kotlin
+compiler is a client-side thing; execution is a separate question, answered twice.
+
 ### 2. Centralized Bootstrap (`HensuFactory`)
 
 All core components are assembled through a single builder — `HensuFactory.builder()` — that produces an immutable
-`HensuEnvironment` container. This enforces a consistent wiring strategy across both CLI and Server deployments:
+`HensuEnvironment` container. This enforces a consistent wiring strategy across both runtimes:
 agent providers, action executors, repositories, and configuration are resolved once at startup.
 
-The builder is the only place where deployment-specific behavior diverges: both CLI and server wire the LangChain4j
+The builder is the only place where runtime-specific behavior diverges: both CLI and server wire the LangChain4j
 provider for LLM access. The CLI additionally wires a local bash executor (`CLIActionExecutor`); the server wires
 `ServerActionExecutor` that dispatches `Action.Send` to any registered `ActionHandler` (falling back to MCP for
 unrecognized handlers) while rejecting `Action.Execute` (local bash), and delegates all components via CDI producers.
@@ -234,14 +252,39 @@ path, not globally.
 
 One structural guard backs all of it: `CommandRunner.bind` is the only place in the tree that builds a
 `/bin/sh` command line, and `NoShellOnTheAgentPathTest` reads the sources and fails the build when a
-second one appears. Containment is never optional — a host with no working backend refuses the command
-rather than running it unsandboxed, unless an operator sets `toolexec.allowUnsandboxed`, which logs
-loudly and is never a default.
+second one appears. Containment is never optional — a host with no working backend does not run the
+command unsandboxed. It demotes the call to approval, so a human can authorise that one uncontained
+invocation, and refuses it outright in a run with nobody to ask. The deployment-wide override stays
+`toolexec.allowUnsandboxed`, which logs loudly and is never a default.
 
 Local stdio MCP servers launch under the same supervisor and the same policy schema. There is one
 containment mechanism, not two.
 
-Operator-facing reference: [`docs/command-catalog.md`](command-catalog.md).
+**Where a human fits, and where one does not.** The engine has no notion of human presence and does
+not gain one: attendedness is a property of the runtime, which the CLI derives from
+`--interactive` / `--unattended` and passes as a single boolean to `ToolApprovalGate`. That gate is
+consulted by one `ApprovalToolProvider` decorator wrapping every discovered provider in the CLI's
+producer, so the policy is written once rather than once per source, and a provider added later is
+gated by being wrapped. The decorator reads the entry's own `unattended:` and `approval:`
+declarations through `PreviewCapable`, which is also what lets a reviewer see the fully resolved
+argv rather than the template.
+
+An unattended run **refuses rather than escalates**. A refusal is not a failure, so
+`ToolLoopRunner` appends a record to the reserved `_capability_gaps` state key and keeps
+`_capability_gap_count` in step — and an ordinary `ConditionTransition` routes the blocked run,
+because nodes do work and transitions route (Rule 9). Both keys are engine-owned: declaring either
+in `writes` is a build error, or the agent's own output could erase the evidence that it was
+blocked.
+
+The profile half of this model is CLI-only, deliberately. Server-side MCP tools run ungated inside
+the calling tenant's own catalog, where there is no reviewer to reach and containment belongs to the
+tenant's server. The audit half is engine-wide: every invocation flows through the
+`ExecutionListener` hooks and into a durable sink — `runtime.tool_audit` on the server, a JSON-lines
+file on the CLI — composed unconditionally rather than behind the verbosity flag.
+
+Operator-facing reference: [`docs/command-catalog.md`](command-catalog.md) and
+[`docs/cli-tool-execution-security-model.md`](cli-tool-execution-security-model.md), which covers
+the CLI side of it.
 
 ### 5. Non-Linear Graph Execution
 
@@ -394,18 +437,25 @@ Violations return `400 Bad Request`. See [Server Developer Guide — Input Valid
 
 ---
 
-## Architecture Overview
+## Runtime Architectures
+
+Two runtimes, one engine. The `hensu-core` block is byte-identical in both diagrams below —
+everything wrapped around it is what differs. Read them as a pair.
+
+### Server Runtime
+
+Multi-tenant, clustered, and reaching the outside world only through the tenant's own MCP servers.
 
 ```mermaid
 flowchart TD
-    subgraph server["hensu-server"]
+    subgraph server["hensu-server (Native Image)"]
         direction TB
         subgraph iface["Interface Layer"]
             direction LR
             qapi(["Quarkus API\n(REST/SSE)"]) ~~~ mcpgw(["MCP Gateway\n(JSON-RPC)"])
         end
 
-        subgraph runtime["Server Runtime"]
+        subgraph runtime["Runtime Layer"]
             direction LR
             sae(["ServerAction\nExecutor"]) ~~~ tc(["TenantContext\n(ScopedValue)"])
         end
@@ -452,13 +502,82 @@ flowchart TD
     linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
+### CLI Runtime
+
+Single-operator, in-process, and reaching the outside world through grants the operator declared on
+that same host. The interface layer is a terminal and a Unix socket rather than HTTP; the runtime
+layer contains rather than forwards; the repositories are the in-memory defaults, so execution state
+lives and dies with the process (the daemon is what keeps it alive between commands).
+
+```mermaid
+flowchart TD
+    subgraph cli["hensu-cli (JVM)"]
+        direction TB
+        subgraph cif["Interface Layer"]
+            direction LR
+            pico(["Picocli\n(run/build/push)"]) ~~~ dmn(["DaemonServer\n(Unix socket)"])
+        end
+
+        subgraph crt["Runtime Layer"]
+            direction LR
+            cae(["CLIAction\nExecutor"]) ~~~ gate(["ToolApproval\nGate"]) ~~~ crn(["CommandRunner\nSandboxLauncher"])
+        end
+
+        subgraph ccore["hensu-core (HensuEnvironment)"]
+            direction LR
+            cwe(["Workflow\nExecutor"]) ~~~ cne(["Node\nExecutors"]) ~~~ cax(["Action\nExecutor"]) ~~~ cre(["Rubric\nEngine"])
+            ctl(["ToolLoop\nRunner"]) ~~~ ctr(["Tool\nRouter"]) ~~~ car(["Agent\nRegistry"]) ~~~ cel(["Execution\nListener"]) ~~~ cwr(["Workflow\nRepository"]) ~~~ cws(["WorkflowState\nRepository"])
+        end
+    end
+
+    subgraph host["Operator Host"]
+        direction LR
+        cat(["Catalog\ncommands.yaml"]) ~~~ lmc(["Local MCP\nmcp.yaml"]) ~~~ wsf(["Workspace\nfiles"])
+    end
+
+    cif --> crt --> ccore
+    ccore <-->|"sandboxed exec · stdio MCP · PathGuard"| host
+
+    style cli fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style cif fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style crt fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ccore fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style host fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+
+    style pico fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style dmn fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style cae fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style gate fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style crn fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style cwe fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style cne fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style cax fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style cre fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ctl fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style ctr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style car fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style cel fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style cwr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style cws fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style cat fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style lmc fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style wsf fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+
+    linkStyle default stroke:#0A84FF, stroke-width:1px
+```
+
+Placing them side by side makes the actual difference legible: the server's runtime layer exists to
+**forward** a side effect to somebody else's machine, and the CLI's exists to **contain** one on this
+machine. Everything below that line is shared.
+
 ---
 
 ## Module Structure
 
-### hensu-core (Pure Execution Runtime)
+### hensu-core (Pure Execution Engine)
 
-Zero-dependency Java library. Contains:
+Zero-dependency Java library — the engine both runtimes embed. It is not itself a runtime: it has no
+main method, no transport, and no opinion about where a side effect lands. Contains:
 
 - `HensuFactory` / `HensuEnvironment` — Builder and container for all core components
 - `WorkflowExecutor` — Graph traversal, node dispatch, pause/resume via `executeFrom()`
@@ -500,9 +619,10 @@ Kotlin DSL for workflow definitions. Contains:
 
 **Client-side only.** Never runs on the server (no Kotlin compiler in native image).
 
-### hensu-server (Quarkus Native Image)
+### hensu-server (Native-Image Execution Runtime)
 
-Extends core with HTTP, MCP, and multi-tenancy:
+The first runtime. Extends the engine with HTTP, MCP, multi-tenancy, and durable state — everything
+that only makes sense when the workflow belongs to somebody who is not at the keyboard:
 
 - `HensuEnvironmentProducer` — CDI producer using `HensuFactory.builder()`
 - `ServerConfiguration` — Delegates core components from `HensuEnvironment` via `@Produces @Singleton`
@@ -537,9 +657,12 @@ Jackson-based JSON serialization shared by CLI and server:
 - Jackson mixins for builder-based deserialization (Workflow, AgentConfig, ExecutionStep, NodeResult, BacktrackEvent, ExecutionHistory)
 - GraalVM-safe: explicit registrations via `SimpleModule` (no reflective scanning)
 
-### hensu-cli (Quarkus CLI)
+### hensu-cli (JVM Execution Runtime)
 
-Developer-facing CLI tool:
+The second runtime, not a thin client for the first. It compiles workflows, and it also executes them
+on the operator's machine with no server involved — `hensu push` / `pull` / `list` / `delete` are the
+subset of its surface that talks to a server at all. Shipped as a JVM uber-jar with a launcher script
+rather than a native image, because it embeds the Kotlin compiler and a native image cannot.
 
 - Uses `hensu-dsl` for Kotlin DSL compilation (workflow.kt → JSON)
 - `hensu run` — Execute a workflow (daemon-aware; inline fallback)
@@ -550,10 +673,10 @@ Developer-facing CLI tool:
 - `hensu daemon` (start / stop / status) — Background daemon lifecycle
 - `hensu ps` / `attach` / `cancel` — Daemon execution management
 - `hensu credentials` (set / list / unset) — API key management
-- Local execution mode (uses full HensuEnvironment with local action executor)
-- `HensuEnvironmentProducer` (CLI variant — wires LangChain4jProvider and the sandboxed `CommandRunner`)
+- Local execution — a full `HensuEnvironment` in this process, on the in-memory repository defaults
+- `HensuEnvironmentProducer` (CLI variant — wires `LangChain4jProvider`, `CLIActionExecutor`, and every discovered `ToolProvider` behind one `ApprovalToolProvider` decorator)
 - `DaemonReviewHandler` / `CLIReviewHandler` / `ReviewTerminal` — Human-in-the-loop review over the daemon socket or inline
-- `io.hensu.cli.command` — `CommandRunner` (two-phase prepare/execute), `SandboxLauncher` with bubblewrap and Seatbelt backends, `ProcessProbe`: the contained execution substrate of Decision 4
+- `io.hensu.cli.sandbox` — `CommandRunner` (two-phase prepare/execute), `SandboxLauncher` with bubblewrap and Seatbelt backends, `ProcessProbe`: the contained execution path of Decision 4
 
 #### Daemon Architecture
 
@@ -572,7 +695,9 @@ without losing output.
   Approve / Reject / Backtrack decisions.
 - If the client detaches (`Ctrl+C`) mid-review, the execution remains in `AWAITING_REVIEW` —
   the virtual thread stays blocked until a new client attaches and submits a response, or the
-  30-minute fallback timeout triggers.
+  30-minute timeout rejects the review. The timeout fails closed: nobody was reached, so nobody
+  approved, and approving on an absent reviewer's behalf would grant exactly what the checkpoint
+  existed to withhold.
 - `CLIReviewHandler` provides the inline (non-daemon) fallback for `--no-daemon` runs.
 
 ---
@@ -862,7 +987,10 @@ See [hensu-serialization Developer Guide](developer-guide-serialization.md) for 
 
 ## Testing Strategy
 
-Each layer has a dedicated testing approach exercising real code at the appropriate scope.
+Each layer has a dedicated testing approach exercising real code at the appropriate scope. Both
+runtimes are covered, and they are covered differently: the server's risk is wiring, SQL, and tenant
+isolation, so it is tested by booting it; the CLI's risk is what a granted process can reach, so it
+is tested by running commands against real sandbox backends.
 
 ### Unit Tests (Pure JVM)
 
@@ -870,7 +998,34 @@ Isolated class tests using Mockito. `StubAgentProvider` (priority 1000) intercep
 creation and returns a `StubAgent` backed by `StubResponseRegistry`. No AI API calls, no network,
 no containers.
 
-### Integration Tests (Quarkus InMemory)
+### CLI Runtime Tests (Pure JVM)
+
+`hensu-cli` tests are plain JUnit 5 with Mockito and no containers; `ToolProviderWiringTest` is the
+single `@QuarkusTest`, and it exists to assert the CDI wiring — that every discovered `ToolProvider`
+reaches the engine wrapped in the approval decorator, including one added later.
+
+A few of them guard properties that no amount of careful coding preserves on its own:
+
+- `NoShellOnTheAgentPathTest` scans the Java sources of both `hensu-cli` and `hensu-core` and fails
+  the build if a shell command-line construction site appears anywhere outside `CommandRunner`.
+  Nothing is launched — it is a structural assertion about the codebase.
+- `SandboxContainmentTest` launches genuinely contained processes and asserts on the result: writes
+  outside the declared subtrees are refused, `$HOME` is private, undeclared network is blocked, and
+  background processes do not outlive the call. Containment is measured against the kernel rather
+  than against the policy object.
+- `SeatbeltProfileTest` asserts the generated SBPL text everywhere — deny-default first, the
+  read-only catalog re-bind ordered after the writable subtrees — and asserts actual `sandbox-exec`
+  behavior only where it can run.
+- `CommittedCatalogTest` loads the repository's own `working-dir/commands.yaml`. That file lives
+  outside the module, so `hensu-cli/build.gradle.kts` declares it as an explicit task input —
+  otherwise Gradle would report the test task up to date and a broken catalog would pass the build
+  meant to catch it.
+
+The behavioral halves are platform-gated (`@EnabledOnOs`, plus an availability probe that skips when
+the backend is absent), so bubblewrap is exercised on Linux and Seatbelt on macOS. A single-platform
+run proves containment for that platform and only the profile text for the other one.
+
+### Server Integration Tests (Quarkus InMemory)
 
 `@QuarkusTest` with `@TestProfile(InMemoryTestProfile.class)` boots the full server — API,
 CDI wiring, `WorkflowExecutor`, `TenantContext` — against in-memory repositories. The `inmem`
@@ -879,7 +1034,7 @@ profile disables PostgreSQL, Flyway, and the scheduler (no Docker required).
 All integration tests extend `IntegrationTestBase`, which provides CDI injection, per-test
 state cleanup, and helpers (`registerStub`, `pushAndExecute`).
 
-### Repository Tests (Testcontainers PostgreSQL)
+### Server Repository Tests (Testcontainers PostgreSQL)
 
 Tests in `io.hensu.server.persistence` extend `JdbcRepositoryTestBase`, which starts a real
 PostgreSQL container and runs Flyway migrations — no Quarkus context involved. These tests
@@ -888,11 +1043,12 @@ distributed recovery operations.
 
 ### Test Coverage Map
 
-| Layer       | Mechanism                      | Scope                                                |
-|:------------|:-------------------------------|:-----------------------------------------------------|
-| Unit        | Mockito, pure JVM              | Class-level logic, edge cases                        |
-| Integration | `@QuarkusTest` + inmem profile | CDI wiring, API contracts, end-to-end workflow logic |
-| Persistence | Testcontainers + Flyway        | SQL correctness, schema migrations, tenant isolation |
+| Layer              | Mechanism                          | Scope                                                    |
+|:-------------------|:-----------------------------------|:---------------------------------------------------------|
+| Unit               | Mockito, pure JVM                  | Class-level logic, edge cases                            |
+| CLI runtime        | Pure JUnit + real sandbox backends | Catalog compilation, containment, approval wiring, audit |
+| Server integration | `@QuarkusTest` + inmem profile     | CDI wiring, API contracts, end-to-end workflow logic     |
+| Server persistence | Testcontainers + Flyway            | SQL correctness, schema migrations, tenant isolation     |
 
 ---
 
@@ -903,7 +1059,7 @@ The unified architecture provides:
 1. **Pure Core** — Zero-dependency Java engine, protocol-agnostic
 2. **Build-Then-Push** — Client-side compilation (Kotlin DSL → JSON); server receives pre-compiled artifacts
 3. **Centralized Bootstrap** — `HensuFactory.builder()` as the single entry point for all core infrastructure
-4. **Two Execution Substrates** — The server has no shell and routes every side effect via registered `ActionHandler`s (MCP by default) to tenant clients. The CLI executes locally through the `commands.yaml` allowlist under an OS sandbox; where the agent authors the executed code, the sandbox is the boundary and the catalog governs grants. Its agent-facing surface is three sources — catalog commands, `mcp.yaml` servers, and built-in file tools that run in-process and are contained by `PathGuard` rather than by the kernel
+4. **Two Runtimes** — The server has no shell and routes every side effect via registered `ActionHandler`s (MCP by default) to tenant clients. The CLI executes locally through the `commands.yaml` allowlist under an OS sandbox; where the agent authors the executed code, the sandbox is the boundary and the catalog governs grants. Its agent-facing surface is three sources — catalog commands, `mcp.yaml` servers, and built-in file tools that run in-process and are contained by `PathGuard` rather than by the kernel
 5. **Non-Linear Graphs** — Condition-routed loops with bounded revise budgets, conditional branches, fork/join, parallel fan-out with consensus, backtracking
 6. **Structured Concurrency** — `StructuredTaskScope` (preview) for all parallel execution; no `ExecutorService`, no thread pool lifecycle
 7. **Rubric Evaluation** — Quality gates that score outputs and route on thresholds for self-correcting loops

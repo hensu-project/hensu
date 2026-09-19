@@ -218,6 +218,32 @@ public final class CommandRunner {
         }
     }
 
+    /// Returns a runner that will launch without containment when no backend works.
+    ///
+    /// The only caller is the approval path: a reviewer who was shown an uncontained
+    /// invocation and approved it has made the decision this flag represents, for that one
+    /// call. Everything else keeps the refusing runner, so an absent sandbox can never
+    /// become a silent uncontained launch.
+    ///
+    /// @return a runner sharing this one's backend and environment, allowing the override
+    /// @see io.hensu.core.tool.UncontainedOnApproval for the capability this serves
+    public CommandRunner allowingUnsandboxed() {
+        return allowUnsandboxed ? this : new CommandRunner(launcher, hostEnvironment, true);
+    }
+
+    /// Releases the scratch filesystem a {@link #prepare} created, without running anything.
+    ///
+    /// {@link #execute} does this itself. A caller that prepared a command only to describe
+    /// it — the approval preview — has to say so, or every previewed call leaves a private
+    /// home behind in the temporary directory.
+    ///
+    /// @param prepared the invocation to discard, not null
+    /// @apiNote **Side effects**: deletes the prepared call's directory tree. The
+    ///     {@link PreparedCommand} must not be executed afterwards.
+    public void discard(PreparedCommand prepared) {
+        deleteRecursively(prepared.callDirectory());
+    }
+
     /// Runs a prepared command and returns what it did.
     ///
     /// ### Contracts

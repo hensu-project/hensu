@@ -31,4 +31,20 @@ class SubWorkflowNodeBuilderTest {
             .isInstanceOf(IllegalArgumentException::class.java)
             .hasMessageContaining("reserved engine variable")
     }
+
+    // Mirroring a gap key back would overwrite the parent's own record with the child's, hiding
+    // whichever run was actually refused. `imports` needs no matching guard: an imported name must
+    // already appear in the parent's state {} block, which an engine-owned key never does.
+    @Test
+    fun `should reject capability gap key in writes`() {
+        val builder = SubWorkflowNodeBuilder("delegate_summary")
+
+        assertThatThrownBy { builder.writes("_capability_gaps") }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessage(
+                "subWorkflow('delegate_summary'): writes field '_capability_gaps' is written by " +
+                    "the engine \u2013 it records tool refusals there. Route on it with " +
+                    "onCondition(\"_capability_gap_count\"); never declare it."
+            )
+    }
 }
