@@ -99,12 +99,12 @@ An MCP result is an ordered array of typed content blocks. Passing that map to a
 would put a Java `Map.toString` — braces, equals signs, identity hashes — into the context window.
 The renderer flattens it instead:
 
-| Block                            | Rendered as                             |
-|----------------------------------|-----------------------------------------|
-| `text`                           | its text, in array order, one per line  |
-| `image`, `audio`                 | `[image: image/png]`                    |
-| `resource`, `resource_link`      | `[resource: file:///etc/hosts (text/plain)]` |
-| unrecognized payload             | canonical JSON                          |
+| Block                       | Rendered as                                  |
+|-----------------------------|----------------------------------------------|
+| `text`                      | its text, in array order, one per line       |
+| `image`, `audio`            | `[image: image/png]`                         |
+| `resource`, `resource_link` | `[resource: file:///etc/hosts (text/plain)]` |
+| unrecognized payload        | canonical JSON                               |
 
 Non-text blocks carry bytes a text completion cannot consume, so only the block type and whatever
 locates it survive. A response setting `isError: true` becomes `ToolCallStatus.FAILURE` carrying
@@ -118,7 +118,7 @@ McpConnection connection = StdioMcpConnection.open(
 ```
 
 Launches the declared argv, speaks line-delimited JSON-RPC over the child's standard input and
-output, and kills the process tree on `close()`. Four properties follow from the server outliving
+output, and kills the process tree on `close()`. Five properties follow from the server outliving
 any single call:
 
 - **Containment is applied once, at launch.** A long-lived process cannot be sandboxed per request,
@@ -128,8 +128,13 @@ any single call:
   `HermeticEnvironment.PASSTHROUGH` plus the server's own `env:`. Nothing that authenticates the
   operator reaches an MCP server.
 - **Each request carries its own deadline.** `McpServerSpec.requestTimeoutMs` bounds every
-  `initialize`, `tools/list` and `tools/call`; a lapsed request drops its correlation entry and
-  raises `McpException` instead of pinning the workflow thread.
+  `tools/list` and `tools/call`; a lapsed request drops its correlation entry and raises
+  `McpException` instead of pinning the workflow thread.
+- **Coming up is budgeted apart from answering.** The `initialize` handshake is bounded by
+  `McpServerSpec.startupTimeoutMs`, measured from the fork, because a server's first reply costs
+  whatever its runtime costs to boot — `npx` resolving a package, an interpreter starting. Sharing
+  one number with `requestTimeoutMs` would force a deployment that wants calls to fail fast into a
+  launch budget no real server survives.
 - **Standard error is drained.** A server that logs would otherwise block on a full pipe and look
   like a hang.
 

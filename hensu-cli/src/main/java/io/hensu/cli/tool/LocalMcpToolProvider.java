@@ -439,6 +439,7 @@ public class LocalMcpToolProvider implements ToolProvider, PreviewCapable {
                 spec.command(),
                 environment,
                 spec.sandbox(),
+                spec.startupTimeoutMs(),
                 spec.requestTimeoutMs(),
                 spec.unattended(),
                 spec.approvalRequired());

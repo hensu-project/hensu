@@ -26,7 +26,19 @@ class StdioMcpConnectionTest {
         }
     }
 
-    private static McpServerSpec spec(long timeoutMs, String... extraArgs) {
+    /// Budget for the fixture's launch, which forks a second JVM.
+    ///
+    /// Generous on purpose: this wait pays for JVM startup and class loading on
+    /// whatever machine the suite runs on, and must not be confused with the
+    /// per-request budget a test is actually exercising.
+    private static final long STARTUP_BUDGET_MS = 30_000L;
+
+    private static McpServerSpec spec(long requestTimeoutMs, String... extraArgs) {
+        return spec(STARTUP_BUDGET_MS, requestTimeoutMs, extraArgs);
+    }
+
+    private static McpServerSpec spec(
+            long startupTimeoutMs, long requestTimeoutMs, String... extraArgs) {
         List<String> argv = new ArrayList<>();
         argv.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
         argv.add("-cp");
@@ -38,7 +50,8 @@ class StdioMcpConnectionTest {
                 argv,
                 Map.of("FIXTURE_MARKER", "set"),
                 SandboxPolicy.restrictive(),
-                timeoutMs,
+                startupTimeoutMs,
+                requestTimeoutMs,
                 true,
                 false);
     }
@@ -85,6 +98,28 @@ class StdioMcpConnectionTest {
 
         // The correlation entry is gone, so the next call gets a fresh id and works.
         assertThat(open.listTools()).hasSize(1);
+    }
+
+    @Test
+    void shouldNotChargeTheLaunchToThePerRequestBudget() {
+        // A deployment that wants calls to fail in 50ms must still be able to
+        // start a server whose runtime is expensive to boot. The fixture declares
+        // its slowness rather than relying on real JVM startup, so the launch is
+        // longer than the call budget on every machine rather than on slow ones.
+        StdioMcpConnection open = open(spec(STARTUP_BUDGET_MS, 50, "--slow-start", "400"));
+
+        assertThat(open.isConnected()).isTrue();
+    }
+
+    @Test
+    void shouldSurfaceAServerThatNeverFinishesComingUpAsAStartupFailure() {
+        // The other direction: a server that launches but never answers
+        // 'initialize' has to fail the open rather than hand back a connection
+        // nobody can use, and it is the startup budget that expires.
+        assertThatThrownBy(() -> open(spec(300, 10_000, "--swallow", "initialize")))
+                .isInstanceOf(McpException.class)
+                .hasMessageContaining("MCP request 'initialize'")
+                .hasMessageContaining("timed out after 300ms");
     }
 
     @Test

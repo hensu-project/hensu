@@ -642,6 +642,7 @@ in the same directory:
 servers:
   filesystem:
     command: ["/usr/local/bin/mcp-server-filesystem", "{workdir}"]
+    startup: 30000        # ms for launch + handshake, default 30000
     timeout: 30000        # per-request ms, default 30000
     unattended: true      # default false
     approval: required    # default none
@@ -655,7 +656,8 @@ servers:
 | Key          | Meaning                                                                                                                                                                                                                                                                                                       |
 |--------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `command`    | The launch argv, required. A server runs with the working directory as its cwd, so a relative path to a script beside `mcp.yaml` is enough and stays portable. `{workdir}` is the only placeholder, expanding to the absolute working directory as one whole token — it cannot be embedded in a longer string |
-| `timeout`    | Milliseconds one request may take, default 30000. It covers both legs: a server that stops reading its standard input fails the call as surely as one that stops answering                                                                                                                                    |
+| `startup`    | Milliseconds the launch and `initialize` handshake may take together, default 30000. The clock starts at the fork, so this is the number that has to cover whatever the server's runtime costs to boot                                                                                                        |
+| `timeout`    | Milliseconds one request may take once the server is answering, default 30000. It covers both legs: a server that stops reading its standard input fails the call as surely as one that stops answering                                                                                                       |
 | `unattended` | Whether an automated run may use this server, **default false**                                                                                                                                                                                                                                               |
 | `approval`   | `required` or `none`, default `none`                                                                                                                                                                                                                                                                          |
 | `env`        | Variables added to the hermetic base. The `HENSU_PARAM_` namespace is reserved                                                                                                                                                                                                                                |
@@ -665,7 +667,7 @@ servers:
 ### Where it differs from a command
 
 The grammar is smaller on purpose: a server is one decision, not a family of parameterised
-invocations. Four differences follow from a process that outlives the call:
+invocations. Five differences follow from a process that outlives the call:
 
 - **Containment is decided once, at launch.** There is no per-call sandbox, so a host with no
   working backend starts no servers at all and says so, rather than starting them uncontained.
@@ -674,6 +676,11 @@ invocations. Four differences follow from a process that outlives the call:
 - **Each server gets its own private `$HOME`**, deleted when the run ends. The working directory is
   never handed over as a home, because a home is bound writable and that would grant writes the
   server's own `sandbox:` block never declared.
+- **Starting up is budgeted apart from answering.** A command is forked per call, so one timeout
+  covers its whole life. A server is forked once and then answers repeatedly, and those two waits
+  have nothing to do with each other: `npx` resolving a package takes seconds, a `tools/call`
+  against the running process takes milliseconds. A deployment that wants a wedged server to fail a
+  node in a second sets `timeout: 1000` and leaves `startup:` alone.
 - **The executable is not resolved at load.** A catalog entry naming a missing binary fails the
   whole catalog; a server that is not installed simply does not start, its tools are absent, and the
   run reports the gap. An MCP server is a runtime dependency of the deployment, not part of the

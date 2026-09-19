@@ -58,6 +58,7 @@ class McpConfigTest {
                     .containsExactly(
                             "/usr/local/bin/mcp-server-filesystem",
                             workingDirectory.toAbsolutePath().normalize().toString());
+            assertThat(filesystem.startupTimeoutMs()).isEqualTo(90_000L);
             assertThat(filesystem.requestTimeoutMs()).isEqualTo(45_000L);
             assertThat(filesystem.unattended()).isTrue();
             assertThat(filesystem.approvalRequired()).isFalse();
@@ -74,12 +75,26 @@ class McpConfigTest {
         void shouldApplyClosedDefaultsToAMinimalDeclaration() {
             McpServerSpec server = parse("valid-minimal").getFirst();
 
+            assertThat(server.startupTimeoutMs())
+                    .isEqualTo(McpServerSpec.DEFAULT_STARTUP_TIMEOUT_MS);
             assertThat(server.requestTimeoutMs())
                     .isEqualTo(McpServerSpec.DEFAULT_REQUEST_TIMEOUT_MS);
             assertThat(server.unattended()).isFalse();
             assertThat(server.approvalRequired()).isFalse();
             assertThat(server.sandbox().network()).isFalse();
             assertThat(server.sandbox().writePaths()).isEmpty();
+        }
+
+        @Test
+        void shouldLeaveTheLaunchItsOwnPatienceWhenOnlyTheCallBudgetIsDeclared() {
+            // timeout: is about a server that has stopped answering, not about one
+            // that has not started yet. A deployment asking for 500ms calls would
+            // otherwise be asking for a 500ms launch, which no real server survives.
+            McpServerSpec server = parse("valid-request-timeout-only").getFirst();
+
+            assertThat(server.requestTimeoutMs()).isEqualTo(500L);
+            assertThat(server.startupTimeoutMs())
+                    .isEqualTo(McpServerSpec.DEFAULT_STARTUP_TIMEOUT_MS);
         }
 
         @Test
