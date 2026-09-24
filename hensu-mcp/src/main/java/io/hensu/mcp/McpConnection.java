@@ -70,6 +70,17 @@ public interface McpConnection {
         return List.of();
     }
 
+    /// Returns who is on the other end, for an operator about to approve a call.
+    ///
+    /// A transport that learns the server's own name during its handshake
+    /// answers with that; one that learns nothing names the endpoint instead.
+    ///
+    /// @return the server's announced name, or a transport-specific fallback,
+    ///     never null
+    default String serverInfo() {
+        return getEndpoint();
+    }
+
     /// Descriptor for an MCP tool.
     ///
     /// @param name the tool name

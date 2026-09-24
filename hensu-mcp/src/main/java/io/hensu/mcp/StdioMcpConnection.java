@@ -279,6 +279,7 @@ public final class StdioMcpConnection implements McpConnection {
     ///
     /// @return the name the server gave itself, or the declared server name when
     ///     it gave none, never null
+    @Override
     public String serverInfo() {
         return serverInfo;
     }

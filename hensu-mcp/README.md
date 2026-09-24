@@ -142,9 +142,13 @@ any single call:
 
 ```
 hensu-mcp/src/main/java/io/hensu/mcp/
+├── EndpointBound.java               # Whether a redirect stays on the connection's own endpoint
+├── HttpExchanger.java               # Bounded JSON-RPC exchanges with one Streamable HTTP endpoint
+├── HttpReply.java                   # One HTTP answer, reduced to the JSON-RPC message it carried
 ├── JsonRpc.java                     # JSON-RPC 2.0 message construction and tree-model parsing
+├── ListedTools.java                 # One tools/list result: descriptors plus mirrored headers
 ├── McpConnection.java               # Connection contract + McpToolDescriptor record
-├── McpEgressDeniedException.java    # A destination outside the declared host allowlist
+├── McpEgressDeniedException.java    # A redirect off its own endpoint or outside the host allowlist
 ├── McpEra.java                      # Sealed: what differs between protocol revisions
 ├── McpException.java                # Protocol, connection, and tool-invocation failures
 ├── McpInvalidArgumentException.java # An argument with no form its mirrored header can carry
@@ -153,6 +157,7 @@ hensu-mcp/src/main/java/io/hensu/mcp/
 ├── McpResultRenderer.java           # tools/call response to ToolCallResult
 ├── McpSchemaConverter.java          # MCP JSON Schema to ToolDefinition, raw schema carried through
 ├── McpServerSpec.java               # Sealed: Stdio | Http, as a deployment declared it
+├── SseFrames.java                   # Reads the awaited JSON-RPC message out of an SSE body
 ├── StdioMcpConnection.java          # stdio: launch, speak JSON-RPC, kill the tree
 └── StreamableHttpMcpConnection.java # Streamable HTTP: POST one endpoint, JSON or SSE back
 ```
