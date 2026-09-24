@@ -64,8 +64,6 @@ class EndpointBoundTest {
 
     private static HttpReply redirect(String location) {
         return new HttpReply(
-                302,
-                HttpHeaders.of(Map.of("location", List.of(location)), (_, _) -> true),
-                "");
+                302, HttpHeaders.of(Map.of("location", List.of(location)), (_, _) -> true), "");
     }
 }

@@ -8,7 +8,7 @@ exercise can assert on what actually left the client rather than on what the cli
 Standard library only — nothing is installed to run it.
 
     python3 http-fixture-server.py --port 8931 [--era modern|legacy] [--log FILE]
-        [--require-bearer VALUE] [--redirect-to URL] [--publish-invalid]
+        [--require-bearer VALUE] [--redirect-to URL] [--publish-invalid] [--publish-nullable]
 
 --era modern   Revision 2026-07-28. No handshake, no session. Every POST must carry
                MCP-Protocol-Version and Mcp-Method; a tools/call must carry Mcp-Name and one
@@ -26,9 +26,15 @@ Standard library only — nothing is installed to run it.
 --publish-invalid
                Also publish `measure`, whose only parameter is a `number` annotated with
                x-mcp-header. A modern client must leave that tool out of its catalog.
+--publish-nullable
+               Also publish `repeat`, whose `times` is typed ["integer", "null"]. A call whose
+               `times` is neither an integer nor null is answered as a tool error, so a client
+               that offered the model a string instead of a nullable integer shows up as a
+               failed call rather than a quietly coerced one.
 
 The log is JSON lines, one per request: path, HTTP method, JSON-RPC method, whether the bearer
-matched, Mcp-Name, every Mcp-Param-* header as received, and the status answered.
+matched, Mcp-Name, every Mcp-Param-* header as received, the JSON type of every argument of a
+tools/call, and the status answered.
 """
 
 import argparse
@@ -69,6 +75,19 @@ MEASURE = {
     },
 }
 
+REPEAT = {
+    "name": "repeat",
+    "description": "Repeats a message. times is optional; null or absent means once.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "message": {"type": "string", "description": "Text to repeat"},
+            "times": {"type": ["integer", "null"], "description": "How many times to repeat it"},
+        },
+        "required": ["message"],
+    },
+}
+
 
 def decode(value):
     if value is not None and value.startswith("=?base64?") and value.endswith("?="):
@@ -90,7 +109,8 @@ class Fixture:
         self.options = options
         self.lock = threading.Lock()
         self.sessions = itertools.count(1)
-        self.tools = [ECHO] + ([MEASURE] if options.publish_invalid else [])
+        self.tools = ([ECHO] + ([MEASURE] if options.publish_invalid else [])
+                      + ([REPEAT] if options.publish_nullable else []))
 
     def log(self, entry):
         line = json.dumps(entry, ensure_ascii=False)
@@ -227,6 +247,7 @@ class Handler(BaseHTTPRequestHandler):
         options = self.fixture.options
         name = params.get("name")
         arguments = params.get("arguments") or {}
+        self.entry["argument-types"] = {k: json_type(v) for k, v in arguments.items()}
 
         if options.redirect_to and self.path == "/mcp":
             self.answer(302, b"", "text/plain", {"Location": options.redirect_to})
@@ -260,10 +281,34 @@ class Handler(BaseHTTPRequestHandler):
                                    % (header, sent, expected))
                         return
 
+        if name == "repeat":
+            times = arguments.get("times")
+            if times is not None and (isinstance(times, bool) or not isinstance(times, int)):
+                self.result(rpc_id, {"isError": True, "content": [{"type": "text", "text":
+                    "times must be an integer or null, got %s" % json_type(times)}]})
+                return
+            text = " ".join([arguments.get("message", "")] * (1 if times is None else times))
+            self.result(rpc_id, {"content": [{"type": "text", "text": text}]})
+            return
+
         text = "echo: %s" % arguments.get("message", "")
         if arguments.get("region") is not None:
             text += " (region %s)" % arguments["region"]
         self.result(rpc_id, {"content": [{"type": "text", "text": text}]})
+
+
+def json_type(value):
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return "array" if isinstance(value, list) else "object"
 
 
 def main():
@@ -274,6 +319,7 @@ def main():
     parser.add_argument("--require-bearer")
     parser.add_argument("--redirect-to")
     parser.add_argument("--publish-invalid", action="store_true")
+    parser.add_argument("--publish-nullable", action="store_true")
     options = parser.parse_args()
 
     Handler.fixture = Fixture(options)

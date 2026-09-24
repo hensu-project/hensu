@@ -80,6 +80,26 @@ class LangChain4jToolSpecTest {
                                     assertThat(schema.items())
                                             .isInstanceOf(JsonIntegerSchema.class));
         }
+
+        @Test
+        void shouldOfferANullableIntegerAsAnIntegerRatherThanAString() {
+            ToolDefinition tool =
+                    new ToolDefinition(
+                            "page",
+                            "Pages",
+                            List.of(),
+                            null,
+                            Map.of(
+                                    "type",
+                                    "object",
+                                    "properties",
+                                    Map.of("limit", Map.of("type", List.of("null", "integer")))));
+
+            ToolSpecification spec = LangChain4jToolSession.toToolSpec(tool);
+
+            assertThat(spec.parameters().properties().get("limit"))
+                    .isInstanceOf(JsonIntegerSchema.class);
+        }
     }
 
     @Nested

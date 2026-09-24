@@ -30,16 +30,16 @@ class SseFramesTest {
     }
 
     @Test
-    void shouldJoinAMessageSplitAcrossDataLines() {
+    void shouldJoinDataLinesRemovingOnlyTheSeparatingSpace() {
         String stream =
                 """
                 data: {"jsonrpc":"2.0",
-                data: "id":"7","result":{}}
+                data:   "id":"7","result":{}}
 
                 """;
 
         assertThat(SseFrames.read(body(stream), "7", "acme"))
-                .isEqualTo("{\"jsonrpc\":\"2.0\",\n\"id\":\"7\",\"result\":{}}");
+                .isEqualTo("{\"jsonrpc\":\"2.0\",\n  \"id\":\"7\",\"result\":{}}");
     }
 
     @Test

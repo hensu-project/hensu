@@ -61,7 +61,10 @@ final class SseFrames {
                     if (!data.isEmpty()) {
                         data.append('\n');
                     }
-                    data.append(line.substring("data:".length()).stripLeading());
+                    String value = line.substring("data:".length());
+                    // The SSE grammar removes exactly one leading space, not all
+                    // leading whitespace.
+                    data.append(value.startsWith(" ") ? value.substring(1) : value);
                 }
             }
         } catch (IOException e) {

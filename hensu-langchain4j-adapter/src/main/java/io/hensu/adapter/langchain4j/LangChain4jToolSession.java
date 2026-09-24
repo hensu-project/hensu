@@ -279,8 +279,7 @@ class LangChain4jToolSession implements ToolSession {
             return JsonEnumSchema.builder().enumValues(enumValues).description(description).build();
         }
 
-        String type = property.get("type") instanceof String named ? named : "string";
-        return switch (type.toLowerCase(Locale.ROOT)) {
+        return switch (typeOf(property).toLowerCase(Locale.ROOT)) {
             case "number" -> JsonNumberSchema.builder().description(description).build();
             case "integer", "int" -> JsonIntegerSchema.builder().description(description).build();
             case "boolean", "bool" -> JsonBooleanSchema.builder().description(description).build();
@@ -294,6 +293,26 @@ class LangChain4jToolSession implements ToolSession {
                             .build();
             case "object" -> nestedObject(property, description);
             default -> JsonStringSchema.builder().description(description).build();
+        };
+    }
+
+    /// Reads a property's type, which JSON Schema allows to be a list.
+    ///
+    /// A list such as `["integer", "null"]` is how a schema says "nullable
+    /// integer". The model is told the first non-null member, because a tool
+    /// spec has no union to offer and falling back to a string would invite a
+    /// quoted number the server then refuses.
+    private static String typeOf(Map<?, ?> property) {
+        return switch (property.get("type")) {
+            case String named -> named;
+            case List<?> named ->
+                    named.stream()
+                            .filter(String.class::isInstance)
+                            .map(String.class::cast)
+                            .filter(member -> !member.equals("null"))
+                            .findFirst()
+                            .orElse("string");
+            case null, default -> "string";
         };
     }
 
