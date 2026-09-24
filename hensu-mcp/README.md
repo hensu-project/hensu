@@ -142,25 +142,74 @@ any single call:
 
 ```
 hensu-mcp/src/main/java/io/hensu/mcp/
-├── JsonRpc.java                # JSON-RPC 2.0 message construction and tree-model parsing
-├── McpConnection.java          # Connection contract + McpToolDescriptor record
-├── McpConnectionFactory.java   # Transport-specific connection establishment
-├── McpException.java           # Protocol, connection, and tool-invocation failures
-├── McpSchemaConverter.java     # MCP JSON Schema to ToolDefinition
-├── McpResultRenderer.java      # tools/call response to ToolCallResult
-├── McpServerSpec.java          # One locally launched server, as a deployment declared it
-└── StdioMcpConnection.java     # stdio transport: launch, speak JSON-RPC, kill the tree
+├── JsonRpc.java                     # JSON-RPC 2.0 message construction and tree-model parsing
+├── McpConnection.java               # Connection contract + McpToolDescriptor record
+├── McpEgressDeniedException.java    # A destination outside the declared host allowlist
+├── McpEra.java                      # Sealed: what differs between protocol revisions
+├── McpException.java                # Protocol, connection, and tool-invocation failures
+├── McpInvalidArgumentException.java # An argument with no form its mirrored header can carry
+├── McpParameterHeaders.java         # x-mcp-header: validate annotations, build Mcp-Param-* headers
+├── McpProtocol.java                 # Revisions Hensu speaks, headers, _meta keys, error codes
+├── McpResultRenderer.java           # tools/call response to ToolCallResult
+├── McpSchemaConverter.java          # MCP JSON Schema to ToolDefinition, raw schema carried through
+├── McpServerSpec.java               # Sealed: Stdio | Http, as a deployment declared it
+├── StdioMcpConnection.java          # stdio: launch, speak JSON-RPC, kill the tree
+└── StreamableHttpMcpConnection.java # Streamable HTTP: POST one endpoint, JSON or SSE back
 ```
 
 Test fixtures live in `src/testFixtures`: `FakeMcpServer` is a real process the stdio tests launch,
-and the CLI reuses it rather than growing a second copy.
+and `FakeHttpMcpServer` is a loopback endpoint on the JDK's own `HttpServer` that the HTTP tests
+drive. The CLI reuses both rather than growing a second copy of either.
+
+## Two eras of one transport
+
+Revision 2026-07-28 removed `initialize`, `notifications/initialized` and session identifiers, and
+moved client identity into each request's `_meta`. Everything before it did the opposite. A hosted
+endpoint deployed today is overwhelmingly on the earlier revision, and one deployed next year will
+not be, so `StreamableHttpMcpConnection` probes: it sends a modern request first and falls back to
+the handshake when the answer identifies an older server. It never issues a `GET` — the ladder that
+follows one leads to the deprecated two-endpoint HTTP+SSE transport, which this module does not
+implement and says so when an endpoint speaks neither era.
+
+`McpEra` is a sealed interface rather than a boolean so the compiler checks that every difference is
+handled: which headers a POST carries, whether `_meta` is injected, whether a session identifier is
+echoed, and how a timed-out request is cancelled. In the modern era, closing the response stream
+*is* the cancellation; in the legacy era, a `notifications/cancelled` goes out under a short fixed
+budget of its own.
+
+## Parameters mirrored into headers
+
+A modern server may mark a tool parameter with `x-mcp-header`, and every call must then repeat that
+argument in an `Mcp-Param-{Name}` header. A gateway can then route on the header without reading
+the body, and the server answers `400` with `-32020` (`HeaderMismatch`) when the two disagree.
+`McpParameterHeaders` owns both halves:
+
+- **At listing**, it checks every annotation against the spec. The name must be an HTTP token and
+  must be unique regardless of case. The parameter must be a string, integer or boolean. It must
+  be reached from the schema root through `properties` alone, never through `items`, a composition
+  keyword or a `$ref`. A tool that fails a check is left out of the catalog rather than failing the
+  server, and the reason is available through `McpConnection.catalogNotices()`. The CLI prints it
+  as a tool-source notice.
+- **At call time**, it reads each annotated argument at its exact path, renders it as text and
+  encodes it. An absent or `null` argument sends no header. A value that is not header-safe travels
+  as `=?base64?…?=`, and `Mcp-Name` uses the same encoding. An argument with no header form throws
+  `McpInvalidArgumentException` before anything is sent: an object, a list, a fraction, or an
+  integer beyond ±2^53−1. The CLI maps that exception onto `VALIDATION_FAILED`, so the agent can
+  correct the argument.
+
+A `-32020` means the server's schema changed after it was listed. The connection lists the tools
+again and retries once, but only when that tool's annotations actually changed. Only the modern
+era mirrors. The annotation postdates the legacy revision, so a legacy connection ignores it.
 
 ## Consumers
 
-| Runtime        | Transport                         | Provider                                         | Status |
-|----------------|-----------------------------------|--------------------------------------------------|--------|
-| `hensu-server` | SSE split-pipe, pooled per tenant | `McpToolProvider` — tenant-scoped catalog        | wired  |
-| `hensu-cli`    | stdio child processes             | `LocalMcpToolProvider` — servers from `mcp.yaml` | wired  |
+| Runtime        | Transport                          | Provider                                            | Status |
+|----------------|------------------------------------|-----------------------------------------------------|--------|
+| `hensu-server` | inbound split pipe, per tenant     | `McpToolProvider` — tenant-scoped catalog           | wired  |
+| `hensu-cli`    | outbound stdio and Streamable HTTP | `DeclaredMcpToolProvider` — servers from `mcp.yaml` | wired  |
+
+The server holds no outbound client by design: `McpConnections` accepts an `sse://clientId` handle
+and refuses every other scheme. See Decision 3 in `docs/unified-architecture.md`.
 
 Each contributes a `ToolProvider` to the engine's `ToolRouter`, so an agent cannot tell which
 transport produced a result. That is the reason the rendering rules above live in this module

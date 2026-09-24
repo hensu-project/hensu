@@ -28,16 +28,16 @@ class McpToolProviderTest {
     private static final String ENDPOINT = "sse://tenant-1";
 
     private McpToolDiscovery discovery;
-    private McpConnectionPool connectionPool;
+    private McpConnections connections;
     private McpConnection connection;
     private McpToolProvider provider;
 
     @BeforeEach
     void setUp() {
         discovery = mock(McpToolDiscovery.class);
-        connectionPool = mock(McpConnectionPool.class);
+        connections = mock(McpConnections.class);
         connection = mock(McpConnection.class);
-        provider = new McpToolProvider(discovery, connectionPool, Duration.ofSeconds(5));
+        provider = new McpToolProvider(discovery, connections, Duration.ofSeconds(5));
     }
 
     private static TenantInfo withMcp() {
@@ -90,7 +90,7 @@ class McpToolProviderTest {
 
         @Test
         void shouldRenderToolOutputAsText() throws Exception {
-            when(connectionPool.get(ENDPOINT)).thenReturn(connection);
+            when(connections.get(ENDPOINT)).thenReturn(connection);
             when(connection.callTool(anyString(), anyMap()))
                     .thenReturn(
                             Map.of(
@@ -112,7 +112,7 @@ class McpToolProviderTest {
 
         @Test
         void shouldMapProtocolErrorsOntoFailure() throws Exception {
-            when(connectionPool.get(ENDPOINT)).thenReturn(connection);
+            when(connections.get(ENDPOINT)).thenReturn(connection);
             when(connection.callTool(anyString(), anyMap()))
                     .thenThrow(new McpException("client not connected"));
 
@@ -139,9 +139,9 @@ class McpToolProviderTest {
         void shouldReportTimeoutWhenTheServerNeverAnswers() throws Exception {
             CountDownLatch released = new CountDownLatch(1);
             McpToolProvider impatient =
-                    new McpToolProvider(discovery, connectionPool, Duration.ofMillis(150));
+                    new McpToolProvider(discovery, connections, Duration.ofMillis(150));
 
-            when(connectionPool.get(ENDPOINT)).thenReturn(connection);
+            when(connections.get(ENDPOINT)).thenReturn(connection);
             when(connection.callTool(anyString(), anyMap()))
                     .thenAnswer(
                             _ -> {

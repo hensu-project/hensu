@@ -1,0 +1,5 @@
+# auth: names a credential key, never the credential.
+servers:
+  remote:
+    url: "https://mcp.example.com/mcp"
+    auth: {bearer: "sk-ant-not-a-key"}

@@ -14,8 +14,7 @@ import org.jboss.logging.Logger;
 
 /// Server implementation of {@link ActionExecutor}.
 ///
-/// Delegates `send` actions to registered {@link ActionHandler} implementations
-/// (e.g., {@link io.hensu.server.mcp.McpSidecar} for DSL-level MCP calls).
+/// Delegates `send` actions to registered {@link ActionHandler} implementations.
 ///
 /// Agent tool calls do not come through here: they are routed by the engine's
 /// tool seam to a {@link io.hensu.core.tool.ToolProvider}, so an unrecognized
@@ -28,7 +27,7 @@ import org.jboss.logging.Logger;
 /// All tool execution happens via MCP protocol to customer's external servers.
 ///
 /// @implNote Thread-safe. Uses ConcurrentHashMap for handler storage.
-/// @see io.hensu.server.mcp.McpSidecar
+/// @see ActionHandler for the handler contract
 @ApplicationScoped
 public class ServerActionExecutor implements ActionExecutor {
 

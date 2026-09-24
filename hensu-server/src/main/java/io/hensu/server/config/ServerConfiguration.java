@@ -8,14 +8,10 @@ import io.hensu.core.execution.executor.NodeExecutorRegistry;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.mcp.JsonRpc;
-import io.hensu.mcp.McpConnection;
-import io.hensu.mcp.McpConnectionFactory;
-import io.hensu.mcp.McpException;
 import io.hensu.serialization.WorkflowSerializer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Singleton;
-import java.time.Duration;
 
 /// CDI configuration for server-specific beans.
 ///
@@ -92,24 +88,5 @@ public class ServerConfiguration {
     @Singleton
     public JsonRpc jsonRpc(ObjectMapper mapper) {
         return new JsonRpc(mapper);
-    }
-
-    @Produces
-    @Singleton
-    public McpConnectionFactory mcpConnectionFactory() {
-        // Stub implementation until MCP is fully configured
-        return new McpConnectionFactory() {
-            @Override
-            public McpConnection create(
-                    String endpoint, Duration connectionTimeout, Duration readTimeout)
-                    throws McpException {
-                throw new McpException("MCP connection factory not configured");
-            }
-
-            @Override
-            public boolean supports(String endpoint) {
-                return false;
-            }
-        };
     }
 }

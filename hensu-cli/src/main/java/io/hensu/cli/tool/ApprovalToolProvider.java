@@ -46,7 +46,7 @@ public final class ApprovalToolProvider implements ToolProviderDecorator {
 
     private static final Logger logger = Logger.getLogger(ApprovalToolProvider.class.getName());
 
-    private static final String UNKNOWN_NODE = "unknown";
+    private static final String UNKNOWN = "unknown";
 
     private final ToolProvider delegate;
     private final ToolApprovalGate gate;
@@ -175,8 +175,8 @@ public final class ApprovalToolProvider implements ToolProviderDecorator {
     private ToolApprovalRequest request(
             String toolName, Map<String, Object> context, ToolPreview preview) {
         return new ToolApprovalRequest(
-                text(context, "_execution_id", UNKNOWN_NODE),
-                text(context, "current_node", UNKNOWN_NODE),
+                text(context, "_execution_id"),
+                text(context, "current_node"),
                 toolName,
                 preview != null ? preview.summary() : toolName,
                 preview != null ? preview.argv() : List.of(),
@@ -201,38 +201,43 @@ public final class ApprovalToolProvider implements ToolProviderDecorator {
     /// Why a call was refused outright. Distinct per gate for the same reason: an agent
     /// that reads "not granted to this node" goes looking for another tool, while one
     /// that reads "this run is unattended" knows to stop and report.
+    ///
+    /// Every sentence ends "the call was not made" rather than naming a launch. The
+    /// gate sits in front of commands, running local servers and remote endpoints
+    /// alike, and for the last two nothing is ever launched per call – the true claim
+    /// is that nothing was executed or sent.
     private static String refusal(String toolName, ToolPreview preview) {
         if (preview == null) {
             return "'"
                     + toolName
                     + "' cannot describe what it would do, and this run has no human to"
-                    + " approve it; nothing was launched.";
+                    + " approve it; the call was not made.";
         }
         if (preview.blocked() == ToolCallStatus.SANDBOX_UNAVAILABLE) {
             return "'"
                     + toolName
                     + "' needs OS containment, no working sandbox backend is available, and"
-                    + " this run has no human to approve running it uncontained; nothing was"
-                    + " launched.";
+                    + " this run has no human to approve running it uncontained; the call was"
+                    + " not made.";
         }
         if (preview.approvalRequired()) {
             return "'"
                     + toolName
-                    + "' is declared approval: required and this run is unattended; nothing"
-                    + " was launched.";
+                    + "' is declared approval: required and this run is unattended; the call"
+                    + " was not made.";
         }
         return "'"
                 + toolName
                 + "' is declared unattended: false and this run has no human present;"
-                + " nothing was launched.";
+                + " the call was not made.";
     }
 
     private static ToolCallResult denied(String toolName, String message) {
         return ToolCallResult.of(toolName, ToolCallStatus.DENIED, null, message, null);
     }
 
-    private static String text(Map<String, Object> context, String key, String fallback) {
+    private static String text(Map<String, Object> context, String key) {
         Object value = context != null ? context.get(key) : null;
-        return value != null ? String.valueOf(value) : fallback;
+        return value != null ? String.valueOf(value) : UNKNOWN;
     }
 }

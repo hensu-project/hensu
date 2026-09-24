@@ -1,0 +1,4 @@
+# Plaintext off the loopback would put every argument on the wire in the clear.
+servers:
+  remote:
+    url: "http://mcp.example.com/mcp"

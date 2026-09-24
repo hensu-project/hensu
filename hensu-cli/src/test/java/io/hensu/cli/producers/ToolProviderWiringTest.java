@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.hensu.cli.tool.ApprovalToolProvider;
 import io.hensu.cli.tool.CommandCatalog;
 import io.hensu.cli.tool.CommandToolProvider;
-import io.hensu.cli.tool.LocalMcpToolProvider;
+import io.hensu.cli.tool.DeclaredMcpToolProvider;
 import io.hensu.cli.tool.ToolApprovalGate;
 import io.hensu.cli.tool.WorkspaceFileToolProvider;
 import io.hensu.core.tool.BuiltInToolProvider;
@@ -43,7 +43,7 @@ class ToolProviderWiringTest {
                 .contains(
                         WorkspaceFileToolProvider.class.getName(),
                         CommandToolProvider.class.getName(),
-                        LocalMcpToolProvider.class.getName());
+                        DeclaredMcpToolProvider.class.getName());
     }
 
     @Test

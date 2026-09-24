@@ -1,0 +1,5 @@
+# A prefix has to leave a legal tool name behind.
+servers:
+  remote:
+    url: "https://mcp.example.com/mcp"
+    prefix: "acme/"

@@ -16,11 +16,22 @@ import java.util.Objects;
 /// discovers them over stdio, and both arrive at the same definitions.
 ///
 /// ### Schema Coverage
-/// Only the parts of JSON Schema the engine can act on are read: the property
-/// name, its `type`, its `description`, its `default`, and whether the schema's
-/// `required` array names it. Anything richer – nested objects, enumerations,
-/// composition keywords – is preserved by the declared type string alone and
-/// otherwise left to the MCP server to enforce.
+/// Two things come out of one input schema, and neither replaces the other.
+///
+/// The {@link ParameterDef} list is a **lossy projection**: the property name,
+/// its `type`, its `description`, its `default`, and whether the schema's
+/// `required` array names it. Nothing richer survives it – an enumeration, an
+/// array's item type, a composition keyword. It is kept because the engine reads
+/// it: `ToolPreview` lists the parameters, the approval frame names them, and the
+/// router's duplicate check walks them.
+///
+/// The **raw schema** is carried through verbatim on
+/// {@link ToolDefinition#rawSchema()}, and that is what reaches the model. An
+/// adapter hands it to the provider unchanged, so a tool whose `path` parameter
+/// is `{"enum": ["a","b"]}` is offered to the agent as those two choices rather
+/// than as an unconstrained string. Revision 2026-07-28 loosened `inputSchema` to
+/// admit any JSON Schema 2020-12 keyword, which makes carrying the original the
+/// only translation that can stay correct.
 ///
 /// @see ToolDefinition for the engine-side model
 /// @see McpConnection.McpToolDescriptor for the MCP-side model
@@ -38,7 +49,13 @@ public final class McpSchemaConverter {
     public static ToolDefinition convert(McpConnection.McpToolDescriptor mcpTool) {
         Objects.requireNonNull(mcpTool, "mcpTool must not be null");
         List<ParameterDef> parameters = extractParameters(mcpTool.inputSchema());
-        return new ToolDefinition(mcpTool.name(), mcpTool.description(), parameters, null);
+        Map<String, Object> schema = mcpTool.inputSchema();
+        return new ToolDefinition(
+                mcpTool.name(),
+                mcpTool.description(),
+                parameters,
+                null,
+                schema == null || schema.isEmpty() ? null : schema);
     }
 
     /// Extracts parameter definitions from an MCP input schema.

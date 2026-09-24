@@ -638,19 +638,34 @@ catalog loads, not by one silently overwriting the other at run time.
 An MCP server is the other way a deployment hands tools to an agent, and it sits beside the catalog
 in the same directory:
 
+A declaration takes one of two shapes. A server with a `command:` is a process this run launches,
+contains and kills. A server with a `url:` is somebody else's process on somebody else's host,
+dialled over Streamable HTTP. The two shapes are mutually exclusive, and each refuses the other's
+keys rather than ignoring them.
+
 ```yaml
 servers:
-  filesystem:
+  filesystem:                              # launched here
     command: ["/usr/local/bin/mcp-server-filesystem", "{workdir}"]
     startup: 30000        # ms for launch + handshake, default 30000
     timeout: 30000        # per-request ms, default 30000
     unattended: true      # default false
     approval: required    # default none
+    prefix: "fs_"         # default none
     env:
       LOG_LEVEL: warn
     sandbox:
       network: false
       write: ["."]
+
+  acme:                                    # dialled from here
+    url: "https://mcp.acme.example/mcp"
+    auth: {bearer: HENSU_MCP_ACME_TOKEN}   # a credential KEY, never a token
+    headers:
+      X-Acme-Region: eu-west-1
+    prefix: "acme_"
+    timeout: 20000
+    unattended: true
 ```
 
 | Key          | Meaning                                                                                                                                                                                                                                                                                                       |
@@ -662,12 +677,61 @@ servers:
 | `approval`   | `required` or `none`, default `none`                                                                                                                                                                                                                                                                          |
 | `env`        | Variables added to the hermetic base. The `HENSU_PARAM_` namespace is reserved                                                                                                                                                                                                                                |
 | `sandbox`    | `network`, `write` and `cache`, read exactly as [above](#sandbox-policy)                                                                                                                                                                                                                                      |
-| `url`        | Reserved. An HTTP endpoint is rejected at load, because the CLI launches servers rather than dialling them                                                                                                                                                                                                    |
+| `prefix`     | Prepended verbatim to every tool this server publishes, so `prefix: "acme_"` turns `search` into `acme_search`. Optional, and valid on either shape — a name collision is a property of the catalog, not of the transport                                                                                     |
+| `url`        | The absolute endpoint of a remote server, mutually exclusive with `command`. `https:` anywhere; `http:` only on loopback                                                                                                                                                                                      |
+| `auth`       | `{bearer: KEY}`, where `KEY` names an entry in the credential store. Remote servers only                                                                                                                                                                                                                      |
+| `headers`    | Extra headers sent on every request to a remote server. `Authorization` and the `Mcp-*` namespace are refused                                                                                                                                                                                                 |
+
+### A remote server refuses `sandbox:` and `env:` rather than ignoring them
+
+There is no local process to contain, and none to give an environment to. Accepting either block
+and quietly doing nothing with it would tell an operator that containment applies to a call that
+leaves the machine — the one thing Hensu cannot provide for a server it did not start. Both are
+load errors naming the line.
+
+What does bound a remote server is the set of hosts named across `mcp.yaml`: that is the allowlist
+for the run, the remote analogue of "the catalog is the allowlist". Inside it, each server is bound
+more tightly still. Every request carries that server's bearer token and declared headers, so a
+redirect is followed only when it stays on the very endpoint that entry names — same scheme, same
+host, same port. A redirect to a host nobody declared, to a host declared for a *different* server,
+or to another port on the same host is refused: following it would hand one server's credential to
+another. The call comes back as `DENIED` and the run continues.
+
+### `auth:` names a key, never a token
+
+`auth: {bearer: HENSU_MCP_ACME_TOKEN}` names an entry in the credential store — the same store
+`hensu credentials set` writes. The value is resolved when the server is dialled and injected into
+the connection; it never appears in an audit row, a log line or an approval frame.
+
+A value that looks like a literal token is a load error. The rule is screaming snake case,
+`[A-Z][A-Z0-9_]{2,64}`, which every real token format fails on its first character or its
+punctuation — `sk-…`, `ghp_…`, a JWT, base64. The check costs nothing and catches a secret about to
+be committed to a file that lives in the project.
+
+A key that is declared but absent from the store stops that server before any of its tools are
+published, and the run's **Tool sources** section names both the key and the credential file. It
+contributes nothing rather than falling through to an unauthenticated call.
+
+### `prefix:` is how two servers keep the same tool name
+
+Two servers that both publish `search` collide, and the first one declared wins the name while the
+run reports which one lost it. A `prefix:` on either keeps both: it is prepended verbatim, so
+`prefix: "acme_"` publishes `acme_search`, and the agent calls that name. Adding one later means
+renaming tools that committed workflow `.kt` files already reference, so it is cheaper to declare
+it when the second server arrives than after.
+
+### An approval frame for a remote call says where the call is going
+
+Approving a remote tool call is approving disclosure. The frame therefore names the endpoint and
+the server that answered for it, lists the argument keys, and says in as many words that the call
+leaves the machine. There is no argv to show and no containment to describe, because neither
+exists.
 
 ### Where it differs from a command
 
 The grammar is smaller on purpose: a server is one decision, not a family of parameterised
-invocations. Five differences follow from a process that outlives the call:
+invocations. Five differences follow from a server that outlives the call. All five are about the launched
+shape; a remote server has no process at all, so the first three do not apply to it:
 
 - **Containment is decided once, at launch.** There is no per-call sandbox, so a host with no
   working backend starts no servers at all and says so, rather than starting them uncontained.

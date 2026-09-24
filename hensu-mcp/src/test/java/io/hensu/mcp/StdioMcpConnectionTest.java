@@ -33,11 +33,11 @@ class StdioMcpConnectionTest {
     /// per-request budget a test is actually exercising.
     private static final long STARTUP_BUDGET_MS = 30_000L;
 
-    private static McpServerSpec spec(long requestTimeoutMs, String... extraArgs) {
+    private static McpServerSpec.Stdio spec(long requestTimeoutMs, String... extraArgs) {
         return spec(STARTUP_BUDGET_MS, requestTimeoutMs, extraArgs);
     }
 
-    private static McpServerSpec spec(
+    private static McpServerSpec.Stdio spec(
             long startupTimeoutMs, long requestTimeoutMs, String... extraArgs) {
         List<String> argv = new ArrayList<>();
         argv.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
@@ -45,8 +45,9 @@ class StdioMcpConnectionTest {
         argv.add(System.getProperty("java.class.path"));
         argv.add(FakeMcpServer.class.getName());
         argv.addAll(List.of(extraArgs));
-        return new McpServerSpec(
+        return new McpServerSpec.Stdio(
                 "fixture",
+                "",
                 argv,
                 Map.of("FIXTURE_MARKER", "set"),
                 SandboxPolicy.restrictive(),
@@ -56,7 +57,7 @@ class StdioMcpConnectionTest {
                 false);
     }
 
-    private StdioMcpConnection open(McpServerSpec spec) {
+    private StdioMcpConnection open(McpServerSpec.Stdio spec) {
         connection =
                 StdioMcpConnection.open(
                         spec, workingDirectory, UnaryOperator.identity(), System.getenv());
@@ -165,8 +166,8 @@ class StdioMcpConnectionTest {
 
     @Test
     void shouldReportALaunchFailureRatherThanReturnABrokenConnection() {
-        McpServerSpec missing =
-                McpServerSpec.of("absent", List.of("/nonexistent/mcp-server-does-not-exist"));
+        McpServerSpec.Stdio missing =
+                McpServerSpec.Stdio.of("absent", List.of("/nonexistent/mcp-server-does-not-exist"));
 
         assertThatThrownBy(
                         () ->
@@ -205,7 +206,7 @@ class StdioMcpConnectionTest {
     @Test
     void shouldApplyTheContainmentWrapperToTheLaunchArgv() {
         List<List<String>> wrapped = new ArrayList<>();
-        McpServerSpec spec = spec(10_000);
+        McpServerSpec.Stdio spec = spec(10_000);
 
         connection =
                 StdioMcpConnection.open(

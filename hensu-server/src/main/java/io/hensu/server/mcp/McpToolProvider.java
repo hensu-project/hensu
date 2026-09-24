@@ -22,9 +22,9 @@ import org.jboss.logging.Logger;
 /// Exposes the calling tenant's MCP server as a source of tools.
 ///
 /// This is the server's single contribution to the engine's tool seam: the
-/// catalog comes from {@link McpToolDiscovery} and invocation goes through the
-/// {@link McpConnectionPool}, both scoped to whichever tenant is bound to the
-/// calling thread. Nothing about the workflow engine changes between runtimes –
+/// catalog comes from {@link McpToolDiscovery} and invocation goes through a
+/// connection opened by {@link McpConnections}, both scoped to whichever tenant
+/// is bound to the calling thread. Nothing about the engine changes between runtimes –
 /// the CLI contributes its own providers and the router composes whatever it is
 /// given.
 ///
@@ -55,23 +55,22 @@ public class McpToolProvider implements ToolProvider {
     private static final Logger LOG = Logger.getLogger(McpToolProvider.class);
 
     private final McpToolDiscovery discovery;
-    private final McpConnectionPool connectionPool;
+    private final McpConnections connections;
     private final Duration callTimeout;
 
     /// Creates the provider over the server's MCP infrastructure.
     ///
     /// @param discovery tenant-scoped tool discovery, not null
-    /// @param connectionPool pool supplying live MCP connections, not null
+    /// @param connections source of live split-pipe connections, not null
     /// @param callTimeout wall clock imposed on a single tool call, not null
     @Inject
     public McpToolProvider(
             McpToolDiscovery discovery,
-            McpConnectionPool connectionPool,
+            McpConnections connections,
             @ConfigProperty(name = "hensu.mcp.read-timeout", defaultValue = "60s")
                     Duration callTimeout) {
         this.discovery = Objects.requireNonNull(discovery, "discovery must not be null");
-        this.connectionPool =
-                Objects.requireNonNull(connectionPool, "connectionPool must not be null");
+        this.connections = Objects.requireNonNull(connections, "connections must not be null");
         this.callTimeout = Objects.requireNonNull(callTimeout, "callTimeout must not be null");
     }
 
@@ -149,7 +148,7 @@ public class McpToolProvider implements ToolProvider {
             Subtask<Map<String, Object>> subtask =
                     scope.fork(
                             () -> {
-                                McpConnection connection = connectionPool.get(endpoint);
+                                McpConnection connection = connections.get(endpoint);
                                 return connection.callTool(toolName, arguments);
                             });
 

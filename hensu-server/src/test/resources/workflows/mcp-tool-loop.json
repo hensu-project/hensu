@@ -1,0 +1,30 @@
+{
+  "id" : "mcp-tool-loop",
+  "version" : "1.0.0",
+  "startNode" : "read-node",
+  "agents" : {
+    "mcp-agent" : {
+      "id" : "mcp-agent",
+      "role" : "researcher",
+      "model" : "stub",
+      "tools" : [ "read_file" ]
+    }
+  },
+  "nodes" : {
+    "read-node" : {
+      "id" : "read-node",
+      "nodeType" : "STANDARD",
+      "agentId" : "mcp-agent",
+      "prompt" : "Read the file the operator asked about",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

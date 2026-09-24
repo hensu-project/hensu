@@ -75,7 +75,7 @@ Provider credentials loaded via `HensuFactory.loadCredentialsFromEnvironment()`:
 ## Testing
 
 - JUnit 5 + AssertJ + Mockito. Stub mode: `HENSU_STUB_ENABLED=true`. Core testable in isolation (no AI deps).
-- **Integration tests** (`hensu-server`): extend `IntegrationTestBase`, run under `@QuarkusTest` with `@TestProfile(InMemoryTestProfile.class)`. The `inmem` profile disables PostgreSQL (no Docker). Base class provides `loadWorkflow`, `registerStub`, `pushAndExecute`, `pushAndExecuteWithMcp`, `resolveRubricPath`. Per-test cleanup clears `StubResponseRegistry` and deletes tenant data (execution states first, FK constraint).
+- **Integration tests** (`hensu-server`): extend `IntegrationTestBase`, run under `@QuarkusTest` with `@TestProfile(InMemoryTestProfile.class)`. The `inmem` profile disables PostgreSQL (no Docker). Base class provides `loadWorkflow`, `registerStub`, `pushAndExecute`, `resolveRubricPath`. Per-test cleanup clears `StubResponseRegistry` and deletes tenant data (execution states first, FK constraint).
 - **Test handlers** (auto-discovered `@ApplicationScoped`): `TestActionHandler`, `TestReviewHandler`, `TestPauseHandler`, `TestValidatorHandler`.
 - **Stub resolution order**: programmatic → `/stubs/{scenario}/{nodeId}.txt` → `/stubs/default/{nodeId}.txt` → echo fallback.
 - **Repository tests** (`io.hensu.server.persistence`): plain JUnit 5 + Testcontainers PostgreSQL (no Quarkus). `JdbcRepositoryTestBase` starts container, runs Flyway, provides `DataSource`.

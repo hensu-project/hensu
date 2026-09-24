@@ -1,0 +1,5 @@
+# A server is launched or dialled, never both.
+servers:
+  confused:
+    url: "https://mcp.example.com/mcp"
+    command: ["/usr/local/bin/mcp-server"]

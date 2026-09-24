@@ -1,0 +1,7 @@
+# Two servers publishing the same tool name, kept apart by a prefix.
+servers:
+  first:
+    command: ["/usr/local/bin/mcp-server-search"]
+  second:
+    command: ["/usr/local/bin/mcp-server-search"]
+    prefix: "alt_"

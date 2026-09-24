@@ -17,7 +17,10 @@ import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.dsl.WorkingDirectory;
 import io.hensu.dsl.parsers.KotlinScriptParser;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -79,6 +82,56 @@ class WorkflowRunCommandTest extends BaseWorkflowCommandTest {
         // Then — verify the DSL was compiled and the executor was invoked
         verify(kotlinParser).parse(any(WorkingDirectory.class), eq(workflowName));
         verify(executor).execute(eq(workflow), any(), any());
+    }
+
+    /// Completed means an end node was reached, not that it was a successful one. A run
+    /// routed to a FAILURE end used to print a green success banner above its own
+    /// failing status, which an operator skimming the output reads as a pass.
+    @Test
+    void shouldNotAnnounceSuccessForARunThatEndedOnAFailureExit() throws Exception {
+        String workflowName = "blocked-workflow";
+        injectField(command, "workflowName", workflowName);
+        Workflow workflow = createTestWorkflow(workflowName, 1, 2);
+        ExecutionResult.Completed completed =
+                new ExecutionResult.Completed(
+                        createFinalState(createHistoryWithSteps(1)), ExitStatus.FAILURE);
+        when(kotlinParser.parse(any(WorkingDirectory.class), eq(workflowName)))
+                .thenReturn(workflow);
+        when(executor.execute(eq(workflow), any(), any())).thenReturn(completed);
+
+        String printed = capturingStdout(command);
+
+        assertThat(printed)
+                .contains("Workflow ended")
+                .contains("FAILURE")
+                .doesNotContain("completed successfully");
+    }
+
+    @Test
+    void shouldStillAnnounceSuccessForASuccessfulExit() throws Exception {
+        String workflowName = "test-workflow";
+        injectField(command, "workflowName", workflowName);
+        Workflow workflow = createTestWorkflow(workflowName, 2, 3);
+        ExecutionResult.Completed completed =
+                new ExecutionResult.Completed(
+                        createFinalState(createHistoryWithSteps(2)), ExitStatus.SUCCESS);
+        when(kotlinParser.parse(any(WorkingDirectory.class), eq(workflowName)))
+                .thenReturn(workflow);
+        when(executor.execute(eq(workflow), any(), any())).thenReturn(completed);
+
+        assertThat(capturingStdout(command)).contains("Workflow completed successfully");
+    }
+
+    private static String capturingStdout(Runnable body) {
+        PrintStream original = System.out;
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(captured, true, StandardCharsets.UTF_8));
+        try {
+            body.run();
+        } finally {
+            System.setOut(original);
+        }
+        return captured.toString(StandardCharsets.UTF_8);
     }
 
     @Test

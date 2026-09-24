@@ -10,7 +10,7 @@ hensu:
   token: ${HENSU_TOKEN:}
 
   # Tenant identifier — used both as the JWT claim and as the MCP session key.
-  # McpConnectionPool routes tool calls to the session keyed by sse://<tenant-id>.
+  # McpConnections routes tool calls to the session keyed by sse://<tenant-id>.
   tenant-id: dev-tenant
 
   demo:

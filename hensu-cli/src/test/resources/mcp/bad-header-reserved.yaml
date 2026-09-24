@@ -1,0 +1,6 @@
+# The transport owns the Mcp-* namespace.
+servers:
+  remote:
+    url: "https://mcp.example.com/mcp"
+    headers:
+      Mcp-Session-Id: "forged"

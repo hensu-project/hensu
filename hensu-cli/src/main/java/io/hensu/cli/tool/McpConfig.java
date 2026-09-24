@@ -6,12 +6,15 @@ import io.hensu.core.util.MiniYaml;
 import io.hensu.core.util.MiniYamlException;
 import io.hensu.mcp.McpServerSpec;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Logger;
@@ -25,18 +28,47 @@ import java.util.regex.Pattern;
 ///
 /// ```yaml
 /// servers:
-///   filesystem:
+///   filesystem:                          # a process this run launches
 ///     command: ["/usr/local/bin/mcp-server-filesystem", "{workdir}"]
 ///     startup: 30000        # ms allowed for launch + handshake, optional
 ///     timeout: 30000        # per-request ms, optional
 ///     unattended: true      # optional, default false
 ///     approval: required    # optional, default none
+///     prefix: "fs_"         # optional, prepended to every published tool name
 ///     env:
 ///       LOG_LEVEL: warn
 ///     sandbox:
 ///       network: false
 ///       write: ["."]
+///   acme:                                # a remote endpoint this run dials
+///     url: "https://mcp.acme.example/mcp"
+///     auth: {bearer: HENSU_MCP_ACME_TOKEN}   # a credential KEY, never a token
+///     headers:
+///       X-Acme-Region: eu-west-1
+///     prefix: "acme_"
+///     timeout: 20000
 /// ```
+///
+/// ### A remote entry refuses `sandbox:` and `env:` rather than ignoring them
+/// There is no local process to contain and none to give an environment to.
+/// Accepting either block and quietly doing nothing with it would tell an
+/// operator that containment applies to a call that leaves the machine, which is
+/// the one thing Hensu cannot provide for a remote server. The bound that does
+/// exist is the set of hosts declared across this document, enforced when a
+/// remote endpoint tries to redirect a call somewhere else.
+///
+/// ### `auth:` names a key, never a token
+/// `auth: {bearer: HENSU_MCP_ACME_TOKEN}` names an entry in the operator's
+/// credential store, resolved at launch. A value that looks like a literal token
+/// is a load error: every real token format fails the screaming-snake-case rule
+/// on its first character or its punctuation, so the check costs nothing and
+/// catches a secret about to be committed to a file in the project.
+///
+/// ### `prefix:` is how two servers keep the same tool name
+/// It is prepended verbatim, so `prefix: "acme_"` turns `search` into
+/// `acme_search`. It complements rather than replaces the first-wins notice: two
+/// servers publishing `search` with no prefix between them still collide, and the
+/// operator is still told which one lost the name.
 ///
 /// ### `{workdir}` is the only substitution
 /// It expands to the absolute working directory as one whole argv token. No
@@ -74,7 +106,7 @@ import java.util.regex.Pattern;
 ///
 /// @implNote **Immutable after construction.** Pure functions over a parsed
 /// document; safe to call from any thread.
-/// @see LocalMcpToolProvider for what starts from these declarations
+/// @see DeclaredMcpToolProvider for what starts from these declarations
 /// @see McpServerSpec for the parsed shape
 public final class McpConfig {
 
@@ -88,6 +120,16 @@ public final class McpConfig {
 
     private static final Pattern SERVER_ID = Pattern.compile("[A-Za-z0-9_.\\-]+");
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{([A-Za-z0-9_.\\-]+)}");
+
+    /// Shape a tool name, and therefore a prefix, has to keep.
+    public static final Pattern TOOL_NAME = Pattern.compile("[A-Za-z0-9_.\\-]+");
+
+    /// Shape a credential key has to take: screaming snake case.
+    ///
+    /// Every real token format – `sk-…`, `ghp_…`, a JWT, base64 – fails this on
+    /// its first character or its punctuation, which is the point.
+    private static final Pattern CREDENTIAL_KEY = Pattern.compile("[A-Z][A-Z0-9_]{2,64}");
+
     private static final Set<String> SERVER_KEYS =
             Set.of(
                     "command",
@@ -96,8 +138,12 @@ public final class McpConfig {
                     "timeout",
                     "unattended",
                     "approval",
+                    "prefix",
+                    "auth",
+                    "headers",
                     "env",
                     "sandbox");
+    private static final Set<String> AUTH_KEYS = Set.of("bearer");
     private static final Set<String> SANDBOX_KEYS = Set.of("network", "write", "cache");
     private static final Set<String> PACKAGE_RUNNERS = Set.of("npx", "uvx", "pnpx", "bunx");
 
@@ -157,7 +203,11 @@ public final class McpConfig {
 
     private static McpServerSpec compile(String id, MiniYaml.Mapping entry, Path workingDir) {
         rejectUnknownKeys(id, entry);
-        rejectUrl(id, entry);
+        return entry.has("url") ? compileHttp(id, entry) : compileStdio(id, entry, workingDir);
+    }
+
+    private static McpServerSpec compileStdio(String id, MiniYaml.Mapping entry, Path workingDir) {
+        rejectRemoteOnlyKeys(id, entry);
 
         List<String> command = command(id, entry, workingDir);
         SandboxPolicy sandbox =
@@ -166,8 +216,9 @@ public final class McpConfig {
                         : SandboxPolicy.restrictive();
         warnAboutOfflinePackageRunner(id, command, sandbox, entry.line());
 
-        return new McpServerSpec(
+        return new McpServerSpec.Stdio(
                 id,
+                prefix(id, entry),
                 command,
                 environment(id, entry),
                 sandbox,
@@ -215,15 +266,219 @@ public final class McpConfig {
         return workingDir.toString();
     }
 
-    private static void rejectUrl(String id, MiniYaml.Mapping entry) {
-        if (entry.has("url")) {
+    private static McpServerSpec compileHttp(String id, MiniYaml.Mapping entry) {
+        MiniYaml.Value declared = entry.require("url");
+        rejectLocalOnlyKeys(id, entry, declared.line());
+
+        URI url = endpoint(id, declared);
+        return new McpServerSpec.Http(
+                id,
+                prefix(id, entry),
+                url,
+                bearerKey(id, entry),
+                headers(id, entry),
+                entry.has("startup")
+                        ? entry.require("startup").asLong()
+                        : McpServerSpec.DEFAULT_STARTUP_TIMEOUT_MS,
+                entry.has("timeout")
+                        ? entry.require("timeout").asLong()
+                        : McpServerSpec.DEFAULT_REQUEST_TIMEOUT_MS,
+                entry.has("unattended") && entry.require("unattended").asBoolean(),
+                approvalRequired(id, entry));
+    }
+
+    /// Refuses the keys that only make sense for a process Hensu owns.
+    ///
+    /// Each is rejected rather than ignored, and the message says why: accepting
+    /// a `sandbox:` block on an endpoint nobody here launched would imply a
+    /// containment that does not exist.
+    private static void rejectLocalOnlyKeys(String id, MiniYaml.Mapping entry, int line) {
+        if (entry.has("command")) {
             throw new MiniYamlException(
                     "server '"
                             + id
-                            + "' declares url:; HTTP MCP endpoints are not yet supported on the"
-                            + " CLI, declare a stdio command: instead",
-                    entry.require("url").line());
+                            + "' declares both url: and command:; a server is either a process"
+                            + " this run launches or an endpoint it dials, never both",
+                    line);
         }
+        if (entry.has("sandbox")) {
+            throw new MiniYamlException(
+                    "server '"
+                            + id
+                            + "' declares url: with sandbox:; there is no local process to"
+                            + " contain, and accepting the block would imply containment Hensu"
+                            + " cannot provide for a remote endpoint",
+                    entry.require("sandbox").line());
+        }
+        if (entry.has("env")) {
+            throw new MiniYamlException(
+                    "server '"
+                            + id
+                            + "' declares url: with env:; there is no local process to give an"
+                            + " environment to. Use headers: for values the endpoint should"
+                            + " receive, and auth: for a credential key",
+                    entry.require("env").line());
+        }
+    }
+
+    /// Refuses the keys that only make sense for an endpoint Hensu dials.
+    private static void rejectRemoteOnlyKeys(String id, MiniYaml.Mapping entry) {
+        if (entry.has("auth")) {
+            throw new MiniYamlException(
+                    "server '"
+                            + id
+                            + "' declares auth: without url:; a launched server"
+                            + " authenticates through env:, not through a bearer token",
+                    entry.require("auth").line());
+        }
+        if (entry.has("headers")) {
+            throw new MiniYamlException(
+                    "server '"
+                            + id
+                            + "' declares headers: without url:; the stdio transport"
+                            + " carries no headers",
+                    entry.require("headers").line());
+        }
+    }
+
+    private static URI endpoint(String id, MiniYaml.Value declared) {
+        String text = declared.asString();
+        URI url;
+        try {
+            url = new URI(text);
+        } catch (URISyntaxException e) {
+            throw new MiniYamlException(
+                    "server '" + id + "' declares the unusable url '" + text + "'",
+                    declared.line());
+        }
+        if (!url.isAbsolute() || url.getHost() == null) {
+            throw new MiniYamlException(
+                    "server '"
+                            + id
+                            + "' declares url: '"
+                            + text
+                            + "' which is not an absolute http(s) URL",
+                    declared.line());
+        }
+        String scheme = url.getScheme().toLowerCase(Locale.ROOT);
+        if (!scheme.equals("http") && !scheme.equals("https")) {
+            throw new MiniYamlException(
+                    "server '"
+                            + id
+                            + "' declares url: scheme '"
+                            + scheme
+                            + "'; Streamable HTTP is https:, or http: on loopback",
+                    declared.line());
+        }
+        if (scheme.equals("http") && !isLoopback(url.getHost())) {
+            throw new MiniYamlException(
+                    "server '"
+                            + id
+                            + "' declares a plaintext url: to "
+                            + url.getHost()
+                            + "; http: is accepted only on loopback, because every argument and"
+                            + " every credential on this connection would cross the network in"
+                            + " the clear",
+                    declared.line());
+        }
+        return url;
+    }
+
+    private static boolean isLoopback(String host) {
+        String bare = host.toLowerCase(Locale.ROOT).replace("[", "").replace("]", "");
+        return bare.equals("localhost") || bare.equals("::1") || bare.startsWith("127.");
+    }
+
+    private static String bearerKey(String id, MiniYaml.Mapping entry) {
+        if (!entry.has("auth")) {
+            return null;
+        }
+        MiniYaml.Value block = entry.require("auth");
+        MiniYaml.Mapping auth = block.asMapping();
+        for (String key : auth.keys()) {
+            if (!AUTH_KEYS.contains(key)) {
+                throw new MiniYamlException(
+                        "auth block of server '"
+                                + id
+                                + "' declares unknown key '"
+                                + key
+                                + "', expected one of "
+                                + AUTH_KEYS,
+                        auth.get(key).line());
+            }
+        }
+        if (!auth.has("bearer")) {
+            return null;
+        }
+        MiniYaml.Value bearer = auth.require("bearer");
+        String key = bearer.asString();
+        if (!CREDENTIAL_KEY.matcher(key).matches()) {
+            // The value is deliberately left out of the message. The likeliest reason this
+            // check fails is a real token pasted where its key belongs, and quoting it
+            // would copy that token onto the console and into every CI log that captures it.
+            throw new MiniYamlException(
+                    "server '"
+                            + id
+                            + "' declares an auth.bearer value that is not a credential key and"
+                            + " may be a token; it is not repeated here. Name a key in the"
+                            + " credential store instead, matching "
+                            + CREDENTIAL_KEY.pattern()
+                            + ", and store the value with 'hensu credentials set'",
+                    bearer.line());
+        }
+        return key;
+    }
+
+    private static Map<String, String> headers(String id, MiniYaml.Mapping entry) {
+        if (!entry.has("headers")) {
+            return Map.of();
+        }
+        MiniYaml.Mapping declared = entry.require("headers").asMapping();
+        Map<String, String> headers = new LinkedHashMap<>();
+        for (String name : declared.keys()) {
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (lower.equals("authorization")) {
+                throw new MiniYamlException(
+                        "server '"
+                                + id
+                                + "' declares an Authorization header; use auth: so the token"
+                                + " stays a credential key rather than a literal in this file",
+                        declared.get(name).line());
+            }
+            if (lower.startsWith("mcp-")) {
+                throw new MiniYamlException(
+                        "server '"
+                                + id
+                                + "' declares the reserved header '"
+                                + name
+                                + "'; the transport owns the Mcp-* namespace, and a header that"
+                                + " disagrees with the request body is a protocol error on the"
+                                + " wire",
+                        declared.get(name).line());
+            }
+            headers.put(name, declared.get(name).asString());
+        }
+        return headers;
+    }
+
+    private static String prefix(String id, MiniYaml.Mapping entry) {
+        if (!entry.has("prefix")) {
+            return "";
+        }
+        MiniYaml.Value value = entry.require("prefix");
+        String prefix = value.asString();
+        if (!TOOL_NAME.matcher(prefix).matches()) {
+            throw new MiniYamlException(
+                    "server '"
+                            + id
+                            + "' declares prefix: '"
+                            + prefix
+                            + "', which must match "
+                            + TOOL_NAME.pattern()
+                            + " so a prefixed tool name stays a legal tool name",
+                    value.line());
+        }
+        return prefix;
     }
 
     private static Map<String, String> environment(String id, MiniYaml.Mapping entry) {

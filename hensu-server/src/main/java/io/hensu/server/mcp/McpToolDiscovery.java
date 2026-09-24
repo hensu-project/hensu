@@ -34,7 +34,7 @@ import org.jboss.logging.Logger;
 /// Tool lists are cached per MCP endpoint. Use {@link #invalidateCache(String)}
 /// to force re-discovery when tools change.
 ///
-/// @see McpConnectionPool for connection management
+/// @see McpConnections for how a connection is opened
 /// @see McpSchemaConverter for the MCP-to-Hensu schema translation
 /// @see TenantContext for tenant-scoped tool access
 @ApplicationScoped
@@ -42,12 +42,11 @@ public class McpToolDiscovery {
 
     private static final Logger LOG = Logger.getLogger(McpToolDiscovery.class);
 
-    private final McpConnectionPool connectionPool;
+    private final McpConnections connections;
     private final Map<String, List<ToolDefinition>> toolCache = new ConcurrentHashMap<>();
 
-    public McpToolDiscovery(McpConnectionPool connectionPool) {
-        this.connectionPool =
-                Objects.requireNonNull(connectionPool, "connectionPool must not be null");
+    public McpToolDiscovery(McpConnections connections) {
+        this.connections = Objects.requireNonNull(connections, "connections must not be null");
     }
 
     /// Discovers tools from the current tenant's MCP server.
@@ -113,7 +112,7 @@ public class McpToolDiscovery {
     private List<ToolDefinition> fetchAndConvert(String endpoint) {
         try {
             LOG.infov("Discovering tools from MCP endpoint: {0}", endpoint);
-            McpConnection connection = connectionPool.get(endpoint);
+            McpConnection connection = connections.get(endpoint);
             List<McpConnection.McpToolDescriptor> mcpTools = connection.listTools();
 
             List<ToolDefinition> tools = new ArrayList<>(mcpTools.size());

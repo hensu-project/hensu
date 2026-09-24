@@ -1,0 +1,4 @@
+# The smallest remote declaration the grammar accepts.
+servers:
+  remote:
+    url: "https://mcp.example.com/mcp"

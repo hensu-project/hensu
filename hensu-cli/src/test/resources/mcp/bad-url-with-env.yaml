@@ -1,0 +1,6 @@
+# There is no local process to give an environment to.
+servers:
+  remote:
+    url: "https://mcp.example.com/mcp"
+    env:
+      LOG_LEVEL: warn

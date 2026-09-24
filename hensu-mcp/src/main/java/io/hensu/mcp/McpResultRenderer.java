@@ -25,9 +25,22 @@ import java.util.StringJoiner;
 ///   canonical JSON, which at least stays machine-readable.
 ///
 /// ### Runtime Neutrality
-/// Both runtimes render the same way: the server calls tools over SSE and the
-/// CLI calls them over stdio, but an agent must not be able to tell which
-/// transport produced a result.
+/// Both runtimes render the same way: the server calls tools over the split
+/// pipe and the CLI calls them over stdio or Streamable HTTP, but an agent must
+/// not be able to tell which transport produced a result.
+///
+/// ### Why `isError` Becomes `FAILURE`
+/// In the protocol, `isError: true` is a *tool-level* error – "no such file, try
+/// another path" – reported so the model can adapt, and it is deliberately
+/// distinct from a transport or protocol fault. This renderer collapses both
+/// onto {@link ToolCallStatus#FAILURE} anyway, and that is the intended reading
+/// today rather than an oversight: {@link ToolCallStatus} has no constant for
+/// "the tool answered negatively", and adding one is a change to a vocabulary
+/// every provider shares, not a change to MCP rendering. The consequence is
+/// real and worth naming: the agent loop cannot tell a tool that answered
+/// negatively from one that could not be reached. Whether the vocabulary should
+/// grow a constant is filed separately as
+/// `docs/tickets/tool-call-status-negative-answers.md`.
 ///
 /// @see ToolCallResult for the result this feeds
 public final class McpResultRenderer {

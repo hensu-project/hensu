@@ -1,0 +1,6 @@
+# Authorization belongs to auth:, so the token stays a key.
+servers:
+  remote:
+    url: "https://mcp.example.com/mcp"
+    headers:
+      Authorization: "Bearer nope"
