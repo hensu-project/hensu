@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.http.HttpHeaders;
+import java.util.Locale;
 
 /// One HTTP answer from an MCP server, already reduced to the JSON-RPC message it carried.
 ///
@@ -13,6 +14,9 @@ import java.net.http.HttpHeaders;
 record HttpReply(int status, HttpHeaders headers, String body) {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /// The most of a body, in code points, that an error message quotes.
+    static final int EXCERPT_LIMIT = 200;
 
     /// Returns the first value of a response header.
     ///
@@ -35,5 +39,30 @@ record HttpReply(int status, HttpHeaders headers, String body) {
         } catch (IOException e) {
             return null;
         }
+    }
+
+    /// Returns what an error message may quote of the body.
+    ///
+    /// A gateway in front of the server answers a failure with its own error
+    /// page, often kilobytes of HTML, and the message this lands in reaches both
+    /// the operator and the agent. A JSON-RPC error contributes its message,
+    /// markup contributes nothing, and anything else is quoted with its
+    /// whitespace collapsed and cut at {@link #EXCERPT_LIMIT} code points.
+    ///
+    /// @return the excerpt, or the empty string when there is nothing worth quoting
+    String excerpt() {
+        JsonNode error = jsonRpcError();
+        if (error != null) {
+            return error.path("message").asText("");
+        }
+        String flat = body == null ? "" : body.strip().replaceAll("\\s+", " ");
+        String type = headers.firstValue("content-type").orElse("").toLowerCase(Locale.ROOT);
+        if (flat.isEmpty() || type.contains("html") || flat.startsWith("<")) {
+            return "";
+        }
+        if (flat.codePointCount(0, flat.length()) <= EXCERPT_LIMIT) {
+            return flat;
+        }
+        return flat.substring(0, flat.offsetByCodePoints(0, EXCERPT_LIMIT)) + "…";
     }
 }

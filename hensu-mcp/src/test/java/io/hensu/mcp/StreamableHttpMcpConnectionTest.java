@@ -497,6 +497,21 @@ class StreamableHttpMcpConnectionTest {
                     .isInstanceOf(McpException.class)
                     .hasMessageContaining("before the result was complete");
         }
+
+        @Test
+        void shouldQuoteNoneOfAGatewaysErrorPage() {
+            // A proxy's 502 page is kilobytes of markup, and the failure message
+            // reaches both the operator and the agent's context.
+            String page =
+                    "<html><body>" + "<p>upstream unavailable</p>".repeat(500) + "</body></html>";
+            server.failingCallsWith(502, page, "text/html; charset=utf-8");
+            open();
+
+            assertThatThrownBy(() -> connection.callTool("read_file", Map.of("path", "/etc/hosts")))
+                    .isInstanceOf(McpException.class)
+                    .hasMessageContaining("answered HTTP 502")
+                    .hasMessageNotContaining("upstream unavailable");
+        }
     }
 
     /// A refused credential is an answer from a reachable server, and the operator's

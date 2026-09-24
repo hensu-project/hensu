@@ -108,6 +108,9 @@ public final class FakeHttpMcpServer implements AutoCloseable {
     private volatile long answerDelayMs;
     private volatile long cancellationDelayMs;
     private volatile boolean truncate;
+    private volatile int callFailureStatus;
+    private volatile String callFailureBody;
+    private volatile String callFailureType;
     private volatile String requiredBearer;
     private volatile Map<String, Object> toolSchema =
             Map.of(
@@ -314,6 +317,20 @@ public final class FakeHttpMcpServer implements AutoCloseable {
         return this;
     }
 
+    /// Answers every `tools/call` the way a gateway in front of the server would
+    /// on failure: with this status and body, and no JSON-RPC message.
+    ///
+    /// @param status the HTTP status to answer with
+    /// @param body the response body, not null
+    /// @param contentType the response content type, not null
+    /// @return this fixture, never null
+    public FakeHttpMcpServer failingCallsWith(int status, String body, String contentType) {
+        this.callFailureStatus = status;
+        this.callFailureBody = body;
+        this.callFailureType = contentType;
+        return this;
+    }
+
     /// Publishes this schema as the one tool's `inputSchema`.
     ///
     /// @param schema the JSON Schema to publish, not null
@@ -437,6 +454,10 @@ public final class FakeHttpMcpServer implements AutoCloseable {
         }
         if ("tools/call".equals(rpcMethod)) {
             sleep(answerDelayMs);
+            if (callFailureStatus != 0) {
+                respond(exchange, callFailureStatus, callFailureBody, callFailureType);
+                return;
+            }
             if (truncate) {
                 respond(
                         exchange,

@@ -617,6 +617,7 @@ public final class StreamableHttpMcpConnection implements McpConnection {
     private Map<String, Object> readResult(HttpReply reply, String method) {
         exchanger.refuseOnAccessDenied(reply, method);
         if (reply.status() != 200) {
+            String excerpt = reply.excerpt();
             throw new McpException(
                     "MCP request '"
                             + method
@@ -624,7 +625,7 @@ public final class StreamableHttpMcpConnection implements McpConnection {
                             + spec.name()
                             + "' answered HTTP "
                             + reply.status()
-                            + (reply.body().isBlank() ? "" : ": " + reply.body()));
+                            + (excerpt.isEmpty() ? "" : ": " + excerpt));
         }
         readModernServerInfo(reply.body());
         return jsonRpc.parseResult(reply.body());
