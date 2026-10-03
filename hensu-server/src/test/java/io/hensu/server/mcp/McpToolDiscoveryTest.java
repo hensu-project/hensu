@@ -19,15 +19,15 @@ import org.junit.jupiter.api.Test;
 
 class McpToolDiscoveryTest {
 
-    private McpConnectionPool connectionPool;
+    private McpConnections connections;
     private McpConnection connection;
     private McpToolDiscovery discovery;
 
     @BeforeEach
     void setUp() {
-        connectionPool = mock(McpConnectionPool.class);
+        connections = mock(McpConnections.class);
         connection = mock(McpConnection.class);
-        discovery = new McpToolDiscovery(connectionPool);
+        discovery = new McpToolDiscovery(connections);
     }
 
     @Nested
@@ -45,7 +45,7 @@ class McpToolDiscoveryTest {
 
         @Test
         void shouldDiscoverToolsFromMcpEndpoint() throws Exception {
-            TenantInfo tenant = TenantInfo.withMcp("tenant-1", "http://mcp.local:8080");
+            TenantInfo tenant = TenantInfo.withMcp("tenant-1", "sse://tenant-1");
             var mcpTool =
                     new McpConnection.McpToolDescriptor(
                             "search",
@@ -62,7 +62,7 @@ class McpToolDiscoveryTest {
                                     "required",
                                     List.of("query")));
 
-            when(connectionPool.get("http://mcp.local:8080")).thenReturn(connection);
+            when(connections.get("sse://tenant-1")).thenReturn(connection);
             when(connection.listTools()).thenReturn(List.of(mcpTool));
 
             List<ToolDefinition> result =
@@ -85,10 +85,10 @@ class McpToolDiscoveryTest {
         void shouldDiscoverToolsFromEndpoint() {
             var mcpTool = new McpConnection.McpToolDescriptor("read_file", "Read a file", Map.of());
 
-            when(connectionPool.get("http://mcp.local")).thenReturn(connection);
+            when(connections.get("sse://tenant-1")).thenReturn(connection);
             when(connection.listTools()).thenReturn(List.of(mcpTool));
 
-            List<ToolDefinition> result = discovery.discoverTools("http://mcp.local");
+            List<ToolDefinition> result = discovery.discoverTools("sse://tenant-1");
 
             assertThat(result).hasSize(1);
             assertThat(result.getFirst().name()).isEqualTo("read_file");
@@ -98,12 +98,12 @@ class McpToolDiscoveryTest {
         void shouldCacheToolDiscoveryResults() {
             var mcpTool = new McpConnection.McpToolDescriptor("tool", "desc", Map.of());
 
-            when(connectionPool.get("http://mcp.local")).thenReturn(connection);
+            when(connections.get("sse://tenant-1")).thenReturn(connection);
             when(connection.listTools()).thenReturn(List.of(mcpTool));
 
             // Call twice
-            discovery.discoverTools("http://mcp.local");
-            discovery.discoverTools("http://mcp.local");
+            discovery.discoverTools("sse://tenant-1");
+            discovery.discoverTools("sse://tenant-1");
 
             // Should only hit MCP once
             verify(connection, times(1)).listTools();
@@ -111,19 +111,19 @@ class McpToolDiscoveryTest {
 
         @Test
         void shouldNotPoisonCacheOnFetchFailure() {
-            when(connectionPool.get("http://failing")).thenThrow(new McpException("timeout"));
-            when(connectionPool.get("http://healthy")).thenReturn(connection);
+            when(connections.get("sse://failing")).thenThrow(new McpException("timeout"));
+            when(connections.get("sse://healthy")).thenReturn(connection);
             when(connection.listTools())
                     .thenReturn(
                             List.of(new McpConnection.McpToolDescriptor("tool", "desc", Map.of())));
 
             // Failing endpoint should not block healthy one
             try {
-                discovery.discoverTools("http://failing");
+                discovery.discoverTools("sse://failing");
             } catch (McpException ignored) {
             }
 
-            List<ToolDefinition> result = discovery.discoverTools("http://healthy");
+            List<ToolDefinition> result = discovery.discoverTools("sse://healthy");
             assertThat(result).hasSize(1);
             assertThat(discovery.cacheSize()).isEqualTo(1);
         }
@@ -132,12 +132,12 @@ class McpToolDiscoveryTest {
         void shouldRefetchAfterCacheInvalidation() {
             var mcpTool = new McpConnection.McpToolDescriptor("tool", "desc", Map.of());
 
-            when(connectionPool.get("http://mcp.local")).thenReturn(connection);
+            when(connections.get("sse://tenant-1")).thenReturn(connection);
             when(connection.listTools()).thenReturn(List.of(mcpTool));
 
-            discovery.discoverTools("http://mcp.local");
-            discovery.invalidateCache("http://mcp.local");
-            discovery.discoverTools("http://mcp.local");
+            discovery.discoverTools("sse://tenant-1");
+            discovery.invalidateCache("sse://tenant-1");
+            discovery.discoverTools("sse://tenant-1");
 
             verify(connection, times(2)).listTools();
         }
@@ -150,16 +150,16 @@ class McpToolDiscoveryTest {
         void shouldReportCacheSize() {
             var mcpTool = new McpConnection.McpToolDescriptor("tool", "desc", Map.of());
 
-            when(connectionPool.get("http://endpoint1")).thenReturn(connection);
-            when(connectionPool.get("http://endpoint2")).thenReturn(connection);
+            when(connections.get("sse://endpoint1")).thenReturn(connection);
+            when(connections.get("sse://endpoint2")).thenReturn(connection);
             when(connection.listTools()).thenReturn(List.of(mcpTool));
 
             assertThat(discovery.cacheSize()).isZero();
 
-            discovery.discoverTools("http://endpoint1");
+            discovery.discoverTools("sse://endpoint1");
             assertThat(discovery.cacheSize()).isEqualTo(1);
 
-            discovery.discoverTools("http://endpoint2");
+            discovery.discoverTools("sse://endpoint2");
             assertThat(discovery.cacheSize()).isEqualTo(2);
         }
 
@@ -167,12 +167,12 @@ class McpToolDiscoveryTest {
         void shouldInvalidateAllCaches() {
             var mcpTool = new McpConnection.McpToolDescriptor("tool", "desc", Map.of());
 
-            when(connectionPool.get("http://endpoint1")).thenReturn(connection);
-            when(connectionPool.get("http://endpoint2")).thenReturn(connection);
+            when(connections.get("sse://endpoint1")).thenReturn(connection);
+            when(connections.get("sse://endpoint2")).thenReturn(connection);
             when(connection.listTools()).thenReturn(List.of(mcpTool));
 
-            discovery.discoverTools("http://endpoint1");
-            discovery.discoverTools("http://endpoint2");
+            discovery.discoverTools("sse://endpoint1");
+            discovery.discoverTools("sse://endpoint2");
             assertThat(discovery.cacheSize()).isEqualTo(2);
 
             discovery.invalidateAllCaches();

@@ -1,0 +1,5 @@
+# A launched server authenticates through env:, not a bearer token.
+servers:
+  local:
+    command: ["/usr/local/bin/mcp-server"]
+    auth: {bearer: HENSU_MCP_TOKEN}

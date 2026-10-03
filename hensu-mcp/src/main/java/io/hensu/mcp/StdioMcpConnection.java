@@ -50,6 +50,9 @@ import java.util.logging.Logger;
 ///   when that expires. The same deadline covers the send: a server that stops
 ///   reading its standard input fills the pipe, and a caller waiting on a full
 ///   pipe would otherwise wait forever.
+/// - **The handshake is read, not merely completed.** A server announcing a
+///   revision Hensu does not implement fails the connection at launch naming both
+///   versions, rather than producing a confusing method error on the first call.
 /// - **Coming up is not answering.** The handshake is charged to
 ///   {@link McpServerSpec#startupTimeoutMs()}, which runs from the fork and so
 ///   has to cover whatever the server's runtime costs to boot. Every call after
@@ -77,10 +80,7 @@ public final class StdioMcpConnection implements McpConnection {
 
     private static final Logger logger = Logger.getLogger(StdioMcpConnection.class.getName());
 
-    /// MCP revision this client announces during the handshake.
-    public static final String PROTOCOL_VERSION = "2024-11-05";
-
-    private final McpServerSpec spec;
+    private final McpServerSpec.Stdio spec;
     private final JsonRpc jsonRpc;
     private final Process process;
     private final BufferedWriter requests;
@@ -89,14 +89,16 @@ public final class StdioMcpConnection implements McpConnection {
     private final ExecutorService stdin;
     private volatile boolean closed;
     private volatile boolean transportClosed;
+    private volatile String serverInfo;
 
-    private StdioMcpConnection(McpServerSpec spec, Process process) {
+    private StdioMcpConnection(McpServerSpec.Stdio spec, Process process) {
         this.spec = spec;
         this.process = process;
         this.jsonRpc = new JsonRpc(new ObjectMapper());
         this.requests =
                 new BufferedWriter(
                         new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
+        this.serverInfo = spec.name();
         this.stdin =
                 Executors.newSingleThreadExecutor(
                         Thread.ofVirtual().name("mcp-stdin-" + spec.name()).factory());
@@ -114,7 +116,7 @@ public final class StdioMcpConnection implements McpConnection {
     /// @throws McpException if the process cannot start or the handshake fails
     /// @throws NullPointerException if any argument is null
     public static StdioMcpConnection open(
-            McpServerSpec spec,
+            McpServerSpec.Stdio spec,
             Path workingDirectory,
             UnaryOperator<List<String>> argvWrapper,
             Map<String, String> hostEnvironment) {
@@ -242,7 +244,7 @@ public final class StdioMcpConnection implements McpConnection {
     /// Returns the declaration this connection was launched from.
     ///
     /// @return the server declaration, never null
-    public McpServerSpec spec() {
+    public McpServerSpec.Stdio spec() {
         return spec;
     }
 
@@ -256,11 +258,30 @@ public final class StdioMcpConnection implements McpConnection {
     /// is what made a deployment asking for fast failures unable to start.
     private void handshake() {
         Map<String, Object> params = new LinkedHashMap<>();
-        params.put("protocolVersion", PROTOCOL_VERSION);
+        params.put("protocolVersion", McpProtocol.LEGACY_REVISION);
         params.put("capabilities", Map.of());
-        params.put("clientInfo", Map.of("name", "hensu", "version", "1"));
-        request("initialize", params, spec.startupTimeoutMs());
-        notifyServer("notifications/initialized", spec.startupTimeoutMs());
+        params.put("clientInfo", McpProtocol.CLIENT_INFO);
+        Map<String, Object> result = request("initialize", params, spec.startupTimeoutMs());
+        McpProtocol.Handshake announced = McpProtocol.read(result);
+        if (announced.revision() != null && !McpProtocol.isSupported(announced.revision())) {
+            throw new McpException(
+                    McpProtocol.unsupportedRevision(spec.name(), announced.revision()));
+        }
+        if (announced.serverName() != null) {
+            serverInfo = announced.serverName();
+        }
+        write(
+                jsonRpc.createNotification("notifications/initialized", Map.of()),
+                spec.startupTimeoutMs());
+    }
+
+    /// Returns who is on the other end, for an operator about to approve a call.
+    ///
+    /// @return the name the server gave itself, or the declared server name when
+    ///     it gave none, never null
+    @Override
+    public String serverInfo() {
+        return serverInfo;
     }
 
     private Map<String, Object> request(String method, Map<String, Object> params, long timeoutMs) {
@@ -288,10 +309,6 @@ public final class StdioMcpConnection implements McpConnection {
         } finally {
             pending.remove(id);
         }
-    }
-
-    private void notifyServer(String method, long timeoutMs) {
-        write(jsonRpc.createNotification(method, Map.of()), timeoutMs);
     }
 
     /// Hands one line to the server under the same deadline as its reply.

@@ -107,6 +107,21 @@ has no shell, no `eval`, no script runner. All side effects (tool calls, databas
 are routed to tenant-owned MCP servers via the **Split-Pipe** transport. The CLI runtime executes
 locally and answers the same question a different way; see Decision 4.
 
+**The server holds no outbound MCP client, by design.** "This process opens no outbound connections"
+is only provable while no outbound client exists, so there is none to disable: `McpConnections`
+accepts an `sse://clientId` handle and refuses every other scheme, naming it. Two MCP paths exist in
+this codebase and are easy to confuse, so they are stated apart:
+
+|            | Direction | Transport                                                            | Who dials              |
+|------------|-----------|----------------------------------------------------------------------|------------------------|
+| **Server** | inbound   | split pipe — SSE down `/mcp/connect`, POST up `/mcp/message`         | the tenant dials Hensu |
+| **CLI**    | outbound  | stdio to a launched process, or Streamable HTTP to a declared `url:` | Hensu dials the server |
+
+The CLI can dial out because the CLI is where the inverted risk is answerable: a credential store
+holds the operator's secrets, an approval gate asks them before a call, and an audit file records
+what happened. None of those exist on a multi-tenant host, which is the whole of the reason this
+decision reads the way it does.
+
 - **Downstream (SSE):** The Hensu server pushes each JSON-RPC tool request — tagged with a unique request id — over the tenant client's open `/mcp/connect` stream.
 - **Upstream (HTTP POST):** The tenant client relays the request to its own MCP servers, then posts the JSON-RPC result to `/mcp/message`. `McpSessionManager` correlates the response by request id, completing the matching pending future (60 s timeout; futures are cancelled if the client disconnects).
 
@@ -152,6 +167,21 @@ Both pipes (①, ③) are **opened by the tenant client** — the accent arrows 
 The only server→client traffic (②) is tool-call data pushed back over the SSE stream the client
 already opened. Hensu never initiates a connection to the tenant, so tenants expose **no inbound
 ports, no firewall rules, no VPN**.
+
+**The invariant is the direction, not the transport.** SSE is how this decision is implemented
+today; it is not the decision. Every connection being inbound-initiated is the property that makes
+the security claim checkable – you verify it by confirming the server owns no outbound client –
+and that property survives a change of framing. A bidirectional transport such as WebSocket or
+gRPC streaming could replace both pipes without touching Decision 3, and probably should
+eventually: one framed connection collapses ① and ③ into a single endpoint and removes the
+request-id correlation map, which exists only because the response arrives over a different
+connection than the request.
+
+The practical form for a reviewer is this. A proposal that keeps connections inbound-initiated is
+inside Decision 3 whatever its wire format, and should be judged on its own merits. A proposal
+that has the server dial out is outside Decision 3 however carefully its destination hosts are
+allowlisted, because it trades a property you can prove for a policy somebody has to keep
+verifying. Defend the direction; do not defend SSE.
 The server never sees raw credentials or executes user-supplied code. LLM output is treated with
 equal suspicion — `AgentOutputValidator` sanitizes all agent responses for control characters,
 Unicode manipulation, and excessive payload size before the output is written to workflow state.
@@ -259,6 +289,16 @@ invocation, and refuses it outright in a run with nobody to ask. The deployment-
 
 Local stdio MCP servers launch under the same supervisor and the same policy schema. There is one
 containment mechanism, not two.
+
+A remote MCP server declared with `url:` has no process to contain, and no sandbox of ours reaches
+another host — which is why a remote declaration refuses a `sandbox:` block rather than ignoring
+one. Its bound is the set of hosts named across `mcp.yaml`: the remote analogue of "the catalog is
+the allowlist". Within that set each connection is bound to the endpoint its own entry names —
+scheme, host and port — because every request carries that server's bearer token: a redirect
+anywhere else, including into another declared server, is refused as `DENIED` and the run continues.
+Only a redirect that stays on the same endpoint is followed, once. Its credential is a **key** into the operator's credential store,
+resolved at launch and injected into the connection, so the transport module never learns that a
+credential store exists and no token reaches a log line, an audit row or an approval frame.
 
 **Where a human fits, and where one does not.** The engine has no notion of human presence and does
 not gain one: attendedness is a property of the runtime, which the CLI derives from
@@ -532,11 +572,11 @@ flowchart TD
 
     subgraph host["Operator Host"]
         direction LR
-        cat(["Catalog\ncommands.yaml"]) ~~~ lmc(["Local MCP\nmcp.yaml"]) ~~~ wsf(["Workspace\nfiles"])
+        cat(["Catalog\ncommands.yaml"]) ~~~ lmc(["Declared MCP\nmcp.yaml"]) ~~~ wsf(["Workspace\nfiles"])
     end
 
     cif --> crt --> ccore
-    ccore <-->|"sandboxed exec · stdio MCP · PathGuard"| host
+    ccore <-->|"sandboxed exec · stdio + HTTP MCP · PathGuard"| host
 
     style cli fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
     style cif fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
@@ -626,13 +666,13 @@ that only makes sense when the workflow belongs to somebody who is not at the ke
 
 - `HensuEnvironmentProducer` — CDI producer using `HensuFactory.builder()`
 - `ServerConfiguration` — Delegates core components from `HensuEnvironment` via `@Produces @Singleton`
-- `ServerActionExecutor` — Send-action dispatcher for DSL-authored actions (routes to registered handlers, falls back to MCP; rejects `Action.Execute`). Agent tool calls do not pass through it
+- `ServerActionExecutor` — Send-action dispatcher for DSL-authored actions (routes to registered handlers; rejects `Action.Execute`). Agent tool calls do not pass through it
 - `WorkflowService` — Service layer facade: start/resume executions, snapshot management
 - `WorkflowRegistryService` — Push pipeline: wraps save in `WorkflowPushLock` and invokes `SubWorkflowGraphValidator` lazily resolving sub-workflow ids through the repository
 - `WorkflowPushLock` — Cluster-wide push mutex (`pg_advisory_xact_lock` with JVM `ReentrantLock` fallback) preventing concurrent pushes on different nodes from introducing cycles
 - `WorkflowResource` — Workflow definition management (push/pull/delete/list)
 - `ExecutionResource` — Execution runtime (start/resume/status)
-- `McpSidecar` / `McpGatewayResource` — MCP protocol integration
+- `McpGatewayResource` / `McpSessionManager` / `McpConnections` — Inbound split-pipe MCP: the tenant dials in, the server answers over that stream and opens no outbound connection of its own
 - `TenantContext` — Java 25 `ScopedValue` carrying tenant identity for the scope of a request; `TenantContext.runAs()` is the safe propagation entry point
 - `ExecutionLeaseManager` / `ExecutionHeartbeatJob` / `WorkflowRecoveryJob` — Distributed recovery: heartbeat emission and orphaned-execution sweeper
 - `JdbcWorkflowRepository` / `JdbcWorkflowStateRepository` — PostgreSQL-backed storage (JSONB workflow definitions, execution state + lease columns)
@@ -885,7 +925,7 @@ flowchart LR
         subgraph server_beans["Server-specific beans"]
             direction LR
             s1(["ObjectMapper"])
-            s3(["McpConnectionFactory"])
+            s3(["JsonRpc"])
         end
     end
 

@@ -251,7 +251,7 @@ public ObjectMapper objectMapper() {
 
 ### ServerActionExecutor
 
-Server-specific `ActionExecutor` that routes `Action.Send` to registered handlers (such as `McpSidecar`) and rejects `Action.Execute` (local command execution). Agent tool calls no longer reach it — those go through the `ToolRouter`. When `send.isRawPayload()` is true, template resolution is skipped to prevent exfiltration of workflow context through machine-generated arguments:
+Server-specific `ActionExecutor` that routes `Action.Send` to registered handlers and rejects `Action.Execute` (local command execution). Agent tool calls no longer reach it — those go through the `ToolRouter`. When `send.isRawPayload()` is true, template resolution is skipped to prevent exfiltration of workflow context through machine-generated arguments:
 
 ```java
 @Override
@@ -318,7 +318,6 @@ io.hensu.server/
 │   ├── LangChain4jAnthropicNativeConfig # @RegisterForReflection — Anthropic DTOs
 │   ├── LangChain4jGeminiNativeConfig   # @RegisterForReflection — Gemini DTOs
 │   ├── ExecutionEventNativeConfig      # @RegisterForReflection — SSE event sealed subtypes
-│   ├── ServerBootstrap                 # Startup registrations
 │   └── ServerConfiguration             # CDI delegation + server beans
 │
 ├── dev/                   # Dev-only handlers (excluded from prod image)
@@ -331,8 +330,7 @@ io.hensu.server/
 │
 ├── mcp/                   # Server-side MCP transport (protocol types live in hensu-mcp)
 │   ├── McpSessionManager        # SSE session management
-│   ├── McpConnectionPool        # Connection pooling
-│   ├── McpSidecar               # ActionHandler for DSL-level send("mcp", …) calls
+│   ├── McpConnections           # Opens split-pipe connections; refuses every other scheme
 │   ├── McpToolDiscovery         # Runtime tool schema discovery + cache
 │   ├── McpToolProvider          # Exposes the tenant's MCP tools to the ToolProvider seam
 │   └── SseMcpConnection         # SSE-based connection impl
@@ -385,8 +383,8 @@ io.hensu.server/
 Uses Java 25 `ScopedValue` for thread-safe tenant isolation:
 
 ```java
-// In REST resource or interceptor
-TenantInfo tenant = TenantInfo.withMcp(tenantId, mcpEndpoint);
+// The MCP session handle is derived from the tenant id and from nothing else
+TenantInfo tenant = TenantInfo.withMcp(tenantId, "sse://" + tenantId);
 TenantContext.runAs(tenant, () -> {
     // All code in this scope sees the tenant
     TenantInfo current = TenantContext.current();
@@ -852,9 +850,15 @@ This route serves DSL-authored actions only. Tools an agent chooses for itself g
 Via direct connection:
 
 ```java
-McpConnection conn = connectionPool.getForTenant(tenantId);
+McpConnection conn = connections.get("sse://" + tenantId);
 Map<String, Object> result = conn.callTool("search", Map.of("query", "test"));
 ```
+
+`McpConnections` opens nothing else. An endpoint that is not an `sse://clientId`
+handle is refused with a message naming the scheme, because the server is a pure
+orchestrator (Decision 3 of `docs/unified-architecture.md`) and "this process
+opens no outbound connections" is only provable while no outbound client exists.
+The outbound MCP clients — stdio and Streamable HTTP — live in the CLI.
 
 ### Dynamic Tool Discovery
 
@@ -868,8 +872,8 @@ MCP tools are discovered at runtime — no server code changes are required to s
   an exception, so one unreachable MCP server fails a node instead of the whole execution.
   Collisions *between* configured providers are a configuration error the `ToolRouter` rejects
   outright; only a built-in provider yields a contested name, and the server registers none.
-- **No server changes**: `McpSidecar.execute()` resolves tool names dynamically from the JSON-RPC
-  payload. Adding a new tool on the MCP server side is sufficient; no `McpSidecar` update is needed.
+- **No server changes**: tool names are resolved from whatever the tenant's server publishes.
+  Adding a new tool on the MCP server side is sufficient; no server code changes.
 - **Rendering**: `McpResultRenderer` (in `hensu-mcp`) flattens the response content blocks into the
   text the agent reads, and maps the protocol's `isError` flag onto `ToolCallStatus.FAILURE`.
 - **Consumers**: `McpToolProvider` contributes the tenant's tools to the `ToolProvider` seam and is
@@ -1000,7 +1004,6 @@ Every integration test extends `IntegrationTestBase`, which provides:
 |--------------------------------------------------|---------------------------------------------------------|
 | `loadWorkflow(resourceName)`                     | Loads JSON fixtures from `/workflows/`                  |
 | `pushAndExecute(workflow, context)`              | Saves workflow + executes under `TEST_TENANT`           |
-| `pushAndExecuteWithMcp(workflow, ctx, endpoint)` | Executes with MCP-enabled tenant context                |
 | `registerStub(key, response)`                    | Programmatic stub registration by node ID or agent ID   |
 | `registerStub(scenario, key, response)`          | Scenario-specific stub registration                     |
 
@@ -1534,9 +1537,7 @@ quarkus.http.port=8080
 quarkus.http.host=0.0.0.0
 
 # MCP Configuration
-hensu.mcp.connection-timeout=30s
 hensu.mcp.read-timeout=60s
-hensu.mcp.pool-size=10
 
 # PostgreSQL (Dev Services auto-starts a container in dev/test mode)
 quarkus.datasource.db-kind=postgresql
@@ -1580,8 +1581,8 @@ quarkus.log.category."io.hensu".level=DEBUG
 @ApplicationScoped
 public class MyComponent {
 
-    @ConfigProperty(name = "hensu.mcp.connection-timeout", defaultValue = "30s")
-    Duration connectionTimeout;
+    @ConfigProperty(name = "hensu.mcp.read-timeout", defaultValue = "60s")
+    Duration readTimeout;
 
     @ConfigProperty(name = "hensu.planning.default-max-steps", defaultValue = "10")
     int maxSteps;

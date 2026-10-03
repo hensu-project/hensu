@@ -16,6 +16,11 @@ lives in [`../invalid/`](../invalid/README.md).
 rather than a behaviour regression: it asserts that the review shapes the validator *permits* still
 compile. It is a fixture all the same, which is why it is here.
 
+The `smoke-` files are the other exception. They pin no defect: they drive a real model through a
+path end to end, so a manual smoke plan has something fixed to run. The `smoke-mcp-http-*` files
+belong to [`manual-test-plan-mcp-http.md`](../../../docs/manual-test-plan-mcp-http.md), with
+`../../mcp-servers/http-fixture-server.py` as their loopback witness.
+
 Most are exercised from a manual test plan under [`docs/`](../../../docs), which records the observed
 outcome of each run. A fixture whose header says "run the exercise, not the file" means exactly that:
 it is meaningful only in the setup its plan describes.

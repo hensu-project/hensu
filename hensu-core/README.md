@@ -168,7 +168,7 @@ if (result.status() == ToolCallStatus.SUCCESS) { /* ... */ }
 
 | Type                    | Description                                                                                        |
 |-------------------------|----------------------------------------------------------------------------------------------------|
-| `ToolDefinition`        | Tool descriptor with name, description, and parameters                                             |
+| `ToolDefinition`        | Tool descriptor with name, description, parameters, and the raw JSON Schema its source published   |
 | `ParameterDef`          | Parameter with name, type, required flag, default value, and a `sensitive` flag                    |
 | `ToolCallStatus`        | Outcome vocabulary shared by every layer (success, failure, denial, timeout, …)                    |
 | `ToolProvider`          | A runtime's tool source: catalog plus invocation; `settledTools()` reports what is already live    |

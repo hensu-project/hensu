@@ -1,0 +1,4 @@
+# An endpoint has to say which host it is on.
+servers:
+  remote:
+    url: "/mcp"

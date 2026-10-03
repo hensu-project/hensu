@@ -21,6 +21,7 @@ import io.hensu.core.execution.CompositeExecutionListener;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.result.ExecutionResult;
+import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.serialization.WorkflowSerializer;
@@ -334,10 +335,7 @@ class WorkflowRunCommand extends WorkflowCommand {
     private void printCompletionSummary(DaemonFrame frame, AnsiStyles styles) {
         String status = frame.status != null ? frame.status : "UNKNOWN";
         boolean ok = status.startsWith("SUCCESS") || "COMPLETED".equals(status);
-        System.out.printf(
-                "%n%s %s%n",
-                ok ? styles.checkmark() : styles.crossmark(),
-                styles.bold(ok ? "Workflow completed successfully" : "Workflow ended"));
+        printOutcomeBanner(System.out, styles, ok);
         System.out.printf("  status   %s%n", ok ? styles.success(status) : styles.error(status));
         CapabilityGapReport.print(System.out, styles, frame.capabilityGaps);
         ToolSourceNoticeReport.print(System.out, styles, frame.toolNotices);
@@ -397,10 +395,13 @@ class WorkflowRunCommand extends WorkflowCommand {
         }
 
         if (result instanceof ExecutionResult.Completed completed) {
-            out.printf(
-                    "%n%s %s%n",
-                    styles.checkmark(), styles.bold("Workflow completed successfully"));
-            out.printf("  status      %s%n", styles.success(completed.getExitStatus().toString()));
+            // Completed means the graph reached an end node, not that the end node was a
+            // success: a run routed to a FAILURE end completes too, and must not print a
+            // green banner above its own failing status.
+            boolean ok = completed.getExitStatus() == ExitStatus.SUCCESS;
+            String status = completed.getExitStatus().toString();
+            printOutcomeBanner(out, styles, ok);
+            out.printf("  status      %s%n", ok ? styles.success(status) : styles.error(status));
             out.printf(
                     "  steps       %d%n", completed.getFinalState().getHistory().getSteps().size());
             out.printf(
@@ -433,6 +434,22 @@ class WorkflowRunCommand extends WorkflowCommand {
 
         CapabilityGapReport.print(out, styles, finalContext(result));
         ToolSourceNoticeReport.print(out, styles, toolNotices.all());
+    }
+
+    /// Prints the one-line verdict above a finished run's summary.
+    ///
+    /// Shared by the inline and daemon paths so the two cannot drift apart again: the
+    /// inline path once printed "completed successfully" for every run that reached an
+    /// end node, including one that ended on a `FAILURE` exit.
+    ///
+    /// @param out where the summary is printed, not null
+    /// @param styles the run's styling, not null
+    /// @param ok whether the run ended with a successful exit status
+    private static void printOutcomeBanner(PrintStream out, AnsiStyles styles, boolean ok) {
+        out.printf(
+                "%n%s %s%n",
+                ok ? styles.checkmark() : styles.crossmark(),
+                styles.bold(ok ? "Workflow completed successfully" : "Workflow ended"));
     }
 
     /// Reads the run's final state context out of whichever terminal shape it produced.

@@ -523,7 +523,7 @@ launchctl load -w ~/Library/LaunchAgents/io.hensu.daemon.plist
     +— build/                              # Output of `hensu build` (JSON artifacts)
     +— mcp-servers/                        # Server scripts mcp.yaml launches (this sample's own)
     +— commands.yaml                       # Command catalog: the allowlist of what may run
-    +— mcp.yaml                            # MCP servers this deployment wants launched locally
+    +— mcp.yaml                            # MCP servers this deployment launches locally or dials remotely
     ```
 
 ## Configuration
@@ -531,6 +531,29 @@ launchctl load -w ~/Library/LaunchAgents/io.hensu.daemon.plist
 ### API Credentials
 
 See [Credentials Commands](#credentials-commands) above.
+
+The same store holds the bearer tokens remote MCP servers need. An `mcp.yaml` entry names a **key**,
+never a value:
+
+```yaml
+servers:
+  acme:
+    url: "https://mcp.acme.example/mcp"
+    auth: {bearer: HENSU_MCP_ACME_TOKEN}
+```
+
+```bash
+hensu credentials set HENSU_MCP_ACME_TOKEN
+```
+
+The convention is `HENSU_MCP_<SERVER>_TOKEN`, and the grammar enforces the shape rather than the
+name: a key must be screaming snake case, `[A-Z][A-Z0-9_]{2,64}`, which every real token format
+fails on its first character or its punctuation. A literal token in `auth:` is therefore a load
+error rather than a secret committed to a file inside the project.
+
+A key that is declared but not set stops that server before any of its tools are published. The run
+names the key and the credential file in its **Tool sources** section; it never falls through to an
+unauthenticated call.
 
 ### Application Properties
 
@@ -633,7 +656,8 @@ apart:
 | Source              | Declared in     | Visible when                                                                |
 |---------------------|-----------------|-----------------------------------------------------------------------------|
 | Catalog commands    | `commands.yaml` | the entry carries a `tool:` block                                           |
-| Local MCP servers   | `mcp.yaml`      | the server launched and answered `tools/list`                               |
+| Local MCP servers   | `mcp.yaml`      | the `command:` server launched and answered `tools/list`                    |
+| Remote MCP servers  | `mcp.yaml`      | the `url:` endpoint was reachable, authenticated and answered `tools/list`  |
 | Built-in file tools | nothing         | always – `read_file`, `list_dir`, `glob`, `grep`, `write_file`, `edit_file` |
 
 A command with no `tool:` block stays usable from a workflow's `execute(...)` and invisible to
@@ -643,9 +667,20 @@ a run cannot rewrite the catalog that decides what it may run. Where a built-in 
 a name a configured MCP server publishes, the configured server wins and the built-in drops out,
 so adding a filesystem server never breaks start-up.
 
-MCP servers are launched lazily, on the first node that resolves its tools, and they run under the
-same containment a command does. A host with no working sandbox backend starts none of them and
-says so, rather than starting them uncontained.
+MCP servers are started lazily, on the first node that resolves its tools. A `command:` server runs
+under the same containment a command does, and a host with no working sandbox backend starts none of
+them and says so, rather than starting them uncontained.
+
+A `url:` server has no process to contain and no sandbox of ours reaches another host. What bounds
+it instead is the set of hosts named across `mcp.yaml`, and within that, the endpoint each entry
+names: a redirect is followed only when it stays on the same scheme, host and port, because every
+request carries that server's bearer token. A redirect anywhere else — including to another declared
+server — is refused as `DENIED`, and the run continues. Approving a remote call is
+approving disclosure, so its approval frame names the endpoint and says the call leaves the machine.
+
+Two servers that publish the same tool name collide, and the first declared wins while the run
+reports which one lost it. A `prefix:` on either keeps both: `prefix: "acme_"` publishes
+`acme_search`, and that is the name an agent calls.
 
 ---
 

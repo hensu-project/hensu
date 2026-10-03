@@ -1,0 +1,13 @@
+# Every key a remote declaration accepts.
+servers:
+  acme:
+    url: "https://mcp.acme.example/mcp"
+    auth: {bearer: HENSU_MCP_ACME_TOKEN}
+    headers:
+      X-Acme-Region: eu-west-1
+      X-Acme-Tier: gold
+    prefix: "acme_"
+    startup: 15000
+    timeout: 20000
+    unattended: true
+    approval: required

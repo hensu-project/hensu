@@ -8,8 +8,6 @@ import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.serialization.WorkflowSerializer;
-import io.hensu.server.tenant.TenantContext;
-import io.hensu.server.tenant.TenantContext.TenantInfo;
 import io.hensu.server.workflow.ExecutionStartResult;
 import io.hensu.server.workflow.WorkflowService;
 import io.quarkus.test.junit.QuarkusTest;
@@ -113,37 +111,6 @@ abstract class IntegrationTestBase {
                 workflowService.startExecution(TEST_TENANT, workflow.getId(), context);
         awaitTerminalState(result.executionId());
         return result;
-    }
-
-    /// Saves a workflow and executes with an MCP-enabled tenant context, blocking until done.
-    ///
-    /// Wraps execution in {@link TenantContext#runAs} with {@link TenantInfo#withMcp} so that
-    /// {@link io.hensu.server.mcp.McpSidecar} can resolve the tenant's MCP endpoint.
-    /// Blocks until terminal state — see {@link #pushAndExecute}.
-    ///
-    /// @param workflow the workflow to persist and execute, not null
-    /// @param context initial execution context variables, not null
-    /// @param mcpEndpoint the MCP server endpoint (e.g. `sse://clientId`), not null
-    /// @return execution result, never null
-    /// @throws AssertionError if the execution does not reach terminal state within 5 seconds
-    /// @throws RuntimeException wrapping the underlying exception if the tenant context fails
-    ExecutionStartResult pushAndExecuteWithMcp(
-            Workflow workflow, Map<String, Object> context, String mcpEndpoint) {
-        workflowRepository.save(TEST_TENANT, workflow);
-
-        TenantInfo tenant = TenantInfo.withMcp(TEST_TENANT, mcpEndpoint);
-        try {
-            ExecutionStartResult result =
-                    TenantContext.runAs(
-                            tenant,
-                            () ->
-                                    workflowService.startExecution(
-                                            TEST_TENANT, workflow.getId(), context));
-            awaitTerminalState(result.executionId());
-            return result;
-        } catch (Exception e) {
-            throw new RuntimeException("Execution failed", e);
-        }
     }
 
     /// Polls until the given execution reaches a terminal checkpoint state.

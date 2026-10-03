@@ -1,6 +1,9 @@
 package io.hensu.core.tool;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /// Describes a callable tool without implementation details.
@@ -13,13 +16,23 @@ import java.util.Objects;
 /// The core module only defines the tool shape; actual invocation happens
 /// through {@link ToolProvider} implementations contributed by each runtime.
 ///
+/// ### Two Views Of The Same Inputs
+/// `parameters` is a flat projection an engine can reason about: the tool loop
+/// checks required names against it, the approval frame lists them, and the
+/// router uses them to describe a call. It is lossy by construction – it has no
+/// way to say "one of these three strings", "an array of objects", or "at least
+/// one of these keys". `rawSchema` is the JSON Schema the source published,
+/// carried verbatim so an adapter can hand the model exactly what the tool
+/// actually accepts. A tool declared locally has none and rebuilds a schema from
+/// `parameters`; a tool discovered over MCP has both.
+///
 /// ### Contracts
 /// - **Precondition**: `name` must not be null or blank
 /// - **Postcondition**: All fields immutable after construction
 ///
 /// ### Usage
 /// {@snippet :
-/// ToolDefinition searchTool = new ToolDefinition(
+/// ToolDefinition searchTool = ToolDefinition.of(
 ///     "search",
 ///     "Search for information",
 ///     List.of(
@@ -33,10 +46,16 @@ import java.util.Objects;
 /// @param description human-readable description for LLM context, not null
 /// @param parameters input parameters accepted by the tool, not null (may be empty)
 /// @param returnType description of the tool's output, may be null
+/// @param rawSchema the JSON Schema the source published for the tool's input,
+///     may be null when the source published none
 /// @see ToolRegistry for tool discovery
 /// @see ToolProvider for tool invocation
 public record ToolDefinition(
-        String name, String description, List<ParameterDef> parameters, ParameterDef returnType) {
+        String name,
+        String description,
+        List<ParameterDef> parameters,
+        ParameterDef returnType,
+        Map<String, Object> rawSchema) {
 
     /// Compact constructor with validation.
     public ToolDefinition {
@@ -46,6 +65,27 @@ public record ToolDefinition(
         }
         Objects.requireNonNull(description, "description must not be null");
         parameters = parameters != null ? List.copyOf(parameters) : List.of();
+        // Not Map.copyOf: a published schema legitimately carries JSON nulls
+        // (a "default": null, for instance), which Map.copyOf rejects outright.
+        rawSchema =
+                rawSchema != null
+                        ? Collections.unmodifiableMap(new LinkedHashMap<>(rawSchema))
+                        : null;
+    }
+
+    /// Creates a tool definition without a published schema.
+    ///
+    /// @param name unique tool identifier, not null
+    /// @param description human-readable description, not null
+    /// @param parameters input parameters, not null
+    /// @param returnType description of the tool's output, may be null
+    /// @return new tool definition, never null
+    public static ToolDefinition of(
+            String name,
+            String description,
+            List<ParameterDef> parameters,
+            ParameterDef returnType) {
+        return new ToolDefinition(name, description, parameters, returnType, null);
     }
 
     /// Creates a tool definition without explicit return type.
@@ -56,7 +96,7 @@ public record ToolDefinition(
     /// @return new tool definition, never null
     public static ToolDefinition of(
             String name, String description, List<ParameterDef> parameters) {
-        return new ToolDefinition(name, description, parameters, null);
+        return new ToolDefinition(name, description, parameters, null, null);
     }
 
     /// Creates a simple tool definition with no parameters.
@@ -65,7 +105,7 @@ public record ToolDefinition(
     /// @param description human-readable description, not null
     /// @return new tool definition, never null
     public static ToolDefinition simple(String name, String description) {
-        return new ToolDefinition(name, description, List.of(), null);
+        return new ToolDefinition(name, description, List.of(), null, null);
     }
 
     /// Returns whether this tool has any required parameters.

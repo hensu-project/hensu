@@ -10,11 +10,18 @@ import java.util.Map;
 /// - Calling tools with arguments
 /// - Managing connection lifecycle
 ///
-/// Implementations may use different transport protocols (HTTP, stdio, WebSocket).
-/// Each runtime owns its own pooling and lifetime policy; this interface only
-/// describes what a live connection can do.
+/// Three transports implement this interface, and which ones exist is a
+/// property of the runtime rather than of the protocol:
 ///
-/// @see McpConnectionFactory for establishing connections
+/// - **stdio** (CLI) – a server process Hensu launched and contains
+/// - **Streamable HTTP** (CLI) – a remote endpoint Hensu dials out to
+/// - **split pipe** (server) – a session the tenant opened inbound, which the
+///   server answers over without ever dialling out
+///
+/// Each runtime owns its own lifetime policy; this interface only describes
+/// what a live connection can do.
+///
+/// @see McpResultRenderer for turning a response into an agent-readable result
 public interface McpConnection {
 
     /// Lists all tools available on the MCP server.
@@ -34,9 +41,12 @@ public interface McpConnection {
     Map<String, Object> callTool(String toolName, Map<String, Object> arguments)
             throws McpException;
 
-    /// Returns the endpoint this connection is connected to.
+    /// Returns the endpoint handle this connection is bound to.
     ///
-    /// @return the endpoint URL
+    /// The shape is transport-specific and is a URL for only one of them:
+    /// `stdio:command`, an `https://` URL, or `sse://clientId`.
+    ///
+    /// @return the endpoint handle, never null
     String getEndpoint();
 
     /// Returns whether this connection is still valid.
@@ -46,6 +56,30 @@ public interface McpConnection {
 
     /// Closes this connection and releases resources.
     void close();
+
+    /// Returns why tools this server knows of are missing from its catalog.
+    ///
+    /// A connection may leave a tool out for a reason only it can see – a
+    /// definition the transport's own rules refuse, or a server that declined to
+    /// list anything. The runtime that adopted the connection decides where an
+    /// operator reads these; the CLI, whose console log is off, prints them
+    /// beside the run's other tool-source notices.
+    ///
+    /// @return the reasons, in the order they were found, never null (empty by default)
+    default List<String> catalogNotices() {
+        return List.of();
+    }
+
+    /// Returns who is on the other end, for an operator about to approve a call.
+    ///
+    /// A transport that learns the server's own name during its handshake
+    /// answers with that; one that learns nothing names the endpoint instead.
+    ///
+    /// @return the server's announced name, or a transport-specific fallback,
+    ///     never null
+    default String serverInfo() {
+        return getEndpoint();
+    }
 
     /// Descriptor for an MCP tool.
     ///

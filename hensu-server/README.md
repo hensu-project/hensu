@@ -265,7 +265,7 @@ See [Server Developer Guide](../docs/developer-guide-server.md) for implementati
 Thread-safe tenant isolation using Java 25 ScopedValues:
 
 ```java
-TenantInfo tenant = TenantInfo.withMcp("tenant-123", "http://mcp.local:8080");
+TenantInfo tenant = TenantInfo.withMcp("tenant-123", "sse://tenant-123");
 TenantContext.runAs(tenant, () -> {
     // All code in this scope has tenant context
     TenantInfo current = TenantContext.current();
@@ -322,9 +322,7 @@ in the Server Developer Guide for the push pipeline.
 quarkus.http.port=8080
 quarkus.http.host=0.0.0.0
 # MCP Configuration
-hensu.mcp.connection-timeout=30s
 hensu.mcp.read-timeout=60s
-hensu.mcp.pool-size=10
 # PostgreSQL
 # Dev: docker-compose (set HENSU_DB_USER, HENSU_DB_PASSWORD, HENSU_DB_NAME in .env)
 # Prod: set HENSU_DB_URL, HENSU_DB_USER, HENSU_DB_PASSWORD as environment variables
@@ -393,7 +391,6 @@ hensu-server/
 │   │   ├── LangChain4jAnthropicNativeConfig.java  # @RegisterForReflection — Anthropic API request/response DTOs
 │   │   ├── LangChain4jGeminiNativeConfig.java     # @RegisterForReflection — Google AI Gemini API request/response DTOs
 │   │   ├── ExecutionEventNativeConfig.java        # @RegisterForReflection — SSE event sealed subtypes
-│   │   ├── ServerBootstrap.java                   # Startup registrations
 │   │   └── ServerConfiguration.java               # CDI delegation + server beans
 │   ├── execution/                         # Server-side execution listeners
 │   │   ├── LoggingExecutionListener.java  # Structured log output for node lifecycle, tool audit, transition warnings
@@ -402,9 +399,8 @@ hensu-server/
 │   ├── dev/                               # Dev-only handlers (excluded from prod image)
 │   │   └── SleepHandler.java              # Simulates long-running node for crash-recovery tests
 │   ├── mcp/                               # Server-side MCP transport (protocol types live in hensu-mcp)
-│   │   ├── McpConnectionPool.java
+│   │   ├── McpConnections.java            # Opens split-pipe connections; refuses every other scheme
 │   │   ├── McpSessionManager.java
-│   │   ├── McpSidecar.java                # ActionHandler for DSL-level send("mcp", …) calls
 │   │   ├── McpToolDiscovery.java          # Runtime tool schema discovery + cache
 │   │   ├── McpToolProvider.java           # Exposes the tenant's MCP tools to the ToolProvider seam
 │   │   └── SseMcpConnection.java

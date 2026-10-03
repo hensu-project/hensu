@@ -162,7 +162,7 @@ working-dir/
 ├── rubrics/                    # markdown scoring criteria
 │   └── content-quality.md
 ├── commands.yaml               # the command catalog: every binary a local run may execute
-├── mcp.yaml                    # MCP servers this deployment wants launched locally (optional)
+├── mcp.yaml                    # MCP servers this deployment launches locally or dials remotely (optional)
 └── build/                      # compiled output of `hensu build`
     └── content-pipeline.json
 ```
@@ -239,7 +239,7 @@ For production setup with JWT auth and PostgreSQL, see the
 - **Rubric evaluation.** Markdown rubrics score outputs and route on thresholds, so a node can send
   weak work back with feedback and no custom parsing code.
 - **Agent-native tool loop.** Agents drive their own tool calls within a per-node budget. Tools come
-  from the runtime – MCP on the server, catalog commands and locally launched MCP servers on the CLI –
+  from the runtime – MCP on the server, catalog commands and declared MCP servers, local or remote, on the CLI –
   plus built-in file tools the engine always carries, and every call and result reaches the execution
   listener as a paired request/outcome record. What a run was refused is recorded on the state, so a
   workflow can route on having been blocked instead of failing blind.
@@ -253,7 +253,7 @@ For production setup with JWT auth and PostgreSQL, see the
 ### Local execution (CLI)
 
 - **Only the commands you declared.** `commands.yaml` is the complete set of binaries a local run may
-  execute, `mcp.yaml` the complete set of servers it may launch, and each node grants an agent only
+  execute, `mcp.yaml` the complete set of servers it may launch or dial, and each node grants an agent only
   the subset it needs. Every command runs inside an OS sandbox; the built-in file tools launch nothing
   and are confined to the working directory instead. How both gates work:
   [the CLI executes what you granted](#the-cli-executes-what-you-granted).

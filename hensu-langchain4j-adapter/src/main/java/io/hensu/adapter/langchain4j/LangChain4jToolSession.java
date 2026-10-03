@@ -11,7 +11,9 @@ import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.request.json.JsonArraySchema;
 import dev.langchain4j.model.chat.request.json.JsonBooleanSchema;
+import dev.langchain4j.model.chat.request.json.JsonEnumSchema;
 import dev.langchain4j.model.chat.request.json.JsonIntegerSchema;
 import dev.langchain4j.model.chat.request.json.JsonNumberSchema;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
@@ -24,6 +26,7 @@ import io.hensu.core.agent.ToolSession;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolDefinition;
 import java.util.*;
+import java.util.Locale;
 import java.util.logging.Logger;
 
 /// LangChain4j implementation of {@link ToolSession}.
@@ -208,7 +211,25 @@ class LangChain4jToolSession implements ToolSession {
         return sb.toString();
     }
 
-    private static ToolSpecification toToolSpec(ToolDefinition tool) {
+    /// Builds the specification the model sees for one tool.
+    ///
+    /// A tool that published a JSON Schema is offered that schema, because the
+    /// flat {@link ToolDefinition#parameters()} list cannot express an
+    /// enumeration, an array's item type, or a nested object, and a model that
+    /// never sees the constraint cannot respect it. A tool declared locally
+    /// published nothing, so its schema is rebuilt from the parameter list.
+    static ToolSpecification toToolSpec(ToolDefinition tool) {
+        JsonObjectSchema paramSchema =
+                tool.rawSchema() != null ? fromRawSchema(tool.rawSchema()) : fromParameters(tool);
+
+        return ToolSpecification.builder()
+                .name(tool.name())
+                .description(tool.description())
+                .parameters(paramSchema)
+                .build();
+    }
+
+    private static JsonObjectSchema fromParameters(ToolDefinition tool) {
         Map<String, JsonSchemaElement> properties = new LinkedHashMap<>();
         List<String> required = new ArrayList<>();
 
@@ -219,14 +240,103 @@ class LangChain4jToolSession implements ToolSession {
             }
         }
 
-        JsonObjectSchema paramSchema =
-                JsonObjectSchema.builder().addProperties(properties).required(required).build();
+        return JsonObjectSchema.builder().addProperties(properties).required(required).build();
+    }
 
-        return ToolSpecification.builder()
-                .name(tool.name())
-                .description(tool.description())
-                .parameters(paramSchema)
-                .build();
+    /// Translates a published JSON Schema object into LangChain4j's model.
+    ///
+    /// Stays on the tree model throughout – no reflective binding, so the
+    /// native image is unaffected. Keywords LangChain4j has no element for are
+    /// dropped rather than approximated, which is the same thing the provider
+    /// would do with them.
+    private static JsonObjectSchema fromRawSchema(Map<String, Object> schema) {
+        JsonObjectSchema.Builder builder = JsonObjectSchema.builder();
+        if (schema.get("description") instanceof String description) {
+            builder.description(description);
+        }
+        if (schema.get("properties") instanceof Map<?, ?> properties) {
+            Map<String, JsonSchemaElement> translated = new LinkedHashMap<>();
+            properties.forEach(
+                    (name, value) -> {
+                        if (name instanceof String key && value instanceof Map<?, ?> property) {
+                            translated.put(key, toSchemaElement(property));
+                        }
+                    });
+            builder.addProperties(translated);
+        }
+        builder.required(stringsOf(schema.get("required")));
+        if (schema.get("additionalProperties") instanceof Boolean additional) {
+            builder.additionalProperties(additional);
+        }
+        return builder.build();
+    }
+
+    private static JsonSchemaElement toSchemaElement(Map<?, ?> property) {
+        String description = property.get("description") instanceof String text ? text : null;
+
+        List<String> enumValues = stringsOf(property.get("enum"));
+        if (!enumValues.isEmpty()) {
+            return JsonEnumSchema.builder().enumValues(enumValues).description(description).build();
+        }
+
+        return switch (typeOf(property).toLowerCase(Locale.ROOT)) {
+            case "number" -> JsonNumberSchema.builder().description(description).build();
+            case "integer", "int" -> JsonIntegerSchema.builder().description(description).build();
+            case "boolean", "bool" -> JsonBooleanSchema.builder().description(description).build();
+            case "array" ->
+                    JsonArraySchema.builder()
+                            .items(
+                                    property.get("items") instanceof Map<?, ?> items
+                                            ? toSchemaElement(items)
+                                            : JsonStringSchema.builder().build())
+                            .description(description)
+                            .build();
+            case "object" -> nestedObject(property, description);
+            default -> JsonStringSchema.builder().description(description).build();
+        };
+    }
+
+    /// Reads a property's type, which JSON Schema allows to be a list.
+    ///
+    /// A list such as `["integer", "null"]` is how a schema says "nullable
+    /// integer". The model is told the first non-null member, because a tool
+    /// spec has no union to offer and falling back to a string would invite a
+    /// quoted number the server then refuses.
+    private static String typeOf(Map<?, ?> property) {
+        return switch (property.get("type")) {
+            case String named -> named;
+            case List<?> named ->
+                    named.stream()
+                            .filter(String.class::isInstance)
+                            .map(String.class::cast)
+                            .filter(member -> !member.equals("null"))
+                            .findFirst()
+                            .orElse("string");
+            case null, default -> "string";
+        };
+    }
+
+    private static JsonObjectSchema nestedObject(Map<?, ?> property, String description) {
+        JsonObjectSchema.Builder nested = JsonObjectSchema.builder().description(description);
+        if (property.get("properties") instanceof Map<?, ?> properties) {
+            Map<String, JsonSchemaElement> translated = new LinkedHashMap<>();
+            properties.forEach(
+                    (name, value) -> {
+                        if (name instanceof String key && value instanceof Map<?, ?> child) {
+                            translated.put(key, toSchemaElement(child));
+                        }
+                    });
+            nested.addProperties(translated);
+        }
+        nested.required(stringsOf(property.get("required")));
+        return nested.build();
+    }
+
+    private static List<String> stringsOf(Object value) {
+        if (!(value instanceof List<?> listed)) {
+            return List.of();
+        }
+        return listed.stream().filter(String.class::isInstance).map(String.class::cast).toList();
     }
 
     private static JsonSchemaElement toSchemaElement(String type) {

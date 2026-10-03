@@ -1207,9 +1207,11 @@ that server. Two configured providers, or two built-ins, still collide.
 
 ### MCP Integration
 
-The server contributes a provider backed by MCP server connections, and the CLI one backed by stdio
-servers it launches itself. Tools discovered via MCP become `ToolDefinition` instances available for
-agent tool loops.
+The server contributes a provider backed by the tenant's split-pipe connection, and the CLI one
+backed by the servers `mcp.yaml` declares – stdio servers it launches itself and remote servers it
+reaches over Streamable HTTP. Tools discovered via MCP become `ToolDefinition` instances available
+for agent tool loops, carrying the raw JSON Schema the server published so constraints such as
+`enum` reach the model intact.
 
 ```
 MCP Server ──► ToolDefinition ──► ToolProvider ──► ToolRouter ──► ToolLoopRunner ──► Agent Tool Session

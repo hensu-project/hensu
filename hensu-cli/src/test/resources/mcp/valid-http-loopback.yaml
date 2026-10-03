@@ -1,0 +1,4 @@
+# Plaintext is accepted on loopback: nothing crosses the network.
+servers:
+  local-http:
+    url: "http://127.0.0.1:8931/mcp"
