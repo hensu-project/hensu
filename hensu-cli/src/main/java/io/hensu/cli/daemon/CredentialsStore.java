@@ -3,8 +3,10 @@ package io.hensu.cli.daemon;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
@@ -76,8 +78,7 @@ public final class CredentialsStore {
                         lines.add(key + "=" + value);
                     }
 
-                    Files.write(file, lines, StandardCharsets.UTF_8);
-                    applyRestrictedPermissions();
+                    replaceWith(lines);
                     return null;
                 });
     }
@@ -134,7 +135,7 @@ public final class CredentialsStore {
                         return false;
                     }
 
-                    Files.write(file, filtered, StandardCharsets.UTF_8);
+                    replaceWith(filtered);
                     return true;
                 });
     }
@@ -194,9 +195,48 @@ public final class CredentialsStore {
         T call() throws IOException;
     }
 
+    /// Replaces the file's content in one step.
+    ///
+    /// Readers do not take the lock – a daemon run reads a token while dialling a server –
+    /// so an in-place rewrite would let one see the file truncated or half-written, and
+    /// skip a server as unauthenticated or send it half a token. The new content is
+    /// written to a sibling created owner-only and renamed over the file, so a reader sees
+    /// the old content or the new, and the secrets are never on disk with wider
+    /// permissions than `0600`, not even between the write and a `chmod`.
+    private void replaceWith(List<String> lines) throws IOException {
+        Path temp =
+                posix()
+                        ? Files.createTempFile(
+                                file.getParent(),
+                                file.getFileName() + ".",
+                                ".tmp",
+                                PosixFilePermissions.asFileAttribute(
+                                        PosixFilePermissions.fromString("rw-------")))
+                        : Files.createTempFile(file.getParent(), file.getFileName() + ".", ".tmp");
+        try {
+            Files.write(temp, lines, StandardCharsets.UTF_8);
+            try {
+                Files.move(
+                        temp,
+                        file,
+                        StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temp);
+        }
+        applyRestrictedPermissions();
+    }
+
+    private boolean posix() {
+        return file.getFileSystem().supportedFileAttributeViews().contains("posix");
+    }
+
     private void applyRestrictedPermissions() {
         try {
-            if (file.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+            if (posix()) {
                 Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
             }
         } catch (Exception ignored) {

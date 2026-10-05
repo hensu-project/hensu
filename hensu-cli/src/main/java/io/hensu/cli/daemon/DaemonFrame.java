@@ -363,6 +363,21 @@ public final class DaemonFrame {
         return f;
     }
 
+    /// Returns whether this frame means nothing is left running in the daemon for the client.
+    ///
+    /// Only then may a client's exit skip the detach notice. A fatal error ends the execution as
+    /// surely as `exec_end` does, and a full daemon never started one, so telling the operator
+    /// either is "still running" sends them to re-attach to nothing.
+    ///
+    /// @return true if no execution of this client's survives the frame
+    public boolean endsExecution() {
+        return switch (type) {
+            case "exec_end", "daemon_full" -> true;
+            case "error" -> Boolean.TRUE.equals(fatal);
+            case null, default -> false;
+        };
+    }
+
     /// Creates an {@code error} frame.
     ///
     /// @param execId  execution identifier, may be null for daemon-level errors
@@ -375,6 +390,23 @@ public final class DaemonFrame {
         f.execId = execId;
         f.message = message;
         f.fatal = fatal;
+        return f;
+    }
+
+    /// Creates an {@code error} frame for a run that failed, carrying what was never offered.
+    ///
+    /// A run that throws never reaches {@code exec_end}, and a declared tool its source never
+    /// offered is the likeliest reason it threw, so the notices travel with the error.
+    ///
+    /// @param execId  id of the failed execution, not null
+    /// @param message error description, not null
+    /// @param fatal   {@code true} if the error closes the connection
+    /// @param toolNotices reasons a tool source offered nothing, may be null or empty
+    /// @return frame, never null
+    public static DaemonFrame error(
+            String execId, String message, boolean fatal, List<String> toolNotices) {
+        var f = error(execId, message, fatal);
+        f.toolNotices = toolNotices == null || toolNotices.isEmpty() ? null : toolNotices;
         return f;
     }
 

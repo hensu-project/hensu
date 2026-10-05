@@ -147,7 +147,8 @@ summary lists those gaps, and a workflow can route on them with
 source that was supposed to provide it never offered it — `mcp.yaml` did not parse, a declared
 server is not installed, or containment was unavailable and nobody could approve starting a server
 without it. Those reasons print in their own **Tool sources** section of the completion summary, on
-both the inline and the daemon path. A healthy run prints no such section.
+both the inline and the daemon path, and above the error of a run that failed. Each run reports only
+the reasons raised while it was in flight. A healthy run prints no such section.
 
 **Tool audit:** every settled tool call appends one JSON line to `~/.hensu/tool-audit.log`
 (or `$XDG_DATA_HOME/hensu/tool-audit.log`), including the refused ones, whatever `--verbose` says.
@@ -671,6 +672,11 @@ MCP servers are started lazily, on the first node that resolves its tools. A `co
 under the same containment a command does, and a host with no working sandbox backend starts none of
 them and says so, rather than starting them uncontained.
 
+A `command:` server lives as long as the process that launched it: one run under `--no-daemon`, every
+run the daemon serves otherwise, so its state carries from one daemon run into the next. Each run
+restarts a server that died and applies an edited `mcp.yaml`; see
+[How long a server lives](../docs/command-catalog.md#how-long-a-server-lives).
+
 A `url:` server has no process to contain and no sandbox of ours reaches another host. What bounds
 it instead is the set of hosts named across `mcp.yaml`, and within that, the endpoint each entry
 names: a redirect is followed only when it stays on the same scheme, host and port, because every
@@ -686,15 +692,15 @@ reports which one lost it. A `prefix:` on either keeps both: `prefix: "acme_"` p
 
 ## Exit Codes
 
-| Code | Meaning                                                                                                     |
-|------|-------------------------------------------------------------------------------------------------------------|
-| `0`  | Command ran — including workflows ending in `FAILURE` status and reported errors (e.g. validation failures) |
-| `1`  | Unhandled internal error                                                                                    |
-| `2`  | Invalid command-line arguments (picocli usage error)                                                        |
+| Code | Meaning                                                                                                                 |
+|------|-------------------------------------------------------------------------------------------------------------------------|
+| `0`  | Command succeeded; for `run`, the workflow ended in `SUCCESS`                                                           |
+| `1`  | Command reported a failure — a workflow that failed, ended in `FAILURE` status or was rejected, a validation failure, or an unhandled internal error |
+| `2`  | Invalid command-line arguments (picocli usage error)                                                                    |
 
-Commands report execution and validation errors on stderr but still exit `0` — scripts
-must parse the output (`[OK]` / `[FAIL]`, the `status` line) rather than rely on the
-exit code to detect workflow-level failure.
+Every command exits `1` when it reports a failure on stderr, so a script or CI job can rely on the
+exit code rather than parse the output. `hensu run` prints the stack trace of a failed run only with
+`--verbose`.
 
 ---
 

@@ -35,7 +35,7 @@ class WorkflowDeleteCommandTest extends BaseWorkflowCommandTest {
         when(httpResponse.statusCode()).thenReturn(204);
 
         // When
-        command.run();
+        command.call();
 
         // Then
         String output = outContent.toString();
@@ -49,7 +49,7 @@ class WorkflowDeleteCommandTest extends BaseWorkflowCommandTest {
         when(httpResponse.statusCode()).thenReturn(404);
 
         // When
-        command.run();
+        command.call();
 
         // Then
         assertThat(errContent.toString()).isNotEmpty();

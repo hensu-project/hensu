@@ -285,12 +285,19 @@ public final class StdioMcpConnection implements McpConnection {
     }
 
     private Map<String, Object> request(String method, Map<String, Object> params, long timeoutMs) {
-        if (closed || !process.isAlive()) {
+        if (closed || transportClosed || !process.isAlive()) {
             throw new McpException("MCP server '" + spec.name() + "' is not running");
         }
         String id = String.valueOf(nextId.incrementAndGet());
         CompletableFuture<String> answer = new CompletableFuture<>();
         pending.put(id, answer);
+        // The reader marks the transport closed before it fails what is pending, so a
+        // request registered after that sweep sees the mark here instead of waiting out
+        // its whole timeout for a reply nothing will read.
+        if (transportClosed) {
+            pending.remove(id);
+            throw new McpException("MCP server '" + spec.name() + "' is not running");
+        }
         try {
             write(jsonRpc.createRequest(id, method, params), timeoutMs);
             String response = answer.orTimeout(timeoutMs, TimeUnit.MILLISECONDS).join();

@@ -195,11 +195,17 @@ The same matrix governs local stdio MCP servers, at the server level, because a 
 process cannot be gated per call. The one decision made at launch rather than per call is whether
 to start a server with no containment available, and that too is refused in a run with no reviewer.
 
-Because the server outlives every call it answers, the reviewer asked for it has to be answering
-for the whole process rather than for one run. A daemon serving several runs at once therefore
-refuses the launch unless exactly one run is in flight and that run is attended: two runs cannot be
-told apart at that point, and one unattended run in the set means the server would outlive a run
-that never had a reviewer to consent to it.
+Because the server outlives every call it answers, an approval to start it uncontained is given by
+one run's reviewer and covers that run only. The daemon keeps a contained server from one run to the
+next, but never an uncontained one: the next run's first tool resolution stops it and launches it
+again, which asks that run's reviewer, or, in a run with none, leaves it stopped. A run that starts
+while the approving run is still in flight triggers the same relaunch, so the approving run can lose
+the server mid-run. That is deliberate: losing a tool fails closed, while keeping the process would
+hand an uncontained server to a run nobody consented for.
+
+The launch itself is refused unless exactly one run is in flight and that run is attended. Two runs
+cannot be told apart at that point, and one unattended run in the set would be using a server no
+reviewer approved on its behalf.
 
 ---
 

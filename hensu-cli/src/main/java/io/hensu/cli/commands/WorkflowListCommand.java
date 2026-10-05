@@ -43,6 +43,7 @@ public class WorkflowListCommand extends ServerCommand {
             }
         } catch (Exception e) {
             System.err.println("Failed to parse response: " + e.getMessage());
+            fail();
         }
     }
 }

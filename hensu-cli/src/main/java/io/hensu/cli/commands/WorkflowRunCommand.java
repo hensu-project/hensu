@@ -182,7 +182,11 @@ class WorkflowRunCommand extends WorkflowCommand {
             System.err.printf(
                     "%s %s %s%n",
                     s.crossmark(), s.bold("Workflow execution failed:"), e.getMessage());
-            e.printStackTrace();
+            // The message is the operator's; the trace is a debugging aid they ask for.
+            if (verbose) {
+                e.printStackTrace();
+            }
+            fail();
         }
     }
 
@@ -243,7 +247,7 @@ class WorkflowRunCommand extends WorkflowCommand {
                 .run(
                         req,
                         (frame, reply) -> {
-                            if ("exec_end".equals(frame.type)) completed[0] = true;
+                            if (frame.endsExecution()) completed[0] = true;
                             if ("review_request".equals(frame.type) && reviewer != null) {
                                 handleReviewRequest(frame, reply, reviewer);
                                 return;
@@ -312,20 +316,25 @@ class WorkflowRunCommand extends WorkflowCommand {
         switch (frame.type) {
             case "out" -> DaemonClient.printOutFrame(frame);
             case "exec_end" -> printCompletionSummary(frame, styles);
-            case "error" ->
-                    System.err.printf(
-                            "%s %s%n",
-                            styles.crossmark(),
-                            styles.error(
-                                    frame.message != null
-                                            ? frame.message
-                                            : "Unknown daemon error"));
-            case "daemon_full" ->
-                    System.err.println(
-                            styles.warn(
-                                    "Daemon is at capacity (max "
-                                            + frame.maxConcurrent
-                                            + " concurrent executions). Try again shortly."));
+            case "error" -> {
+                fail();
+                // The cause before its effect: a missing tool source is the likeliest
+                // reason a run failed.
+                ToolSourceNoticeReport.print(System.out, styles, frame.toolNotices);
+                System.err.printf(
+                        "%s %s%n",
+                        styles.crossmark(),
+                        styles.error(
+                                frame.message != null ? frame.message : "Unknown daemon error"));
+            }
+            case "daemon_full" -> {
+                fail();
+                System.err.println(
+                        styles.warn(
+                                "Daemon is at capacity (max "
+                                        + frame.maxConcurrent
+                                        + " concurrent executions). Try again shortly."));
+            }
             default -> {
                 /* ignore node_start / node_end / ping */
             }
@@ -336,6 +345,9 @@ class WorkflowRunCommand extends WorkflowCommand {
         String status = frame.status != null ? frame.status : "UNKNOWN";
         boolean ok = status.startsWith("SUCCESS") || "COMPLETED".equals(status);
         printOutcomeBanner(System.out, styles, ok);
+        if (!ok) {
+            fail();
+        }
         System.out.printf("  status   %s%n", ok ? styles.success(status) : styles.error(status));
         CapabilityGapReport.print(System.out, styles, frame.capabilityGaps);
         ToolSourceNoticeReport.print(System.out, styles, frame.toolNotices);
@@ -374,6 +386,7 @@ class WorkflowRunCommand extends WorkflowCommand {
         String execId = UUID.randomUUID().toString();
         context.putIfAbsent("_execution_id", execId);
         approvalGate.setRunMode(execId, !interactive);
+        toolNotices.beginRun(execId);
 
         WorkflowExecutor workflowExecutor = environment.getWorkflowExecutor();
         // The audit sink is composed whatever the verbosity: verbose output is a
@@ -388,11 +401,17 @@ class WorkflowRunCommand extends WorkflowCommand {
         ExecutionResult result;
         try {
             result = workflowExecutor.execute(workflow, context, listener);
+        } catch (Throwable t) {
+            // A run that threw never reaches the summary below, and a declared tool its
+            // source never offered is the likeliest reason it threw.
+            ToolSourceNoticeReport.print(out, styles, toolNotices.endRun(execId));
+            throw t;
         } finally {
             // The gate answers process-wide decisions from the set of live runs; a run
             // that ended must leave that set whether it succeeded or threw.
             approvalGate.endRun(execId);
         }
+        List<String> notices = toolNotices.endRun(execId);
 
         if (result instanceof ExecutionResult.Completed completed) {
             // Completed means the graph reached an end node, not that the end node was a
@@ -401,6 +420,9 @@ class WorkflowRunCommand extends WorkflowCommand {
             boolean ok = completed.getExitStatus() == ExitStatus.SUCCESS;
             String status = completed.getExitStatus().toString();
             printOutcomeBanner(out, styles, ok);
+            if (!ok) {
+                fail();
+            }
             out.printf("  status      %s%n", ok ? styles.success(status) : styles.error(status));
             out.printf(
                     "  steps       %d%n", completed.getFinalState().getHistory().getSteps().size());
@@ -428,12 +450,13 @@ class WorkflowRunCommand extends WorkflowCommand {
                                                                 + ")")));
             }
         } else if (result instanceof ExecutionResult.Rejected rejected) {
+            fail();
             out.printf("%n%s %s%n", styles.crossmark(), styles.bold("Workflow rejected!"));
             out.printf("  Reason: %s%n", rejected.getReason());
         }
 
         CapabilityGapReport.print(out, styles, finalContext(result));
-        ToolSourceNoticeReport.print(out, styles, toolNotices.all());
+        ToolSourceNoticeReport.print(out, styles, notices);
     }
 
     /// Prints the one-line verdict above a finished run's summary.

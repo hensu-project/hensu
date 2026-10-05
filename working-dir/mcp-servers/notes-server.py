@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""An example MCP server: a scratch notebook that lives as long as the run does.
+"""An example MCP server: a scratch notebook that lives as long as the server does.
 
 It exists to show what a server gives you that a `commands.yaml` entry does not — **state between
 calls**. A catalog command is one invocation: it starts, does its work, and exits, so two calls
@@ -12,8 +12,8 @@ Two tools:
   note_list()     return every note written so far, in order
 
 The notes live in memory and are gone when the process is. Hensu starts this server on the first
-node that resolves a tool and stops it when the run ends, so "as long as the run does" is the whole
-lifetime: nothing here outlives a `hensu run`, and nothing here touches the working directory.
+node that resolves a tool and keeps it as long as the process that launched it: one run under
+`--no-daemon`, every run the daemon serves otherwise. Nothing here touches the working directory.
 
 Containment is Hensu's, not this file's. `mcp.yaml` declares `network: false` and the server is
 launched inside the same OS sandbox a catalog command gets, with its own private `$HOME` and no
@@ -32,7 +32,7 @@ NOTES = []
 TOOLS = [
     {
         "name": "note_add",
-        "description": "Write a note to the run's scratch notebook. Notes persist for the run.",
+        "description": "Write a note to the scratch notebook. Notes persist while the server runs.",
         "inputSchema": {
             "type": "object",
             "properties": {"text": {"type": "string", "description": "The note to write"}},

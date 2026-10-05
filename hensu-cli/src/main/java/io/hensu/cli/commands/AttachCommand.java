@@ -40,6 +40,7 @@ public class AttachCommand extends HensuCommand {
 
         if (!DaemonClient.isAlive()) {
             System.err.println(styles.error("No daemon is running."));
+            fail();
             return;
         }
 
@@ -82,6 +83,7 @@ public class AttachCommand extends HensuCommand {
 
         } catch (IOException e) {
             System.err.println(styles.error("Connection error: " + e.getMessage()));
+            fail();
         }
     }
 
@@ -169,13 +171,19 @@ public class AttachCommand extends HensuCommand {
                     System.out.printf(
                             "%s %s%n",
                             styles.crossmark(), styles.bold("Execution ended: " + frame.status));
+                    fail();
                 }
             }
-            case "error" ->
-                    System.err.printf(
-                            "%s %s%n",
-                            styles.crossmark(),
-                            styles.error(frame.message != null ? frame.message : "Unknown error"));
+            case "error" -> {
+                if (frame.endsExecution()) {
+                    completed[0] = true;
+                }
+                System.err.printf(
+                        "%s %s%n",
+                        styles.crossmark(),
+                        styles.error(frame.message != null ? frame.message : "Unknown error"));
+                fail();
+            }
             default -> {
                 /* ignore control frames */
             }

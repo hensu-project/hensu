@@ -92,6 +92,7 @@ public class DaemonCommand extends HensuCommand {
                     daemonServer.start();
                 } catch (IOException e) {
                     System.err.println(styles.error("Daemon failed to start: " + e.getMessage()));
+                    fail();
                 }
                 return;
             }
@@ -113,6 +114,7 @@ public class DaemonCommand extends HensuCommand {
                 Thread.currentThread().interrupt();
             } catch (IOException e) {
                 System.err.println(styles.error("Failed to launch daemon: " + e.getMessage()));
+                fail();
             }
         }
 
@@ -128,6 +130,7 @@ public class DaemonCommand extends HensuCommand {
                             .waitFor();
             if (exitCode != 0) {
                 System.err.println(styles.error("systemctl start failed (exit " + exitCode + ")."));
+                fail();
                 return;
             }
             System.out.println(styles.checkmark() + " " + styles.bold("Daemon started."));
@@ -144,6 +147,7 @@ public class DaemonCommand extends HensuCommand {
                             .waitFor();
             if (exitCode != 0) {
                 System.err.println(styles.error("launchctl start failed (exit " + exitCode + ")."));
+                fail();
                 return;
             }
             waitForSocket(styles);
@@ -204,6 +208,7 @@ public class DaemonCommand extends HensuCommand {
             }
             System.err.println(styles.error("Daemon did not start within 10 s."));
             System.err.println(styles.gray("  Check log: " + DaemonPaths.logFile()));
+            fail();
         }
     }
 
@@ -248,6 +253,7 @@ public class DaemonCommand extends HensuCommand {
                 } catch (Exception e) {
                     System.err.println(
                             styles.error("Failed to stop via systemd: " + e.getMessage()));
+                    fail();
                 }
                 return;
             }
@@ -263,6 +269,7 @@ public class DaemonCommand extends HensuCommand {
                 } catch (Exception e) {
                     System.err.println(
                             styles.error("Failed to stop via launchctl: " + e.getMessage()));
+                    fail();
                 }
                 return;
             }
@@ -273,6 +280,7 @@ public class DaemonCommand extends HensuCommand {
                 System.out.println(styles.checkmark() + " " + styles.bold("Daemon stopped."));
             } catch (IOException e) {
                 System.err.println(styles.error("Failed to stop daemon: " + e.getMessage()));
+                fail();
             }
         }
     }
@@ -311,6 +319,7 @@ public class DaemonCommand extends HensuCommand {
 
             } catch (IOException e) {
                 System.err.println(styles.error("Failed to query daemon: " + e.getMessage()));
+                fail();
             }
         }
     }

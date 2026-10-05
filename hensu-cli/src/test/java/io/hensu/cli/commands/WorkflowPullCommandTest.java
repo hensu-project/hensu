@@ -37,7 +37,7 @@ class WorkflowPullCommandTest extends BaseWorkflowCommandTest {
         when(httpResponse.body()).thenReturn(jsonBody);
 
         // When
-        command.run();
+        command.call();
 
         // Then
         String output = outContent.toString();
@@ -51,7 +51,7 @@ class WorkflowPullCommandTest extends BaseWorkflowCommandTest {
         when(httpResponse.statusCode()).thenReturn(404);
 
         // When
-        command.run();
+        command.call();
 
         // Then
         assertThat(errContent.toString()).isNotEmpty();

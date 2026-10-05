@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import io.hensu.cli.review.DaemonReviewHandler;
 import io.hensu.cli.tool.ToolApprovalGate;
+import io.hensu.cli.tool.ToolSourceNotices;
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.result.ExecutionHistory;
@@ -58,6 +59,7 @@ class WorkflowRunCommandTest extends BaseWorkflowCommandTest {
         injectField(command, "workingDirPath", tempDir);
         injectField(command, "noDaemon", true); // force inline — tests run alongside a live daemon
         injectField(command, "approvalGate", new ToolApprovalGate(new DaemonReviewHandler()));
+        injectField(command, "toolNotices", new ToolSourceNotices());
         lenient().when(environment.getWorkflowExecutor()).thenReturn(executor);
     }
 
@@ -77,7 +79,7 @@ class WorkflowRunCommandTest extends BaseWorkflowCommandTest {
         when(executor.execute(eq(workflow), any(), any())).thenReturn(completed);
 
         // When
-        command.run();
+        assertThat(command.call()).isZero();
 
         // Then — verify the DSL was compiled and the executor was invoked
         verify(kotlinParser).parse(any(WorkingDirectory.class), eq(workflowName));
@@ -122,12 +124,12 @@ class WorkflowRunCommandTest extends BaseWorkflowCommandTest {
         assertThat(capturingStdout(command)).contains("Workflow completed successfully");
     }
 
-    private static String capturingStdout(Runnable body) {
+    private static String capturingStdout(HensuCommand body) {
         PrintStream original = System.out;
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         System.setOut(new PrintStream(captured, true, StandardCharsets.UTF_8));
         try {
-            body.run();
+            body.call();
         } finally {
             System.setOut(original);
         }
@@ -150,7 +152,7 @@ class WorkflowRunCommandTest extends BaseWorkflowCommandTest {
         when(executor.execute(eq(workflow), any(), any())).thenReturn(rejected);
 
         // When
-        command.run();
+        assertThat(command.call()).isEqualTo(1);
 
         // Then — executor was invoked and Rejected result was handled without exception
         verify(executor).execute(eq(workflow), any(), any());
@@ -170,7 +172,8 @@ class WorkflowRunCommandTest extends BaseWorkflowCommandTest {
                 .thenThrow(new RuntimeException("Agent unavailable"));
 
         // When
-        command.run();
+        // A caught failure must still reach the shell, or a script reads it as a pass.
+        assertThat(command.call()).isEqualTo(1);
 
         // Then — exception is caught internally; executor was called and command did not rethrow
         verify(executor).execute(eq(workflow), any(), any());

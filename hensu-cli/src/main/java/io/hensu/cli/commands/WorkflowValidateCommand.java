@@ -59,6 +59,7 @@ class WorkflowValidateCommand extends WorkflowCommand {
             }
         } catch (Exception e) {
             System.err.println(" [FAIL] Validation failed: " + rootCauseMessage(e));
+            fail();
         }
     }
 

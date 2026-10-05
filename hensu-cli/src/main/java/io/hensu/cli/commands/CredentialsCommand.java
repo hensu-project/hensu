@@ -100,6 +100,7 @@ public class CredentialsCommand extends HensuCommand {
                 printDaemonRestartHint(styles);
             } catch (IOException e) {
                 System.err.println(styles.error("Failed to write credentials: " + e.getMessage()));
+                fail();
             }
         }
 
@@ -111,12 +112,14 @@ public class CredentialsCommand extends HensuCommand {
                     String line = reader.readLine();
                     if (line == null || line.isBlank()) {
                         System.err.println(styles.error("No value provided via stdin."));
+                        fail();
                         return null;
                     }
                     return line.strip();
                 } catch (IOException e) {
                     System.err.println(
                             styles.error("Failed to read from stdin: " + e.getMessage()));
+                    fail();
                     return null;
                 }
             }
@@ -125,6 +128,7 @@ public class CredentialsCommand extends HensuCommand {
             if (console == null) {
                 System.err.println(
                         styles.error("No TTY available — use --stdin to pipe the value."));
+                fail();
                 return null;
             }
             System.out.print(styles.bold("Enter value for " + key + ": "));
@@ -132,6 +136,7 @@ public class CredentialsCommand extends HensuCommand {
             char[] chars = console.readPassword();
             if (chars == null || chars.length == 0) {
                 System.err.println(styles.error("No value provided."));
+                fail();
                 return null;
             }
             return new String(chars).strip();
@@ -183,6 +188,7 @@ public class CredentialsCommand extends HensuCommand {
                 }
             } catch (IOException e) {
                 System.err.println(styles.error("Failed to read credentials: " + e.getMessage()));
+                fail();
             }
         }
 
@@ -230,6 +236,7 @@ public class CredentialsCommand extends HensuCommand {
                 printDaemonRestartHint(styles);
             } catch (IOException e) {
                 System.err.println(styles.error("Failed to update credentials: " + e.getMessage()));
+                fail();
             }
         }
 

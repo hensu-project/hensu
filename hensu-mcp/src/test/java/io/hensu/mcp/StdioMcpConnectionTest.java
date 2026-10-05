@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.function.UnaryOperator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 class StdioMcpConnectionTest {
@@ -219,5 +220,24 @@ class StdioMcpConnectionTest {
                         System.getenv());
 
         assertThat(wrapped).singleElement().isEqualTo(spec.command());
+    }
+
+    @Test
+    @Timeout(10)
+    void shouldFailACallAtOnceWhenTheServerStoppedAnsweringButStillRuns() throws Exception {
+        // A process that closed its output is alive but can never reply. The request
+        // budget here is a minute; the call must not spend it waiting.
+        StdioMcpConnection open = open(spec(60_000, "--mute-after", "initialize"));
+        // The call must come after the reader has seen the output close. Made earlier, it
+        // is pending when the reader's final sweep fails it, and passes without the fix.
+        // The reader's exit raises no event, so poll the state, bounded by @Timeout.
+        while (open.isConnected()) {
+            //noinspection BusyWait
+            Thread.sleep(10);
+        }
+
+        assertThatThrownBy(() -> open.callTool("echo", Map.of("message", "hello")))
+                .isInstanceOf(McpException.class)
+                .hasMessageContaining("is not running");
     }
 }

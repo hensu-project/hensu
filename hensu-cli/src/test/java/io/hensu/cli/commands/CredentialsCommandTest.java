@@ -82,7 +82,7 @@ class CredentialsCommandTest extends BaseWorkflowCommandTest {
 
         var cmd = new CredentialsCommand.Keys();
         injectField(cmd, "store", new CredentialsStore(credFile));
-        cmd.run();
+        cmd.call();
 
         String out = outContent.toString(StandardCharsets.UTF_8);
         assertThat(out).contains("ANTHROPIC_API_KEY");
@@ -106,7 +106,7 @@ class CredentialsCommandTest extends BaseWorkflowCommandTest {
         var cmd = new CredentialsCommand.Unset();
         injectField(cmd, "key", "ANTHROPIC_API_KEY");
         injectField(cmd, "store", new CredentialsStore(credFile));
-        cmd.run();
+        cmd.call();
 
         List<String> lines = Files.readAllLines(credFile, StandardCharsets.UTF_8);
         assertThat(lines).doesNotContain("ANTHROPIC_API_KEY=secret1");
@@ -116,11 +116,11 @@ class CredentialsCommandTest extends BaseWorkflowCommandTest {
 
     // — helpers ————————————————————————————————————————————————————————————————
 
-    private void withStdin(String value, Runnable action) {
+    private void withStdin(String value, HensuCommand action) {
         var original = System.in;
         System.setIn(new ByteArrayInputStream(value.getBytes(StandardCharsets.UTF_8)));
         try {
-            action.run();
+            action.call();
         } finally {
             System.setIn(original);
         }

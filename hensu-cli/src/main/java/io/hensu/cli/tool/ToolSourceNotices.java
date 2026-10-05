@@ -1,10 +1,13 @@
 package io.hensu.cli.tool;
 
 import jakarta.inject.Singleton;
-import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 /// Collects the reasons a declared tool source produced no tools, for the operator to read.
 ///
@@ -19,42 +22,84 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 /// replaces it: the provider records a notice, and the run prints them where it prints the
 /// capability gaps.
 ///
-/// Notices are bounded. A misconfiguration repeats per run, not per call, so the bound exists only
-/// to keep a pathological catalog from growing the list without limit.
+/// Notices belong to runs, not to the process. A daemon serves several runs, possibly at once, so
+/// each run registers itself with {@link #beginRun} and takes its own notices with {@link #endRun}:
+/// a run that starts never erases another's, and a run that ends reports only what was recorded
+/// while it was in flight. Tool sources are shared by every run in the process, so a notice is
+/// recorded for every run in flight when it is raised: a server that failed to start is missing for
+/// all of them, whichever run's tool resolution noticed. A notice raised while no run is in flight
+/// reaches the logger only.
+///
+/// Notices are bounded and deduplicated per run. A source reports its state again each time a run
+/// reconciles it, so an overlapping run would otherwise see the same sentence twice; the bound
+/// keeps a pathological catalog from growing a run's list without limit.
 ///
 /// @see io.hensu.cli.ui.ToolSourceNoticeReport for the operator-facing rendering
 /// @see io.hensu.core.tool.CapabilityGaps for the per-call half of the same question
 @Singleton
 public class ToolSourceNotices {
 
-    /// Most notices retained. Beyond this the newest are dropped, because the first
+    /// Most notices retained per run. Beyond this the newest are dropped, because the first
     /// misconfiguration is the one an operator acts on.
     public static final int MAX_NOTICES = 32;
 
-    private final ConcurrentLinkedQueue<String> notices = new ConcurrentLinkedQueue<>();
+    private final Map<String, RunNotices> runs = new ConcurrentHashMap<>();
 
-    /// Records one reason a tool source is not offering what it declared.
+    /// Starts collecting notices for one run.
+    ///
+    /// @param executionId the run's execution id, not null
+    public void beginRun(String executionId) {
+        Objects.requireNonNull(executionId, "executionId must not be null");
+        runs.put(executionId, new RunNotices());
+    }
+
+    /// Records one reason a tool source is not offering what it declared, for every run in flight.
     ///
     /// @param notice the operator-facing sentence, not null
-    /// @apiNote **Side effects**: none beyond the collection. Never throws, and never fails the
+    /// @apiNote **Side effects**: none beyond the collections. Never throws, and never fails the
     ///     run it is describing.
     public void record(String notice) {
         Objects.requireNonNull(notice, "notice must not be null");
-        if (notices.size() < MAX_NOTICES) {
-            notices.add(notice);
-        }
+        runs.values().forEach(run -> run.add(notice));
     }
 
-    /// Returns the notices recorded so far, oldest first.
+    /// Stops collecting for one run and returns what it collected, oldest first.
     ///
-    /// @return an immutable snapshot, never null
-    public List<String> all() {
-        return List.copyOf(new ArrayList<>(notices));
+    /// @param executionId the run's execution id, not null
+    /// @return an immutable snapshot, never null (empty for a run that was never begun)
+    public List<String> endRun(String executionId) {
+        Objects.requireNonNull(executionId, "executionId must not be null");
+        RunNotices run = runs.remove(executionId);
+        return run == null ? List.of() : run.snapshot();
     }
 
-    /// Forgets every notice, so a daemon serving many runs does not report one run's
-    /// misconfiguration on the next.
-    public void clear() {
-        notices.clear();
+    /// One run's notices, in the order first recorded.
+    ///
+    /// Guarded by a {@link ReentrantLock} rather than `synchronized`, because recording happens
+    /// on the Virtual Threads that resolve tools.
+    private static final class RunNotices {
+
+        private final ReentrantLock lock = new ReentrantLock();
+        private final Set<String> notices = new LinkedHashSet<>();
+
+        void add(String notice) {
+            lock.lock();
+            try {
+                if (notices.size() < MAX_NOTICES) {
+                    notices.add(notice);
+                }
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        List<String> snapshot() {
+            lock.lock();
+            try {
+                return List.copyOf(notices);
+            } finally {
+                lock.unlock();
+            }
+        }
     }
 }

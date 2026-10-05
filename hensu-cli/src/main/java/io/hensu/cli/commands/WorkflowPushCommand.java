@@ -50,6 +50,7 @@ public class WorkflowPushCommand extends ServerCommand {
         if (!Files.exists(jsonFile)) {
             System.err.println("Compiled workflow not found: " + jsonFile);
             System.err.println("Run 'hensu build' first to compile the workflow.");
+            fail();
             return;
         }
 
@@ -58,6 +59,7 @@ public class WorkflowPushCommand extends ServerCommand {
             json = Files.readString(jsonFile);
         } catch (IOException e) {
             System.err.println("Failed to read compiled workflow: " + e.getMessage());
+            fail();
             return;
         }
 

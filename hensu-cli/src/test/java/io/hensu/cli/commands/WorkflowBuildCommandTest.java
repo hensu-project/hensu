@@ -45,7 +45,7 @@ class WorkflowBuildCommandTest extends BaseWorkflowCommandTest {
                 .thenReturn(workflow);
 
         // When
-        command.run();
+        command.call();
 
         // Then
         String output = outContent.toString();
@@ -69,7 +69,7 @@ class WorkflowBuildCommandTest extends BaseWorkflowCommandTest {
         assertThat(tempDir.resolve("build")).doesNotExist();
 
         // When
-        command.run();
+        command.call();
 
         // Then
         assertThat(tempDir.resolve("build")).isDirectory();
@@ -83,7 +83,7 @@ class WorkflowBuildCommandTest extends BaseWorkflowCommandTest {
         injectField(command, "defaultWorkflowName", java.util.Optional.empty());
 
         // When
-        command.run();
+        command.call();
 
         // Then
         assertThat(errContent.toString()).isNotEmpty();

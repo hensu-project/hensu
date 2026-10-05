@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 
@@ -25,6 +26,9 @@ import java.util.concurrent.CountDownLatch;
 /// - `--deaf-after <method>` – answer that method, then stay alive without ever
 ///   reading standard input again, so the pipe to the server fills and the
 ///   client's send blocks instead of its reply
+/// - `--mute-after <method>` – answer that method, then close standard output
+///   while staying alive and reading, so the client's reader ends but the process
+///   does not
 /// - `--slow-start <ms>` – sleep that long before answering `initialize`, standing
 ///   in for a runtime that is expensive to boot. Real startup cost is whatever
 ///   the host's JVM happens to charge, which is not a number a test can assert
@@ -49,6 +53,7 @@ public final class FakeMcpServer {
         String swallow = null;
         String exitOn = null;
         String deafAfter = null;
+        String muteAfter = null;
         long slowStartMs = 0;
         boolean noisy = false;
         for (int i = 0; i < args.length; i++) {
@@ -58,6 +63,8 @@ public final class FakeMcpServer {
                 exitOn = args[++i];
             } else if ("--deaf-after".equals(args[i]) && i + 1 < args.length) {
                 deafAfter = args[++i];
+            } else if ("--mute-after".equals(args[i]) && i + 1 < args.length) {
+                muteAfter = args[++i];
             } else if ("--slow-start".equals(args[i]) && i + 1 < args.length) {
                 slowStartMs = Long.parseLong(args[++i]);
             } else if ("--noisy".equals(args[i])) {
@@ -92,6 +99,13 @@ public final class FakeMcpServer {
             out.println(respond(id, method, line));
             if (method.equals(deafAfter)) {
                 goDeaf();
+            }
+            if (method.equals(muteAfter)) {
+                out.close();
+                // Alive and reading, never answering: only the client closing our
+                // standard input ends this.
+                in.transferTo(Writer.nullWriter());
+                return;
             }
         }
     }

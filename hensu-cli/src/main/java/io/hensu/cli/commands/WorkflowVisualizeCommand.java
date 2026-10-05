@@ -57,6 +57,7 @@ class WorkflowVisualizeCommand extends WorkflowCommand {
             System.out.println(output);
         } catch (Exception e) {
             System.err.println(" [FAIL] Visualization failed: " + e.getMessage());
+            fail();
         }
     }
 }

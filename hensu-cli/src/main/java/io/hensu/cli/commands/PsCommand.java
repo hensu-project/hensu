@@ -65,6 +65,7 @@ public class PsCommand extends HensuCommand {
 
         } catch (IOException e) {
             System.err.println(styles.error("Failed to query daemon: " + e.getMessage()));
+            fail();
         }
     }
 
