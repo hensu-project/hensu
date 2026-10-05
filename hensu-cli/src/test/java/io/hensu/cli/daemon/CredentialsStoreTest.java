@@ -177,4 +177,32 @@ class CredentialsStoreTest {
             assertThat(all).containsEntry("KEY_" + i, "val_" + i);
         }
     }
+
+    @Test
+    void loadAll_neverSeesAKeyVanishWhileAnotherIsRewritten(@TempDir Path dir) throws Exception {
+        // A daemon run reads a token without the lock while `hensu credentials set` may be
+        // rewriting the file. An in-place rewrite truncates first, so the reader could see
+        // no file content at all and skip a server as unauthenticated.
+        var store = new CredentialsStore(dir.resolve("credentials"));
+        store.set("STABLE_KEY", "kept");
+
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<?> writer =
+                    pool.submit(
+                            () -> {
+                                for (int i = 0; i < 300; i++) {
+                                    store.set("CHURNING_KEY", "value-" + i);
+                                }
+                                return null;
+                            });
+            List<Integer> misses = new ArrayList<>();
+            while (!writer.isDone()) {
+                if (!"kept".equals(store.loadAll().get("STABLE_KEY"))) {
+                    misses.add(1);
+                }
+            }
+            writer.get();
+            assertThat(misses).isEmpty();
+        }
+    }
 }

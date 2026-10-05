@@ -15,6 +15,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 import java.util.logging.Level;
@@ -27,13 +31,27 @@ import java.util.stream.Stream;
 /// here, once, before the process exists: when no backend is available the
 /// server is skipped rather than started uncontained, unless a reviewer
 /// approves that launch. Each server gets its own writable home, removed when
-/// the run ends.
+/// the server is stopped.
 ///
-/// @implNote **Not thread-safe.** Called only from the provider's single
-///     launch pass and its shutdown, both under the provider's lock.
+/// @implNote **Not thread-safe.** Called only from the provider's launch passes
+///     and its shutdown, all under the provider's lock.
 final class StdioServerLauncher implements AutoCloseable {
 
     private static final Logger logger = Logger.getLogger(StdioServerLauncher.class.getName());
+
+    /// The one thread every server process is spawned from.
+    ///
+    /// `bwrap --die-with-parent` has the kernel kill the sandbox when its parent
+    /// dies, and on Linux that parent is the thread that spawned the process, not
+    /// the process itself. A Virtual Thread's carrier is a pool thread that retires
+    /// after about thirty idle seconds, so a server spawned from one died shortly
+    /// after the call that launched it – invisible in a short run, fatal to a
+    /// daemon that keeps servers between runs. This is a platform thread that never
+    /// exits: work reaches it as a future, so a failing launch cannot make the pool
+    /// replace its worker, and nothing shuts it down.
+    private static final ExecutorService SPAWNER =
+            Executors.newSingleThreadExecutor(
+                    Thread.ofPlatform().name("mcp-spawner").daemon().factory());
 
     private final CommandCatalog catalog;
     private final SandboxLauncher sandbox;
@@ -96,24 +114,61 @@ final class StdioServerLauncher implements AutoCloseable {
                                         privateHome)
                         : UnaryOperator.identity();
         McpServerSpec.Stdio rooted = rootedAt(spec, privateHome);
+        Path workingDirectory = catalog.workingDirectory();
+        CompletableFuture<StdioMcpConnection> opening =
+                CompletableFuture.supplyAsync(
+                        () ->
+                                StdioMcpConnection.open(
+                                        rooted, workingDirectory, wrapper, hostEnvironment),
+                        SPAWNER);
         try {
-            return Optional.of(
-                    new McpRoute(
-                            rooted,
-                            StdioMcpConnection.open(
-                                    rooted, catalog.workingDirectory(), wrapper, hostEnvironment)));
-        } catch (McpException e) {
+            return Optional.of(new McpRoute(rooted, opening.get(), !contained));
+        } catch (ExecutionException e) {
+            if (!(e.getCause() instanceof McpException cause)) {
+                discard(privateHome);
+                throw e.getCause() instanceof RuntimeException unchecked
+                        ? unchecked
+                        : new IllegalStateException(e.getCause());
+            }
             String message =
                     "MCP server '"
                             + spec.name()
                             + "' did not start, its tools are not offered to agents: "
-                            + e.getMessage();
+                            + cause.getMessage();
             // The stack trace goes to the logger, the sentence to the operator: a launch
             // failure is usually a wrong path or a missing binary, and the cause reads
             // better than the trace.
-            logger.log(Level.FINE, message, e);
+            logger.log(Level.FINE, message, cause);
             operator.accept(message);
+            discard(privateHome);
             return Optional.empty();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            // The launch finishes without us; whatever it produces is closed, not leaked.
+            privateHomes.remove(privateHome);
+            opening.whenComplete(
+                    (connection, _) -> {
+                        if (connection != null) {
+                            connection.close();
+                        }
+                        deleteRecursively(privateHome);
+                    });
+            operator.accept(
+                    "MCP server '"
+                            + spec.name()
+                            + "' did not start: the run was interrupted while it launched");
+            return Optional.empty();
+        }
+    }
+
+    /// Removes the private home of a server that has been stopped.
+    ///
+    /// @param rooted the declaration the server was launched with, as its route
+    ///     carries it, not null
+    void release(McpServerSpec.Stdio rooted) {
+        String home = rooted.env().get("HOME");
+        if (home != null) {
+            discard(Path.of(home));
         }
     }
 
@@ -122,6 +177,12 @@ final class StdioServerLauncher implements AutoCloseable {
     public void close() {
         privateHomes.forEach(StdioServerLauncher::deleteRecursively);
         privateHomes.clear();
+    }
+
+    private void discard(Path privateHome) {
+        if (privateHomes.remove(privateHome)) {
+            deleteRecursively(privateHome);
+        }
     }
 
     /// Asks whether a server may start with no containment, because none is available.
@@ -147,7 +208,7 @@ final class StdioServerLauncher implements AutoCloseable {
                                     spec.command(),
                                     "no sandbox backend: " + sandbox.unavailabilityReason(),
                                     "no working sandbox backend is available, so approving starts"
-                                            + " this server uncontained for the whole run."));
+                                            + " this server uncontained for this run only."));
         }
         if (outcome == ApprovalOutcome.APPROVED) {
             operator.accept(

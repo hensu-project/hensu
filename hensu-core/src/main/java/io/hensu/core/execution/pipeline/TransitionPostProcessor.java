@@ -1,6 +1,7 @@
 package io.hensu.core.execution.pipeline;
 
 import io.hensu.core.execution.EngineVariables;
+import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.review.ReviewVerdict;
 import io.hensu.core.state.HensuState;
@@ -100,7 +101,26 @@ public final class TransitionPostProcessor implements PostNodeExecutionProcessor
             }
         }
 
-        throw new IllegalStateException("No valid transition from " + node.getId());
+        throw new IllegalStateException(noTransitionMessage(node.getId(), context.result()));
+    }
+
+    /// Names the node's own failure when there was one.
+    ///
+    /// A failed node with no route for failure is the common way to reach here, and then
+    /// the missing route is only the consequence: the node's error is what an operator can
+    /// act on, so it travels in the message rather than being left behind in a node result
+    /// nobody prints.
+    private static String noTransitionMessage(String nodeId, NodeResult result) {
+        String message = "No valid transition from " + nodeId;
+        if (result.getStatus() == ResultStatus.SUCCESS) {
+            return message;
+        }
+        Object reason =
+                result.getOutput() != null
+                        ? result.getOutput()
+                        : result.getError() != null ? result.getError().getMessage() : null;
+        message += ": the node failed and declares no route for a failure";
+        return reason == null || reason.toString().isBlank() ? message : message + " – " + reason;
     }
 
     /// Applies retry-counter, feedback, and engine var cleanup after a transition rule matches.

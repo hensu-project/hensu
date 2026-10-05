@@ -119,5 +119,6 @@ public abstract class ServerCommand extends HensuCommand {
                     default -> "HTTP " + statusCode + ": " + body;
                 };
         System.err.println("Error: " + message);
+        fail();
     }
 }

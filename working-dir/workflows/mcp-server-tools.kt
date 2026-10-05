@@ -10,9 +10,9 @@
  * calls, so the note written by the first is still there for the second. That is why the prompt
  * below can ask for a note and then a listing and expect the listing to contain the note.
  *
- * The lifetime is the run's. The server starts lazily, holds its notes in memory, and is stopped
- * when the run ends — nothing here outlives `hensu run`, and nothing here touches the project
- * directory. Containment is decided once, at launch, from the server's own `sandbox:` block rather
+ * The server starts lazily and holds its notes in memory for as long as it runs: one run under
+ * `--no-daemon`, every run the daemon serves otherwise, so a daemon run may list notes an earlier
+ * run wrote. Nothing here touches the project directory. Containment is decided once, at launch, from the server's own `sandbox:` block rather
  * than per call, because a process that outlives every call it answers cannot be gated by one.
  *
  * Tool names come from the server, not from Hensu. `note_add` and `note_list` are what this server

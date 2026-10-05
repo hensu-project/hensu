@@ -47,8 +47,10 @@ public class WorkflowBuildCommand extends WorkflowCommand {
             System.out.println("Output:   " + outputFile);
         } catch (UnsupportedWorkflowException e) {
             System.err.println("Build failed: " + e.getMessage());
+            fail();
         } catch (IOException e) {
             System.err.println("I/O error: " + e.getMessage());
+            fail();
         }
     }
 

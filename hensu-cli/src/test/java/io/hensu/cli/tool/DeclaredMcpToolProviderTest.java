@@ -40,6 +40,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 class DeclaredMcpToolProviderTest {
 
+    private static final String RUN = "exec-1";
+
     @TempDir Path workingDirectory;
 
     private CommandCatalog catalog;
@@ -62,6 +64,18 @@ class DeclaredMcpToolProviderTest {
 
     /// Writes an `mcp.yaml` launching the shared fake server under a given name.
     private void declareFakeServer(String id, String... extraArgs) throws IOException {
+        declare(fakeServerEntry(id, extraArgs));
+    }
+
+    /// Writes an `mcp.yaml` holding the given `servers:` entries.
+    private void declare(String... entries) throws IOException {
+        Files.writeString(
+                workingDirectory.resolve(McpConfig.FILE_NAME),
+                "servers:\n" + String.join("", entries));
+    }
+
+    /// One `servers:` entry launching the shared fake server under a given name.
+    private static String fakeServerEntry(String id, String... extraArgs) {
         List<String> argv = new ArrayList<>();
         argv.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
         argv.add("-cp");
@@ -69,12 +83,11 @@ class DeclaredMcpToolProviderTest {
         argv.add(FakeMcpServer.class.getName());
         argv.addAll(List.of(extraArgs));
 
-        StringBuilder yaml = new StringBuilder("servers:\n  " + id + ":\n    command: [");
+        StringBuilder yaml = new StringBuilder("  " + id + ":\n    command: [");
         for (int i = 0; i < argv.size(); i++) {
             yaml.append(i == 0 ? "" : ", ").append('"').append(argv.get(i)).append('"');
         }
-        yaml.append("]\n    unattended: true\n");
-        Files.writeString(workingDirectory.resolve(McpConfig.FILE_NAME), yaml.toString());
+        return yaml.append("]\n    unattended: true\n").toString();
     }
 
     private DeclaredMcpToolProvider provider(SandboxLauncher backend) {
@@ -104,6 +117,13 @@ class DeclaredMcpToolProviderTest {
                 new DeclaredMcpToolProvider(
                         catalog, backend, gate, System.getenv(), notices, credentials);
         return provider;
+    }
+
+    /// Notices collecting for one run in flight, begun as the CLI and the daemon begin them.
+    private static ToolSourceNotices noticesForOneRun() {
+        ToolSourceNotices notices = new ToolSourceNotices();
+        notices.beginRun(RUN);
+        return notices;
     }
 
     private CredentialsStore isolatedCredentials() {
@@ -197,11 +217,11 @@ class DeclaredMcpToolProviderTest {
             // the operator meant to attach to it.
             declareRemote("    auth: {bearer: HENSU_MCP_ACME_TOKEN}\n");
             CredentialsStore credentials = store(Map.of("SOMETHING_ELSE", "x"));
-            ToolSourceNotices notices = new ToolSourceNotices();
+            ToolSourceNotices notices = noticesForOneRun();
 
             assertThat(provider(launcher, notices, credentials).tools()).isEmpty();
 
-            assertThat(notices.all())
+            assertThat(notices.endRun(RUN))
                     .singleElement(as(STRING))
                     .contains("HENSU_MCP_ACME_TOKEN")
                     .contains(credentials.path().toString());
@@ -215,7 +235,7 @@ class DeclaredMcpToolProviderTest {
             String secret = "sk-live-do-not-leak-1234567890";
             declareRemote("    auth: {bearer: HENSU_MCP_ACME_TOKEN}\n");
             CredentialsStore credentials = store(Map.of("HENSU_MCP_ACME_TOKEN", secret));
-            ToolSourceNotices notices = new ToolSourceNotices();
+            ToolSourceNotices notices = noticesForOneRun();
 
             DeclaredMcpToolProvider open = provider(launcher, notices, credentials);
             String logs =
@@ -226,7 +246,7 @@ class DeclaredMcpToolProviderTest {
                             });
 
             assertThat(logs).doesNotContain(secret);
-            assertThat(notices.all()).noneSatisfy(n -> assertThat(n).contains(secret));
+            assertThat(notices.endRun(RUN)).noneSatisfy(n -> assertThat(n).contains(secret));
 
             var frame = open.preview("read_file", Map.of("path", "/x"));
             assertThat(frame.summary()).doesNotContain(secret);
@@ -245,7 +265,7 @@ class DeclaredMcpToolProviderTest {
         @Test
         void shouldDenyARedirectOffTheDeclaredHostsAndKeepTheRunGoing() throws IOException {
             declareRemote("");
-            ToolSourceNotices notices = new ToolSourceNotices();
+            ToolSourceNotices notices = noticesForOneRun();
             DeclaredMcpToolProvider open = provider(launcher, notices, store(Map.of()));
             assertThat(open.tools()).hasSize(1);
 
@@ -277,12 +297,12 @@ class DeclaredMcpToolProviderTest {
                             "properties",
                             Map.of("ratio", Map.of("type", "number", "x-mcp-header", "Ratio"))));
             declareRemote("");
-            ToolSourceNotices notices = new ToolSourceNotices();
+            ToolSourceNotices notices = noticesForOneRun();
 
             ToolProvider open = provider(launcher, notices, store(Map.of()));
 
             assertThat(open.tools()).extracting(ToolDefinition::name).containsExactly("read_file");
-            assertThat(notices.all())
+            assertThat(notices.endRun(RUN))
                     .singleElement(as(STRING))
                     .contains("'measure'")
                     .contains("x-mcp-header")
@@ -405,14 +425,14 @@ class DeclaredMcpToolProviderTest {
                                 + second.uri()
                                 + "\"\n"
                                 + "    prefix: \"alt_\"\n");
-                ToolSourceNotices notices = new ToolSourceNotices();
+                ToolSourceNotices notices = noticesForOneRun();
 
                 ToolProvider open = provider(launcher, notices, store(Map.of()));
 
                 assertThat(open.tools())
                         .extracting(ToolDefinition::name)
                         .containsExactlyInAnyOrder("read_file", "alt_read_file");
-                assertThat(notices.all()).isEmpty();
+                assertThat(notices.endRun(RUN)).isEmpty();
                 assertThat(open.call("alt_read_file", Map.of("path", "/x"), Map.of()).status())
                         .isEqualTo(ToolCallStatus.SUCCESS);
             }
@@ -432,14 +452,14 @@ class DeclaredMcpToolProviderTest {
                                 + "    url: \""
                                 + second.uri()
                                 + "\"\n");
-                ToolSourceNotices notices = new ToolSourceNotices();
+                ToolSourceNotices notices = noticesForOneRun();
 
                 ToolProvider open = provider(launcher, notices, store(Map.of()));
 
                 assertThat(open.tools())
                         .extracting(ToolDefinition::name)
                         .containsExactly("read_file");
-                assertThat(notices.all())
+                assertThat(notices.endRun(RUN))
                         .singleElement(as(STRING))
                         .contains("read_file")
                         .contains("prefix:");
@@ -459,11 +479,11 @@ class DeclaredMcpToolProviderTest {
             Files.writeString(
                     workingDirectory.resolve(McpConfig.FILE_NAME),
                     "servers:\n  fixture:\n    command: [\"/bin/echo\", \"{workdir}/server.py\"]\n");
-            ToolSourceNotices notices = new ToolSourceNotices();
+            ToolSourceNotices notices = noticesForOneRun();
 
             assertThat(provider(launcher, notices).tools()).isEmpty();
 
-            assertThat(notices.all())
+            assertThat(notices.endRun(RUN))
                     .singleElement(as(STRING))
                     .contains(McpConfig.FILE_NAME)
                     .contains("{workdir}");
@@ -479,11 +499,11 @@ class DeclaredMcpToolProviderTest {
                                 command: ["/nonexistent/server"]
                                 unattended: true
                             """);
-            ToolSourceNotices notices = new ToolSourceNotices();
+            ToolSourceNotices notices = noticesForOneRun();
 
             assertThat(provider(launcher, notices).tools()).isEmpty();
 
-            assertThat(notices.all())
+            assertThat(notices.endRun(RUN))
                     .singleElement(as(STRING))
                     .contains("fixture")
                     .contains("did not start");
@@ -492,12 +512,12 @@ class DeclaredMcpToolProviderTest {
         @Test
         void shouldSayNothingWhenEveryDeclaredServerAnswered() throws IOException {
             declareFakeServer("fixture");
-            ToolSourceNotices notices = new ToolSourceNotices();
+            ToolSourceNotices notices = noticesForOneRun();
 
             assertThat(provider(launcher, notices).tools()).isNotEmpty();
 
             // A section printed on every healthy run is a section nobody reads.
-            assertThat(notices.all()).isEmpty();
+            assertThat(notices.endRun(RUN)).isEmpty();
         }
     }
 
@@ -601,6 +621,120 @@ class DeclaredMcpToolProviderTest {
         }
     }
 
+    /// The daemon keeps one provider across every run it serves.
+    @Nested
+    class AcrossRuns {
+
+        @Test
+        void shouldKeepALiveServerRunningIntoTheNextRun() throws IOException {
+            // A server that is still alive and declared the same way keeps its process,
+            // and with it whatever state it holds between calls.
+            declareFakeServer("fixture");
+            DeclaredMcpToolProvider daemon = provider(launcher);
+            daemon.tools();
+
+            daemon.beginRun();
+
+            assertThat(daemon.tools()).extracting(ToolDefinition::name).containsExactly("echo");
+            assertThat(launcher.wrapped).hasSize(1);
+        }
+
+        @Test
+        void shouldRestartAServerThatDiedInAnEarlierRun() throws IOException {
+            declareFakeServer("fixture", "--exit-on", "tools/call");
+            DeclaredMcpToolProvider daemon = provider(launcher);
+            daemon.call("echo", Map.of("message", "hi"), Map.of());
+            assertThat(daemon.tools()).isEmpty();
+
+            daemon.beginRun();
+
+            assertThat(daemon.tools()).extracting(ToolDefinition::name).containsExactly("echo");
+            assertThat(launcher.wrapped).hasSize(2);
+            // The dead server's home goes with it, or a long-lived daemon collects them.
+            assertThat(launcher.homes.get(0)).doesNotExist();
+            assertThat(launcher.homes.get(1)).exists();
+        }
+
+        @Test
+        void shouldRestartAChangedServerAndStopAnUndeclaredOneBetweenRuns() throws IOException {
+            // An edited mcp.yaml takes effect at the next run, not at the next daemon restart.
+            declare(
+                    fakeServerEntry("changing"),
+                    fakeServerEntry("leaving") + "    prefix: \"alt_\"\n");
+            DeclaredMcpToolProvider daemon = provider(launcher);
+            daemon.tools();
+            Path leavingHome = launcher.homes.get(1);
+
+            declare(fakeServerEntry("changing", "--noisy"));
+            daemon.beginRun();
+
+            assertThat(daemon.tools()).extracting(ToolDefinition::name).containsExactly("echo");
+            assertThat(launcher.wrapped).hasSize(3);
+            assertThat(launcher.wrapped.get(2)).contains("--noisy");
+            assertThat(leavingHome).doesNotExist();
+        }
+
+        @Test
+        void shouldSpawnFromAThreadThatOutlivesTheVirtualThreadThatAsked() throws Exception {
+            // bwrap --die-with-parent ties the sandbox to the spawning thread. A server
+            // spawned from a Virtual Thread's carrier died when the idle carrier retired,
+            // about thirty seconds later, which a daemon keeping servers between runs
+            // turns into every server dying between runs.
+            declareFakeServer("fixture", "--exit-on", "tools/call");
+            DeclaredMcpToolProvider daemon = provider(launcher);
+            Thread.ofVirtual().start(daemon::tools).join();
+            daemon.call("echo", Map.of("message", "hi"), Map.of());
+            daemon.beginRun();
+            Thread.ofVirtual().start(daemon::tools).join();
+
+            assertThat(launcher.spawnedFrom).hasSize(2);
+            Thread spawner = launcher.spawnedFrom.getFirst();
+            assertThat(spawner.isVirtual()).isFalse();
+            assertThat(spawner.isAlive()).isTrue();
+            assertThat(launcher.spawnedFrom.get(1)).isSameAs(spawner);
+        }
+
+        @Test
+        void shouldNotCarryAnUncontainedServerIntoARunWithNoReviewer() throws IOException {
+            // A reviewer's consent to run a server uncontained was one run's. Keeping the
+            // process would hand it to a later unattended run that nobody consented for.
+            declareFakeServer("fixture");
+            ScriptedGate gate = new ScriptedGate(ApprovalOutcome.APPROVED, false);
+            DeclaredMcpToolProvider daemon =
+                    provider(
+                            new UnavailableSandboxLauncher("test"),
+                            gate,
+                            new ToolSourceNotices(),
+                            isolatedCredentials());
+            assertThat(daemon.tools()).hasSize(1);
+
+            gate.endRun("exec-1");
+            gate.setRunMode("exec-2", true);
+            daemon.beginRun();
+
+            assertThat(daemon.tools()).isEmpty();
+            assertThat(gate.asked).hasSize(1);
+        }
+
+        @Test
+        void shouldNotClaimASandboxForAServerAReviewerLetStartUncontained() throws IOException {
+            // The reviewer approving a call to this server is told what it actually runs
+            // under, not the policy its declaration asked for and never got.
+            declareFakeServer("fixture");
+            DeclaredMcpToolProvider daemon =
+                    provider(
+                            new UnavailableSandboxLauncher("test"),
+                            new ScriptedGate(ApprovalOutcome.APPROVED, false),
+                            new ToolSourceNotices(),
+                            isolatedCredentials());
+            daemon.tools();
+
+            assertThat(daemon.preview("echo", Map.of()).sandboxSummary())
+                    .contains("without containment")
+                    .doesNotContain("network");
+        }
+    }
+
     @Nested
     class Calling {
 
@@ -617,7 +751,7 @@ class DeclaredMcpToolProviderTest {
 
         @Test
         void shouldFailLoudlyAndShrinkTheCatalogWhenAServerDiesMidRun() throws IOException {
-            // No restart policy: a crashing server that is quietly respawned is
+            // No restart within a run: a crashing server that is quietly respawned is
             // worse than one whose absence the declared-versus-available diff names.
             declareFakeServer("fixture", "--exit-on", "tools/call");
             DeclaredMcpToolProvider running = provider(launcher);
@@ -698,6 +832,7 @@ class DeclaredMcpToolProviderTest {
         private final List<List<String>> wrapped = new ArrayList<>();
         private final List<SandboxPolicy> policies = new ArrayList<>();
         private final List<Path> homes = new ArrayList<>();
+        private final List<Thread> spawnedFrom = new ArrayList<>();
 
         @Override
         public boolean isAvailable() {
@@ -720,6 +855,7 @@ class DeclaredMcpToolProviderTest {
             wrapped.add(argv);
             policies.add(policy);
             homes.add(privateHome);
+            spawnedFrom.add(Thread.currentThread());
             return argv;
         }
     }

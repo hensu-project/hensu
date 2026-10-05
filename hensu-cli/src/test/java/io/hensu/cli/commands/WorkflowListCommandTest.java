@@ -42,7 +42,7 @@ class WorkflowListCommandTest extends BaseWorkflowCommandTest {
         when(httpResponse.body()).thenReturn(jsonBody);
 
         // When
-        command.run();
+        command.call();
 
         // Then
         String output = outContent.toString();
@@ -62,7 +62,7 @@ class WorkflowListCommandTest extends BaseWorkflowCommandTest {
         when(httpResponse.body()).thenReturn("[]");
 
         // When
-        command.run();
+        command.call();
 
         // Then
         assertThat(outContent.toString()).isNotEmpty();
@@ -76,7 +76,7 @@ class WorkflowListCommandTest extends BaseWorkflowCommandTest {
         when(httpResponse.body()).thenReturn("Internal error");
 
         // When
-        command.run();
+        command.call();
 
         // Then
         assertThat(errContent.toString()).isNotEmpty();
@@ -90,7 +90,7 @@ class WorkflowListCommandTest extends BaseWorkflowCommandTest {
         when(httpResponse.body()).thenReturn("not valid json");
 
         // When
-        command.run();
+        command.call();
 
         // Then
         assertThat(errContent.toString()).isNotEmpty();

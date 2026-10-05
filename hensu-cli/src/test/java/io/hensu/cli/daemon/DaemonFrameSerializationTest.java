@@ -114,4 +114,13 @@ class DaemonFrameSerializationTest {
         assertThat(deserialized.executions.get(0).execId()).isEqualTo("e1");
         assertThat(deserialized.executions.get(1).status()).isEqualTo("AWAITING_REVIEW");
     }
+
+    @Test
+    void shouldNotLetAClientOfferToReattachToARunAFatalErrorEnded() {
+        // The daemon ends a run that threw with a fatal error frame, not exec_end. Clients
+        // used to answer it with "Detached. Execution … is still running".
+        assertThat(DaemonFrame.error("exec-1", "No valid transition", true).endsExecution())
+                .isTrue();
+        assertThat(DaemonFrame.error("exec-1", "slow", false).endsExecution()).isFalse();
+    }
 }

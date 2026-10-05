@@ -174,4 +174,31 @@ class WorkflowExecutorTest extends WorkflowExecutorTestBase {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("No valid transition");
     }
+
+    @Test
+    void shouldNameTheFailedNodesOwnErrorWhenItHasNoRouteForFailure() {
+        // The missing route is the consequence; the node's error is what the operator
+        // can act on, and it used to be dropped from the only line they see.
+        var workflow =
+                WorkflowTest.TestWorkflowBuilder.create("test")
+                        .agent(agentCfg())
+                        .startNode(
+                                StandardNode.builder()
+                                        .id("start")
+                                        .agentId("test-agent")
+                                        .prompt("Process input")
+                                        .transitionRules(List.of(new SuccessTransition("end")))
+                                        .build())
+                        .node(end("end"))
+                        .build();
+
+        when(agentRegistry.getAgent("test-agent")).thenReturn(Optional.of(mockAgent));
+        when(mockAgent.execute(any(), any()))
+                .thenReturn(AgentResponse.Error.of("Unresolvable tools for agent 'test-agent'"));
+
+        assertThatThrownBy(() -> executor.execute(workflow, new HashMap<>()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("No valid transition from start")
+                .hasMessageContaining("Unresolvable tools for agent 'test-agent'");
+    }
 }

@@ -3,7 +3,9 @@
 # A server is the second way an agent gets tools, beside `commands.yaml`. The difference is
 # lifetime: a catalog entry is one invocation, a server is one process answering many calls, so a
 # server can hold state between them. Hensu starts these lazily — on the first node whose tools have
-# to be resolved — and stops them when the run ends.
+# to be resolved — and keeps them as long as the process that launched them: one run under
+# `--no-daemon`, every run the daemon serves otherwise. A server that died, or whose entry below
+# changed, is restarted at the start of the next run.
 #
 # Containment is decided once, at launch, rather than per call. A host with no working sandbox
 # backend starts no server at all and says why, rather than starting one uncontained.

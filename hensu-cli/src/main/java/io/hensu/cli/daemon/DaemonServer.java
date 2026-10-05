@@ -7,6 +7,7 @@ import io.hensu.cli.execution.ToolAuditFileListener;
 import io.hensu.cli.execution.VerboseExecutionListenerFactory;
 import io.hensu.cli.review.ApprovalOutcome;
 import io.hensu.cli.review.DaemonReviewHandler;
+import io.hensu.cli.tool.DeclaredMcpToolProvider;
 import io.hensu.cli.tool.ToolApprovalGate;
 import io.hensu.cli.tool.ToolSourceNotices;
 import io.hensu.cli.workflow.SubWorkflowLoader;
@@ -94,6 +95,7 @@ public class DaemonServer {
     @Inject DaemonReviewHandler daemonReviewHandler;
     @Inject ToolApprovalGate approvalGate;
     @Inject ToolSourceNotices toolNotices;
+    @Inject DeclaredMcpToolProvider mcpServers;
 
     private final ExecutionStore store = new ExecutionStore();
     private final ObjectMapper mapper =
@@ -264,6 +266,9 @@ public class DaemonServer {
                                 runExecution(execution, req, useColor, verbose, termWidth);
                             } finally {
                                 approvalGate.endRun(execId);
+                                // A failed or cancelled run never reached exec_end, where its
+                                // notices are taken; it must still stop collecting them.
+                                toolNotices.endRun(execId);
                                 if (interactive) {
                                     daemonReviewHandler.unregisterExecution(execId);
                                 }
@@ -408,8 +413,11 @@ public class DaemonServer {
             context.put(ToolApprovalGate.RUN_MODE_KEY, !interactive);
             applyWorkingDirectory(req);
             approvalGate.setRunMode(execId, !interactive);
-            // One run's misconfiguration is not the next run's news.
-            toolNotices.clear();
+            // Notices are collected per run, so a run starting here never erases another's.
+            toolNotices.beginRun(execId);
+            // MCP servers outlive a run here; this run's first tool resolution restarts
+            // any that died since the last one and picks up an edited mcp.yaml.
+            mcpServers.beginRun();
 
             // Register `--with` subs in the daemon's repository under the run's tenant
             // before the executor starts — SubWorkflowNodeExecutor looks them up there.
@@ -437,7 +445,7 @@ public class DaemonServer {
                                     execId,
                                     extractStatus(result),
                                     capabilityGaps(result),
-                                    toolNotices.all()));
+                                    toolNotices.endRun(execId)));
             execution.markCompleted(result, finalFrame);
 
         } catch (InterruptedException e) {
@@ -445,7 +453,10 @@ public class DaemonServer {
             tryMarkCancelled(execution, execId);
         } catch (Throwable t) {
             log.warning("Execution " + execId + " failed: " + t.getMessage());
-            String errFrame = safeSerialize(DaemonFrame.error(execId, t.getMessage(), true));
+            String errFrame =
+                    safeSerialize(
+                            DaemonFrame.error(
+                                    execId, t.getMessage(), true, toolNotices.endRun(execId)));
             execution.markFailed(t.getMessage(), errFrame);
         }
     }

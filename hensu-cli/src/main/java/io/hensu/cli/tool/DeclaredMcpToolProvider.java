@@ -19,7 +19,8 @@ import io.hensu.mcp.StreamableHttpMcpConnection;
 import jakarta.annotation.PreDestroy;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
-import java.util.ArrayList;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -32,11 +33,12 @@ import java.util.stream.Collectors;
 /// Publishes the tools of every MCP server `mcp.yaml` declares.
 ///
 /// A declaration is one of two shapes, and the difference decides what this
-/// class can promise about it. A stdio server is a process this run launches,
-/// contains and kills. An HTTP server is somebody else's process on somebody
-/// else's host, dialled over Streamable HTTP. Both are started on first use and
-/// kept for the length of the run; several consequences of that lifetime are
-/// visible here and are deliberate:
+/// class can promise about it. A stdio server is a process this provider
+/// launches, contains and kills. An HTTP server is somebody else's process on
+/// somebody else's host, dialled over Streamable HTTP. Both are started on first
+/// use and kept for as long as this provider lives: one run under `--no-daemon`,
+/// every run the daemon serves until it stops. Several consequences of that
+/// lifetime are visible here and are deliberate:
 ///
 /// - **Lazy, under a lock.** Nothing starts until an agent's node first resolves
 ///   its tools, so a run that never uses MCP launches nothing and dials nothing.
@@ -62,10 +64,17 @@ import java.util.stream.Collectors;
 ///   store exists. A key that is not in the store stops that server before any
 ///   of its tools are published – it contributes nothing rather than falling
 ///   through to an unauthenticated call.
-/// - **No restart policy.** A server that exits, or an endpoint that stops
-///   answering, reports failure and drops out of the catalog, so the loop's
-///   declared-versus-available diff names it. Quietly respawning a process that
-///   keeps crashing is worse than a loud absence.
+/// - **Reconciled once per run, never restarted within one.** A server that
+///   exits, or an endpoint that stops answering, reports failure and drops out
+///   of the catalog for the rest of the run, so the loop's declared-versus-available
+///   diff names it. Quietly respawning a process that keeps crashing is worse
+///   than a loud absence. {@link #beginRun} lets the next run's first tool
+///   resolution compare what is running with what `mcp.yaml` now declares: a
+///   server that is still alive and still declared the same way keeps running,
+///   state and all; one that died, changed, is no longer declared or was started
+///   uncontained on a reviewer's approval is stopped, and every declared server
+///   not running is started. So a server that crashes
+///   on every start costs one launch per run, not a loop.
 ///
 /// A missing `mcp.yaml`, a malformed one, a server that will not start and an
 /// endpoint that cannot be reached all end the same way: fewer tools and a
@@ -82,9 +91,11 @@ import java.util.stream.Collectors;
 /// (`StdioServerLauncher`, `HttpServerDialer`, `McpToolCatalog`); this class
 /// owns only the lifetime they share.
 ///
-/// @implNote **Mutable.** Holds the run's connections. All mutation happens
+/// @implNote **Mutable.** Holds the running connections. All mutation happens
 /// under one lock; reads of the published catalog are of an immutable
-/// snapshot, so parallel branches may call tools concurrently.
+/// snapshot, so parallel branches may call tools concurrently. Two daemon runs
+/// that overlap share one set of servers, and with it whatever state those
+/// servers hold.
 /// @see McpConfig for the declaration grammar
 /// @see StdioMcpConnection for the local transport
 /// @see StreamableHttpMcpConnection for the remote one
@@ -98,10 +109,12 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
     private final StdioServerLauncher stdio;
     private final HttpServerDialer http;
     private final ReentrantLock lock = new ReentrantLock();
-    private final List<McpConnection> connections = new ArrayList<>();
+    private final Map<String, Running> running = new LinkedHashMap<>();
 
     private volatile boolean started;
     private volatile McpToolCatalog published = McpToolCatalog.EMPTY;
+    private Path launchedFrom;
+    private boolean shutdownHookRegistered;
 
     /// Creates a provider over the shared catalog, the platform sandbox, the host
     /// environment and the operator's credential store.
@@ -275,7 +288,24 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
         return route == null ? null : route.spec();
     }
 
-    /// Closes every server this run started.
+    /// Marks the start of a run, so its first tool resolution reconciles the servers.
+    ///
+    /// Nothing is launched or stopped here: a run that never resolves a tool still
+    /// starts nothing. The next {@link #tools}, {@link #provides} or {@link #call}
+    /// re-reads `mcp.yaml` from the catalog's current working directory and brings
+    /// the running servers in line with it, as the class documentation describes.
+    ///
+    /// @apiNote **Side effects**: a run already in flight shares the reconciliation.
+    ///     It keeps every server that is still alive and still declared the same way,
+    ///     so it is affected only when the declaration or the working directory
+    ///     changed underneath it.
+    public void beginRun() {
+        // A plain volatile write: taking the lock would wait out a launch in progress,
+        // and a reconciliation that races this write simply runs once more.
+        started = false;
+    }
+
+    /// Closes every server this provider started.
     ///
     /// @apiNote **Side effects**: destroys each server's process tree. Idempotent,
     ///     so the shutdown hook and the container's own callback may both fire.
@@ -283,11 +313,9 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
     public void shutdown() {
         lock.lock();
         try {
-            connections.forEach(McpConnection::close);
-            connections.clear();
+            stopAll();
             stdio.close();
             http.close();
-            published = McpToolCatalog.EMPTY;
         } finally {
             lock.unlock();
         }
@@ -305,25 +333,36 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
                 return;
             }
             started = true;
-            launchAll();
+            reconcile();
         } finally {
             lock.unlock();
         }
     }
 
-    private void launchAll() {
+    /// Brings the running servers in line with the current `mcp.yaml`.
+    ///
+    /// The catalog is reassembled from scratch in declaration order, listing the
+    /// tools of servers that kept running as well as of those just started. That
+    /// keeps the first-declared-wins rule for colliding names independent of which
+    /// servers happened to survive, and records this run's catalog notices for this
+    /// run, which starts with an empty notice list.
+    private void reconcile() {
+        Path directory = catalog.workingDirectory();
+        if (!directory.equals(launchedFrom)) {
+            stopAll();
+            launchedFrom = directory;
+        }
+
         List<McpServerSpec> declared;
         try {
-            declared = McpConfig.load(catalog.workingDirectory());
+            declared = McpConfig.load(directory);
         } catch (RuntimeException e) {
+            stopAll();
             notifyOperator(
                     "Could not read "
                             + McpConfig.FILE_NAME
                             + ", no MCP tools are available: "
                             + e.getMessage());
-            return;
-        }
-        if (declared.isEmpty()) {
             return;
         }
 
@@ -335,24 +374,37 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
                         .map(spec -> ((McpServerSpec.Http) spec).host())
                         .collect(Collectors.toUnmodifiableSet());
 
+        Map<String, McpServerSpec> byName = new LinkedHashMap<>();
+        declared.forEach(spec -> byName.put(spec.name(), spec));
+        for (Running server : List.copyOf(running.values())) {
+            if (!server.stillAnswers(byName.get(server.route().name()), allowedHosts)) {
+                stop(server.route());
+            }
+        }
+
         McpToolCatalog assembled = McpToolCatalog.EMPTY;
         for (McpServerSpec spec : declared) {
+            Running kept = running.get(spec.name());
             Optional<McpRoute> route =
-                    switch (spec) {
-                        case McpServerSpec.Stdio local -> stdio.launch(local);
-                        case McpServerSpec.Http remote -> http.dial(remote, allowedHosts);
-                    };
+                    kept != null
+                            ? Optional.of(kept.route())
+                            : switch (spec) {
+                                case McpServerSpec.Stdio local -> stdio.launch(local);
+                                case McpServerSpec.Http remote -> http.dial(remote, allowedHosts);
+                            };
             if (route.isPresent()) {
-                assembled = adopt(route.get(), assembled);
+                assembled = adopt(new Running(spec, allowedHosts, route.get()), assembled);
             }
         }
         published = assembled;
-        if (!connections.isEmpty()) {
+        if (!running.isEmpty() && !shutdownHookRegistered) {
             Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "mcp-shutdown"));
+            shutdownHookRegistered = true;
         }
     }
 
-    private McpToolCatalog adopt(McpRoute route, McpToolCatalog assembled) {
+    private McpToolCatalog adopt(Running server, McpToolCatalog assembled) {
+        McpRoute route = server.route();
         McpConnection connection = route.connection();
         List<McpConnection.McpToolDescriptor> descriptors;
         try {
@@ -363,10 +415,10 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
                             + route.name()
                             + "' did not answer tools/list, its tools are not offered: "
                             + e.getMessage());
-            connection.close();
+            stop(route);
             return assembled;
         }
-        connections.add(connection);
+        running.put(route.name(), server);
         connection.catalogNotices().forEach(this::notifyOperator);
         logger.info("MCP server '" + route.name() + "' offers " + descriptors.size() + " tool(s)");
         return assembled.with(route, descriptors, this::notifyOperator);
@@ -374,18 +426,74 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
 
     /// Drops a dead server's tools so the loop's diff names them as absent.
     private void forget(McpRoute route) {
+        boolean removed;
         lock.lock();
         try {
-            // Read-modify-write is safe: every write to `published` holds this lock;
-            // `volatile` only lets lock-free readers see a whole snapshot.
-            published = published.without(route.connection());
-            connections.remove(route.connection());
+            removed = stop(route);
         } finally {
             lock.unlock();
         }
-        notifyOperator(
-                "MCP server '"
-                        + route.name()
-                        + "' is no longer running; its tools have left the catalog");
+        if (removed) {
+            notifyOperator(
+                    "MCP server '"
+                            + route.name()
+                            + "' is no longer running; its tools have left the catalog until"
+                            + " the next run");
+        }
+    }
+
+    /// Stops one server and removes its tools. Caller holds the lock.
+    ///
+    /// @return whether the server was still registered as running
+    private boolean stop(McpRoute route) {
+        if (!lock.isHeldByCurrentThread()) {
+            throw new IllegalStateException("stop() requires the provider lock");
+        }
+        // Read-modify-write is safe: every write to `published` holds this lock, checked
+        // above; `volatile` only lets lock-free readers see a whole snapshot.
+        //noinspection NonAtomicOperationOnVolatileField
+        published = published.without(route.connection());
+        route.connection().close();
+        if (route.spec() instanceof McpServerSpec.Stdio rooted) {
+            stdio.release(rooted);
+        }
+        Running registered = running.get(route.name());
+        if (registered != null && registered.route().connection() == route.connection()) {
+            running.remove(route.name());
+            return true;
+        }
+        return false;
+    }
+
+    /// Stops every running server. Caller holds the lock.
+    private void stopAll() {
+        List.copyOf(running.values()).forEach(server -> stop(server.route()));
+        published = McpToolCatalog.EMPTY;
+    }
+
+    /// A running server with the declaration and host allowlist it was started under.
+    ///
+    /// @param declared the declaration as `mcp.yaml` wrote it, before launch added
+    ///     anything to it, not null
+    /// @param allowedHosts the hosts declared across the document at launch, not null
+    /// @param route the route to the running server, not null
+    private record Running(McpServerSpec declared, Set<String> allowedHosts, McpRoute route) {
+
+        /// Returns whether this server may keep running under a new declaration.
+        ///
+        /// A remote server is also redialled when the document's host set changed,
+        /// because its connection enforces the set it was opened with. A server a
+        /// reviewer let start uncontained never carries over: that approval was one
+        /// run's, so the next run relaunches it and asks its own reviewer, or, with
+        /// none, leaves it stopped.
+        ///
+        /// @param now the server's current declaration, or null when it is gone
+        /// @param hostsNow the hosts the current document declares, not null
+        boolean stillAnswers(McpServerSpec now, Set<String> hostsNow) {
+            return route.connection().isConnected()
+                    && !route.uncontained()
+                    && declared.equals(now)
+                    && (declared instanceof McpServerSpec.Stdio || allowedHosts.equals(hostsNow));
+        }
     }
 }

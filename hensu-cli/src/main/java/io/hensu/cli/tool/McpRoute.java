@@ -16,11 +16,22 @@ import java.util.Objects;
 ///
 /// @param spec the declaration the server was started from, not null
 /// @param connection the open connection to it, not null
-record McpRoute(McpServerSpec spec, McpConnection connection) {
+/// @param uncontained whether this is a local process a reviewer let start with no
+///     containment available. Such an approval was given by one run's reviewer and
+///     covers that run only.
+record McpRoute(McpServerSpec spec, McpConnection connection, boolean uncontained) {
 
     McpRoute {
         Objects.requireNonNull(spec, "spec must not be null");
         Objects.requireNonNull(connection, "connection must not be null");
+    }
+
+    /// Creates a route to a contained local server or to a remote one.
+    ///
+    /// @param spec the declaration the server was started from, not null
+    /// @param connection the open connection to it, not null
+    McpRoute(McpServerSpec spec, McpConnection connection) {
+        this(spec, connection, false);
     }
 
     /// Returns the declared server name.
@@ -91,7 +102,10 @@ record McpRoute(McpServerSpec spec, McpConnection connection) {
     private String containment() {
         return switch (spec) {
             case McpServerSpec.Stdio stdio ->
-                    "server launched with network: " + (stdio.sandbox().network() ? "on" : "off");
+                    uncontained
+                            ? "server launched without containment, approved by a reviewer"
+                            : "server launched with network: "
+                                    + (stdio.sandbox().network() ? "on" : "off");
             case McpServerSpec.Http http ->
                     "no containment applies to a remote server; the declared hosts are the bound,"
                             + " and this one is "

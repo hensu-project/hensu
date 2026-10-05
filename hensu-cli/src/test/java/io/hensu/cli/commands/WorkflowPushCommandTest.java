@@ -44,7 +44,7 @@ class WorkflowPushCommandTest extends BaseWorkflowCommandTest {
         org.mockito.Mockito.when(httpResponse.statusCode()).thenReturn(201);
 
         // When
-        command.run();
+        command.call();
 
         // Then
         String output = outContent.toString();
@@ -62,7 +62,7 @@ class WorkflowPushCommandTest extends BaseWorkflowCommandTest {
         org.mockito.Mockito.when(httpResponse.statusCode()).thenReturn(200);
 
         // When
-        command.run();
+        command.call();
 
         // Then
         String output = outContent.toString();
@@ -74,7 +74,7 @@ class WorkflowPushCommandTest extends BaseWorkflowCommandTest {
         // Given — no build/my-workflow.json file
 
         // When
-        command.run();
+        command.call();
 
         // Then
         assertThat(errContent.toString()).isNotEmpty();
@@ -92,7 +92,7 @@ class WorkflowPushCommandTest extends BaseWorkflowCommandTest {
         org.mockito.Mockito.when(httpResponse.body()).thenReturn("Internal error");
 
         // When
-        command.run();
+        command.call();
 
         // Then
         assertThat(errContent.toString()).isNotEmpty();

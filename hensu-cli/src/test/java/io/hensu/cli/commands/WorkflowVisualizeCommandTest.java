@@ -70,7 +70,7 @@ class WorkflowVisualizeCommandTest extends BaseWorkflowCommandTest {
                 .thenReturn(expectedOutput);
 
         // When
-        command.run();
+        command.call();
 
         // Then
         String output = outContent.toString();
@@ -94,7 +94,7 @@ class WorkflowVisualizeCommandTest extends BaseWorkflowCommandTest {
                 .thenReturn(mermaidOutput);
 
         // When
-        command.run();
+        command.call();
 
         // Then
         String output = outContent.toString();
@@ -116,7 +116,7 @@ class WorkflowVisualizeCommandTest extends BaseWorkflowCommandTest {
                 .thenThrow(new IllegalArgumentException("Unsupported format: unknown"));
 
         // When
-        command.run();
+        command.call();
 
         // Then
         String errOutput = errContent.toString();
@@ -138,7 +138,7 @@ class WorkflowVisualizeCommandTest extends BaseWorkflowCommandTest {
                 .thenReturn("Workflow: kts-workflow");
 
         // When
-        command.run();
+        command.call();
 
         // Then
         String output = outContent.toString();

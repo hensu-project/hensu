@@ -737,7 +737,7 @@ shape; a remote server has no process at all, so the first three do not apply to
   working backend starts no servers at all and says so, rather than starting them uncontained.
 - **`unattended` defaults to false, the opposite of a command's default.** A catalog entry is a
   reviewed invocation; a server is a whole surface whose tool list the operator has not read.
-- **Each server gets its own private `$HOME`**, deleted when the run ends. The working directory is
+- **Each server gets its own private `$HOME`**, deleted when the server stops. The working directory is
   never handed over as a home, because a home is bound writable and that would grant writes the
   server's own `sandbox:` block never declared.
 - **Starting up is budgeted apart from answering.** A command is forked per call, so one timeout
@@ -752,6 +752,25 @@ shape; a remote server has no process at all, so the first three do not apply to
 
 Servers start lazily, on the first node whose tools have to be resolved, so a run that never reaches
 an agent never pays for one.
+
+### How long a server lives
+
+A server lives as long as the process that launched it. Under `--no-daemon` that is one run. Under
+the daemon it is every run the daemon serves, so a server that holds state carries it from one run
+into the next, and two runs that overlap share it. Restart the daemon to start every server afresh.
+
+A server that dies is not restarted within the run that saw it die: its tools leave the catalog, and
+the next node's declared-versus-available diff names them. At the start of the next run's first tool
+resolution, Hensu compares what is running with what `mcp.yaml` declares now. A server that is still
+alive and declared the same way keeps running; one that died, whose declaration changed, or that is
+no longer declared is stopped; every declared server that is not running is started. A server that
+crashes on every start therefore costs one launch per run, never a restart loop.
+
+The one server never kept is one a reviewer let start without containment, because no sandbox
+backend was available. That approval belongs to the run that gave it, so the next run stops the
+server and launches it again, asking its own reviewer, or leaving the server stopped when the run
+has none. See [the security model](cli-tool-execution-security-model.md). Changing the
+working directory with `-d` stops every server and starts the new directory's.
 
 ### A package runner needs the network it was denied
 

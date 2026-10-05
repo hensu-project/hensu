@@ -52,7 +52,7 @@ class WorkflowValidateCommandTest extends BaseWorkflowCommandTest {
                 .thenReturn(workflow);
 
         // When
-        command.run();
+        assertThat(command.call()).isZero();
 
         // Then
         String output = outContent.toString();
@@ -80,7 +80,7 @@ class WorkflowValidateCommandTest extends BaseWorkflowCommandTest {
                 .thenReturn(childWorkflow);
 
         // When
-        command.run();
+        command.call();
 
         // Then
         String output = outContent.toString();
@@ -99,7 +99,8 @@ class WorkflowValidateCommandTest extends BaseWorkflowCommandTest {
                 .thenThrow(new RuntimeException("Syntax error at line 10"));
 
         // When
-        command.run();
+        // CI gates on this exit code, not on the [FAIL] line.
+        assertThat(command.call()).isEqualTo(1);
 
         // Then
         assertThat(errContent.toString()).contains("Syntax error at line 10");
@@ -117,7 +118,7 @@ class WorkflowValidateCommandTest extends BaseWorkflowCommandTest {
                 .thenReturn(workflow);
 
         // When
-        command.run();
+        command.call();
 
         // Then
         String output = outContent.toString();
@@ -138,7 +139,7 @@ class WorkflowValidateCommandTest extends BaseWorkflowCommandTest {
                 .thenReturn(workflow);
 
         // When
-        command.run();
+        command.call();
 
         // Then
         String output = outContent.toString();

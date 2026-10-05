@@ -31,6 +31,7 @@ public class CancelCommand extends HensuCommand {
 
         if (!DaemonClient.isAlive()) {
             System.err.println(styles.error("No daemon is running."));
+            fail();
             return;
         }
 
@@ -40,6 +41,7 @@ public class CancelCommand extends HensuCommand {
                     styles.checkmark() + " " + styles.bold("Cancelled execution: " + execId));
         } catch (IOException e) {
             System.err.println(styles.error("Failed to cancel execution: " + e.getMessage()));
+            fail();
         }
     }
 }
