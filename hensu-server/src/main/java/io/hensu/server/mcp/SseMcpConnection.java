@@ -46,7 +46,7 @@ public class SseMcpConnection implements McpConnection {
     @Override
     public List<McpToolDescriptor> listTools() throws McpException {
         if (!sessionManager.isConnected(clientId)) {
-            throw new McpException("Client not connected: " + clientId);
+            throw sessionManager.notConnected(clientId);
         }
 
         // Send tools/list request via SSE and wait for response
@@ -68,7 +68,7 @@ public class SseMcpConnection implements McpConnection {
     public Map<String, Object> callTool(String toolName, Map<String, Object> arguments)
             throws McpException {
         if (!sessionManager.isConnected(clientId)) {
-            throw new McpException("Client not connected: " + clientId);
+            throw sessionManager.notConnected(clientId);
         }
 
         // Build MCP tools/call params
@@ -85,7 +85,7 @@ public class SseMcpConnection implements McpConnection {
 
     @Override
     public String getEndpoint() {
-        return "sse://" + clientId;
+        return McpConnections.endpointFor(clientId);
     }
 
     @Override

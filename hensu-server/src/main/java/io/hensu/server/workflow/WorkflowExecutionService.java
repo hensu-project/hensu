@@ -8,9 +8,13 @@ import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.Workflow;
+import io.hensu.server.execution.CheckpointingListener;
 import io.hensu.server.execution.LoggingExecutionListener;
 import io.hensu.server.execution.ToolAuditListener;
 import io.hensu.server.execution.ToolStreamingExecutionListener;
+import io.hensu.server.mcp.McpConnections;
+import io.hensu.server.persistence.ExecutionLeaseManager;
+import io.hensu.server.persistence.LeaseLostException;
 import io.hensu.server.persistence.ToolAuditRepository;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
@@ -23,7 +27,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
@@ -50,6 +53,7 @@ public class WorkflowExecutionService {
     private final ExecutionEventBroadcaster eventBroadcaster;
     private final WorkflowRegistryService registryService;
     private final ToolAuditRepository toolAuditRepository;
+    private final ExecutionLeaseManager leaseManager;
 
     @Inject
     public WorkflowExecutionService(
@@ -57,7 +61,8 @@ public class WorkflowExecutionService {
             WorkflowStateRepository stateRepository,
             ExecutionEventBroadcaster eventBroadcaster,
             WorkflowRegistryService registryService,
-            ToolAuditRepository toolAuditRepository) {
+            ToolAuditRepository toolAuditRepository,
+            ExecutionLeaseManager leaseManager) {
         this.workflowExecutor =
                 Objects.requireNonNull(workflowExecutor, "workflowExecutor must not be null");
         this.stateRepository =
@@ -68,6 +73,7 @@ public class WorkflowExecutionService {
                 Objects.requireNonNull(registryService, "registryService must not be null");
         this.toolAuditRepository =
                 Objects.requireNonNull(toolAuditRepository, "toolAuditRepository must not be null");
+        this.leaseManager = Objects.requireNonNull(leaseManager, "leaseManager must not be null");
     }
 
     /// Accepts a new workflow execution and dispatches it asynchronously.
@@ -76,11 +82,20 @@ public class WorkflowExecutionService {
     /// running the workflow on a background virtual thread. Progress and outcome are
     /// delivered via SSE events.
     ///
+    /// Refuses the execution when the tenant's MCP session is held by another
+    /// node: its first tool call would fail here, and the lease an execution takes
+    /// at its first checkpoint must sit on the node holding the session. This is
+    /// what makes tenant affinity at the load balancer a deployment requirement.
+    ///
+    /// @apiNote Issues a blocking JDBC read for the session owner. Call from a
+    /// worker thread or Virtual Thread, never from the event loop.
+    ///
     /// @param tenantId the tenant requesting execution, not null
     /// @param workflowId the workflow to execute, not null
     /// @param context initial context variables, not null
     /// @return execution result containing the assigned execution ID, never null
     /// @throws WorkflowNotFoundException if the workflow does not exist
+    /// @throws ExecutionNotLocalException if the tenant's MCP session is held by another node
     public ExecutionStartResult startExecution(
             String tenantId, String workflowId, Map<String, Object> context) {
         Objects.requireNonNull(tenantId, "tenantId must not be null");
@@ -95,11 +110,20 @@ public class WorkflowExecutionService {
         if (TenantContext.isBound() && TenantContext.current().tenantId().equals(tenantId)) {
             tenant = TenantContext.current();
         } else {
-            tenant = TenantInfo.withMcp(tenantId, "sse://" + tenantId);
+            tenant = TenantInfo.withMcp(tenantId, McpConnections.endpointFor(tenantId));
         }
 
         // Fail fast before accepting the request if the workflow is not registered.
         registryService.getWorkflow(tenantId, workflowId);
+
+        leaseManager
+                .sessionElsewhere(tenantId)
+                .ifPresent(
+                        node -> {
+                            throw new ExecutionNotLocalException(
+                                    ExecutionLeaseManager.describeSessionElsewhere(tenantId, node)
+                                            + "; executions must start there");
+                        });
 
         Map<String, Object> executionContext = new HashMap<>(context);
         executionContext.put("_tenant_id", tenantId);
@@ -130,7 +154,20 @@ public class WorkflowExecutionService {
             String tenantId,
             TenantInfo tenant,
             Map<String, Object> executionContext) {
-        AtomicReference<HensuState> lastCheckpoint = new AtomicReference<>();
+        // The audit listener is not behind verboseEnabled: the log lines are a
+        // debugging aid, the rows are the record.
+        ExecutionListener toolStream =
+                new ToolStreamingExecutionListener(eventBroadcaster, executionId);
+        ExecutionListener audit = new ToolAuditListener(toolAuditRepository, tenantId, executionId);
+        CheckpointingListener listener =
+                new CheckpointingListener(
+                        stateRepository,
+                        tenantId,
+                        verboseEnabled
+                                ? new CompositeExecutionListener(
+                                        toolStream, audit, new LoggingExecutionListener())
+                                : new CompositeExecutionListener(toolStream, audit));
+        leaseManager.beginRun(tenantId, executionId);
         try {
             eventBroadcaster.runAs(
                     executionId,
@@ -141,26 +178,6 @@ public class WorkflowExecutionService {
                                     Workflow workflow =
                                             registryService.getWorkflow(tenantId, workflowId);
 
-                                    ExecutionListener checkpoint =
-                                            trackingCheckpointListener(tenantId, lastCheckpoint);
-                                    ExecutionListener toolStream =
-                                            new ToolStreamingExecutionListener(
-                                                    eventBroadcaster, executionId);
-                                    // The audit listener is not behind verboseEnabled:
-                                    // the log lines are a debugging aid, the rows are the
-                                    // record.
-                                    ExecutionListener audit =
-                                            new ToolAuditListener(
-                                                    toolAuditRepository, tenantId, executionId);
-                                    ExecutionListener listener =
-                                            verboseEnabled
-                                                    ? new CompositeExecutionListener(
-                                                            checkpoint,
-                                                            toolStream,
-                                                            audit,
-                                                            new LoggingExecutionListener())
-                                                    : new CompositeExecutionListener(
-                                                            checkpoint, toolStream, audit);
                                     ExecutionResult result =
                                             workflowExecutor.execute(
                                                     workflow, executionContext, listener);
@@ -178,46 +195,40 @@ public class WorkflowExecutionService {
                         return null;
                     });
         } catch (Exception e) {
+            if (LeaseLostException.isCause(e)) {
+                // Another node claimed this execution and is running it; recording a
+                // failure here would be refused, and would be false if it were not.
+                LOG.warnv("Execution {0} stopped on this node: {1}", executionId, e.getMessage());
+                return;
+            }
             LOG.errorv(
                     e, "Workflow execution failed: workflow={0}, tenant={1}", workflowId, tenantId);
             eventBroadcaster.publish(
                     executionId,
                     ExecutionEvent.ExecutionError.now(
                             executionId, e.getClass().getSimpleName(), e.getMessage(), null));
-            HensuState ls = lastCheckpoint.get();
-            if (ls != null) {
-                stateRepository.save(tenantId, HensuSnapshot.from(ls, "failed"));
-            } else {
-                stateRepository.save(
-                        tenantId,
-                        new HensuSnapshot(
-                                workflowId,
-                                executionId,
-                                null,
-                                executionContext,
-                                Map.of(),
-                                null,
-                                null,
-                                Instant.now(),
-                                "failed"));
-            }
+            HensuState ls = listener.lastCheckpoint();
+            HensuSnapshot failed =
+                    ls != null
+                            ? HensuSnapshot.from(ls, "failed")
+                            : new HensuSnapshot(
+                                    workflowId,
+                                    executionId,
+                                    null,
+                                    executionContext,
+                                    Map.of(),
+                                    null,
+                                    null,
+                                    Instant.now(),
+                                    "failed");
+            ExecutionResultHandler.saveFailed(stateRepository, tenantId, failed, e, LOG);
         } finally {
+            leaseManager.endRun(tenantId, executionId);
             // Always close the SSE stream. Paused executions may wait days/weeks
             // for human review — holding an HTTP connection open is wasteful and
             // will be killed by idle timeouts long before then. Clients must
             // re-subscribe after submitting a review to receive post-resume events.
             eventBroadcaster.complete(executionId);
         }
-    }
-
-    private ExecutionListener trackingCheckpointListener(
-            String tenantId, AtomicReference<HensuState> lastCheckpoint) {
-        return new ExecutionListener() {
-            @Override
-            public void onCheckpoint(HensuState state) {
-                lastCheckpoint.set(state);
-                stateRepository.save(tenantId, HensuSnapshot.from(state, "checkpoint"));
-            }
-        };
     }
 }

@@ -30,6 +30,16 @@ import javax.sql.DataSource;
 /// This ensures the recovery sweeper only targets executions that are actively
 /// running on a now-dead node, never safely-paused human-review executions.
 ///
+/// ### Write Fencing
+/// An existing row is overwritten only while this node owns it
+/// (`server_node_id = thisNode`). A node that stalled past the stale threshold
+/// and lost the execution to another node's sweeper finds its next write
+/// refused with {@link LeaseLostException}, rather than replacing the newer
+/// state the claiming node has written since. A first write – a new execution –
+/// inserts unconditionally, and every path that writes to an unowned row
+/// (resuming a paused execution) claims it through
+/// {@link ExecutionLeaseManager#tryClaim} first.
+///
 /// ### Contracts
 /// - **Precondition**: Flyway migration `V1__create_schema` has run
 /// - **Postcondition**: `save` is idempotent per `(tenant_id, execution_id)`
@@ -62,6 +72,7 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
                 checkpoint_reason = EXCLUDED.checkpoint_reason,
                 server_node_id    = EXCLUDED.server_node_id,
                 last_heartbeat_at = EXCLUDED.last_heartbeat_at
+            WHERE execution_states.server_node_id = ?
             """;
 
     private static final String SQL_FIND_BY_EXECUTION_ID =
@@ -128,6 +139,13 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
         this.serverNodeId = Objects.requireNonNull(serverNodeId, "serverNodeId must not be null");
     }
 
+    /// Upserts the snapshot, fenced on this node's lease.
+    ///
+    /// @param tenantId the tenant owning the execution, not null
+    /// @param snapshot the snapshot to persist, not null
+    /// @throws LeaseLostException if the row exists and another node, or no node,
+    ///     holds its lease
+    /// @throws PersistenceException if the write fails
     @Override
     public void save(String tenantId, HensuSnapshot snapshot) {
         Objects.requireNonNull(tenantId, "tenantId must not be null");
@@ -138,24 +156,30 @@ public class JdbcWorkflowStateRepository implements WorkflowStateRepository {
         String leaseNodeId = active ? serverNodeId : null;
         OffsetDateTime heartbeatAt = active ? OffsetDateTime.now(ZoneOffset.UTC) : null;
 
-        jdbc.update(
-                SQL_SAVE,
-                ps -> {
-                    ps.setString(1, tenantId);
-                    ps.setString(2, snapshot.executionId());
-                    ps.setString(3, snapshot.workflowId());
-                    ps.setString(4, snapshot.currentNodeId());
-                    ps.setString(5, writeJson(snapshot.context()));
-                    ps.setString(6, writeJson(snapshot.history()));
-                    ps.setString(7, writeJson(snapshot.phase()));
-                    ps.setString(8, writeJson(snapshot.retryCounters()));
-                    ps.setString(9, snapshot.checkpointReason());
-                    ps.setObject(
-                            10, OffsetDateTime.ofInstant(snapshot.createdAt(), ZoneOffset.UTC));
-                    ps.setString(11, leaseNodeId);
-                    ps.setObject(12, heartbeatAt);
-                },
-                "Failed to save execution state: " + snapshot.executionId());
+        int written =
+                jdbc.update(
+                        SQL_SAVE,
+                        ps -> {
+                            ps.setString(1, tenantId);
+                            ps.setString(2, snapshot.executionId());
+                            ps.setString(3, snapshot.workflowId());
+                            ps.setString(4, snapshot.currentNodeId());
+                            ps.setString(5, writeJson(snapshot.context()));
+                            ps.setString(6, writeJson(snapshot.history()));
+                            ps.setString(7, writeJson(snapshot.phase()));
+                            ps.setString(8, writeJson(snapshot.retryCounters()));
+                            ps.setString(9, snapshot.checkpointReason());
+                            ps.setObject(
+                                    10,
+                                    OffsetDateTime.ofInstant(snapshot.createdAt(), ZoneOffset.UTC));
+                            ps.setString(11, leaseNodeId);
+                            ps.setObject(12, heartbeatAt);
+                            ps.setString(13, serverNodeId);
+                        },
+                        "Failed to save execution state: " + snapshot.executionId());
+        if (written == 0) {
+            throw new LeaseLostException(snapshot.executionId());
+        }
     }
 
     @Override

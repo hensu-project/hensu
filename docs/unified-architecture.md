@@ -123,7 +123,8 @@ what happened. None of those exist on a multi-tenant host, which is the whole of
 decision reads the way it does.
 
 - **Downstream (SSE):** The Hensu server pushes each JSON-RPC tool request — tagged with a unique request id — over the tenant client's open `/mcp/connect` stream.
-- **Upstream (HTTP POST):** The tenant client relays the request to its own MCP servers, then posts the JSON-RPC result to `/mcp/message`. `McpSessionManager` correlates the response by request id, completing the matching pending future (60 s timeout; futures are cancelled if the client disconnects).
+- **Upstream (HTTP POST):** The tenant client relays the request to its own MCP servers, then posts the JSON-RPC result to `/mcp/message`. `McpSessionManager` correlates the response by request id, completing the matching pending future only when the posting tenant owns that request (60 s timeout; a disconnect fails the requests pushed down that stream at once, naming the disconnect). A response that arrives after its request timed out or was failed is answered 404, like an id the tenant never owned; a client should drop it rather than treat it as an error. A message carrying a `method` is a client notification or request, not a response, and is accepted and ignored.
+- **Identity:** the session is registered under the authenticated tenant – the JWT `tenant_id` claim – never under a caller-supplied id. A `clientId` that disagrees with the claim is refused with 403, a response for another tenant's request id is answered 404, and a second connection for the same tenant supersedes the first without letting the displaced stream evict its successor.
 
 ```mermaid
 flowchart LR
@@ -135,8 +136,15 @@ flowchart LR
 
     subgraph server["Hensu Server"]
         direction TB
+        register(["createSession()\n· one per tenant"])
         send(["sendRequest()\n· new request id\n· pending future"])
-        handle(["handleResponse()\n· match id → complete future"])
+        handle(["handleResponse()\n· match id + tenant"])
+        claim(["claim\n· start · resume · recover"])
+    end
+
+    subgraph db["PostgreSQL"]
+        direction TB
+        sessions["runtime.mcp_sessions\ntenant → node"]
     end
 
     subgraph backends["Tenant MCP Servers"]
@@ -144,29 +152,52 @@ flowchart LR
         tools(["Tools · Data · Auth"])
     end
 
-    es -->|"① opens SSE stream — outbound"| send
+    es -->|"① opens SSE stream — outbound"| register
     send -->|"② tools/call + id — pushed over open stream"| es
     post -->|"③ POST result + id — outbound"| handle
     es -.->|"relay"| tools
     tools -.->|"result"| post
+    register -->|"publish · refresh"| sessions
+    sessions -->|"gates"| claim
 
     style client fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
     style server fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style db fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
     style backends fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
     style es fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
     style post fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style register fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style send fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style handle fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style claim fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style sessions fill:#2c2c2e, stroke:#48484a, color:#8e8e93, stroke-width:1px
     style tools fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
 
     linkStyle 0,2 stroke:#0A84FF, stroke-width:1px
-    linkStyle 1,3,4 stroke:#48484a, stroke-width:1px
+    linkStyle 1,3,4,5,6 stroke:#48484a, stroke-width:1px
 ```
 
 Both pipes (①, ③) are **opened by the tenant client** — the accent arrows point *into* Hensu.
 The only server→client traffic (②) is tool-call data pushed back over the SSE stream the client
 already opened. Hensu never initiates a connection to the tenant, so tenants expose **no inbound
 ports, no firewall rules, no VPN**.
+
+Two consequences follow from the direction, and a deployment has to plan for both:
+
+- **A tool call needs a live client connection.** The server cannot reach a tenant whose relay is
+  not connected, so unattended or scheduled server-side runs need the tenant's relay to be
+  continuously available. A run whose relay is away fails its tool calls with "Client not
+  connected" rather than waiting for one.
+- **An execution's lease and its tenant's session must sit on one node.** The stream lives in the
+  memory of the node the relay connected to, and a tool call is answered over it, so the node that
+  leases an execution must be the node holding its tenant's session. `runtime.mcp_sessions` records
+  which node that is and is the coordination point between the two: a node refuses to start (409)
+  or resume (409) an execution whose tenant's fresh session is held elsewhere, and the recovery
+  sweeper leaves such an execution to that node (Decision 9). This makes **tenant affinity at the
+  load balancer** a deployment requirement – route `/mcp/*` and `/api/v1/executions` for one tenant
+  to one node – and a misrouted request is refused rather than started and left to fail. The
+  window that remains, a session moving while an execution already runs, fails that execution's
+  tool calls with a message naming the node that holds the session.
 
 **The invariant is the direction, not the transport.** SSE is how this decision is implemented
 today; it is not the decision. Every connection being inbound-initiated is the property that makes
@@ -404,13 +435,14 @@ currently running. Leases are tracked via two columns in `hensu.execution_states
 - `server_node_id` — the UUID of the server node owning the execution (`NULL` when idle or complete)
 - `last_heartbeat_at` — timestamp last refreshed by the owning node
 
-Three components implement the lease lifecycle:
+Three components implement the lease lifecycle, and one table ties it to the MCP sessions:
 
-| Component               | Responsibility                                                                                                                                                               |
-|:------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ExecutionLeaseManager` | Acquires, renews, and atomically claims leases; generates and holds `server_node_id`                                                                                         |
-| `ExecutionHeartbeatJob` | Runs every `hensu.lease.heartbeat-interval` (default `30s`) — bumps `last_heartbeat_at` for all active leases on this node                                                   |
-| `WorkflowRecoveryJob`   | Runs every `hensu.lease.recovery-interval` (default `60s`) — claims any execution whose heartbeat is older than `hensu.lease.stale-threshold` (default `90s`) and resumes it |
+| Component               | Responsibility                                                                                                                                                                                                                |
+|:------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ExecutionLeaseManager` | Acquires, renews, and atomically claims leases; generates and holds `server_node_id`; publishes, clears, and reads session ownership                                                                                          |
+| `ExecutionHeartbeatJob` | Runs every `hensu.lease.heartbeat-interval` (default `30s`) — bumps `last_heartbeat_at` for all active leases on this node, and queues the refresh of this node's `runtime.mcp_sessions` rows on the session writer           |
+| `WorkflowRecoveryJob`   | Runs every `hensu.lease.recovery-interval` (default `60s`) — claims any execution whose heartbeat is older than `hensu.lease.stale-threshold` (default `90s`) and whose tenant has no fresh session elsewhere, and resumes it |
+| `runtime.mcp_sessions`  | One row per tenant naming the node that holds its MCP session; authoritative only while `last_heartbeat_at` is within the stale threshold                                                                                     |
 
 ```mermaid
 flowchart LR
@@ -429,6 +461,34 @@ flowchart LR
 
     linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
+
+**Session-aware claiming**: no node claims an execution whose tenant holds a fresh session on another
+node – not on start, not on resume, not in the sweep – so orphaned work migrates to the node that can
+answer its tool calls. A session row older than the stale threshold counts as no session: it blocks
+nothing, and the node that claims past it deletes it in the same statement, so a node that dies holding
+a session never disables recovery. If the resume's claim of an orphan the sweep just claimed is
+refused – typically because the session moved in between – the sweeping node hands the lease back –
+owner kept, heartbeat pinned to the epoch so its own heartbeat never revives it – and the next sweep,
+on the session-holding node or on this one if the session has returned, takes it. A lease on an
+execution that is running is never handed back: releasing it would let a second node resume the
+execution while it still runs.
+
+**One run per node**: the write fence below is scoped to the node, not to the run, so two runs of one
+execution on the same node would both pass it. Each node therefore tracks the executions with a live
+run on it, and neither its sweeper nor a resume claims one of them – a heartbeat that lapsed while the
+database was unreachable does not hand the still-running execution to the same node's own sweeper. A
+resume of an execution already running here answers 409, and a resume of an id that does not exist
+answers 404.
+
+**Write fencing**: a snapshot write overwrites an existing row only while that row's `server_node_id`
+names the writing node. A node that stalled past the stale threshold – a long GC pause, a frozen VM –
+and lost its execution to a sweeper has its next checkpoint refused with `LeaseLostException`. The
+refusal stops the stale run, which otherwise would keep calling tools beside the node now running
+the execution, and no `failed` snapshot is written over the newer state. Tool calls the stale run
+makes between waking and its next checkpoint are not fenced; the checkpoint is the fence's grain. A
+run that fails after it has already saved its terminal state also finds its `failed` write refused,
+since the terminal write released the row; the recorded state stands and the original error is the
+one reported.
 
 **Concurrency safety**: `claimStaleExecutions` uses a single `UPDATE … WHERE last_heartbeat_at < threshold
 RETURNING …`. Under PostgreSQL's default `READ COMMITTED` isolation, two concurrent sweepers racing on the
@@ -469,10 +529,10 @@ Violations return `400 Bad Request`. See [Server Developer Guide — Input Valid
 └── GET    /events                   Subscribe to all tenant execution events (SSE stream)
 
 /mcp                     → McpGatewayResource (MCP split-pipe transport)
-├── GET    /connect?clientId=...          SSE stream for tool call requests
-├── POST   /message                       Submit JSON-RPC responses
-├── GET    /status                        Gateway status (connected clients, pending requests)
-└── GET    /clients/{clientId}/status     Status of a specific MCP client connection
+├── GET    /connect?clientId=...          SSE stream for tool call requests (session bound to the tenant claim; clientId optional, 403 on mismatch)
+├── POST   /message                       Submit JSON-RPC responses (404 for an id the caller's tenant does not own)
+├── GET    /status                        Gateway status (connected clients, pending requests; no token required)
+└── GET    /clients/{clientId}/status     Status of the caller's own MCP client connection (404 for any other)
 ```
 
 ---

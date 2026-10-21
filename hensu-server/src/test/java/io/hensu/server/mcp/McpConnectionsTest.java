@@ -36,13 +36,19 @@ class McpConnectionsTest {
             assertThat(conn.getEndpoint()).isEqualTo("sse://client-1");
         }
 
+        /// The message used to be a local "Client not connected via SSE"; it now
+        /// comes from the session manager, which names the owning node when the
+        /// session is held elsewhere, so both connection paths report alike.
         @Test
-        void shouldThrowWhenClientNotConnected() {
+        void shouldThrowSessionManagersDiagnosisWhenClientNotConnected() {
+            McpException diagnosis =
+                    new McpException(
+                            "Tenant 'client-1' has its MCP session on node node-b, not on this"
+                                    + " node node-a");
             when(sessionManager.isConnected("client-1")).thenReturn(false);
+            when(sessionManager.notConnected("client-1")).thenReturn(diagnosis);
 
-            assertThatThrownBy(() -> connections.get("sse://client-1"))
-                    .isInstanceOf(McpException.class)
-                    .hasMessageContaining("Client not connected");
+            assertThatThrownBy(() -> connections.get("sse://client-1")).isSameAs(diagnosis);
         }
     }
 

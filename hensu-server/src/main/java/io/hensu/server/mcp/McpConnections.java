@@ -55,6 +55,18 @@ public class McpConnections {
         this.jsonRpc = Objects.requireNonNull(jsonRpc, "jsonRpc must not be null");
     }
 
+    /// Returns the split-pipe endpoint handle for a client's inbound session.
+    ///
+    /// The handle is derived from the client id and from nothing else, so every
+    /// path that binds a tenant to its MCP session – starting an execution,
+    /// resuming one, invalidating its tool catalog – names the same endpoint.
+    ///
+    /// @param clientId the client, typically the tenant id, not null
+    /// @return the `sse://clientId` handle, never null
+    public static String endpointFor(String clientId) {
+        return SSE_PREFIX + Objects.requireNonNull(clientId, "clientId must not be null");
+    }
+
     /// Opens a connection to the given endpoint.
     ///
     /// ### Contracts
@@ -82,10 +94,11 @@ public class McpConnections {
     ///
     /// @param clientId the client that connected via SSE, not null
     /// @return SSE-based connection, never null
-    /// @throws McpException if the client is not connected
+    /// @throws McpException if the client is not connected; the message names
+    ///     the node holding the session when it is held elsewhere
     public McpConnection getSseConnection(String clientId) throws McpException {
         if (!sessionManager.isConnected(clientId)) {
-            throw new McpException("Client not connected via SSE: " + clientId);
+            throw sessionManager.notConnected(clientId);
         }
         return new SseMcpConnection(clientId, sessionManager, jsonRpc);
     }

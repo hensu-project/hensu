@@ -100,4 +100,36 @@ final class ExecutionResultHandler {
             }
         }
     }
+
+    /// Records a run that failed outside {@link #handle}, without letting the
+    /// write replace the failure being reported.
+    ///
+    /// The write can be refused: if the run got as far as saving a terminal
+    /// state before something else threw, the row is no longer leased to this
+    /// node, and the fenced save answers with a `LeaseLostException`. The
+    /// execution's recorded state then stands – a run that completed is not
+    /// rewritten as failed by a broken event stream – and the refusal, like any
+    /// other write failure here, is attached to `cause` as suppressed rather
+    /// than thrown in its place.
+    ///
+    /// @param stateRepository repository for snapshot persistence, not null
+    /// @param tenantId the owning tenant, not null
+    /// @param failed the snapshot to record, with reason `failed`, not null
+    /// @param cause the failure being reported, not null
+    /// @param log logger for the calling service, not null
+    static void saveFailed(
+            WorkflowStateRepository stateRepository,
+            String tenantId,
+            HensuSnapshot failed,
+            Throwable cause,
+            Logger log) {
+        try {
+            stateRepository.save(tenantId, failed);
+        } catch (RuntimeException e) {
+            cause.addSuppressed(e);
+            log.warnv(
+                    "Execution {0} not recorded as failed: {1}",
+                    LogSanitizer.sanitize(failed.executionId()), e.getMessage());
+        }
+    }
 }

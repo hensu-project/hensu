@@ -11,9 +11,13 @@ import io.hensu.core.state.HensuState;
 import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.util.LogSanitizer;
 import io.hensu.core.workflow.Workflow;
+import io.hensu.server.execution.CheckpointingListener;
 import io.hensu.server.execution.ToolAuditListener;
 import io.hensu.server.execution.ToolStreamingExecutionListener;
+import io.hensu.server.mcp.McpConnections;
 import io.hensu.server.persistence.ExecutionLeaseManager;
+import io.hensu.server.persistence.ExecutionLeaseManager.ClaimOutcome;
+import io.hensu.server.persistence.LeaseLostException;
 import io.hensu.server.persistence.ToolAuditRepository;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
@@ -72,11 +76,18 @@ public class ExecutionStateService {
     /// for this node, so the recovery → resume hand-off works without releasing in
     /// between.
     ///
+    /// The claim also refuses when the tenant's MCP session is held by another
+    /// node. A resume that cannot be served here is refused rather than accepted
+    /// and quietly degraded, so a resumed execution is bound to its tenant's MCP
+    /// endpoint exactly as the start path binds it and sees the same tool catalog
+    /// the paused run saw.
+    ///
     /// @param tenantId the tenant owning the execution, not null
     /// @param executionId the execution to resume, not null
     /// @param resumeInput the caller-supplied input for the resumed execution, may be null
     /// @throws ExecutionNotFoundException if execution not found
-    /// @throws IllegalStateException if another node currently owns the execution lease
+    /// @throws ExecutionNotLocalException if another node owns the execution lease or
+    ///     holds the tenant's MCP session, or a run of it is already live here
     /// @throws WorkflowExecutionException if resume fails
     public void resumeExecution(String tenantId, String executionId, ResumeInput resumeInput) {
         Objects.requireNonNull(tenantId, "tenantId must not be null");
@@ -86,8 +97,22 @@ public class ExecutionStateService {
                 "Resuming workflow execution: executionId={0}, tenant={1}",
                 LogSanitizer.sanitize(executionId), tenantId);
 
-        if (!leaseManager.tryClaim(tenantId, executionId)) {
-            throw new IllegalStateException("Execution owned by another node: " + executionId);
+        switch (leaseManager.tryClaim(tenantId, executionId)) {
+            case ClaimOutcome.Claimed _ -> {}
+            case ClaimOutcome.NotFound _ ->
+                    throw new ExecutionNotFoundException("Execution not found: " + executionId);
+            case ClaimOutcome.AlreadyRunning _ ->
+                    throw new ExecutionNotLocalException(
+                            "Execution already running on this node: " + executionId);
+            case ClaimOutcome.LeasedElsewhere _ ->
+                    throw new ExecutionNotLocalException(
+                            "Execution owned by another node: " + executionId);
+            case ClaimOutcome.SessionElsewhere(String nodeId) ->
+                    throw new ExecutionNotLocalException(
+                            ExecutionLeaseManager.describeSessionElsewhere(tenantId, nodeId)
+                                    + "; execution "
+                                    + executionId
+                                    + " must resume there");
         }
 
         try {
@@ -99,7 +124,7 @@ public class ExecutionStateService {
                                             new ExecutionNotFoundException(
                                                     "Execution not found: " + executionId));
 
-            TenantInfo tenant = TenantInfo.simple(tenantId);
+            TenantInfo tenant = TenantInfo.withMcp(tenantId, McpConnections.endpointFor(tenantId));
             String workflowId = snapshot.workflowId();
 
             // Validated before the try below, whose catch marks the execution failed. A resume
@@ -150,11 +175,24 @@ public class ExecutionStateService {
                             return null;
                         });
             } catch (Exception e) {
+                if (LeaseLostException.isCause(e)) {
+                    // Another node claimed this execution and is running it; a failed
+                    // snapshot written here would be refused, and false if it were not.
+                    LOG.warnv(
+                            "Resumed execution {0} stopped on this node: {1}",
+                            LogSanitizer.sanitize(executionId), e.getMessage());
+                    throw new ExecutionNotLocalException(e.getMessage());
+                }
                 LOG.errorv(
                         e,
                         "Resume execution failed: executionId={0}",
                         LogSanitizer.sanitize(executionId));
-                stateRepository.save(tenantId, HensuSnapshot.from(snapshot.toState(), "failed"));
+                ExecutionResultHandler.saveFailed(
+                        stateRepository,
+                        tenantId,
+                        HensuSnapshot.from(snapshot.toState(), "failed"),
+                        e,
+                        LOG);
                 eventBroadcaster.publish(
                         executionId,
                         ExecutionEvent.ExecutionError.now(
@@ -177,18 +215,11 @@ public class ExecutionStateService {
     /// @param executionId the execution being resumed, not null
     /// @return composed listener, never null
     private ExecutionListener resumeListener(String tenantId, String executionId) {
-        return new CompositeExecutionListener(
-                checkpointListener(tenantId),
-                new ToolStreamingExecutionListener(eventBroadcaster, executionId),
-                new ToolAuditListener(toolAuditRepository, tenantId, executionId));
-    }
-
-    private ExecutionListener checkpointListener(String tenantId) {
-        return new ExecutionListener() {
-            @Override
-            public void onCheckpoint(HensuState state) {
-                stateRepository.save(tenantId, HensuSnapshot.from(state, "checkpoint"));
-            }
-        };
+        return new CheckpointingListener(
+                stateRepository,
+                tenantId,
+                new CompositeExecutionListener(
+                        new ToolStreamingExecutionListener(eventBroadcaster, executionId),
+                        new ToolAuditListener(toolAuditRepository, tenantId, executionId)));
     }
 }

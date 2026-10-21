@@ -139,7 +139,7 @@ Both files land in `dev/keys/` (gitignored). Set `HENSU_JWT_PUBLIC_KEY=file:/abs
 docker-compose up -d
 ```
 
-Flyway runs `V1__create_schema` automatically on server startup. No manual DB setup needed.
+Flyway runs the `db/migration` scripts (`V1__create_schema` onward) automatically on server startup. No manual DB setup needed.
 
 **4. Run the server**
 
@@ -324,12 +324,14 @@ io.hensu.server/
 │   └── SleepHandler             # Simulates long-running node for crash-recovery tests
 │
 ├── execution/             # Server-side execution listeners
+│   ├── CheckpointingListener      # Persists checkpoints; a lost lease stops the run
 │   ├── LoggingExecutionListener   # Logs node lifecycle, tool audit, transition warnings
 │   ├── ToolStreamingExecutionListener # Republishes tool audit events as SSE events
 │   └── ToolAuditListener          # One durable row per settled tool call, paired by call id
 │
 ├── mcp/                   # Server-side MCP transport (protocol types live in hensu-mcp)
 │   ├── McpSessionManager        # SSE session management
+│   ├── McpSessionChanged        # CDI event: a session began or ended; drops the cached catalog
 │   ├── McpConnections           # Opens split-pipe connections; refuses every other scheme
 │   ├── McpToolDiscovery         # Runtime tool schema discovery + cache
 │   ├── McpToolProvider          # Exposes the tenant's MCP tools to the ToolProvider seam
@@ -342,11 +344,12 @@ io.hensu.server/
 ├── persistence/           # PostgreSQL persistence (plain JDBC)
 │   ├── JdbcWorkflowRepository         # Workflow definitions (JSONB)
 │   ├── JdbcWorkflowStateRepository    # Execution state snapshots (JSONB + lease columns)
-│   ├── ExecutionLeaseManager          # Distributed lease management (@ApplicationScoped)
+│   ├── ExecutionLeaseManager          # Distributed leases + MCP session ownership (runtime.mcp_sessions)
 │   ├── WorkflowPushLock               # Cluster-wide push mutex (pg_advisory_xact_lock + JVM fallback)
 │   ├── JdbcToolAuditRepository        # Tool audit rows (runtime.tool_audit)
 │   ├── ToolAuditEntry                 # One settled tool call: status, argv, arguments, output
 │   ├── JdbcSupport                    # JDBC helper (queryList, update)
+│   ├── LeaseLostException             # Snapshot write refused: another node holds the lease
 │   └── PersistenceException           # Unchecked wrapper for SQLException
 │
 ├── workflow/              # Business logic layer
@@ -361,6 +364,7 @@ io.hensu.server/
 │   ├── WorkflowRecoveryJob          # Orphaned execution sweeper (@Scheduled)
 │   ├── ExecutionStartResult / ExecutionOutput / ExecutionSummary   # DTOs
 │   ├── ExecutionStatus              # DTO for execution status (with correlationId)
+│   ├── ExecutionNotLocalException   # Lease or tenant MCP session held by another node (409)
 │   └── {Execution,Workflow}{NotFound,Execution}Exception   # Domain exceptions
 │
 ├── streaming/             # Execution event streaming
@@ -384,7 +388,7 @@ Uses Java 25 `ScopedValue` for thread-safe tenant isolation:
 
 ```java
 // The MCP session handle is derived from the tenant id and from nothing else
-TenantInfo tenant = TenantInfo.withMcp(tenantId, "sse://" + tenantId);
+TenantInfo tenant = TenantInfo.withMcp(tenantId, McpConnections.endpointFor(tenantId));
 TenantContext.runAs(tenant, () -> {
     // All code in this scope sees the tenant
     TenantInfo current = TenantContext.current();
@@ -473,7 +477,9 @@ public class MyResource {
 | 202 Accepted              | Async operation started (execution start) |
 | 204 No Content            | Successful DELETE                         |
 | 400 Bad Request           | Invalid input, missing headers            |
+| 403 Forbidden             | Caller-supplied id contradicts the tenant |
 | 404 Not Found             | Resource not found                        |
+| 409 Conflict              | Execution belongs on another node         |
 | 500 Internal Server Error | Unexpected errors                         |
 
 ### Input Validation
@@ -824,8 +830,16 @@ Downstream (SSE): Server → Client
 
 Upstream (HTTP POST): Client → Server
   - JSON-RPC responses sent via POST /mcp/message
-  - Server correlates by request ID
+  - Server correlates by request ID and the caller's tenant
 ```
+
+The session is registered under the JWT `tenant_id` claim, never under a caller-supplied id: a
+`clientId` query parameter that disagrees with the claim is refused with 403, and a response for a
+request the caller's tenant does not own is answered 404 – as is a late response to a request that
+already timed out or was failed, which a client should drop rather than treat as an error. A second
+connection for the same tenant supersedes the first, and a disconnect fails the requests pushed down
+that stream at once. A stream whose tenant has since connected to another node is retired at the
+next heartbeat.
 
 ### Using MCP in Workflows
 
@@ -850,7 +864,7 @@ This route serves DSL-authored actions only. Tools an agent chooses for itself g
 Via direct connection:
 
 ```java
-McpConnection conn = connections.get("sse://" + tenantId);
+McpConnection conn = connections.get(McpConnections.endpointFor(tenantId));
 Map<String, Object> result = conn.callTool("search", Map.of("query", "test"));
 ```
 
@@ -866,7 +880,8 @@ MCP tools are discovered at runtime — no server code changes are required to s
 
 - **Discovery & caching**: `McpToolDiscovery` fetches the tool schema from the tenant's MCP server
   and caches it per endpoint. On the first call, schemas are fetched; subsequent calls are served
-  from cache.
+  from cache. The entry is dropped whenever the client's session registers or ends
+  (`McpSessionChanged`), so a relay that reconnects with a changed tool list is discovered afresh.
 - **Scope**: the catalog a tenant sees is exactly what its own MCP server publishes. Outside a
   tenant context the catalog is empty, and a discovery failure yields an empty catalog rather than
   an exception, so one unreachable MCP server fails a node instead of the whole execution.
@@ -1142,7 +1157,7 @@ include inline rubric content in the `"rubric"` field, which the deserializer pa
 JDBC repository tests live in `io.hensu.server.persistence` and use Testcontainers PostgreSQL (no Quarkus context). They extend `JdbcRepositoryTestBase` which provides:
 
 - A shared PostgreSQL container per test class
-- Flyway migration (same `V1__create_persistence_tables.sql` used in production)
+- Flyway migration (same `db/migration` scripts used in production)
 - Pre-configured `DataSource` and `ObjectMapper`
 
 ```java
@@ -1184,11 +1199,21 @@ claim the orphaned execution for re-execution.
 
 ### Components
 
-| Class                   | Package        | Role                                                                                                                                             |
-|-------------------------|----------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ExecutionLeaseManager` | `persistence/` | `@ApplicationScoped` CDI bean; owns lease SQL, generates `server_node_id`, exposes `updateHeartbeats()` and `claimStaleExecutions()`             |
-| `ExecutionHeartbeatJob` | `service/`     | `@Scheduled` — runs every `${hensu.lease.heartbeat-interval:30s}`; calls `leaseManager.updateHeartbeats()`                                       |
-| `WorkflowRecoveryJob`   | `service/`     | `@Scheduled` — runs every `${hensu.lease.recovery-interval:60s}`; claims stale executions and calls `workflowService.resumeExecution()` for each |
+| Class                   | Package        | Role                                                                                                                                                                                                  |
+|-------------------------|----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ExecutionLeaseManager` | `persistence/` | `@ApplicationScoped` CDI bean; owns lease and session SQL, generates `server_node_id`, exposes `updateHeartbeats()`, `claimStaleExecutions()`, `tryClaim()` and the `runtime.mcp_sessions` operations |
+| `ExecutionHeartbeatJob` | `service/`     | `@Scheduled` — runs every `${hensu.lease.heartbeat-interval:30s}`; calls `leaseManager.updateHeartbeats()` and `sessionManager.refreshSessions()`                                                     |
+| `WorkflowRecoveryJob`   | `service/`     | `@Scheduled` — runs every `${hensu.lease.recovery-interval:60s}`; claims stale executions and calls `workflowService.resumeExecution()` for each                                                      |
+
+### Session Affinity
+
+A tool call is answered over the tenant's MCP session, which lives on the node the relay connected
+to. `McpSessionManager` publishes that node to `runtime.mcp_sessions`, and claiming honours it: a
+node does not start, resume or recover an execution whose tenant holds a **fresh** session on
+another node. Start and resume answer 409 (`ExecutionNotLocalException`); the sweeper leaves the
+execution to the session-holding node. A session row older than `hensu.lease.stale-threshold` counts
+as no session and is deleted by the node that claims past it. Deployments therefore need tenant
+affinity at the load balancer – see Decision 3 of `docs/unified-architecture.md`.
 
 ### Lease Lifecycle
 
@@ -1199,6 +1224,13 @@ The `JdbcWorkflowStateRepository.save()` method sets or clears lease columns bas
 |--------------------------------------------------------|-----------------------|---------------------|
 | `"checkpoint"`                                         | set to this node's ID | set to `NOW()`      |
 | `"paused"` / `"completed"` / `"failed"` / `"rejected"` | `NULL`                | `NULL`              |
+
+The write is **fenced**: an existing row is overwritten only while `server_node_id` names this node.
+A node that stalled past the stale threshold and lost its execution to another node's sweeper has
+its next write refused with `LeaseLostException`; `CheckpointingListener` lets that one failure
+escape the observer composite, so the stale run stops instead of repeating tool calls beside the
+node that took it over, and neither service records a `failed` snapshot over the newer state.
+Writing to an unowned row (a paused execution) requires claiming it first, which resume does.
 
 `findPaused()` filters on `server_node_id IS NULL` to exclude executions leased by a live node,
 and on the durable phase — `phase ->> 'type' = 'awaiting_post_processor'` — to select the ones
@@ -1242,6 +1274,17 @@ PostgreSQL, no Quarkus context). Key properties covered:
 - Orphaned row (stale heartbeat) is claimed by the sweeper node
 - Row with a fresh heartbeat is never claimed (live execution safety)
 - `updateHeartbeats()` only touches rows owned by the calling node (crashed-node isolation)
+- An execution whose tenant has a fresh session on another node is not claimed, by `tryClaim()` or
+  the sweeper; a session row already aged past the threshold blocks nothing and is deleted
+- A recovered execution whose resume claim is refused is relinquished back to recovery, whether or
+  not the session is still elsewhere when looked up; one running on this node never is
+- An execution with a live run on this node is never claimed by this node's own sweeper, and a
+  second `tryClaim()` for it is refused until the first run releases
+- `tryClaim()` reports a missing execution as not found, not as leased elsewhere
+- `clearSession()` and `refreshSessions()` never delete or take another node's session row, and
+  `refreshSessions()` reports the tenants whose row another node holds
+- A node that lost the lease cannot overwrite the claiming node's snapshot, and an unowned row
+  accepts a write only after `tryClaim()`
 
 ### Manual Crash-Recovery Testing
 

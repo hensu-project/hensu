@@ -65,11 +65,13 @@ class SseMcpConnectionTest {
 
         @Test
         void shouldThrowWhenNotConnected() {
+            // The diagnosis – no session anywhere, or a session on another node – is
+            // the session manager's; the connection must surface it unchanged.
+            McpException diagnosis = new McpException("Client not connected: client-1");
             when(sessionManager.isConnected("client-1")).thenReturn(false);
+            when(sessionManager.notConnected("client-1")).thenReturn(diagnosis);
 
-            assertThatThrownBy(() -> connection.listTools())
-                    .isInstanceOf(McpException.class)
-                    .hasMessageContaining("Client not connected");
+            assertThatThrownBy(() -> connection.listTools()).isSameAs(diagnosis);
         }
     }
 
@@ -92,11 +94,13 @@ class SseMcpConnectionTest {
 
         @Test
         void shouldThrowWhenNotConnected() {
+            // The diagnosis – no session anywhere, or a session on another node – is
+            // the session manager's; the connection must surface it unchanged.
+            McpException diagnosis = new McpException("Client not connected: client-1");
             when(sessionManager.isConnected("client-1")).thenReturn(false);
+            when(sessionManager.notConnected("client-1")).thenReturn(diagnosis);
 
-            assertThatThrownBy(() -> connection.callTool("test", Map.of()))
-                    .isInstanceOf(McpException.class)
-                    .hasMessageContaining("Client not connected");
+            assertThatThrownBy(() -> connection.callTool("test", Map.of())).isSameAs(diagnosis);
         }
     }
 

@@ -13,6 +13,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.Disposable;
 import reactor.util.retry.Retry;
 
@@ -179,8 +180,17 @@ public class HensuMcpTransport {
                 .retrieve()
                 .toBodilessEntity()
                 .doOnSuccess(r -> LOG.debug("MCP response posted: requestId={}", requestId))
-                .doOnError(e -> LOG.error(
-                        "Failed to post MCP response: requestId={}", requestId, e))
+                .doOnError(e -> {
+                    // 404 means the server no longer awaits this id: the call timed out, or
+                    // its stream was superseded or closed. The answer is simply late.
+                    if (e instanceof WebClientResponseException.NotFound) {
+                        LOG.warn("MCP response dropped, server no longer awaits it: requestId={}",
+                                requestId);
+                    } else {
+                        LOG.error("Failed to post MCP response: requestId={}", requestId, e);
+                    }
+                })
+                .onErrorComplete()
                 .subscribe();
     }
 }

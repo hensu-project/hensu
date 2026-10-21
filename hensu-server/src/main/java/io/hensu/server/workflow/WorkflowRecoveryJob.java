@@ -6,10 +6,8 @@ import io.hensu.server.persistence.ExecutionLeaseManager.ExecutionRef;
 import io.quarkus.scheduler.Scheduled;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 /// Scheduled job that detects and resumes orphaned workflow executions.
@@ -21,6 +19,12 @@ import org.jboss.logging.Logger;
 ///
 /// Safely-paused executions (awaiting human review) always have
 /// `server_node_id = NULL` and are never visible to this sweeper.
+///
+/// The sweeper does not claim an execution whose tenant's MCP session is held
+/// fresh by another node; that node's sweeper claims it instead, so orphaned
+/// work migrates to where its tools can be reached. A recovered execution
+/// whose session moved between the claim and the resume is handed back by
+/// {@link ExecutionLeaseManager#tryClaim} and logged here at info.
 ///
 /// No-op when the datasource is inactive (e.g., the {@code inmem} profile).
 ///
@@ -45,9 +49,6 @@ public class WorkflowRecoveryJob {
     private final ExecutionLeaseManager leaseManager;
     private final WorkflowService workflowService;
 
-    @ConfigProperty(name = "hensu.lease.stale-threshold", defaultValue = "90s")
-    Duration staleThreshold;
-
     @Inject
     public WorkflowRecoveryJob(
             ExecutionLeaseManager leaseManager, WorkflowService workflowService) {
@@ -62,7 +63,7 @@ public class WorkflowRecoveryJob {
     void tick() {
         if (!leaseManager.isActive()) return;
 
-        Instant threshold = Instant.now().minus(staleThreshold);
+        Instant threshold = Instant.now().minus(leaseManager.getStaleThreshold());
         List<ExecutionRef> stale = leaseManager.claimStaleExecutions(threshold);
 
         if (stale.isEmpty()) return;
@@ -80,11 +81,17 @@ public class WorkflowRecoveryJob {
         try {
             workflowService.resumeExecution(ref.tenantId(), ref.executionId(), null);
             LOG.infov("Recovered execution: {0}", LogSanitizer.sanitize(ref.executionId()));
+        } catch (ExecutionNotLocalException e) {
+            LOG.infov(
+                    "Recovery of {0} handed off: {1}",
+                    LogSanitizer.sanitize(ref.executionId()), e.getMessage());
         } catch (Exception e) {
             LOG.errorv(
                     e,
                     "Failed to recover execution: {0}",
                     LogSanitizer.sanitize(ref.executionId()));
+        } finally {
+            leaseManager.discardHandOff(ref);
         }
     }
 }

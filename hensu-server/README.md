@@ -134,7 +134,8 @@ curl -X POST http://localhost:8080/api/v1/executions \
 
 ## REST API
 
-All API and MCP endpoints require a valid JWT bearer token (`Authorization: Bearer <jwt>`).
+All API and MCP endpoints except the aggregate `/mcp/status` require a valid JWT bearer token
+(`Authorization: Bearer <jwt>`).
 Tenant identity is extracted from the `tenant_id` claim. JWT is required in every profile
 except `inmem` (the integration-test profile), where authentication is disabled and a default
 tenant is used (see [Local Development](#local-development)).
@@ -168,12 +169,17 @@ Runtime operations for starting and managing workflow executions (client integra
 | `GET`  | `/api/v1/executions/{executionId}/result`   | Get final output (public context, `_`-keys hidden) |
 | `GET`  | `/api/v1/executions/paused`                 | List paused executions                             |
 
+Start and resume answer **409 Conflict** when the tenant's MCP session or the execution's lease is
+held by another node; route each tenant to one node at the load balancer. See Session Affinity in
+the [Server Developer Guide](../docs/developer-guide-server.md#session-affinity).
+
 ### MCP Gateway (SSE Split-Pipe Transport)
 
 Implements MCP (Model Context Protocol) over SSE using a "split-pipe" architecture:
 
 - **Downstream (SSE)**: the Hensu server pushes JSON-RPC tool call requests to connected tenant clients
-- **Upstream (HTTP POST)**: tenant clients relay each request to their own MCP servers and post the JSON-RPC response back (requests time out after 60 s if no response is received — see `McpSessionManager.DEFAULT_TIMEOUT`)
+- **Upstream (HTTP POST)**: tenant clients relay each request to their own MCP servers and post the JSON-RPC response back (requests time out after 60 s if no response is received — see `McpSessionManager.DEFAULT_TIMEOUT` — and fail at once if the client disconnects first)
+- **Tenant binding**: the session is registered under the JWT `tenant_id` claim, and a response completes only a request that tenant owns. A second connection for the same tenant supersedes the first
 
 ```mermaid
 flowchart LR
@@ -202,12 +208,12 @@ flowchart LR
     linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
-| Method | Path                             | Description                                          |
-|--------|----------------------------------|------------------------------------------------------|
-| `GET`  | `/mcp/connect?clientId=...`      | SSE stream for receiving tool call requests          |
-| `POST` | `/mcp/message`                   | Submit JSON-RPC responses                            |
-| `GET`  | `/mcp/status`                    | Gateway status (connected clients, pending requests) |
-| `GET`  | `/mcp/clients/{clientId}/status` | Status of a specific MCP client connection           |
+| Method | Path                             | Description                                                                                                         |
+|--------|----------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| `GET`  | `/mcp/connect?clientId=...`      | SSE stream for receiving tool call requests; `clientId` is optional and must match the tenant claim (403 otherwise) |
+| `POST` | `/mcp/message`                   | Submit JSON-RPC responses; 404 for an id the caller's tenant does not own or that no longer awaits an answer        |
+| `GET`  | `/mcp/status`                    | Gateway status (connected clients, pending requests); no token required                                             |
+| `GET`  | `/mcp/clients/{clientId}/status` | Status of the caller's own MCP client connection; 404 for any other client                                          |
 
 ### Event Streaming (SSE)
 
@@ -265,7 +271,7 @@ See [Server Developer Guide](../docs/developer-guide-server.md) for implementati
 Thread-safe tenant isolation using Java 25 ScopedValues:
 
 ```java
-TenantInfo tenant = TenantInfo.withMcp("tenant-123", "sse://tenant-123");
+TenantInfo tenant = TenantInfo.withMcp("tenant-123", McpConnections.endpointFor("tenant-123"));
 TenantContext.runAs(tenant, () -> {
     // All code in this scope has tenant context
     TenantInfo current = TenantContext.current();
@@ -393,6 +399,7 @@ hensu-server/
 │   │   ├── ExecutionEventNativeConfig.java        # @RegisterForReflection — SSE event sealed subtypes
 │   │   └── ServerConfiguration.java               # CDI delegation + server beans
 │   ├── execution/                         # Server-side execution listeners
+│   │   ├── CheckpointingListener.java     # Persists checkpoints; a lost lease stops the run
 │   │   ├── LoggingExecutionListener.java  # Structured log output for node lifecycle, tool audit, transition warnings
 │   │   ├── ToolStreamingExecutionListener.java # Republishes tool audit events onto the execution's SSE stream
 │   │   └── ToolAuditListener.java         # One durable row per settled tool call; pairs request to outcome by call id
@@ -400,6 +407,7 @@ hensu-server/
 │   │   └── SleepHandler.java              # Simulates long-running node for crash-recovery tests
 │   ├── mcp/                               # Server-side MCP transport (protocol types live in hensu-mcp)
 │   │   ├── McpConnections.java            # Opens split-pipe connections; refuses every other scheme
+│   │   ├── McpSessionChanged.java         # CDI event: a session began or ended; drops the cached catalog
 │   │   ├── McpSessionManager.java
 │   │   ├── McpToolDiscovery.java          # Runtime tool schema discovery + cache
 │   │   ├── McpToolProvider.java           # Exposes the tenant's MCP tools to the ToolProvider seam
@@ -410,11 +418,12 @@ hensu-server/
 │   ├── persistence/                       # PostgreSQL persistence (plain JDBC)
 │   │   ├── JdbcWorkflowRepository.java        # Workflow definitions (JSONB)
 │   │   ├── JdbcWorkflowStateRepository.java   # Execution state snapshots (JSONB + lease columns)
-│   │   ├── ExecutionLeaseManager.java         # Distributed lease management (@ApplicationScoped)
+│   │   ├── ExecutionLeaseManager.java         # Distributed leases + MCP session ownership (runtime.mcp_sessions)
 │   │   ├── WorkflowPushLock.java              # Cluster-wide push mutex (pg_advisory_xact_lock + JVM fallback)
 │   │   ├── JdbcToolAuditRepository.java       # Tool audit rows (runtime.tool_audit)
 │   │   ├── ToolAuditEntry.java                # One settled tool call: status, argv, arguments, output
 │   │   ├── JdbcSupport.java                   # JDBC helper (queryList, update)
+│   │   ├── LeaseLostException.java            # Snapshot write refused: another node holds the lease
 │   │   └── PersistenceException.java          # Unchecked wrapper for SQLException
 │   ├── workflow/              # Business logic
 │   │   ├── WorkflowService.java                 # Facade over registry + execution + query services
@@ -431,6 +440,7 @@ hensu-server/
 │   │   ├── ExecutionStatus.java                 # DTO for execution status (with correlationId)
 │   │   ├── ExecutionSummary.java                # DTO for paused-list (with correlationId)
 │   │   ├── ExecutionNotFoundException.java
+│   │   ├── ExecutionNotLocalException.java      # Lease or tenant MCP session held by another node (409)
 │   │   ├── WorkflowNotFoundException.java
 │   │   └── WorkflowExecutionException.java
 │   ├── review/                # Server-side review handling

@@ -141,6 +141,63 @@ class McpToolDiscoveryTest {
 
             verify(connection, times(2)).listTools();
         }
+
+        @Test
+        void shouldRefetchAfterClientSessionChanges() {
+            var mcpTool = new McpConnection.McpToolDescriptor("tool", "desc", Map.of());
+
+            when(connections.get("sse://tenant-1")).thenReturn(connection);
+            when(connection.listTools()).thenReturn(List.of(mcpTool));
+
+            discovery.discoverTools("sse://tenant-1");
+            discovery.onSessionChanged(new McpSessionChanged("tenant-1"));
+            discovery.discoverTools("sse://tenant-1");
+
+            verify(connection, times(2)).listTools();
+        }
+
+        /// A fetch that is still in flight when the relay reconnects returns the old
+        /// session's list. Caching it would serve that list for the new session's
+        /// whole lifetime, since nothing invalidates again until the next reconnect.
+        @Test
+        void shouldNotCacheListFetchedAcrossAnInvalidation() {
+            var mcpTool = new McpConnection.McpToolDescriptor("tool", "desc", Map.of());
+
+            when(connections.get("sse://tenant-1")).thenReturn(connection);
+            when(connection.listTools())
+                    .thenAnswer(
+                            _ -> {
+                                discovery.onSessionChanged(new McpSessionChanged("tenant-1"));
+                                return List.of(mcpTool);
+                            });
+
+            List<ToolDefinition> result = discovery.discoverTools("sse://tenant-1");
+
+            assertThat(result).hasSize(1);
+            assertThat(discovery.cacheSize()).isZero();
+        }
+
+        /// Another tenant's relay reconnecting says nothing about this tenant's
+        /// session. A global invalidation counter withdrew this fetch anyway, so a
+        /// busy node re-listed tools on nearly every execution start.
+        @Test
+        void shouldCacheListFetchedAcrossAnotherEndpointsInvalidation() {
+            var mcpTool = new McpConnection.McpToolDescriptor("tool", "desc", Map.of());
+
+            when(connections.get("sse://tenant-1")).thenReturn(connection);
+            when(connection.listTools())
+                    .thenAnswer(
+                            _ -> {
+                                discovery.onSessionChanged(new McpSessionChanged("tenant-2"));
+                                return List.of(mcpTool);
+                            });
+
+            discovery.discoverTools("sse://tenant-1");
+            discovery.discoverTools("sse://tenant-1");
+
+            assertThat(discovery.cacheSize()).isEqualTo(1);
+            verify(connection, times(1)).listTools();
+        }
     }
 
     @Nested

@@ -2,13 +2,16 @@ package io.hensu.server.api;
 
 import io.hensu.core.util.LogSanitizer;
 import io.hensu.server.mcp.McpSessionManager;
+import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.validation.ValidId;
 import io.hensu.server.validation.ValidMessage;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.ForbiddenException;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
@@ -32,16 +35,24 @@ import org.jboss.resteasy.reactive.RestStreamElementType;
 /// ```
 ///
 /// ### Client Connection Flow
-/// 1. Client authenticates and connects to `GET /mcp/connect?clientId=client-123`
+/// 1. Client authenticates and connects to `GET /mcp/connect`
 /// 2. Client receives JSON-RPC requests via SSE (e.g., `tools/call`)
 /// 3. Client executes the tool locally
 /// 4. Client POSTs result to `POST /mcp/message`
-/// 5. Hensu correlates response by JSON-RPC `id`
+/// 5. Hensu correlates response by JSON-RPC `id` and the caller's tenant
+///
+/// ### Tenant Binding
+/// Every endpoint except the aggregate `/mcp/status` derives the client
+/// identity from the authenticated tenant – the JWT `tenant_id` claim read by
+/// {@link RequestTenantResolver} – and never from the request. The tenant is
+/// resolved eagerly on the resource-method thread and only the resolved string
+/// reaches {@link McpSessionManager}, so no stream callback or termination hook
+/// depends on the request context still being active.
 ///
 /// ### Example Client (JavaScript)
 /// ```javascript
 /// // Connect to SSE stream (with JWT auth)
-/// const events = new EventSource('/mcp/connect?clientId=my-client');
+/// const events = new EventSource('/mcp/connect');
 /// events.onmessage = async (e) => {
 ///     const request = JSON.parse(e.data);
 ///     if (request.method === 'tools/call') {
@@ -63,20 +74,34 @@ public class McpGatewayResource {
     private static final Logger LOG = Logger.getLogger(McpGatewayResource.class);
 
     private final McpSessionManager sessionManager;
+    private final RequestTenantResolver tenantResolver;
 
+    /// Creates the gateway resource.
+    ///
+    /// @param sessionManager registry of inbound tenant sessions, not null
+    /// @param tenantResolver resolves the authenticated tenant of the request, not null
     @Inject
-    public McpGatewayResource(McpSessionManager sessionManager) {
+    public McpGatewayResource(
+            McpSessionManager sessionManager, RequestTenantResolver tenantResolver) {
         this.sessionManager = sessionManager;
+        this.tenantResolver = tenantResolver;
     }
 
     /// SSE endpoint for client connections (downstream pipe).
     ///
     /// Clients connect here using EventSource to receive JSON-RPC requests.
-    /// The connection stays open until the client disconnects.
+    /// The connection stays open until the client disconnects. The session is
+    /// registered under the authenticated tenant; a second connection for the
+    /// same tenant supersedes the first.
+    ///
+    /// The `clientId` parameter is optional. When present it is an assertion of
+    /// intent, checked against the tenant claim: a value that disagrees is
+    /// refused rather than honoured, so no caller can register as another
+    /// tenant's client.
     ///
     /// ### Request
     /// ```
-    /// GET /mcp/connect?clientId=client-123
+    /// GET /mcp/connect?clientId=tenant-123
     /// Authorization: Bearer <jwt>
     /// Accept: text/event-stream
     /// ```
@@ -88,24 +113,33 @@ public class McpGatewayResource {
     /// data: {"jsonrpc":"2.0","id":"uuid-1","method":"tools/call","params":{...}}
     /// ```
     ///
-    /// @param clientId unique client identifier for session management
-    /// @return SSE stream of JSON-RPC messages
+    /// @param clientId the tenant the caller asserts it connects as, may be null
+    /// @return SSE stream of JSON-RPC messages, never null
+    /// @throws ForbiddenException if `clientId` is present and differs from the
+    ///     authenticated tenant, or if no tenant can be resolved
     @GET
     @Path("/connect")
     @Produces(MediaType.SERVER_SENT_EVENTS)
     @RestStreamElementType(MediaType.APPLICATION_JSON)
     public Multi<String> connect(@QueryParam("clientId") @ValidId String clientId) {
+        String tenantId = tenantResolver.tenantId();
+        if (clientId != null && !clientId.equals(tenantId)) {
+            LOG.warnv(
+                    "MCP connection refused: clientId {0} does not match the authenticated tenant",
+                    LogSanitizer.sanitize(clientId));
+            throw new ForbiddenException("clientId does not match the authenticated tenant");
+        }
 
-        LOG.infov("MCP connection request: clientId={0}", clientId);
+        LOG.infov("MCP connection request: tenant={0}", LogSanitizer.sanitize(tenantId));
 
         return sessionManager
-                .createSession(clientId)
+                .createSession(tenantId)
                 .onSubscription()
                 .invoke(
                         () ->
                                 LOG.debugv(
                                         "SSE stream started for: {0}",
-                                        LogSanitizer.sanitize(clientId)))
+                                        LogSanitizer.sanitize(tenantId)))
                 .onTermination()
                 .invoke(
                         (t, _) -> {
@@ -113,11 +147,11 @@ public class McpGatewayResource {
                                 LOG.warnv(
                                         t,
                                         "SSE stream error for: {0}",
-                                        LogSanitizer.sanitize(clientId));
+                                        LogSanitizer.sanitize(tenantId));
                             } else {
                                 LOG.debugv(
                                         "SSE stream ended for: {0}",
-                                        LogSanitizer.sanitize(clientId));
+                                        LogSanitizer.sanitize(tenantId));
                             }
                         });
     }
@@ -125,7 +159,10 @@ public class McpGatewayResource {
     /// HTTP POST endpoint for client responses (upstream pipe).
     ///
     /// Clients POST JSON-RPC responses here after executing tool calls.
-    /// The response is correlated to the pending request by JSON-RPC `id`.
+    /// The response is correlated to the pending request by JSON-RPC `id`, and
+    /// completes it only when the caller's tenant owns that request. An id
+    /// owned by another tenant is answered exactly like one that never existed,
+    /// so the endpoint does not confirm the existence of other tenants' ids.
     ///
     /// The {@link ValidMessage} constraint enforces:
     /// - Non-blank body
@@ -142,24 +179,34 @@ public class McpGatewayResource {
     /// ```
     ///
     /// ### Response
-    /// - 204 No Content: Response accepted
+    /// - 204 No Content: Response accepted, or a message that is not a response –
+    ///   a notification, or a request carrying a `method`, which is ignored
     /// - 400 Bad Request: Empty body, oversized payload, or illegal characters
+    /// - 404 Not Found: No pending request with that `id` belongs to the caller –
+    ///   unknown, timed out, failed by a disconnect, or owned by another tenant.
+    ///   A client answering late sees this and should drop the response, not
+    ///   treat it as an error
     ///
-    /// @param jsonMessage the JSON-RPC response
-    /// @return empty response on success
+    /// @param jsonMessage the JSON-RPC response, not null
+    /// @return empty response on success, never null
+    /// @throws NotFoundException if no pending request with the message's id
+    ///     belongs to the caller's tenant
+    /// @throws ForbiddenException if no tenant can be resolved
     @POST
     @Path("/message")
     @Consumes(MediaType.APPLICATION_JSON)
     public Uni<Response> receiveMessage(@ValidMessage String jsonMessage) {
+        String tenantId = tenantResolver.tenantId();
 
         LOG.debugv(
                 "Received MCP message: {0}",
                 LogSanitizer.sanitize(
                         jsonMessage.substring(0, Math.min(200, jsonMessage.length()))));
 
-        sessionManager.handleResponse(jsonMessage);
-
-        return Uni.createFrom().item(Response.noContent().build());
+        return switch (sessionManager.handleResponse(tenantId, jsonMessage)) {
+            case COMPLETED, NOT_A_RESPONSE -> Uni.createFrom().item(Response.noContent().build());
+            case UNKNOWN -> throw new NotFoundException("No pending MCP request with that id");
+        };
     }
 
     /// Health check endpoint for MCP gateway status.
@@ -189,14 +236,24 @@ public class McpGatewayResource {
                 .build();
     }
 
-    /// Checks if a specific client is connected.
+    /// Checks if the caller's own client is connected.
     ///
-    /// @param clientId the client to check
-    /// @return connection status
+    /// Answers only for the authenticated tenant. Asking about any other client
+    /// is answered 404, so the endpoint reveals neither the existence nor the
+    /// connection duration of another tenant.
+    ///
+    /// @param clientId the client to check, must be the caller's tenant, not null
+    /// @return connection status, never null
+    /// @throws NotFoundException if `clientId` is not the caller's tenant
+    /// @throws ForbiddenException if no tenant can be resolved
     @GET
     @Path("/clients/{clientId}/status")
     @Produces(MediaType.APPLICATION_JSON)
     public Response clientStatus(@PathParam("clientId") @ValidId String clientId) {
+        String tenantId = tenantResolver.tenantId();
+        if (!tenantId.equals(clientId)) {
+            throw new NotFoundException("Unknown MCP client");
+        }
         McpSessionManager.ClientInfo info = sessionManager.getClientInfo(clientId);
 
         ClientStatusResponse body =

@@ -5,6 +5,7 @@ import io.hensu.core.util.LogSanitizer;
 import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.validation.ValidId;
 import io.hensu.server.workflow.ExecutionNotFoundException;
+import io.hensu.server.workflow.ExecutionNotLocalException;
 import io.hensu.server.workflow.ExecutionOutput;
 import io.hensu.server.workflow.ExecutionStartResult;
 import io.hensu.server.workflow.ExecutionStatus;
@@ -14,6 +15,7 @@ import io.hensu.server.workflow.WorkflowService;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import jakarta.ws.rs.ClientErrorException;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.NotFoundException;
@@ -95,6 +97,8 @@ public class ExecutionResource {
         } catch (WorkflowNotFoundException e) {
             LOG.warnv("Workflow not found: {0}", request.workflowId());
             throw new NotFoundException(e.getMessage());
+        } catch (ExecutionNotLocalException e) {
+            throw notLocal(e);
         }
     }
 
@@ -181,6 +185,8 @@ public class ExecutionResource {
         } catch (ExecutionNotFoundException e) {
             LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());
+        } catch (ExecutionNotLocalException e) {
+            throw notLocal(e);
         }
     }
 
@@ -251,5 +257,13 @@ public class ExecutionResource {
             LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());
         }
+    }
+
+    /// Translates a refusal to run here into 409. The body stays generic (see
+    /// `GlobalExceptionMapper`); the node that can serve the request is logged,
+    /// since it is the fact an operator needs to fix routing.
+    private static ClientErrorException notLocal(ExecutionNotLocalException e) {
+        LOG.warnv("Execution refused on this node: {0}", e.getMessage());
+        return new ClientErrorException(e.getMessage(), Response.Status.CONFLICT, e);
     }
 }
