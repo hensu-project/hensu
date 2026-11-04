@@ -90,14 +90,11 @@ public Object dynamicBean() {
 # Full native build (slow — run before releases, not on every change)
 ./gradlew hensu-server:build -Dquarkus.native.enabled=true -Dquarkus.package.type=native
 
-# Run the produced binary
-./hensu-server/build/hensu-server-*-runner
+# Run the produced binary (inmem profile needs no PostgreSQL; the default prod profile also needs TLS)
+QUARKUS_PROFILE=inmem ./hensu-server/build/hensu-server-*-runner
 
 # Quick JVM-mode test (catches most issues except native-specific ones)
 ./gradlew hensu-server:test
-
-# Native integration tests
-./gradlew hensu-server:test -Dquarkus.test.native-image-profile=true
 ```
 
 ### When to run the full native build

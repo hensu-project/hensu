@@ -306,7 +306,8 @@ class WorkflowExecutorSubWorkflowTest extends WorkflowExecutorTestBase {
                         .context(new HashMap<>())
                         .build();
         var pausingExecutor = mock(WorkflowExecutor.class);
-        when(pausingExecutor.execute(any(Workflow.class), any(Map.class), any()))
+        when(pausingExecutor.executeNested(
+                        any(Workflow.class), any(HensuState.class), any(), any()))
                 .thenReturn(new ExecutionResult.Paused(pausedChildState));
 
         var parentState =

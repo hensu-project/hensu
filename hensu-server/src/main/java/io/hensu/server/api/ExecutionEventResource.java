@@ -1,13 +1,16 @@
 package io.hensu.server.api;
 
+import io.hensu.core.state.WorkflowStateReader;
 import io.hensu.core.util.LogSanitizer;
 import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import io.hensu.server.validation.ValidId;
+import io.smallrye.common.annotation.Blocking;
 import io.smallrye.mutiny.Multi;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
@@ -64,12 +67,16 @@ public class ExecutionEventResource {
 
     private final ExecutionEventBroadcaster broadcaster;
     private final RequestTenantResolver tenantResolver;
+    private final WorkflowStateReader stateReader;
 
     @Inject
     public ExecutionEventResource(
-            ExecutionEventBroadcaster broadcaster, RequestTenantResolver tenantResolver) {
+            ExecutionEventBroadcaster broadcaster,
+            RequestTenantResolver tenantResolver,
+            WorkflowStateReader stateReader) {
         this.broadcaster = broadcaster;
         this.tenantResolver = tenantResolver;
+        this.stateReader = stateReader;
     }
 
     /// Subscribes to execution events via SSE.
@@ -90,16 +97,25 @@ public class ExecutionEventResource {
     /// data: {"executionId":"exec-123","planId":"plan-456","stepIndex":0,...}
     /// ```
     ///
+    /// Any node serves the subscription: events of an execution running on another node
+    /// reach this one over the cluster event bus. Only the execution's own tenant may
+    /// subscribe; any other is answered as if the execution did not exist.
+    ///
     /// @param executionId the execution to subscribe to
     /// @return SSE event stream
+    /// @throws NotFoundException if the caller's tenant has no such execution
     @GET
     @Path("/{executionId}/events")
     @Produces(MediaType.SERVER_SENT_EVENTS)
     @RestStreamElementType(MediaType.APPLICATION_JSON)
+    @Blocking
     public Multi<ExecutionEvent> streamEvents(
             @PathParam("executionId") @ValidId String executionId) {
 
         String tenantId = tenantResolver.tenantId();
+        if (stateReader.findByExecutionId(tenantId, executionId).isEmpty()) {
+            throw new NotFoundException("Execution not found: " + executionId);
+        }
 
         LOG.infov(
                 "SSE subscription: executionId={0}, tenant={1}",

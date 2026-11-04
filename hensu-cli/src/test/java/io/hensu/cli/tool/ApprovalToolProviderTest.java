@@ -6,6 +6,7 @@ import io.hensu.cli.review.ApprovalOutcome;
 import io.hensu.cli.review.DaemonReviewHandler;
 import io.hensu.cli.review.ToolApprovalRequest;
 import io.hensu.core.tool.PreviewCapable;
+import io.hensu.core.tool.ToolCall;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolCallStatus;
 import io.hensu.core.tool.ToolDefinition;
@@ -33,7 +34,9 @@ class ApprovalToolProviderTest {
             ApprovalToolProvider provider = gated(delegate, ApprovalOutcome.REJECTED);
 
             ToolCallResult result =
-                    provider.call("deploy", Map.of("environment", "prod"), unattendedRun());
+                    provider.call(
+                            new ToolCall("test#1", "deploy", Map.of("environment", "prod")),
+                            unattendedRun());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.SUCCESS);
             assertThat(delegate.calls).containsExactly("deploy");
@@ -44,7 +47,8 @@ class ApprovalToolProviderTest {
             RecordingProvider delegate = new RecordingProvider(preview(true, false));
             ApprovalToolProvider provider = gated(delegate, ApprovalOutcome.APPROVED);
 
-            ToolCallResult result = provider.call("deploy", Map.of(), unattendedRun());
+            ToolCallResult result =
+                    provider.call(new ToolCall("test#1", "deploy", Map.of()), unattendedRun());
 
             // The loop never sees an argv and the provider does not return one; this is
             // the only layer holding the resolved invocation the trail has to record.
@@ -60,7 +64,8 @@ class ApprovalToolProviderTest {
             RecordingProvider delegate = new RecordingProvider(preview(false, false));
             ApprovalToolProvider provider = gated(delegate, ApprovalOutcome.APPROVED);
 
-            ToolCallResult result = provider.call("deploy", Map.of(), unattendedRun());
+            ToolCallResult result =
+                    provider.call(new ToolCall("test#1", "deploy", Map.of()), unattendedRun());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.DENIED);
             assertThat(delegate.calls).isEmpty();
@@ -73,8 +78,14 @@ class ApprovalToolProviderTest {
             ApprovalToolProvider approvalRequired =
                     gated(new RecordingProvider(preview(true, true)), ApprovalOutcome.APPROVED);
 
-            String first = unattendedFalse.call("deploy", Map.of(), unattendedRun()).error();
-            String second = approvalRequired.call("deploy", Map.of(), unattendedRun()).error();
+            String first =
+                    unattendedFalse
+                            .call(new ToolCall("test#1", "deploy", Map.of()), unattendedRun())
+                            .error();
+            String second =
+                    approvalRequired
+                            .call(new ToolCall("test#1", "deploy", Map.of()), unattendedRun())
+                            .error();
 
             // An agent reading "not granted to this node" looks for another tool; one
             // reading "this run is unattended" stops and reports. Same string for both
@@ -93,7 +104,8 @@ class ApprovalToolProviderTest {
             RecordingProvider delegate = new RecordingProvider(preview(true, true));
             ApprovalToolProvider provider = gated(delegate, ApprovalOutcome.APPROVED);
 
-            ToolCallResult result = provider.call("deploy", Map.of(), attendedRun());
+            ToolCallResult result =
+                    provider.call(new ToolCall("test#1", "deploy", Map.of()), attendedRun());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.SUCCESS);
             assertThat(delegate.calls).containsExactly("deploy");
@@ -106,7 +118,8 @@ class ApprovalToolProviderTest {
             ApprovalToolProvider provider =
                     new ApprovalToolProvider(delegate, new ToolApprovalGate(handler));
 
-            provider.call("deploy", Map.of("environment", "prod"), attendedRun());
+            provider.call(
+                    new ToolCall("test#1", "deploy", Map.of("environment", "prod")), attendedRun());
 
             assertThat(handler.seen)
                     .singleElement()
@@ -124,7 +137,8 @@ class ApprovalToolProviderTest {
             RecordingProvider delegate = new RecordingProvider(preview(true, true));
             ApprovalToolProvider provider = gated(delegate, ApprovalOutcome.REJECTED);
 
-            ToolCallResult result = provider.call("deploy", Map.of(), attendedRun());
+            ToolCallResult result =
+                    provider.call(new ToolCall("test#1", "deploy", Map.of()), attendedRun());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.DENIED);
             assertThat(delegate.calls).isEmpty();
@@ -135,7 +149,8 @@ class ApprovalToolProviderTest {
             RecordingProvider delegate = new RecordingProvider(preview(true, true));
             ApprovalToolProvider provider = gated(delegate, ApprovalOutcome.NO_REVIEWER);
 
-            ToolCallResult result = provider.call("deploy", Map.of(), attendedRun());
+            ToolCallResult result =
+                    provider.call(new ToolCall("test#1", "deploy", Map.of()), attendedRun());
 
             // A question that could not be asked is not an approval.
             assertThat(result.status()).isEqualTo(ToolCallStatus.DENIED);
@@ -151,7 +166,8 @@ class ApprovalToolProviderTest {
             SandboxlessProvider delegate = new SandboxlessProvider();
             ApprovalToolProvider provider = gated(delegate, ApprovalOutcome.APPROVED);
 
-            ToolCallResult result = provider.call("deploy", Map.of(), attendedRun());
+            ToolCallResult result =
+                    provider.call(new ToolCall("test#1", "deploy", Map.of()), attendedRun());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.SUCCESS);
             assertThat(delegate.uncontainedCalls).containsExactly("deploy");
@@ -163,7 +179,8 @@ class ApprovalToolProviderTest {
             SandboxlessProvider delegate = new SandboxlessProvider();
             ApprovalToolProvider provider = gated(delegate, ApprovalOutcome.APPROVED);
 
-            ToolCallResult result = provider.call("deploy", Map.of(), unattendedRun());
+            ToolCallResult result =
+                    provider.call(new ToolCall("test#1", "deploy", Map.of()), unattendedRun());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.DENIED);
             assertThat(delegate.uncontainedCalls).isEmpty();
@@ -179,7 +196,8 @@ class ApprovalToolProviderTest {
             ThrowingPreviewProvider delegate = new ThrowingPreviewProvider();
             ApprovalToolProvider provider = gated(delegate, ApprovalOutcome.APPROVED);
 
-            ToolCallResult result = provider.call("deploy", Map.of(), unattendedRun());
+            ToolCallResult result =
+                    provider.call(new ToolCall("test#1", "deploy", Map.of()), unattendedRun());
 
             // A throwing preview must not abort the node — finding 3 — and must not be
             // read as "nothing objected, go ahead".
@@ -270,8 +288,8 @@ class ApprovalToolProviderTest {
         }
 
         @Override
-        public ToolCallResult call(
-                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+        public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+            String toolName = call.toolName();
             calls.add(toolName);
             return ToolCallResult.success(toolName, "deployed");
         }
@@ -300,8 +318,8 @@ class ApprovalToolProviderTest {
         }
 
         @Override
-        public ToolCallResult call(
-                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+        public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+            String toolName = call.toolName();
             containedCalls.add(toolName);
             return ToolCallResult.of(
                     toolName, ToolCallStatus.SANDBOX_UNAVAILABLE, null, "no backend", null);

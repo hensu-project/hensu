@@ -39,8 +39,8 @@ class ToolRouterTest {
 
             assertThat(router.all()).isEmpty();
 
-            first.publish(SEARCH);
-            second.publish(SEARCH);
+            first.publishSearch();
+            second.publishSearch();
 
             assertThatThrownBy(router::all)
                     .isInstanceOf(IllegalStateException.class)
@@ -53,10 +53,11 @@ class ToolRouterTest {
             LateCatalogProvider second = new LateCatalogProvider();
             ToolRouter router = new ToolRouter(List.of(first, second));
 
-            first.publish(SEARCH);
-            second.publish(SEARCH);
+            first.publishSearch();
+            second.publishSearch();
 
-            ToolCallResult result = router.call("search", Map.of(), Map.of());
+            ToolCallResult result =
+                    router.call(new ToolCall("test#1", "search", Map.of()), Map.of());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.CATALOG_ERROR);
             assertThat(result.error()).contains("Duplicate tool 'search'");
@@ -72,7 +73,8 @@ class ToolRouterTest {
             StubToolProvider buildProvider = StubToolProvider.alwaysSucceeding("built", BUILD);
             ToolRouter router = new ToolRouter(List.of(searchProvider, buildProvider));
 
-            ToolCallResult result = router.call("build", Map.of("clean", true), Map.of());
+            ToolCallResult result =
+                    router.call(new ToolCall("test#1", "build", Map.of("clean", true)), Map.of());
 
             assertThat(result.success()).isTrue();
             assertThat(result.output()).isEqualTo("built");
@@ -111,7 +113,8 @@ class ToolRouterTest {
             ToolRouter router =
                     new ToolRouter(List.of(StubToolProvider.alwaysSucceeding("hits", SEARCH)));
 
-            ToolCallResult result = router.call("deploy", Map.of(), Map.of());
+            ToolCallResult result =
+                    router.call(new ToolCall("test#1", "deploy", Map.of()), Map.of());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.UNKNOWN_TOOL);
             assertThat(result.error()).contains("Unknown tool 'deploy'").doesNotContain("search");
@@ -127,7 +130,8 @@ class ToolRouterTest {
                             });
             ToolRouter router = new ToolRouter(List.of(throwing));
 
-            ToolCallResult result = router.call("search", Map.of(), Map.of());
+            ToolCallResult result =
+                    router.call(new ToolCall("test#1", "search", Map.of()), Map.of());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.FAILURE);
             assertThat(result.error()).contains("StubToolProvider").contains("boom");
@@ -146,7 +150,8 @@ class ToolRouterTest {
             assertThat(router.all()).extracting(ToolDefinition::name).containsExactly("build");
             assertThat(router.get("build")).contains(BUILD);
 
-            ToolCallResult result = router.call("build", Map.of(), Map.of());
+            ToolCallResult result =
+                    router.call(new ToolCall("test#1", "build", Map.of()), Map.of());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.SUCCESS);
             assertThat(result.output()).isEqualTo("built");
@@ -176,7 +181,8 @@ class ToolRouterTest {
             StubBuiltInProvider builtIn = new StubBuiltInProvider(SEARCH);
             ToolRouter router = new ToolRouter(List.of(builtIn, configured));
 
-            ToolCallResult result = router.call("search", Map.of(), Map.of());
+            ToolCallResult result =
+                    router.call(new ToolCall("test#1", "search", Map.of()), Map.of());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.SUCCESS);
             assertThat(result.output()).isEqualTo("configured");
@@ -211,7 +217,8 @@ class ToolRouterTest {
 
             ToolRouter router = new ToolRouter(List.of(wrappedBuiltIn, configured));
 
-            assertThat(router.call("search", Map.of(), Map.of()).output()).isEqualTo("configured");
+            assertThat(router.call(new ToolCall("test#1", "search", Map.of()), Map.of()).output())
+                    .isEqualTo("configured");
         }
 
         @Test
@@ -263,9 +270,8 @@ class ToolRouterTest {
         }
 
         @Override
-        public ToolCallResult call(
-                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
-            return delegate.call(toolName, arguments, context);
+        public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+            return delegate.call(call, context);
         }
     }
 
@@ -288,9 +294,8 @@ class ToolRouterTest {
         }
 
         @Override
-        public ToolCallResult call(
-                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
-            return ToolCallResult.failure(toolName, "unreachable");
+        public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+            return ToolCallResult.failure(call.toolName(), "unreachable");
         }
     }
 
@@ -314,9 +319,8 @@ class ToolRouterTest {
         }
 
         @Override
-        public ToolCallResult call(
-                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
-            return ToolCallResult.success(toolName, "other");
+        public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+            return ToolCallResult.success(call.toolName(), "other");
         }
     }
 
@@ -329,8 +333,7 @@ class ToolRouterTest {
         }
 
         @Override
-        public ToolCallResult call(
-                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+        public ToolCallResult call(ToolCall call, Map<String, Object> context) {
             throw new IllegalStateException("connection refused");
         }
     }
@@ -341,8 +344,8 @@ class ToolRouterTest {
 
         private List<ToolDefinition> tools = List.of();
 
-        void publish(ToolDefinition... published) {
-            this.tools = List.of(published);
+        void publishSearch() {
+            this.tools = List.of(SEARCH);
         }
 
         @Override
@@ -356,9 +359,8 @@ class ToolRouterTest {
         }
 
         @Override
-        public ToolCallResult call(
-                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
-            return ToolCallResult.success(toolName, "late");
+        public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+            return ToolCallResult.success(call.toolName(), "late");
         }
     }
 
@@ -382,9 +384,8 @@ class ToolRouterTest {
         }
 
         @Override
-        public ToolCallResult call(
-                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
-            return ToolCallResult.success(toolName, "built-in");
+        public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+            return ToolCallResult.success(call.toolName(), "built-in");
         }
     }
 }

@@ -55,6 +55,8 @@ public class ExecutionEventBroadcaster {
     /// ScopedValue carrying the current execution ID within a {@link #runAs} frame.
     static final ScopedValue<String> CURRENT_EXECUTION = ScopedValue.newInstance();
 
+    private volatile ClusterEventBus bus;
+
     /// Subscribes to events for an execution.
     ///
     /// @param executionId the execution to subscribe to, not null
@@ -84,7 +86,26 @@ public class ExecutionEventBroadcaster {
     public void publish(String executionId, ExecutionEvent event) {
         Objects.requireNonNull(executionId, "executionId must not be null");
         Objects.requireNonNull(event, "event must not be null");
+        ClusterEventBus bus = this.bus;
+        if (bus != null) {
+            try {
+                bus.publish(executionId, event);
+                return;
+            } catch (RuntimeException e) {
+                LOG.debugv("Event bus unavailable, delivering locally: {0}", e.getMessage());
+            }
+        }
+        deliver(executionId, event);
+    }
 
+    /// Delivers an event to this node's subscribers of the execution.
+    ///
+    /// Called for events published here when no bus is attached, and by the bus for every
+    /// event published on any node.
+    ///
+    /// @param executionId the execution, not null
+    /// @param event the event, not null
+    public void deliver(String executionId, ExecutionEvent event) {
         BroadcastProcessor<ExecutionEvent> processor = processors.get(executionId);
         if (processor != null) {
             LOG.debugv(
@@ -96,6 +117,13 @@ public class ExecutionEventBroadcaster {
                     "No subscribers for execution {0}, event {1} dropped",
                     LogSanitizer.sanitize(executionId), event.type());
         }
+    }
+
+    /// Attaches the bus that carries events between nodes.
+    ///
+    /// @param bus the bus, not null
+    public void attach(ClusterEventBus bus) {
+        this.bus = Objects.requireNonNull(bus, "bus must not be null");
     }
 
     /// Executes a task with the given execution ID bound as the current execution context.
@@ -122,7 +150,22 @@ public class ExecutionEventBroadcaster {
     /// @param executionId the execution to complete, not null
     public void complete(String executionId) {
         Objects.requireNonNull(executionId, "executionId must not be null");
+        ClusterEventBus bus = this.bus;
+        if (bus != null) {
+            try {
+                bus.complete(executionId);
+                return;
+            } catch (RuntimeException e) {
+                LOG.debugv("Event bus unavailable, completing locally: {0}", e.getMessage());
+            }
+        }
+        completeLocally(executionId);
+    }
 
+    /// Completes this node's subscriptions to the execution.
+    ///
+    /// @param executionId the execution, not null
+    public void completeLocally(String executionId) {
         BroadcastProcessor<ExecutionEvent> processor = processors.remove(executionId);
         if (processor != null) {
             LOG.debugv(

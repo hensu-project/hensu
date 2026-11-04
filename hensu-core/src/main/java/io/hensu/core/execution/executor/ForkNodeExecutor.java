@@ -1,6 +1,8 @@
 package io.hensu.core.execution.executor;
 
+import io.hensu.core.execution.ExecutionJournal;
 import io.hensu.core.execution.ExecutionListener;
+import io.hensu.core.execution.RunAbortedException;
 import io.hensu.core.execution.SynchronizedListenerDecorator;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.parallel.BranchResult;
@@ -162,10 +164,21 @@ public class ForkNodeExecutor implements NodeExecutor<ForkNode> {
                                                 state,
                                                 workflow,
                                                 workflowExecutor,
-                                                safeListener)));
+                                                safeListener,
+                                                context.getJournal())));
             }
 
             scope.join();
+
+            // A branch whose run was preempted or whose replay diverged stops the whole
+            // run: merging what the other branches did would record a fork outcome the
+            // stopped branch never reached.
+            for (Subtask<SubFlowOutcome> subtask : subtasks) {
+                if (subtask.state() == Subtask.State.FAILED
+                        && subtask.exception() instanceof RunAbortedException aborted) {
+                    throw aborted;
+                }
+            }
 
             outcomes = subtasks.stream().map(Subtask::get).toList();
         }
@@ -248,7 +261,8 @@ public class ForkNodeExecutor implements NodeExecutor<ForkNode> {
             HensuState parentState,
             Workflow workflow,
             WorkflowExecutor workflowExecutor,
-            ExecutionListener listener) {
+            ExecutionListener listener,
+            ExecutionJournal journal) {
 
         long startTime = System.currentTimeMillis();
 
@@ -261,9 +275,16 @@ public class ForkNodeExecutor implements NodeExecutor<ForkNode> {
         try {
             logger.info("Sub-flow starting: " + targetId);
 
-            HensuState branchState = parentState.branch(targetId);
+            // A branch resumes from the latest checkpoint it journaled under its scope: a
+            // recovery re-entering this fork does not re-run nodes whose effects happened.
+            String scope = parentState.position() + "/f:" + targetId + "/";
+            HensuState branchState =
+                    journal.flowCheckpoint(scope)
+                            .map(checkpoint -> checkpoint.toNestedState(scope))
+                            .orElseGet(() -> parentState.branch(targetId, scope));
             ExecutionResult result =
-                    workflowExecutor.executeUntil(joinNodeId, branchState, workflow, listener);
+                    workflowExecutor.executeUntil(
+                            joinNodeId, branchState, workflow, listener, journal);
 
             long elapsed = System.currentTimeMillis() - startTime;
             logger.info("Sub-flow completed: " + targetId + " in " + elapsed + "ms");
@@ -297,6 +318,8 @@ public class ForkNodeExecutor implements NodeExecutor<ForkNode> {
                             1.0),
                     branchState.getHistory());
 
+        } catch (RunAbortedException e) {
+            throw e;
         } catch (Exception e) {
             long elapsed = System.currentTimeMillis() - startTime;
             logger.warning("Sub-flow failed: " + targetId + " – " + e.getMessage());

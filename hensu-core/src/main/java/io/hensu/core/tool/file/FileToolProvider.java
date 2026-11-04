@@ -2,6 +2,7 @@ package io.hensu.core.tool.file;
 
 import io.hensu.core.tool.BuiltInToolProvider;
 import io.hensu.core.tool.PreviewCapable;
+import io.hensu.core.tool.ToolCall;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolCallStatus;
 import io.hensu.core.tool.ToolDefinition;
@@ -244,14 +245,14 @@ public final class FileToolProvider implements BuiltInToolProvider, PreviewCapab
 
     /// Runs a file tool inside the confinement root.
     ///
-    /// @param toolName the tool identifier to invoke, not null
-    /// @param arguments arguments supplied by the agent, not null (may be empty)
+    /// @param call the invocation, not null; its key is unused – file tools record nothing
     /// @param context the workflow state context, not null and unused – file
     ///     tools are rooted at construction, never at call time
     /// @return the invocation result, never null
     @Override
-    public ToolCallResult call(
-            String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+    public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+        String toolName = call.toolName();
+        Map<String, Object> arguments = call.arguments();
         Deadline deadline = Deadline.starting();
         try {
             return switch (toolName) {

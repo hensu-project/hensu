@@ -14,17 +14,26 @@ import java.util.regex.Pattern;
 /// (max 255 characters). This prevents path traversal, injection,
 /// and other input-based attacks.
 ///
+/// ### Idempotency Keys
+/// Keys are 1 to 255 characters from `[A-Za-z0-9._:-]`. Unlike identifiers they
+/// may start with any of those characters and may contain colons, so a client can
+/// send a UUID or a namespaced key as is.
+///
 /// ### Dangerous Control Characters
 /// Null bytes and non-printable control characters
 /// (U+0000–U+0008, U+000B, U+000C, U+000E–U+001F, U+007F)
 /// are rejected. TAB, LF, and CR are permitted in free-text fields.
 ///
 /// @see ValidIdValidator
+/// @see ValidIdempotencyKeyValidator
 /// @see ValidWorkflowValidator
 public final class InputValidator {
 
     /// Safe identifier pattern: starts with alphanumeric, up to 255 chars total.
     static final Pattern SAFE_ID = Pattern.compile("[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}");
+
+    /// Idempotency key pattern: up to 255 chars, colons allowed so clients can namespace keys.
+    static final Pattern IDEMPOTENCY_KEY = Pattern.compile("[A-Za-z0-9._:-]{1,255}");
 
     /// Control characters that are never legitimate in user content.
     /// Excludes TAB (0x09), LF (0x0A), CR (0x0D) which are valid in free text.
@@ -42,6 +51,14 @@ public final class InputValidator {
     /// @return {@code true} if the value matches the safe-ID pattern
     public static boolean isSafeId(String value) {
         return value != null && !value.isBlank() && SAFE_ID.matcher(value).matches();
+    }
+
+    /// Checks whether the value is a well-formed idempotency key.
+    ///
+    /// @param value the string to check, may be null
+    /// @return {@code true} if the value matches the idempotency-key pattern
+    public static boolean isIdempotencyKey(String value) {
+        return value != null && IDEMPOTENCY_KEY.matcher(value).matches();
     }
 
     /// Checks whether the value contains dangerous control characters.

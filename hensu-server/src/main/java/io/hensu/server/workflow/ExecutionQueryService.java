@@ -2,7 +2,7 @@ package io.hensu.server.workflow;
 
 import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuSnapshot;
-import io.hensu.core.state.WorkflowStateRepository;
+import io.hensu.core.state.WorkflowStateReader;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.List;
@@ -10,18 +10,17 @@ import java.util.Objects;
 
 /// Read-only service for querying execution state.
 ///
-/// Fetches status, pending plan info, public output, and paused execution summaries from
-/// the {@link WorkflowStateRepository}. Does not mutate any state — any change to an
+/// Fetches status, public output, and paused execution summaries from
+/// the {@link WorkflowStateReader}. Does not mutate any state — any change to an
 /// execution goes through {@link WorkflowExecutionService} or {@link ExecutionStateService}.
 @ApplicationScoped
 public class ExecutionQueryService {
 
-    private final WorkflowStateRepository stateRepository;
+    private final WorkflowStateReader stateReader;
 
     @Inject
-    public ExecutionQueryService(WorkflowStateRepository stateRepository) {
-        this.stateRepository =
-                Objects.requireNonNull(stateRepository, "stateRepository must not be null");
+    public ExecutionQueryService(WorkflowStateReader stateReader) {
+        this.stateReader = Objects.requireNonNull(stateReader, "stateReader must not be null");
     }
 
     /// Gets execution status by ID.
@@ -66,7 +65,7 @@ public class ExecutionQueryService {
     /// @return list of paused execution summaries, never null, may be empty
     public List<ExecutionSummary> listPausedExecutions(String tenantId) {
         Objects.requireNonNull(tenantId, "tenantId must not be null");
-        return stateRepository.findPaused(tenantId).stream()
+        return stateReader.findPaused(tenantId).stream()
                 .map(
                         s ->
                                 new ExecutionSummary(
@@ -87,7 +86,7 @@ public class ExecutionQueryService {
     private HensuSnapshot loadSnapshot(String tenantId, String executionId) {
         Objects.requireNonNull(tenantId, "tenantId must not be null");
         Objects.requireNonNull(executionId, "executionId must not be null");
-        return stateRepository
+        return stateReader
                 .findByExecutionId(tenantId, executionId)
                 .orElseThrow(
                         () ->

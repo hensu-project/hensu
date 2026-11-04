@@ -2,6 +2,7 @@ package io.hensu.cli.tool;
 
 import io.hensu.core.tool.BuiltInToolProvider;
 import io.hensu.core.tool.PreviewCapable;
+import io.hensu.core.tool.ToolCall;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolDefinition;
 import io.hensu.core.tool.ToolPreview;
@@ -67,9 +68,8 @@ public class WorkspaceFileToolProvider implements BuiltInToolProvider, PreviewCa
     }
 
     @Override
-    public ToolCallResult call(
-            String toolName, Map<String, Object> arguments, Map<String, Object> context) {
-        return delegate().call(toolName, arguments, context);
+    public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+        return delegate().call(call, context);
     }
 
     @Override

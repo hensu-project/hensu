@@ -1,12 +1,14 @@
 package io.hensu.core.state;
 
-import java.util.List;
-import java.util.Optional;
-
-/// Repository for workflow execution state persistence.
+/// Writable repository for workflow execution state.
 ///
-/// Provides checkpoint/restore operations for long-running workflows.
-/// Uses {@link HensuSnapshot} for state representation.
+/// Provides checkpoint/restore operations for long-running workflows in a single-process
+/// runtime, on top of the reads of {@link WorkflowStateReader}. Uses {@link HensuSnapshot}
+/// for state representation.
+///
+/// A runtime whose writes must be guarded – the server writes only under a claim – does not
+/// implement this interface; it implements {@link WorkflowStateReader} alone, so no caller
+/// can reach a write that bypasses the guard.
 ///
 /// ### Multi-Tenancy
 /// All operations are tenant-scoped. The repository associates each
@@ -23,9 +25,10 @@ import java.util.Optional;
 /// restored.ifPresent(s -> executor.resume(s.toState()));
 /// }
 ///
+/// @see WorkflowStateReader for the read operations
 /// @see HensuSnapshot for state representation
 /// @see InMemoryWorkflowStateRepository for in-memory implementation
-public interface WorkflowStateRepository {
+public interface WorkflowStateRepository extends WorkflowStateReader {
 
     /// Saves a workflow state snapshot.
     ///
@@ -35,31 +38,6 @@ public interface WorkflowStateRepository {
     /// @param snapshot the state to persist, not null
     /// @throws NullPointerException if tenantId or snapshot is null
     void save(String tenantId, HensuSnapshot snapshot);
-
-    /// Finds a snapshot by execution ID.
-    ///
-    /// @param tenantId the tenant to search within, not null
-    /// @param executionId the unique execution identifier, not null
-    /// @return the snapshot if found, empty otherwise
-    /// @throws NullPointerException if tenantId or executionId is null
-    Optional<HensuSnapshot> findByExecutionId(String tenantId, String executionId);
-
-    /// Finds all paused executions for a tenant.
-    ///
-    /// Returns executions where currentNodeId is not null (not completed).
-    ///
-    /// @param tenantId the tenant to search within, not null
-    /// @return list of paused snapshots, never null (may be empty)
-    /// @throws NullPointerException if tenantId is null
-    List<HensuSnapshot> findPaused(String tenantId);
-
-    /// Finds all executions for a workflow.
-    ///
-    /// @param tenantId the tenant to search within, not null
-    /// @param workflowId the workflow definition ID, not null
-    /// @return list of snapshots for the workflow, never null
-    /// @throws NullPointerException if tenantId or workflowId is null
-    List<HensuSnapshot> findByWorkflowId(String tenantId, String workflowId);
 
     /// Deletes a snapshot by execution ID.
     ///

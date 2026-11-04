@@ -9,8 +9,8 @@ import java.util.Objects;
 
 /// JSON-RPC 2.0 helper for MCP protocol messages.
 ///
-/// Creates and parses JSON-RPC messages used by the Model Context Protocol.
-/// All MCP communication uses JSON-RPC 2.0 format over the split-pipe transport.
+/// Creates and parses JSON-RPC messages used by the Model Context Protocol, over the
+/// transports that speak it to an MCP server: stdio and Streamable HTTP.
 ///
 /// ### Message Types
 /// - **Request**: Has `id`, `method`, `params` - expects a response

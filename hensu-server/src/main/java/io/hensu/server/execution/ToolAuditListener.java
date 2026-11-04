@@ -68,6 +68,7 @@ public final class ToolAuditListener implements ExecutionListener {
                         event.occurredAt(),
                         event.argv(),
                         call != null ? call.arguments() : Map.of(),
-                        event.output()));
+                        event.output(),
+                        event.callId()));
     }
 }

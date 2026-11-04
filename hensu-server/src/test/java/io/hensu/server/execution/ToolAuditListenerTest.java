@@ -8,6 +8,7 @@ import io.hensu.core.tool.ToolCallStatus;
 import io.hensu.core.tool.ToolResultEvent;
 import io.hensu.server.persistence.InMemoryToolAuditRepository;
 import io.hensu.server.persistence.ToolAuditEntry;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -74,6 +75,30 @@ class ToolAuditListenerTest {
         assertThat(row.arguments())
                 .containsEntry("environment", "prod")
                 .containsEntry("token", ToolCallEvent.REDACTED);
+    }
+
+    @Test
+    void shouldRecordACallWhoseArgumentsCarryAnExplicitNull() {
+        InMemoryToolAuditRepository repository = new InMemoryToolAuditRepository();
+        ToolAuditListener listener = new ToolAuditListener(repository, TENANT, EXECUTION);
+        Map<String, Object> arguments = new HashMap<>();
+        arguments.put("path", "/data.txt");
+        arguments.put("encoding", null);
+
+        listener.onToolCall(
+                ToolCallEvent.now("call-1", "publish", "releaser", "read_file", arguments));
+        listener.onToolResult(
+                ToolResultEvent.now(
+                        "call-1",
+                        "publish",
+                        "releaser",
+                        ToolCallResult.success("read_file", "contents", 0),
+                        3L));
+
+        // Model-produced JSON may say null outright; the call still ran and needs its row.
+        assertThat(repository.findByExecution(TENANT, EXECUTION))
+                .singleElement()
+                .satisfies(row -> assertThat(row.arguments()).containsEntry("encoding", null));
     }
 
     @Test

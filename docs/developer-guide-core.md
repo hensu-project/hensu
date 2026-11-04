@@ -111,7 +111,8 @@ if (result instanceof ExecutionResult.Completed completed) {
     // Save snapshot for later resume
     HensuSnapshot snapshot = pausedState.snapshot("paused");
     // ... persist snapshot, then later:
-    // executor.executeFrom(workflow, snapshot.toState());
+    // executor.executeFrom(
+    //         workflow, snapshot.toState(), ExecutionListener.NOOP, ExecutionJournal.NONE);
 } else if (result instanceof ExecutionResult.Rejected rejected) {
     System.out.println("Rejected: " + rejected.getReason());
 }
@@ -158,10 +159,10 @@ flowchart LR
 
 Runs before the node's primary logic. All processors receive a `ProcessorContext` with a `null` result.
 
-| Order | Processor                  | Responsibility                                                      |
-|-------|----------------------------|---------------------------------------------------------------------|
-| 1     | `CheckpointPreProcessor`   | Fires `listener.onCheckpoint(state)` for crash-recovery persistence |
-| 2     | `NodeStartPreProcessor`    | Fires `listener.onNodeStart(node)` for observability                |
+| Order | Processor                | Responsibility                                                                                                                                                       |
+|-------|--------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1     | `CheckpointPreProcessor` | Main flow: fires `listener.onCheckpoint(state)` for crash-recovery persistence. Nested flow: records the checkpoint in the `ExecutionJournal` under the flow's scope |
+| 2     | `NodeStartPreProcessor`  | Fires `listener.onNodeStart(node)` for observability                                                                                                                 |
 
 ### Post-Execution Pipeline
 
@@ -362,10 +363,39 @@ The verdict is transient like `resumeInput`: never persisted, never carried into
 
 ### Recovery granularity
 
-Two at-least-once boundaries follow from what a checkpoint can record.
+A checkpoint fixes the state at the start of a node attempt. What happens inside the attempt is
+recovered through the `ExecutionJournal` the runtime passes to `executeFrom`, and nested flows
+share it through `executeNested`. `execute` and a resume given `ExecutionJournal.NONE` record and
+replay nothing.
 
-- **Forks re-run whole.** `CheckpointPreProcessor` suppresses checkpoints for branch states (`HensuState.isBranchState()`), because a checkpoint holds one cursor and a fork has several. The parent's last checkpoint before the fork still names the fork node, so recovery re-runs every sub-flow — including ones that had already completed, whose agent calls are billed again. Branches record into private `ExecutionHistory` copies; `ForkNodeExecutor` folds them back into the parent in target-declaration order after the join, so the history is complete and reproducible.
-- **Reviews can be re-requested.** A crash between applying a review decision and the next checkpoint loses the verdict, and recovery re-prompts the review. Persisting the verdict would not close that window, only move it earlier.
+- **Position.** `HensuState.step` counts the node attempts a flow has completed and is persisted in
+  the snapshot; `WorkflowExecutor` advances it after each attempt. Nested flows carry a transient
+  `scope` – `<parent position>/f:<target>/` for a fork branch, `/p:<branch>/` for a parallel branch,
+  `/w:<node>/` for a sub-workflow – and `position()` is `scope + step`, unique within an execution.
+- **Model turns** are journaled per position by `ToolLoopRunner` through the session's `TurnJournal`.
+  A recovered run gets each recorded answer back instead of calling the model, so it asks for the
+  same tools with the same arguments under the same `ToolCall` keys (`position#sequence`), and a
+  runtime that records tool outcomes under those keys hands back the original outcome instead of
+  running the tool again. An agent that declares no tools runs no tool loop, so its call is not
+  journaled and a recovered run asks the model again.
+- **Nested flows** – fork branches and sub-workflows – write their checkpoints to the journal, not
+  to the listener, because a checkpoint holds one cursor and a fork has several. On recovery
+  `ForkNodeExecutor` and `SubWorkflowNodeExecutor` resume each nested flow from its last journaled
+  checkpoint (`HensuSnapshot.toNestedState(scope)`), so a branch that had completed is not run
+  again. A parallel branch is a single agent call rather than a flow: it takes no checkpoint and
+  runs again on recovery, replaying the turns it journaled under its own scope. Branches record into
+  private `ExecutionHistory` copies; `ForkNodeExecutor` folds them back into the parent in
+  target-declaration order after the join, so the history is complete and reproducible.
+- **Aborts propagate.** A journal or tool seam that can no longer record under the run's claim
+  throws `RunPreemptedException`; a replay that reaches a recorded call with different arguments
+  throws `ReplayDivergenceException`. Both extend the sealed `RunAbortedException`, which the tool
+  router, the tool loop and the nested-flow executors rethrow rather than turn into a node failure,
+  so the run stops instead of routing on an outcome it could not record.
+- **Without a journal** (the CLI), forks and sub-workflows re-run whole from the parent's last
+  checkpoint and model turns are asked again.
+- **Reviews can be re-requested.** A crash between applying a review decision and the next
+  checkpoint loses the verdict, and recovery re-prompts the review. Persisting the verdict would not
+  close that window, only move it earlier.
 
 ### Backtrack prompt override
 
@@ -1019,14 +1049,14 @@ sequenceDiagram
         ALR->>TLR: execute(nodeId, agentId, prompt, agent, ctx)
         TLR->>TR: all() — catalog union, failing providers skipped, duplicates rejected (built-ins yield)
         TLR->>TLR: filter to the agent's declared tools
-        TLR->>TS: openToolSession(prompt, context, tools)
+        TLR->>TS: openToolSession(prompt, context, tools, turns)
         TLR->>TS: start()
         TS-->>TLR: AgentResponse
 
         loop while ToolRequest && budget > 0
             TLR->>TLR: listener.onToolCall(ToolCallEvent)
             alt Known tool
-                TLR->>TR: call(name, arguments, context)
+                TLR->>TR: call(ToolCall(key, name, arguments), context)
                 TR-->>TLR: ToolCallResult
                 TLR->>TLR: toolCallCount++
             else Unknown tool (hallucination)
@@ -1062,12 +1092,19 @@ sequenceDiagram
 
 Three types form the tool session protocol (all in `hensu-core`, zero external deps):
 
-| Type             | Description                                                                                         |
-|------------------|-----------------------------------------------------------------------------------------------------|
-| `ToolCapable`    | Narrow interface on agents: `openToolSession(prompt, context, tools)` returns a `ToolSession`       |
-| `ToolSession`    | Call-scoped session: `start()`, `submit(ToolCallResult)`, `compact()`, `close()`                    |
-| `ToolCallResult` | Record `(toolName, status, output, error, exitCode)` with a derived `success()` and `asText()`      |
-| `ToolCallStatus` | Outcome vocabulary: `SUCCESS`, `FAILURE`, `UNKNOWN_TOOL`, `CATALOG_ERROR`, `DENIED`, `TIMEOUT`, …   |
+| Type             | Description                                                                                                                                      |
+|------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ToolCapable`    | Narrow interface on agents: `openToolSession(prompt, context, tools, turns)` returns a `ToolSession`                                             |
+| `TurnJournal`    | Passed to the session: `turn(index, live)` returns the recorded model turn or records the live one                                               |
+| `ToolSession`    | Call-scoped session: `start()`, `submit(ToolCallResult)`, `compact()`, `close()`                                                                 |
+| `ToolCall`       | Record `(key, toolName, arguments)`; `key` is `position#sequence`, stable across recovery                                                        |
+| `ToolCallResult` | Record `(toolName, status, output, error, exitCode)` with a derived `success()` and `asText()`                                                   |
+| `ToolCallStatus` | Outcome vocabulary: `SUCCESS`, `FAILURE`, `UNKNOWN_TOOL`, `CATALOG_ERROR`, `DENIED`, `TIMEOUT` (outcome unknown), `UNAVAILABLE` (did not run), … |
+
+A session journals its opening conversation as turn 0 and each model answer after it, and decodes a
+recorded turn exactly as it would a live one – a replayed answer must drive the loop the way the
+original did. `LangChain4jToolSession` encodes turns with `ChatMessageCodec` (tree-model JSON, no
+reflection).
 
 Sessions are call-scoped, not stateful on the agent – `ParallelNodeExecutor` fan-out shares one agent
 instance across branches, so loop state must not live on the agent.
@@ -1093,7 +1130,7 @@ Tools declared but agent not capable → `NodeResult.failure()` (routable via `o
 ### Tool Resolution
 
 Tools are resolved through the router's provider catalogs:
-1. `ctx.getToolRegistry().all()` returns the union of every provider's live catalog (in server context: `McpToolProvider` → `McpToolDiscovery`)
+1. `ctx.getToolRegistry().all()` returns the union of every provider's live catalog (in server context: `McpToolProvider` → the catalog the tenant's relay published)
 2. Filter to the agent's declared `tools` names
 3. A provider that throws from `tools()` is logged and skipped, so its tools are absent rather than fatal — one unreachable source fails a node, not the execution
 4. Unresolvable name → `NodeResult.failure()` with diagnostic listing available tools
@@ -1146,9 +1183,9 @@ trail of what the agent asked to run:
 The pair fires for every outcome, not only for tools that ran: a hallucinated name, a provider
 failure, an exception during invocation, and a request the budget rejected are all audited.
 
-Each record carries a `callId`, minted by the loop once per call, and a sink pairs the request with
-its outcome on that. Node id and tool name would identify a call only while no two concurrent calls
-can share both — true of today's graph shapes, and a property of the graph rather than of the audit.
+Each record carries a `callId` – the execution id and the call's `ToolCall` key – and a sink pairs
+the request with its outcome on that. The key is derived from the call's position, so a recovered
+run that replays a call reports it under the same id, and a durable sink can record it once.
 
 Both records are built to be kept. `ToolResultEvent` truncates output at `MAX_OUTPUT_CHARS` (4096)
 and `ToolCallEvent` truncates each argument value at `MAX_ARG_CHARS` (1024), so the trail stays
@@ -1180,7 +1217,7 @@ Protocol-agnostic tool descriptors plus the seam each runtime plugs its tool sou
 ```java
 // Each runtime supplies its own providers
 ToolProvider commands = new CommandToolProvider(catalog, runner);
-ToolProvider mcp = new McpToolProvider(discovery, pool);
+ToolProvider mcp = new DeclaredMcpToolProvider(catalog, gate, notices);
 
 ToolRouter router = new ToolRouter(List.of(commands, mcp));
 
@@ -1207,7 +1244,8 @@ that server. Two configured providers, or two built-ins, still collide.
 
 ### MCP Integration
 
-The server contributes a provider backed by the tenant's split-pipe connection, and the CLI one
+The server contributes a provider backed by the catalog the tenant's relay published, whose calls
+the relay pulls from the server (Decision 3 of `docs/unified-architecture.md`), and the CLI one
 backed by the servers `mcp.yaml` declares – stdio servers it launches itself and remote servers it
 reaches over Streamable HTTP. Tools discovered via MCP become `ToolDefinition` instances available
 for agent tool loops, carrying the raw JSON Schema the server published so constraints such as
@@ -1576,9 +1614,12 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `agent/DefaultAgentRegistry.java`                       | Thread-safe agent registry                                                                        |
 | `agent/ToolCapable.java`                                | Narrow interface for agents that support tool sessions                                            |
 | `agent/ToolSession.java`                                | Call-scoped tool loop session (start/submit/compact/close)                                        |
+| `agent/TurnJournal.java`                                | A session's view of the journal: records or replays model turns                                   |
 | `agent/stub/StubAgentProvider.java`                     | Testing provider (priority 1000 when enabled)                                                     |
 | `agent/stub/StubToolSession.java`                       | Scripted tool session for testing (`---TURN---` syntax)                                           |
 | `execution/WorkflowExecutor.java`                       | Main execution engine                                                                             |
+| `execution/ExecutionJournal.java`                       | Records model turns and nested-flow checkpoints so a recovered run replays them                   |
+| `execution/RunAbortedException.java`                    | Sealed: `RunPreemptedException`, `ReplayDivergenceException` – stops a run, never an outcome      |
 | `execution/NodeLifecycleCoordinator.java`               | Per-node lifecycle: phase dispatch, pipeline orchestration                                        |
 | `execution/executor/GenericNodeHandler.java`            | Generic node handler interface                                                                    |
 | `execution/action/ActionHandler.java`                   | Action handler interface                                                                          |
@@ -1587,10 +1628,11 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `workflow/Workflow.java`                                | Core data model                                                                                   |
 | `workflow/WorkflowRepository.java`                      | Workflow definition persistence interface                                                         |
 | `workflow/InMemoryWorkflowRepository.java`              | In-memory workflow repository (default)                                                           |
-| `state/HensuState.java`                                 | Mutable workflow execution state; `branch(node)` creates isolated copies for concurrent branches  |
-| `state/HensuSnapshot.java`                              | Immutable state snapshot for persistence                                                          |
+| `state/HensuState.java`                                 | Mutable workflow execution state; `branch(node, scope)` creates isolated copies for nested flows  |
+| `state/HensuSnapshot.java`                              | Immutable state snapshot; `toState()` resumes the main flow, `toNestedState(scope)` a nested one  |
 | `state/ExecutionPhase.java`                             | Sealed: `Initial`, `Awaiting`, `Terminal` — tracks position within a node's lifecycle             |
-| `state/WorkflowStateRepository.java`                    | Execution state persistence interface                                                             |
+| `state/WorkflowStateReader.java`                        | Execution state queries (read side); the server's claim store implements only this                |
+| `state/WorkflowStateRepository.java`                    | Writable execution state persistence, extends `WorkflowStateReader`                               |
 | `state/InMemoryWorkflowStateRepository.java`            | In-memory state repository (default)                                                              |
 | `workflow/state/WorkflowStateSchema.java`               | Typed state variable schema (optional per-workflow declaration)                                   |
 | `workflow/state/StateVariableDeclaration.java`          | Single variable declaration record (name, type, isInput)                                          |
@@ -1608,6 +1650,7 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `rubric/RubricEngine.java`                              | Quality evaluation engine                                                                         |
 | `rubric/model/Rubric.java`                              | Rubric definition model                                                                           |
 | `tool/ToolDefinition.java`                              | Protocol-agnostic tool descriptor                                                                 |
+| `tool/ToolCall.java`                                    | One invocation, keyed `position#sequence` within its execution                                    |
 | `tool/ToolCallStatus.java`                              | Outcome vocabulary shared by every layer                                                          |
 | `tool/ToolCallResult.java`                              | Tool execution result record (typed status, exit code, `asText()`)                                |
 | `tool/ToolProvider.java`                                | A runtime's tool source: catalog plus invocation                                                  |

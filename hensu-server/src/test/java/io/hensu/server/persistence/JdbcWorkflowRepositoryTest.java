@@ -102,8 +102,8 @@ class JdbcWorkflowRepositoryTest extends JdbcRepositoryTestBase {
                         conn.prepareStatement(
                                 """
                      INSERT INTO runtime.execution_states
-                         (tenant_id, execution_id, workflow_id, context, history)
-                     VALUES (?, ?, ?, '{}'::jsonb, '{}'::jsonb)
+                         (tenant_id, execution_id, workflow_id, context, history, run_state)
+                     VALUES (?, ?, ?, '{}'::jsonb, '{}'::jsonb, 'DONE')
                      """)) {
             ps.setString(1, TENANT);
             ps.setString(2, "exec-1");

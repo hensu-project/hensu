@@ -9,7 +9,6 @@ import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.workflow.ExecutionStartResult;
 import io.quarkus.test.junit.QuarkusTest;
-import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -117,10 +116,7 @@ class ParallelNodeIntegrationTest extends IntegrationTestBase {
     }
 
     private HensuSnapshot terminalSnapshot(ExecutionStartResult result) {
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         return snapshot;
     }

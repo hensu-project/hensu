@@ -10,6 +10,7 @@ import io.hensu.core.execution.action.CommandRegistry;
 import io.hensu.core.execution.action.ParamSpec;
 import io.hensu.core.execution.action.SandboxPolicy;
 import io.hensu.core.execution.action.ToolSpec;
+import io.hensu.core.tool.ToolCall;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolCallStatus;
 import io.hensu.core.tool.ToolDefinition;
@@ -102,7 +103,8 @@ class CommandToolProviderTest {
         void shouldRefuseToRunACommandThatIsNotAgentVisible() {
             // The entry exists and the action path can run it; reaching it from
             // an agent must look exactly like a tool that was never offered.
-            ToolCallResult result = provider.call("internal-only", Map.of(), Map.of());
+            ToolCallResult result =
+                    provider.call(new ToolCall("test#1", "internal-only", Map.of()), Map.of());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.UNKNOWN_TOOL);
         }
@@ -149,7 +151,10 @@ class CommandToolProviderTest {
         @Test
         void shouldReturnTheProcessOutputOnSuccess() {
             ToolCallResult result =
-                    provider.call("echo-message", Map.of("message", "hello there"), Map.of());
+                    provider.call(
+                            new ToolCall(
+                                    "test#1", "echo-message", Map.of("message", "hello there")),
+                            Map.of());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.SUCCESS);
             assertThat(result.output()).isEqualTo("hello there");
@@ -159,7 +164,9 @@ class CommandToolProviderTest {
         @Test
         void shouldCarryTheExitCodeThroughOnFailure() {
             ToolCallResult result =
-                    provider.call("publish-release", Map.of("token", "secret"), Map.of());
+                    provider.call(
+                            new ToolCall("test#1", "publish-release", Map.of("token", "secret")),
+                            Map.of());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.FAILURE);
             assertThat(result.exitCode()).isEqualTo(1);
@@ -169,7 +176,9 @@ class CommandToolProviderTest {
         void shouldReportASchemaViolationWithoutLaunchingAnything() {
             // The pattern rejects digits, so the process must never start.
             ToolCallResult result =
-                    provider.call("echo-message", Map.of("message", "hello 42"), Map.of());
+                    provider.call(
+                            new ToolCall("test#1", "echo-message", Map.of("message", "hello 42")),
+                            Map.of());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.VALIDATION_FAILED);
             assertThat(result.error()).contains("does not match pattern");

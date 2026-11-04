@@ -8,8 +8,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 ///
 /// @param serverUrl base URL of the hensu-server instance (e.g. `http://localhost:8080`)
 /// @param token     JWT bearer token; empty string disables auth header injection
-/// @param tenantId  tenant identifier sent as `?clientId=` when connecting to `/mcp/connect`;
-///                  must match the tenant JWT claim used by the server to route MCP tool calls
+/// @param tenantId  tenant identifier; must match the tenant JWT claim the server binds this
+///                  relay's tool calls to
 /// @param demo      demo-specific settings controlling auto-start behavior
 @ConfigurationProperties(prefix = "hensu")
 public record HensuProperties(

@@ -77,13 +77,18 @@ public interface ToolProvider {
     ///
     /// Implementations report failures as a {@link ToolCallResult} carrying the
     /// matching {@link ToolCallStatus} so the agent can react to them; throwing
-    /// is reserved for programming errors. Implementations must return within
-    /// their own deadline rather than block indefinitely.
+    /// is reserved for programming errors and for
+    /// {@link io.hensu.core.execution.RunAbortedException}, which a provider throws
+    /// when the run itself must stop and which every layer above it rethrows.
+    /// Implementations must return within their own deadline rather than block
+    /// indefinitely.
     ///
-    /// @param toolName the tool identifier to invoke, not null
-    /// @param arguments arguments supplied by the agent, not null (may be empty)
+    /// A provider that records outcomes – so that a recovered run is handed the
+    /// original outcome rather than invoking the tool twice – keys them on
+    /// {@link ToolCall#key()}. Providers that do not record outcomes ignore the key.
+    ///
+    /// @param call the invocation: its key, tool name and arguments, not null
     /// @param context the workflow state context, not null (may be empty)
     /// @return the invocation result, never null
-    ToolCallResult call(
-            String toolName, Map<String, Object> arguments, Map<String, Object> context);
+    ToolCallResult call(ToolCall call, Map<String, Object> context);
 }

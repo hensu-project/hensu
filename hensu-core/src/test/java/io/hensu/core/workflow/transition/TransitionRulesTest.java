@@ -4,12 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.executor.NodeResult;
-import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.rubric.model.ComparisonOperator;
 import io.hensu.core.rubric.model.ScoreCondition;
 import io.hensu.core.state.HensuState;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,8 +23,11 @@ class TransitionRulesTest {
     @BeforeEach
     void setUp() {
         state =
-                new HensuState(
-                        new HashMap<>(), "test-workflow", "current-node", new ExecutionHistory());
+                new HensuState.Builder()
+                        .executionId("exec-1")
+                        .workflowId("test-workflow")
+                        .currentNode("current-node")
+                        .build();
     }
 
     @Nested

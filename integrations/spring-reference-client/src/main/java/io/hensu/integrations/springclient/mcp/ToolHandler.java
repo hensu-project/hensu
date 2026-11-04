@@ -9,19 +9,19 @@ import java.util.Map;
 /// `List<ToolHandler>` injection. Register a new tool by creating a
 /// `@Component` that implements this interface.
 ///
-/// ### JSON-RPC context
-/// The MCP protocol requires two interactions before any tool can be called:
+/// ### Relay context
+/// The relay protocol needs two things from every tool:
 ///
-/// 1. **`tools/list`** — hensu-server discovers available tools at execution start
-///    so `LlmPlanner` can inject their names, descriptions, and parameter schemas
-///    into the planning prompt. Without this, the LLM sees zero tools and will
-///    never plan a tool call.
+/// 1. **Catalog** — the name, description and input schema, published to hensu-server
+///    (`PUT /mcp/v1/catalog`) so an agent that declares the tool is offered its schema.
+///    A tool missing from the catalog is a tool the agent never sees.
 ///
-/// 2. **`tools/call`** — hensu-server dispatches execution after the LLM plan
-///    decides to invoke a specific tool.
+/// 2. **Call** — the work itself, run once for every call to the tool that the relay
+///    pulls from the server and acknowledges.
 ///
-/// Both requests arrive via the SSE split-pipe and are handled by
-/// {@link HensuMcpTransport}. This interface provides the data for both.
+/// {@link HensuMcpTransport} serves both: it publishes the catalog built from every
+/// handler, and runs a handler for each tool call it pulls from the server. This
+/// interface provides the data for both.
 ///
 /// @see io.hensu.integrations.springclient.tools.FetchCustomerDataTool
 /// @see io.hensu.integrations.springclient.tools.CalculateRiskScoreTool
@@ -44,8 +44,8 @@ public interface ToolHandler {
 
     /// Returns the JSON Schema for this tool's input parameters.
     ///
-    /// Used in the `tools/list` MCP response. The LLM planner uses this schema
-    /// to understand what arguments to pass when it decides to call the tool.
+    /// Published in the relay's catalog. The agent uses this schema to decide
+    /// what arguments to pass when it calls the tool.
     ///
     /// ### Minimum structure
     /// ```json
@@ -61,8 +61,8 @@ public interface ToolHandler {
 
     /// Executes the tool with the provided arguments.
     ///
-    /// The returned map is serialized as the `result` field in the JSON-RPC
-    /// response posted back to `/mcp/message`.
+    /// The returned map is posted back as the `result` of the call's
+    /// `POST /mcp/v1/tasks/{token}/complete`.
     ///
     /// @param arguments tool arguments from `params.arguments`, never null
     /// @return tool execution result, never null

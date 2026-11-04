@@ -10,13 +10,15 @@ import java.util.Map;
 /// - Calling tools with arguments
 /// - Managing connection lifecycle
 ///
-/// Three transports implement this interface, and which ones exist is a
-/// property of the runtime rather than of the protocol:
+/// Two transports implement this interface, both in the CLI, and which ones exist
+/// is a property of the runtime rather than of the protocol:
 ///
-/// - **stdio** (CLI) – a server process Hensu launched and contains
-/// - **Streamable HTTP** (CLI) – a remote endpoint Hensu dials out to
-/// - **split pipe** (server) – a session the tenant opened inbound, which the
-///   server answers over without ever dialling out
+/// - **stdio** – a server process Hensu launched and contains
+/// - **Streamable HTTP** – a remote endpoint Hensu dials out to
+///
+/// The server implements none: it holds no MCP client, and the tenant's relay
+/// pulls its tool calls instead (Decision 3). It shares only the descriptor types
+/// declared here.
 ///
 /// Each runtime owns its own lifetime policy; this interface only describes
 /// what a live connection can do.

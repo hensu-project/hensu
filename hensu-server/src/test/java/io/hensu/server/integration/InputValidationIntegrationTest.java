@@ -53,6 +53,23 @@ class InputValidationIntegrationTest {
         assertThat(response.jsonPath().getString("error")).containsIgnoringCase("workflowId");
     }
 
+    /// The key is checked before the start reaches the service: an unknown workflow would
+    /// otherwise answer 404, so a 400 here proves the constraint ran first.
+    @Test
+    void executionShouldRejectAMalformedIdempotencyKey() {
+        Response response =
+                given().contentType(ContentType.JSON)
+                        .header("Idempotency-Key", "has spaces")
+                        .body("{\"workflowId\":\"no-such-workflow\",\"context\":{}}")
+                        .when()
+                        .post("/api/v1/executions");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(response.jsonPath().getInt("status")).isEqualTo(400);
+        assertThat(response.jsonPath().getString("error"))
+                .isEqualTo("idempotencyKey: must be 1-255 characters from [A-Za-z0-9._:-]");
+    }
+
     @Test
     void executionShouldRejectSpecialCharsInExecutionId() {
         Response response = given().when().get("/api/v1/executions/exec%3B+DROP+TABLE");
@@ -140,41 +157,68 @@ class InputValidationIntegrationTest {
         assertThat(response.jsonPath().getString("error")).contains("valid identifier");
     }
 
-    // --- MCP endpoints ---
+    // --- Relay protocol endpoints ---
 
     @Test
-    void mcpShouldRejectMissingClientId() {
-        Response response = given().when().get("/mcp/connect");
-
-        assertThat(response.statusCode()).isEqualTo(400);
-        assertThat(response.jsonPath().getInt("status")).isEqualTo(400);
-        assertThat(response.jsonPath().getString("error")).containsIgnoringCase("clientId");
-    }
-
-    @Test
-    void mcpShouldRejectBlankClientId() {
-        Response response = given().when().get("/mcp/connect?clientId=   ");
-
-        assertThat(response.statusCode()).isEqualTo(400);
-        assertThat(response.jsonPath().getInt("status")).isEqualTo(400);
-        assertThat(response.jsonPath().getString("error")).containsIgnoringCase("clientId");
-    }
-
-    @Test
-    void mcpShouldRejectEmptyMessageBody() {
+    void relayCompletionShouldRejectEmptyBody() {
         Response response =
-                given().contentType(ContentType.JSON).body("").when().post("/mcp/message");
+                given().contentType(ContentType.JSON)
+                        .body("")
+                        .when()
+                        .post("/mcp/v1/tasks/00000000-0000-0000-0000-000000000000/complete");
 
         assertThat(response.statusCode()).isEqualTo(400);
         assertThat(response.jsonPath().getInt("status")).isEqualTo(400);
     }
 
     @Test
-    void mcpShouldRejectSpecialCharsInClientStatusId() {
-        Response response = given().when().get("/mcp/clients/client%3B+DROP+TABLE/status");
+    void relayCompletionShouldRejectABodyWithNeitherResultNorError() {
+        Response response =
+                given().contentType(ContentType.JSON)
+                        .body("{\"value\":1}")
+                        .when()
+                        .post("/mcp/v1/tasks/00000000-0000-0000-0000-000000000000/complete");
 
         assertThat(response.statusCode()).isEqualTo(400);
-        assertThat(response.jsonPath().getInt("status")).isEqualTo(400);
-        assertThat(response.jsonPath().getString("error")).contains("valid identifier");
+    }
+
+    @Test
+    void relayAckShouldRefuseAMalformedTokenAsNotOffered() {
+        Response response = given().when().post("/mcp/v1/tasks/x%3B+DROP+TABLE/ack");
+
+        assertThat(response.statusCode()).isEqualTo(409);
+    }
+
+    @Test
+    void relayCatalogShouldRejectAMissingVersion() {
+        Response response =
+                given().contentType(ContentType.JSON)
+                        .body("{\"tools\":[]}")
+                        .when()
+                        .put("/mcp/v1/catalog");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+    }
+
+    /// The body is checked before the catalog version is: an unknown version would otherwise
+    /// answer 409, so a 400 here proves the size bound ran first.
+    @Test
+    void relayPollShouldRejectAnOversizedBody() {
+        Response response =
+                given().contentType(ContentType.JSON)
+                        .body("{\"catalogVersion\":\"" + "v".repeat(5000) + "\"}")
+                        .when()
+                        .post("/mcp/v1/poll");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(response.jsonPath().getString("error")).contains("maximum allowed size");
+    }
+
+    @Test
+    void relayPollShouldRejectMalformedJson() {
+        Response response =
+                given().contentType(ContentType.JSON).body("{not json").when().post("/mcp/v1/poll");
+
+        assertThat(response.statusCode()).isEqualTo(400);
     }
 }

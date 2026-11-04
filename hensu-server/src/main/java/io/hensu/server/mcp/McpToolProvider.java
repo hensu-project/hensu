@@ -1,11 +1,19 @@
 package io.hensu.server.mcp;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hensu.core.execution.RunPreemptedException;
+import io.hensu.core.tool.ToolCall;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolCallStatus;
 import io.hensu.core.tool.ToolDefinition;
 import io.hensu.core.tool.ToolProvider;
-import io.hensu.mcp.McpConnection;
 import io.hensu.mcp.McpResultRenderer;
+import io.hensu.server.execution.RunContext;
+import io.hensu.server.execution.RunHandle;
+import io.hensu.server.mcp.ToolIntents.Intent;
+import io.hensu.server.mcp.ToolIntents.Settlement;
 import io.hensu.server.tenant.TenantContext;
 import io.hensu.server.tenant.TenantContext.TenantInfo;
 import jakarta.inject.Inject;
@@ -14,156 +22,150 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.StructuredTaskScope;
-import java.util.concurrent.StructuredTaskScope.Subtask;
+import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
-/// Exposes the calling tenant's MCP server as a source of tools.
+/// Exposes the calling tenant's relay as a source of tools.
 ///
-/// This is the server's single contribution to the engine's tool seam: the
-/// catalog comes from {@link McpToolDiscovery} and invocation goes through a
-/// connection opened by {@link McpConnections}, both scoped to whichever tenant
-/// is bound to the calling thread. Nothing about the engine changes between runtimes –
-/// the CLI contributes its own providers and the router composes whatever it is
-/// given.
+/// The server's single contribution to the engine's tool seam. The catalog is whatever
+/// the tenant's relay published ({@link McpCatalogs}); a call becomes an intent in
+/// {@link ToolIntents}, submitted under the run's claim, which the relay pulls from any
+/// node, executes once, and completes through any node. This provider waits for the
+/// intent to settle. No node holds a connection to the relay, so no node is special to a
+/// tenant, and nothing here depends on which node the run or the relay reached.
 ///
-/// ### Tenant Scoping
-/// {@link TenantContext} is a `ScopedValue`, and parallel branches fork through
-/// `StructuredTaskScope`, which inherits scoped-value bindings. A branch
-/// therefore sees the same tenant as the execution that forked it, so resolving
-/// the tenant inside {@link #call} is safe under fan-out.
+/// ### Replay
+/// A recovered run reaches the calls of its predecessor's attempt under the same keys.
+/// Submitting finds the original intent: an intent that settled hands back its outcome
+/// without the relay seeing the call again, and one still in flight is waited on rather
+/// than issued twice.
 ///
-/// ### Empty Catalog Outside a Tenant
-/// Startup validation of duplicate tool names asks every provider for its
-/// catalog before any request is bound, so {@link #tools()} answers with an
-/// empty list there. That is expected, not a failure: the authoritative
-/// duplicate check runs again on every catalog read, when a tenant is bound.
+/// ### Deadlines
+/// The provider imposes none of its own. The store settles an intent as `TIMEOUT` when the
+/// relay acknowledged it and did not complete it in time – the call may have run – and as
+/// `UNAVAILABLE` when no relay acknowledged it before the dispatch deadline – it did not.
+/// Both bound every wait, on whichever node waits.
 ///
-/// ### Deadline
-/// The engine runs no watchdog around a tool call, and the SSE transport waits
-/// indefinitely for a response, so this provider bounds every call itself with
-/// the configured read timeout and reports {@link ToolCallStatus#TIMEOUT} when
-/// it expires.
-///
-/// @implNote Uses Java 25 preview API ({@code StructuredTaskScope}).
-/// @see ToolProvider for the seam contract
-/// @see McpResultRenderer for how a response becomes agent-readable text
+/// @implNote Thread-safe. Parallel branches inherit the run through
+///     {@link RunContext}, a `ScopedValue`.
 @Singleton
 public class McpToolProvider implements ToolProvider {
 
     private static final Logger LOG = Logger.getLogger(McpToolProvider.class);
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
+    private static final Duration RECHECK = Duration.ofSeconds(1);
 
-    private final McpToolDiscovery discovery;
-    private final McpConnections connections;
-    private final Duration callTimeout;
+    private final McpCatalogs catalogs;
+    private final ToolIntents intents;
+    private final ClusterSignals signals;
+    private final Duration callDeadline;
+    private final Duration dispatchDeadline;
 
-    /// Creates the provider over the server's MCP infrastructure.
-    ///
-    /// @param discovery tenant-scoped tool discovery, not null
-    /// @param connections source of live split-pipe connections, not null
-    /// @param callTimeout wall clock imposed on a single tool call, not null
     @Inject
     public McpToolProvider(
-            McpToolDiscovery discovery,
-            McpConnections connections,
-            @ConfigProperty(name = "hensu.mcp.read-timeout", defaultValue = "60s")
-                    Duration callTimeout) {
-        this.discovery = Objects.requireNonNull(discovery, "discovery must not be null");
-        this.connections = Objects.requireNonNull(connections, "connections must not be null");
-        this.callTimeout = Objects.requireNonNull(callTimeout, "callTimeout must not be null");
+            McpCatalogs catalogs,
+            ToolIntents intents,
+            ClusterSignals signals,
+            @ConfigProperty(name = "hensu.mcp.call-deadline", defaultValue = "60s")
+                    Duration callDeadline,
+            @ConfigProperty(name = "hensu.mcp.dispatch-deadline", defaultValue = "5m")
+                    Duration dispatchDeadline) {
+        this.catalogs = Objects.requireNonNull(catalogs, "catalogs must not be null");
+        this.intents = Objects.requireNonNull(intents, "intents must not be null");
+        this.signals = Objects.requireNonNull(signals, "signals must not be null");
+        this.callDeadline = Objects.requireNonNull(callDeadline, "callDeadline must not be null");
+        this.dispatchDeadline =
+                Objects.requireNonNull(dispatchDeadline, "dispatchDeadline must not be null");
     }
 
     @Override
     public List<ToolDefinition> tools() {
         TenantInfo tenant = TenantContext.currentOrNull();
-        if (tenant == null || !tenant.hasMcp()) {
+        if (tenant == null) {
             return List.of();
         }
         try {
-            return discovery.discoverTools();
+            return catalogs.tools(tenant.tenantId());
         } catch (RuntimeException e) {
-            // A provider that throws is treated as absent by the router, which would
-            // hide the outage behind a missing tool. Report the empty catalog
-            // deliberately and say why.
+            // A provider that throws is treated as absent by the router, which would hide
+            // the outage behind a missing tool. Report the empty catalog and say why.
             LOG.warnv(
-                    "MCP tool discovery failed for tenant {0}, exposing no tools: {1}",
+                    "Tool catalog of tenant {0} unreadable, exposing no tools: {1}",
                     tenant.tenantId(), e.getMessage());
             return List.of();
         }
     }
 
     @Override
-    public ToolCallResult call(
-            String toolName, Map<String, Object> arguments, Map<String, Object> context) {
-        TenantInfo tenant = TenantContext.currentOrNull();
-        if (tenant == null) {
-            return ToolCallResult.failure(
-                    toolName, "No tenant context bound. MCP tool calls require tenant context.");
-        }
-        if (!tenant.hasMcp()) {
-            return ToolCallResult.failure(
-                    toolName, "Tenant '" + tenant.tenantId() + "' has no MCP endpoint configured.");
-        }
-
-        String endpoint = tenant.mcpEndpoint();
-
-        try {
-            return McpResultRenderer.toResult(
-                    toolName, callWithDeadline(toolName, endpoint, arguments));
-        } catch (StructuredTaskScope.TimeoutException e) {
-            LOG.warnv("MCP tool call {0} exceeded {1}", toolName, callTimeout);
-            return ToolCallResult.of(
-                    toolName,
-                    ToolCallStatus.TIMEOUT,
-                    null,
-                    "MCP tool '" + toolName + "' did not respond within " + callTimeout,
-                    null);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return ToolCallResult.failure(toolName, "MCP tool call was interrupted: " + toolName);
-        } catch (RuntimeException e) {
-            LOG.warnv("MCP tool call failed for {0}: {1}", toolName, e.getMessage());
-            return ToolCallResult.failure(toolName, e.getMessage());
-        }
-    }
-
-    /// Runs one tool call on a forked virtual thread bounded by the configured timeout.
-    ///
-    /// The fork exists purely for the deadline: the SSE transport blocks until a
-    /// response arrives, so the only way to stop waiting is to cancel the scope,
-    /// which interrupts the waiting thread.
-    private Map<String, Object> callWithDeadline(
-            String toolName, String endpoint, Map<String, Object> arguments)
-            throws InterruptedException {
-        var threadFactory = Thread.ofVirtual().name("mcp-tool-" + toolName + "-", 0).factory();
-        try (var scope =
-                StructuredTaskScope.open(
-                        StructuredTaskScope.Joiner.<Map<String, Object>>awaitAll(),
-                        cf ->
-                                cf.withThreadFactory(threadFactory)
-                                        .withTimeout(callTimeout)
-                                        .withName("mcp-tool-" + toolName))) {
-
-            Subtask<Map<String, Object>> subtask =
-                    scope.fork(
-                            () -> {
-                                McpConnection connection = connections.get(endpoint);
-                                return connection.callTool(toolName, arguments);
-                            });
-
-            scope.join();
-
-            if (subtask.state() == Subtask.State.FAILED) {
-                throw asRuntime(subtask.exception());
+    public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+        RunHandle run = RunContext.current();
+        Intent intent = intents.submit(run.claim(), call);
+        while (true) {
+            ClusterSignals.Waiter waiter = signals.outcomeWaiter(intent.id());
+            Optional<Settlement> settlement = intents.settlement(intent);
+            if (settlement.isPresent()) {
+                return render(call.toolName(), settlement.get());
             }
-            return subtask.get();
+            run.checkLive();
+            try {
+                waiter.await(RECHECK);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RunPreemptedException("Interrupted while waiting for " + call.key(), e);
+            }
         }
     }
 
-    private static RuntimeException asRuntime(Throwable failure) {
-        return failure instanceof RuntimeException runtime
-                ? runtime
-                : new IllegalStateException(failure.getMessage(), failure);
+    private ToolCallResult render(String toolName, Settlement settlement) {
+        return switch (settlement.status()) {
+            case "SUCCESS", "FAILURE" -> fromRelay(toolName, settlement);
+            case "TIMEOUT" ->
+                    ToolCallResult.of(
+                            toolName,
+                            ToolCallStatus.TIMEOUT,
+                            null,
+                            "'"
+                                    + toolName
+                                    + "' started but did not complete within "
+                                    + callDeadline.toSeconds()
+                                    + " s; it may have run, so its outcome is unknown",
+                            null);
+            case "UNAVAILABLE" ->
+                    ToolCallResult.of(
+                            toolName,
+                            ToolCallStatus.UNAVAILABLE,
+                            null,
+                            "No relay took '"
+                                    + toolName
+                                    + "' within "
+                                    + dispatchDeadline.toSeconds()
+                                    + " s; it did not run",
+                            null);
+            // The execution finished under another claim while this run waited.
+            case "CANCELLED" ->
+                    throw new RunPreemptedException("Call to '" + toolName + "' was cancelled");
+            default ->
+                    ToolCallResult.failure(
+                            toolName, "Unrecognized tool outcome: " + settlement.status());
+        };
+    }
+
+    private static ToolCallResult fromRelay(String toolName, Settlement settlement) {
+        if (settlement.outcome() == null) {
+            return ToolCallResult.failure(toolName, "The relay reported no outcome");
+        }
+        try {
+            JsonNode outcome = JSON.readTree(settlement.outcome());
+            if (outcome.has("error")) {
+                return ToolCallResult.failure(
+                        toolName, outcome.path("error").path("message").asText("Tool error"));
+            }
+            return McpResultRenderer.toResult(
+                    toolName, JSON.convertValue(outcome.path("result"), MAP_TYPE));
+        } catch (Exception e) {
+            return ToolCallResult.failure(toolName, "Unreadable tool outcome: " + e.getMessage());
+        }
     }
 }

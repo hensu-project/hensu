@@ -23,7 +23,7 @@ import javax.sql.DataSource;
 /// Each call acquires and releases its own connection from the Agroal pool.
 ///
 /// @see JdbcWorkflowRepository
-/// @see JdbcWorkflowStateRepository
+/// @see JdbcExecutionStore
 final class JdbcSupport {
 
     private final DataSource dataSource;

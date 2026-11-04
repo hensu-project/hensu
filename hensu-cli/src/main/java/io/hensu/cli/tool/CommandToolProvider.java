@@ -8,6 +8,7 @@ import io.hensu.core.execution.action.CommandDefinition;
 import io.hensu.core.execution.action.ParamSpec;
 import io.hensu.core.execution.action.SandboxPolicy;
 import io.hensu.core.tool.PreviewCapable;
+import io.hensu.core.tool.ToolCall;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolCallStatus;
 import io.hensu.core.tool.ToolDefinition;
@@ -98,15 +99,13 @@ public class CommandToolProvider implements ToolProvider, PreviewCapable, Uncont
 
     /// Runs a declared command and reports its outcome unchanged.
     ///
-    /// @param toolName the command id the agent chose, not null
-    /// @param arguments the agent's arguments, not null (may be empty)
+    /// @param call the command id the agent chose and its arguments, not null
     /// @param context the workflow state context, not null and unused – a
     ///     command binds only its declared parameters, never ambient state
     /// @return the command's result, never null
     @Override
-    public ToolCallResult call(
-            String toolName, Map<String, Object> arguments, Map<String, Object> context) {
-        return dispatch(runner, toolName, arguments);
+    public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+        return dispatch(runner, call.toolName(), call.arguments());
     }
 
     /// Runs a command outside the sandbox, after a reviewer approved exactly this call.

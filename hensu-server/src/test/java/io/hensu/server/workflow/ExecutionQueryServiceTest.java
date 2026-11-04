@@ -6,7 +6,7 @@ import static org.mockito.Mockito.when;
 
 import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuSnapshot;
-import io.hensu.core.state.WorkflowStateRepository;
+import io.hensu.core.state.WorkflowStateReader;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
@@ -17,13 +17,13 @@ import org.junit.jupiter.api.Test;
 
 class ExecutionQueryServiceTest {
 
-    private WorkflowStateRepository stateRepository;
+    private WorkflowStateReader stateReader;
     private ExecutionQueryService service;
 
     @BeforeEach
     void setUp() {
-        stateRepository = mock(WorkflowStateRepository.class);
-        service = new ExecutionQueryService(stateRepository);
+        stateReader = mock(WorkflowStateReader.class);
+        service = new ExecutionQueryService(stateReader);
     }
 
     @Test
@@ -44,9 +44,9 @@ class ExecutionQueryServiceTest {
                         null,
                         null,
                         Instant.now(),
-                        "completed");
-        when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
-                .thenReturn(Optional.of(snapshot));
+                        "completed",
+                        0);
+        when(stateReader.findByExecutionId("tenant-1", "exec-1")).thenReturn(Optional.of(snapshot));
 
         ExecutionOutput output = service.getExecutionResult("tenant-1", "exec-1");
 
@@ -72,9 +72,9 @@ class ExecutionQueryServiceTest {
                         null,
                         awaiting,
                         Instant.now(),
-                        "paused");
-        when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
-                .thenReturn(Optional.of(snapshot));
+                        "paused",
+                        0);
+        when(stateReader.findByExecutionId("tenant-1", "exec-1")).thenReturn(Optional.of(snapshot));
 
         ExecutionStatus status = service.getExecutionStatus("tenant-1", "exec-1");
 
@@ -94,9 +94,9 @@ class ExecutionQueryServiceTest {
                         null,
                         null,
                         Instant.now(),
-                        "completed");
-        when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
-                .thenReturn(Optional.of(snapshot));
+                        "completed",
+                        0);
+        when(stateReader.findByExecutionId("tenant-1", "exec-1")).thenReturn(Optional.of(snapshot));
 
         ExecutionStatus status = service.getExecutionStatus("tenant-1", "exec-1");
 
@@ -119,8 +119,9 @@ class ExecutionQueryServiceTest {
                         null,
                         awaiting,
                         Instant.now(),
-                        "paused");
-        when(stateRepository.findPaused("tenant-1")).thenReturn(List.of(snapshot));
+                        "paused",
+                        0);
+        when(stateReader.findPaused("tenant-1")).thenReturn(List.of(snapshot));
 
         List<ExecutionSummary> paused = service.listPausedExecutions("tenant-1");
 
@@ -143,9 +144,9 @@ class ExecutionQueryServiceTest {
                         null,
                         null,
                         Instant.now(),
-                        "completed");
-        when(stateRepository.findByExecutionId("tenant-1", "exec-1"))
-                .thenReturn(Optional.of(snapshot));
+                        "completed",
+                        0);
+        when(stateReader.findByExecutionId("tenant-1", "exec-1")).thenReturn(Optional.of(snapshot));
 
         ExecutionOutput output = service.getExecutionResult("tenant-1", "exec-1");
 

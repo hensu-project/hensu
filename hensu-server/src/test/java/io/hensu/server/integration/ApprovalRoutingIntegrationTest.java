@@ -6,7 +6,6 @@ import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.workflow.ExecutionStartResult;
 import io.quarkus.test.junit.QuarkusTest;
-import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -33,7 +32,7 @@ class ApprovalRoutingIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("content", "test content"));
 
-        HensuSnapshot snapshot = lastSnapshot(result);
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.currentNodeId()).isEqualTo("finalize");
     }
@@ -45,7 +44,7 @@ class ApprovalRoutingIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("content", "test content"));
 
-        HensuSnapshot snapshot = lastSnapshot(result);
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.currentNodeId()).isEqualTo("improve");
     }
 
@@ -59,7 +58,7 @@ class ApprovalRoutingIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("content", "test content"));
 
-        HensuSnapshot snapshot = lastSnapshot(result);
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.currentNodeId())
                 .as("high score must not override explicit agent rejection")
                 .isEqualTo("improve");
@@ -72,7 +71,7 @@ class ApprovalRoutingIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("content", "test content"));
 
-        HensuSnapshot snapshot = lastSnapshot(result);
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.currentNodeId()).isEqualTo("finalize");
     }
@@ -86,14 +85,7 @@ class ApprovalRoutingIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("content", "test content"));
 
-        HensuSnapshot snapshot = lastSnapshot(result);
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.currentNodeId()).isEqualTo("critical-fail");
-    }
-
-    private HensuSnapshot lastSnapshot(ExecutionStartResult result) {
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-        return snapshots.getLast();
     }
 }

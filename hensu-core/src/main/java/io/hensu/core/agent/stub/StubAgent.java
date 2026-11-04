@@ -6,6 +6,7 @@ import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.agent.AgentResponse.TextResponse;
 import io.hensu.core.agent.ToolCapable;
 import io.hensu.core.agent.ToolSession;
+import io.hensu.core.agent.TurnJournal;
 import io.hensu.core.tool.ToolDefinition;
 import java.util.HashMap;
 import java.util.List;
@@ -65,13 +66,16 @@ public class StubAgent implements Agent, ToolCapable {
 
     @Override
     public ToolSession openToolSession(
-            String prompt, Map<String, Object> context, List<ToolDefinition> tools) {
+            String prompt,
+            Map<String, Object> context,
+            List<ToolDefinition> tools,
+            TurnJournal turns) {
         String nodeId = context != null ? (String) context.get("current_node") : null;
         String response = responseRegistry.getResponse(nodeId, id, context, prompt);
         if (response == null) {
             response = generateMockResponse(prompt, context);
         }
-        return new StubToolSession(response);
+        return new StubToolSession(response, turns);
     }
 
     /// Executes the agent by returning a configured or generated stub response.

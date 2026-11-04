@@ -88,7 +88,7 @@ flowchart TD
   modules
 - **GraalVM native-image safe** — no reflection, no classpath scanning, explicit wiring only
 - **Thread-safe after construction** — immutable components wired via `HensuFactory`
-- **Storage interfaces in core** — `WorkflowRepository` and `WorkflowStateRepository` with in-memory defaults; server delegates via CDI
+- **Storage interfaces in core** — `WorkflowRepository`, plus `WorkflowStateReader` and the writable `WorkflowStateRepository` built on it, with in-memory defaults; the server implements only the reader, in its claim store
 
 ## Quick Start
 
@@ -158,7 +158,9 @@ ToolRouter router = new ToolRouter(List.of(myCommandProvider, myMcpProvider));
 
 // Discovery (ToolRegistry) and invocation (ToolInvoker) go through the same object
 List<ToolDefinition> available = router.all();
-ToolCallResult result = router.call("analyze", Map.of("input", "..."), context);
+// A call is keyed by the node attempt's position and its sequence within the attempt
+ToolCall call = new ToolCall(ToolCall.key(state.position(), 1), "analyze", Map.of("input", "..."));
+ToolCallResult result = router.call(call, context);
 
 // Every outcome is typed, so a refusal is distinguishable from a broken tool
 if (result.status() == ToolCallStatus.SUCCESS) { /* ... */ }
@@ -170,6 +172,7 @@ if (result.status() == ToolCallStatus.SUCCESS) { /* ... */ }
 |-------------------------|----------------------------------------------------------------------------------------------------|
 | `ToolDefinition`        | Tool descriptor with name, description, parameters, and the raw JSON Schema its source published   |
 | `ParameterDef`          | Parameter with name, type, required flag, default value, and a `sensitive` flag                    |
+| `ToolCall`              | One invocation: key (`position#sequence`, stable across recovery), tool name, and arguments        |
 | `ToolCallStatus`        | Outcome vocabulary shared by every layer (success, failure, denial, timeout, …)                    |
 | `ToolProvider`          | A runtime's tool source: catalog plus invocation; `settledTools()` reports what is already live    |
 | `ToolInvoker`           | Invocation half of the seam, consumed by the tool loop                                             |
@@ -182,7 +185,7 @@ if (result.status() == ToolCallStatus.SUCCESS) { /* ... */ }
 | `UncontainedOnApproval` | Optional: a provider whose calls may run without containment once a reviewer says so               |
 | `CapabilityGaps`        | The reserved state keys recording what a run was refused, and the vocabulary of a refusal          |
 
-`FileToolProvider` ships with the engine – six file tools that need no catalog and no launch, which a runtime registers like any other provider; the server contributes a provider backed by MCP server connections; the CLI contributes providers for local commands and stdio MCP servers. When a node declares tools and its agent implements `ToolCapable`, `ToolLoopRunner` resolves declared tool names against the router's catalog, filters to the agent's declared subset, and passes full schemas into the tool session.
+`FileToolProvider` ships with the engine – six file tools that need no catalog and no launch, which a runtime registers like any other provider; the server contributes a provider backed by the catalog the tenant's relay published, whose calls the relay pulls; the CLI contributes providers for local commands and stdio MCP servers. When a node declares tools and its agent implements `ToolCapable`, `ToolLoopRunner` resolves declared tool names against the router's catalog, filters to the agent's declared subset, and passes full schemas into the tool session.
 
 A provider that throws while reporting its catalog is logged and skipped rather than propagated, so one unreachable tool source costs its own tools instead of aborting the execution. Two providers exposing the same tool name is a configuration error: it fails the node, and never reaches the agent as an ordinary tool failure it might retry against.
 
@@ -208,13 +211,18 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── DefaultAgentRegistry.java  # Thread-safe ConcurrentHashMap implementation
 │   ├── ToolCapable.java           # Narrow interface for agents that support tool sessions
 │   ├── ToolSession.java           # Call-scoped tool loop session (start/submit/compact/close)
+│   ├── TurnJournal.java           # A session's view of the journal: records or replays model turns
 │   └── stub/
 │       ├── StubAgentProvider.java # Testing provider (priority 1000 when enabled)
 │       ├── StubAgent.java         # Mock agent returning stub responses
 │       ├── StubToolSession.java   # Scripted tool session for testing (---TURN--- syntax)
 │       └── StubResponseRegistry.java
 ├── execution/
-│   ├── WorkflowExecutor.java          # Main graph traversal engine (execute + executeFrom for resume)
+│   ├── WorkflowExecutor.java          # Main graph traversal engine (execute, executeFrom for resume, executeNested)
+│   ├── ExecutionJournal.java          # Records model turns and nested-flow checkpoints so a recovered run replays them
+│   ├── RunAbortedException.java       # Sealed: stops a run; no layer converts it into an outcome
+│   ├── RunPreemptedException.java     # The run's claim no longer stands; another run continues the execution
+│   ├── ReplayDivergenceException.java # A replayed call differs from the recorded one; the execution fails
 │   ├── NodeLifecycleCoordinator.java  # Per-node lifecycle: phase dispatch + pipeline orchestration
 │   ├── executor/
 │   │   ├── NodeExecutor.java              # Interface for node type executors
@@ -249,7 +257,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   │   ├── PostNodeExecutionProcessor.java      # Post-execution processor marker interface
 │   │   ├── ProcessorContext.java                # Per-iteration context (node + result + state)
 │   │   ├── ProcessorPipeline.java               # Orchestrates pre/post processor chains
-│   │   ├── CheckpointPreProcessor.java          # Fires listener.onCheckpoint for crash-recovery persistence
+│   │   ├── CheckpointPreProcessor.java          # Main flow: fires listener.onCheckpoint; nested flow: journals the checkpoint
 │   │   ├── NodeStartPreProcessor.java           # Fires listener.onNodeStart for observability
 │   │   ├── OutputExtractionPostProcessor.java   # Validates then stores node output in state context
 │   │   ├── RubricPostProcessor.java             # Quality evaluation + auto-backtrack
@@ -326,6 +334,7 @@ hensu-core/src/main/java/io/hensu/core/
 │       └── ScoreExtractingEvaluator.java # Reads score engine variable from context; accumulates recommendation feedback
 ├── tool/                          # Protocol-agnostic tool descriptors and the provider seam
 │   ├── ToolDefinition.java        # Tool shape (name, params, return type)
+│   ├── ToolCall.java              # One invocation, keyed position#sequence within its execution
 │   ├── ToolCallStatus.java        # Outcome vocabulary shared by every layer
 │   ├── ToolCallResult.java        # Tool execution result (typed status, exit code, asText())
 │   ├── ToolProvider.java          # A runtime's tool source: catalog plus invocation
@@ -364,7 +373,8 @@ hensu-core/src/main/java/io/hensu/core/
     ├── HensuState.java            # Mutable runtime state during execution
     ├── HensuSnapshot.java         # Immutable checkpoint record for persistence
     ├── ExecutionPhase.java        # Sealed: Initial | Awaiting(nodeId, processorId, ...) | Terminal
-    ├── WorkflowStateRepository.java     # Tenant-scoped state storage interface
+    ├── WorkflowStateReader.java         # Tenant-scoped state queries (read side)
+    ├── WorkflowStateRepository.java     # Writable state storage, extends the reader
     └── InMemoryWorkflowStateRepository.java  # Default in-memory implementation
 ```
 

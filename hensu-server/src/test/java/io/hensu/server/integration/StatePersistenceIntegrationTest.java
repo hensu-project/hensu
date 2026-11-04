@@ -9,7 +9,6 @@ import io.hensu.server.workflow.ExecutionStartResult;
 import io.hensu.server.workflow.WorkflowService;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,11 +43,7 @@ class StatePersistenceIntegrationTest extends IntegrationTestBase {
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("input", "test data"));
 
         // Verify snapshot saved at pause point
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot pausedSnapshot = snapshots.getLast();
+        HensuSnapshot pausedSnapshot = snapshotOf(result);
         assertThat(pausedSnapshot.checkpointReason()).isEqualTo("paused");
         assertThat(pausedSnapshot.currentNodeId()).isEqualTo("pause-point");
         assertThat(pausedSnapshot.context()).containsEntry("step-a", "Step A output");
@@ -62,7 +57,7 @@ class StatePersistenceIntegrationTest extends IntegrationTestBase {
         // The repository stores one snapshot per execution ID — the completed
         // snapshot replaces the paused one.
         HensuSnapshot completedSnapshot =
-                workflowStateRepository
+                stateReader
                         .findByExecutionId(TEST_TENANT, pausedSnapshot.executionId())
                         .orElseThrow();
         assertThat(completedSnapshot.checkpointReason()).isEqualTo("completed");
@@ -79,7 +74,7 @@ class StatePersistenceIntegrationTest extends IntegrationTestBase {
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("input", "test data"));
 
         Optional<HensuSnapshot> paused =
-                workflowStateRepository.findByExecutionId(TEST_TENANT, result.executionId());
+                stateReader.findByExecutionId(TEST_TENANT, result.executionId());
         assertThat(paused).isPresent();
         assertThat(paused.get().checkpointReason()).isEqualTo("paused");
 
@@ -87,9 +82,7 @@ class StatePersistenceIntegrationTest extends IntegrationTestBase {
         workflowService.resumeExecution(TEST_TENANT, result.executionId(), ResumeInput.NONE);
 
         // The completed snapshot should preserve the same workflow ID
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        HensuSnapshot completed = snapshots.getLast();
+        HensuSnapshot completed = snapshotOf(result);
         assertThat(completed.checkpointReason()).isEqualTo("completed");
         assertThat(completed.workflowId()).isEqualTo(result.workflowId());
     }
@@ -109,9 +102,7 @@ class StatePersistenceIntegrationTest extends IntegrationTestBase {
                 new ResumeInput.ApplyContextEdits(Map.of("extra", "injected-value")));
 
         // Verify the injected key is present in the final state
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        HensuSnapshot completed = snapshots.getLast();
+        HensuSnapshot completed = snapshotOf(result);
         assertThat(completed.checkpointReason()).isEqualTo("completed");
         assertThat(completed.context()).containsEntry("extra", "injected-value");
     }

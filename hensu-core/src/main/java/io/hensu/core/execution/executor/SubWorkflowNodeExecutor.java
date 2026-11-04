@@ -1,6 +1,8 @@
 package io.hensu.core.execution.executor;
 
+import io.hensu.core.execution.ExecutionJournal;
 import io.hensu.core.execution.WorkflowExecutor;
+import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuState;
@@ -79,8 +81,27 @@ public class SubWorkflowNodeExecutor implements NodeExecutor<SubWorkflowNode> {
         }
         subContext.put(DEPTH_KEY, parentDepth + 1);
 
+        // The child runs as a nested flow of this attempt: it shares the execution and the
+        // journal, and resumes from its own latest journaled checkpoint when a recovery
+        // re-enters this node, rather than re-running nodes whose effects happened.
+        String scope = state.position() + "/w:" + node.getId() + "/";
+        ExecutionJournal journal = context.getJournal();
+        HensuState childState =
+                journal.flowCheckpoint(scope)
+                        .map(checkpoint -> checkpoint.toNestedState(scope))
+                        .orElseGet(
+                                () ->
+                                        new HensuState.Builder()
+                                                .executionId(state.getExecutionId())
+                                                .workflowId(subWorkflow.getId())
+                                                .currentNode(subWorkflow.getStartNode())
+                                                .context(subContext)
+                                                .history(new ExecutionHistory())
+                                                .scope(scope)
+                                                .build());
         ExecutionResult subResult =
-                workflowExecutor.execute(subWorkflow, subContext, context.getListener());
+                workflowExecutor.executeNested(
+                        subWorkflow, childState, context.getListener(), journal);
 
         if (subResult instanceof ExecutionResult.Completed completed) {
             for (Map.Entry<String, String> entry : node.getOutputMapping().entrySet()) {

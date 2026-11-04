@@ -42,12 +42,12 @@ and a handful of constructs resolve differently in each. The CLI executes the wo
 operator's own machine; the server executes it for a tenant and has no local shell at all. Decide
 which one you are targeting before you reach for the constructs below.
 
-| DSL construct   | CLI runtime                                                                                                     | Server runtime                                                                                                       |
-|:----------------|:----------------------------------------------------------------------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------|
-| `execute("id")` | Resolved through `commands.yaml` and run under the OS sandbox; an unknown id fails the action                   | **Not supported.** The action fails at runtime with "Server mode does not support local command execution"           |
-| `send("id", …)` | Dispatched to an `ActionHandler` registered in this process; an unknown id fails the action                     | Dispatched to a registered `ActionHandler`, falling back to MCP for an unrecognized one                              |
-| `tools = [...]` | Catalog commands, `mcp.yaml` stdio servers, and built-in file tools — every call passes the approval gate       | Tools offered by the tenant's own MCP servers over the split-pipe transport; ungated, because containment is theirs  |
-| `review(…)`     | Blocks the execution and is answered over the daemon socket or stdin; `AWAITING_REVIEW` is not a terminal state | Checkpoints, drops the lease, reports `paused`, and resumes only when something calls `POST /executions/{id}/resume` |
+| DSL construct   | CLI runtime                                                                                                     | Server runtime                                                                                                          |
+|:----------------|:----------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------|
+| `execute("id")` | Resolved through `commands.yaml` and run under the OS sandbox; an unknown id fails the action                   | **Not supported.** The action fails at runtime with "Server mode does not support local command execution"              |
+| `send("id", …)` | Dispatched to an `ActionHandler` registered in this process; an unknown id fails the action                     | Dispatched to a registered `ActionHandler`; an unknown id fails the action                                              |
+| `tools = [...]` | Catalog commands, `mcp.yaml` stdio servers, and built-in file tools — every call passes the approval gate       | Tools offered by the tenant's own MCP servers, pulled by the tenant's relay; ungated, because containment is theirs     |
+| `review(…)`     | Blocks the execution and is answered over the daemon socket or stdin; `AWAITING_REVIEW` is not a terminal state | Checkpoints, gives up its claim, reports `paused`, and resumes only when something calls `POST /executions/{id}/resume` |
 
 Everything else — nodes, transitions, rubrics, state schema, consensus, sub-workflows — behaves
 identically, because it is decided by `hensu-core`, which both runtimes embed unchanged.
@@ -1113,8 +1113,8 @@ If the analyst emits `"approved": false` and the reviewer approves, the workflow
 
 Two consequences are worth knowing when running with durable persistence.
 
-- **A fork recovers as a unit.** Checkpoints record a single cursor, so branches of a `fork` are not checkpointed individually. A crash anywhere inside a fork re-runs *every* sub-flow on recovery, including branches that had already finished, and their agent calls are billed again. Sub-flow work must be safe to repeat.
-- **A review can be re-requested.** The reviewer's verdict lives only for the moment between the decision being applied and the outgoing transition being resolved. A crash inside that window recovers to the checkpoint before the review, so the review is requested once more. This is the same at-least-once guarantee that already applies to every node.
+- **A fork recovers branch by branch.** Each branch of a `fork`, and each sub-workflow, records its own checkpoints in the execution journal, and the model turns and tool outcomes of every agent that declares tools are recorded as well. A crash inside a fork resumes each branch from its last checkpoint: a branch that had finished is not run again, and an interrupted node replays what it had recorded instead of asking the model or calling a tool again. The branches of a `parallel` node take no checkpoints: they run again, replaying what they recorded. An agent without tools records nothing and is asked again.
+- **A review can be re-requested.** The reviewer's verdict lives only for the moment between the decision being applied and the outgoing transition being resolved. A crash inside that window recovers to the checkpoint before the review, so the review is requested once more.
 
 ## Available Models
 

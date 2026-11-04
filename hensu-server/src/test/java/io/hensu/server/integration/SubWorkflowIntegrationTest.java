@@ -6,7 +6,6 @@ import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.workflow.ExecutionStartResult;
 import io.quarkus.test.junit.QuarkusTest;
-import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -34,11 +33,7 @@ class SubWorkflowIntegrationTest extends IntegrationTestBase {
         ExecutionStartResult result =
                 pushAndExecute(parent, Map.of("topic", "integration testing"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.context()).containsKey("child_result");
     }
@@ -54,9 +49,7 @@ class SubWorkflowIntegrationTest extends IntegrationTestBase {
                 pushAndExecute(parent, Map.of("topic", "integration testing"));
 
         HensuSnapshot snapshot =
-                workflowStateRepository
-                        .findByExecutionId(TEST_TENANT, result.executionId())
-                        .orElseThrow();
+                stateReader.findByExecutionId(TEST_TENANT, result.executionId()).orElseThrow();
         assertThat(snapshot.checkpointReason()).isEqualTo("failed");
     }
 }

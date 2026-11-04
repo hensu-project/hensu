@@ -46,7 +46,9 @@ class WorkflowExecutorResumeTest extends WorkflowExecutorTestBase {
         when(mockAgent.execute(any(), any()))
                 .thenReturn(AgentResponse.TextResponse.of("step2 result"));
 
-        var result = executor.executeFrom(workflow, savedState);
+        var result =
+                executor.executeFrom(
+                        workflow, savedState, ExecutionListener.NOOP, ExecutionJournal.NONE);
 
         assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
         var completed = (ExecutionResult.Completed) result;
@@ -77,7 +79,13 @@ class WorkflowExecutorResumeTest extends WorkflowExecutorTestBase {
                         .history(new ExecutionHistory())
                         .build();
 
-        assertThatThrownBy(() -> executor.executeFrom(workflow, staleState))
+        assertThatThrownBy(
+                        () ->
+                                executor.executeFrom(
+                                        workflow,
+                                        staleState,
+                                        ExecutionListener.NOOP,
+                                        ExecutionJournal.NONE))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Node not found");
     }
@@ -109,7 +117,9 @@ class WorkflowExecutorResumeTest extends WorkflowExecutorTestBase {
                         .phase(phase)
                         .build();
 
-        var result = executor.executeFrom(workflow, savedState);
+        var result =
+                executor.executeFrom(
+                        workflow, savedState, ExecutionListener.NOOP, ExecutionJournal.NONE);
 
         assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
         verify(mockAgent, never()).execute(any(), any());
@@ -134,7 +144,13 @@ class WorkflowExecutorResumeTest extends WorkflowExecutorTestBase {
                         .phase(ExecutionPhase.TERMINAL)
                         .build();
 
-        assertThatThrownBy(() -> executor.executeFrom(workflow, savedState))
+        assertThatThrownBy(
+                        () ->
+                                executor.executeFrom(
+                                        workflow,
+                                        savedState,
+                                        ExecutionListener.NOOP,
+                                        ExecutionJournal.NONE))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("terminal");
     }
@@ -166,7 +182,13 @@ class WorkflowExecutorResumeTest extends WorkflowExecutorTestBase {
                         .phase(phase)
                         .build();
 
-        assertThatThrownBy(() -> executor.executeFrom(workflow, savedState))
+        assertThatThrownBy(
+                        () ->
+                                executor.executeFrom(
+                                        workflow,
+                                        savedState,
+                                        ExecutionListener.NOOP,
+                                        ExecutionJournal.NONE))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("wrong-node")
                 .hasMessageContaining("step1");

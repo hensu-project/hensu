@@ -12,7 +12,8 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/// Verifies the isolation guarantees {@link HensuState#branch(String)} owes concurrent sub-flows.
+/// Verifies the isolation guarantees {@link HensuState#branch(String, String)} owes concurrent
+/// sub-flows.
 @DisplayName("HensuState.branch")
 class HensuStateBranchTest {
 
@@ -22,16 +23,23 @@ class HensuStateBranchTest {
         HensuState parent = parentState();
         parent.setReviewVerdict(ReviewVerdict.rejection("not good enough"));
 
-        assertThat(parent.branch("worker").getReviewVerdict()).isNull();
+        assertThat(parent.branch("worker", "0/f:worker/").getReviewVerdict()).isNull();
     }
 
     @Test
-    @DisplayName("a branch is marked as such so its checkpoints can be suppressed")
-    void branchIsMarked() {
+    @DisplayName("a branch is a nested flow counting its own steps under its scope")
+    void branchIsNested() {
         HensuState parent = parentState();
+        parent.advanceStep();
+        parent.advanceStep();
 
-        assertThat(parent.branch("worker").isBranchState()).isTrue();
-        assertThat(parent.isBranchState()).isFalse();
+        HensuState branch = parent.branch("worker", parent.position() + "/f:worker/");
+
+        assertThat(branch.isNested()).isTrue();
+        assertThat(branch.getStep()).isZero();
+        assertThat(branch.position()).isEqualTo("2/f:worker/0");
+        assertThat(parent.isNested()).isFalse();
+        assertThat(parent.position()).isEqualTo("2");
     }
 
     @Test
@@ -40,8 +48,8 @@ class HensuStateBranchTest {
         HensuState parent = parentState();
         parent.getHistory().addStep(step("start"));
 
-        HensuState left = parent.branch("left");
-        HensuState right = parent.branch("right");
+        HensuState left = parent.branch("left", "0/f:left/");
+        HensuState right = parent.branch("right", "0/f:right/");
         left.getHistory().addStep(step("left-work"));
         right.getHistory().addStep(step("right-work"));
 

@@ -1,6 +1,7 @@
 package io.hensu.server.security;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import io.hensu.server.persistence.PersistenceException;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
@@ -40,6 +41,18 @@ public class GlobalExceptionMapper implements ExceptionMapper<Throwable> {
             return Response.status(status)
                     .type(MediaType.APPLICATION_JSON)
                     .entity(Map.of("error", message, "status", status))
+                    .build();
+        }
+
+        if (exception instanceof PersistenceException) {
+            // This node cannot reach the store right now; another node may. A load balancer
+            // or client retries a 503 elsewhere, and the readiness check takes the node out
+            // of rotation until it recovers.
+            LOG.warnv("Store unavailable: {0}", exception.getMessage());
+            return Response.status(Response.Status.SERVICE_UNAVAILABLE)
+                    .header("Retry-After", "1")
+                    .type(MediaType.APPLICATION_JSON)
+                    .entity(Map.of("error", "Storage unavailable on this node", "status", 503))
                     .build();
         }
 

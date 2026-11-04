@@ -39,7 +39,8 @@ class InMemoryWorkflowStateRepositoryTest {
                         correlationId,
                         Instant.now()),
                 Instant.now(),
-                checkpointReason);
+                checkpointReason,
+                0);
     }
 
     private HensuSnapshot createSnapshot(
@@ -53,7 +54,8 @@ class InMemoryWorkflowStateRepositoryTest {
                 null,
                 null,
                 Instant.now(),
-                checkpointReason);
+                checkpointReason,
+                0);
     }
 
     @Test

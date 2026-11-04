@@ -11,7 +11,8 @@ import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.HensuState;
-import io.hensu.core.state.WorkflowStateRepository;
+import io.hensu.server.execution.Claim;
+import io.hensu.server.execution.ExecutionStore;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import java.time.Instant;
@@ -27,13 +28,14 @@ import org.mockito.ArgumentCaptor;
 
 class ExecutionResultHandlerTest {
 
-    private WorkflowStateRepository stateRepository;
+    private ExecutionStore store;
+    private static final Claim CLAIM = new Claim("tenant-1", "exec-1", 3);
     private ExecutionEventBroadcaster eventBroadcaster;
     private static final Logger LOG = Logger.getLogger(ExecutionResultHandlerTest.class);
 
     @BeforeEach
     void setUp() {
-        stateRepository = mock(WorkflowStateRepository.class);
+        store = mock(ExecutionStore.class);
         eventBroadcaster = mock(ExecutionEventBroadcaster.class);
     }
 
@@ -92,18 +94,16 @@ class ExecutionResultHandlerTest {
             String expectedStatus,
             Class<? extends ExecutionEvent> expectedEventType) {
 
-        ExecutionResultHandler.handle(
-                result,
-                "tenant-1",
-                "exec-1",
-                "wf-1",
-                stateRepository,
-                eventBroadcaster,
-                LOG,
-                "execute");
+        ExecutionResultHandler.handle(result, CLAIM, "wf-1", store, eventBroadcaster, LOG);
 
+        // Every outcome is written under the run's claim: a pause hands the execution to a
+        // reviewer, everything else finishes it.
         ArgumentCaptor<HensuSnapshot> snapshotCaptor = ArgumentCaptor.forClass(HensuSnapshot.class);
-        verify(stateRepository).save(eq("tenant-1"), snapshotCaptor.capture());
+        if (expectedStatus.equals("paused")) {
+            verify(store).pause(eq(CLAIM), snapshotCaptor.capture());
+        } else {
+            verify(store).finish(eq(CLAIM), snapshotCaptor.capture());
+        }
         assertThat(snapshotCaptor.getValue().checkpointReason()).isEqualTo(expectedStatus);
 
         verify(eventBroadcaster).publish(eq("exec-1"), any(expectedEventType));

@@ -1,0 +1,50 @@
+{
+  "id" : "mcp-review-resume",
+  "version" : "1.0.0",
+  "startNode" : "draft",
+  "agents" : {
+    "writer" : {
+      "id" : "writer",
+      "role" : "writer",
+      "model" : "stub"
+    },
+    "mcp-agent" : {
+      "id" : "mcp-agent",
+      "role" : "researcher",
+      "model" : "stub",
+      "tools" : [ "read_file" ]
+    }
+  },
+  "nodes" : {
+    "draft" : {
+      "id" : "draft",
+      "nodeType" : "STANDARD",
+      "agentId" : "writer",
+      "prompt" : "Draft the request",
+      "reviewConfig" : {
+        "mode" : "REQUIRED",
+        "allowBacktrack" : false,
+        "allowEdit" : false
+      },
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "read-node"
+      } ]
+    },
+    "read-node" : {
+      "id" : "read-node",
+      "nodeType" : "STANDARD",
+      "agentId" : "mcp-agent",
+      "prompt" : "Read the file the operator asked about",
+      "transitionRules" : [ {
+        "type" : "success",
+        "targetNode" : "done"
+      } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

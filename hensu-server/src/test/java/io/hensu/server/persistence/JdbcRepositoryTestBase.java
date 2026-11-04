@@ -9,6 +9,9 @@ import io.hensu.core.workflow.node.Node;
 import io.hensu.core.workflow.node.StandardNode;
 import io.hensu.core.workflow.transition.SuccessTransition;
 import io.hensu.serialization.WorkflowSerializer;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,9 +19,9 @@ import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.postgresql.ds.PGSimpleDataSource;
-import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /// Shared Testcontainers setup for JDBC repository tests.
 ///
@@ -28,7 +31,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 /// @implNote Package-private. Not part of the public API.
 ///
 /// @see JdbcWorkflowRepositoryTest
-/// @see JdbcWorkflowStateRepositoryTest
+/// @see JdbcExecutionStoreTest
 @Testcontainers
 abstract class JdbcRepositoryTestBase {
 
@@ -36,7 +39,7 @@ abstract class JdbcRepositoryTestBase {
     static final String OTHER_TENANT = "other-tenant";
 
     @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
 
     static DataSource dataSource;
     static ObjectMapper objectMapper;
@@ -61,6 +64,27 @@ abstract class JdbcRepositoryTestBase {
                 .migrate();
 
         objectMapper = WorkflowSerializer.createMapper();
+    }
+
+    /// Deletes every execution of a tenant, with its journal and tool intents.
+    ///
+    /// Test cleanup only: the server has no unfenced write to execution state, so tests
+    /// clear the table directly. Executions go first, since they reference workflows.
+    ///
+    /// @apiNote **Side effects**: deletes rows from `runtime.execution_states`, cascading
+    ///     to `runtime.execution_journal` and `runtime.tool_intents`
+    ///
+    /// @param tenantId the tenant whose executions to delete, not null
+    static void deleteExecutions(String tenantId) {
+        try (Connection c = dataSource.getConnection();
+                PreparedStatement ps =
+                        c.prepareStatement(
+                                "DELETE FROM runtime.execution_states WHERE tenant_id = ?")) {
+            ps.setString(1, tenantId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Cannot delete executions of " + tenantId, e);
+        }
     }
 
     /// Builds a minimal two-node workflow for persistence round-trip testing.

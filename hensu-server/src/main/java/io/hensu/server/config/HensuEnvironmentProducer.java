@@ -4,22 +4,22 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hensu.adapter.langchain4j.LangChain4jProvider;
 import io.hensu.core.HensuEnvironment;
 import io.hensu.core.HensuFactory;
+import io.hensu.core.agent.stub.StubResponseRegistry;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.GenericNodeHandler;
 import io.hensu.core.review.ReviewHandler;
 import io.hensu.core.tool.ToolProvider;
 import io.hensu.core.tool.ToolRouter;
-import io.hensu.server.persistence.ExecutionLeaseManager;
 import io.hensu.server.persistence.InMemoryToolAuditRepository;
 import io.hensu.server.persistence.JdbcToolAuditRepository;
 import io.hensu.server.persistence.JdbcWorkflowRepository;
-import io.hensu.server.persistence.JdbcWorkflowStateRepository;
 import io.hensu.server.persistence.ToolAuditRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Properties;
 import javax.sql.DataSource;
@@ -70,8 +70,6 @@ public class HensuEnvironmentProducer {
 
     @Inject ObjectMapper objectMapper;
 
-    @Inject ExecutionLeaseManager leaseManager;
-
     @Inject Instance<ToolProvider> toolProviders;
 
     /// Produces the Hensu runtime environment for CDI injection.
@@ -97,12 +95,7 @@ public class HensuEnvironmentProducer {
                 config.getOptionalValue("quarkus.datasource.active", Boolean.class).orElse(true);
 
         if (dsActive && dataSourceInstance.isResolvable()) {
-            DataSource ds = dataSourceInstance.get();
-            factoryBuilder
-                    .workflowRepository(new JdbcWorkflowRepository(ds))
-                    .workflowStateRepository(
-                            new JdbcWorkflowStateRepository(
-                                    ds, objectMapper, leaseManager.getServerNodeId()));
+            factoryBuilder.workflowRepository(new JdbcWorkflowRepository(dataSourceInstance.get()));
             LOG.info("Using JDBC persistence (PostgreSQL)");
         } else {
             LOG.info("Using in-memory persistence");
@@ -114,6 +107,7 @@ public class HensuEnvironmentProducer {
         }
 
         hensuEnvironment = factoryBuilder.build();
+        configureStubDirectory();
 
         LOG.info("Configured HensuEnvironment via HensuFactory");
 
@@ -151,6 +145,25 @@ public class HensuEnvironmentProducer {
                     .registerGenericHandler(handler.getType(), handler);
             LOG.infov("Registered generic handler: {0}", handler.getType());
         }
+    }
+
+    /// Points stub mode at a directory of scripted responses.
+    ///
+    /// Stub mode answers every agent from `stubs/{scenario}/{node}.txt`, and the
+    /// classpath carries only the scripts the image was built with. A directory
+    /// lets an operator – or the multi-node fault-injection test – script a deployed
+    /// server without rebuilding it. Ignored unless stub mode is on.
+    private void configureStubDirectory() {
+        boolean stubEnabled =
+                config.getOptionalValue("hensu.stub.enabled", Boolean.class).orElse(false);
+        config.getOptionalValue("hensu.stub.directory", String.class)
+                .filter(directory -> stubEnabled && !directory.isBlank())
+                .ifPresent(
+                        directory -> {
+                            StubResponseRegistry.getInstance()
+                                    .setStubsDirectory(Path.of(directory));
+                            LOG.infov("Stub responses read from {0}", directory);
+                        });
     }
 
     /// Extracts `hensu.credentials.*` and `hensu.stub.enabled` from Quarkus config.

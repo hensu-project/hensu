@@ -25,9 +25,10 @@ import java.util.StringJoiner;
 ///   canonical JSON, which at least stays machine-readable.
 ///
 /// ### Runtime Neutrality
-/// Both runtimes render the same way: the server calls tools over the split
-/// pipe and the CLI calls them over stdio or Streamable HTTP, but an agent must
-/// not be able to tell which transport produced a result.
+/// Both runtimes render the same way: the server's tool calls are pulled and
+/// answered by the tenant's relay and the CLI calls tools over stdio or
+/// Streamable HTTP, but an agent must not be able to tell which transport
+/// produced a result.
 ///
 /// ### Why `isError` Becomes `FAILURE`
 /// In the protocol, `isError: true` is a *tool-level* error – "no such file, try
@@ -39,8 +40,8 @@ import java.util.StringJoiner;
 /// every provider shares, not a change to MCP rendering. The consequence is
 /// real and worth naming: the agent loop cannot tell a tool that answered
 /// negatively from one that could not be reached. Whether the vocabulary should
-/// grow a constant is filed separately as
-/// `docs/tickets/tool-call-status-negative-answers.md`.
+/// grow a constant is an open design question about `ToolCallStatus` itself,
+/// to be settled there rather than in this renderer.
 ///
 /// @see ToolCallResult for the result this feeds
 public final class McpResultRenderer {

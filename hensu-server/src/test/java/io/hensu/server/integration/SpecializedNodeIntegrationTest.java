@@ -45,11 +45,7 @@ class SpecializedNodeIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of());
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
 
         List<Map<String, Object>> payloads = testActionHandler.getReceivedPayloads();
@@ -65,11 +61,7 @@ class SpecializedNodeIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("input", "test"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.currentNodeId()).isEqualTo("success-end");
     }
@@ -81,11 +73,7 @@ class SpecializedNodeIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("input", "test"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.currentNodeId()).isEqualTo("failure-end");
     }
@@ -97,11 +85,7 @@ class SpecializedNodeIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("input", "test"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.currentNodeId()).isEqualTo("cancel-end");
     }
@@ -112,11 +96,7 @@ class SpecializedNodeIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of());
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.context()).containsKey("validate");
         assertThat(snapshot.context().get("validate").toString()).contains("Validation passed");
@@ -130,11 +110,7 @@ class SpecializedNodeIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("input", "test data"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.currentNodeId()).isEqualTo("done");
 

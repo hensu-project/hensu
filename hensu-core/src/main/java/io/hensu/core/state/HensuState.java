@@ -8,7 +8,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.UUID;
 
 /// Mutable workflow execution state container.
 ///
@@ -43,7 +42,7 @@ public final class HensuState {
     private RubricEvaluation rubricEvaluation;
     private String currentNode;
     private final Map<String, Integer> retryCounters;
-    private ExecutionPhase phase = ExecutionPhase.INITIAL;
+    private ExecutionPhase phase;
 
     // Transient — set before executeFrom(), consumed by post-processors, never persisted.
     private ResumeInput resumeInput;
@@ -56,8 +55,13 @@ public final class HensuState {
     // persisted and never propagated to fork branches.
     private ReviewVerdict reviewVerdict;
 
-    // Transient — set by branch(), read by CheckpointPreProcessor, never persisted.
-    private boolean branchState;
+    // Persisted: node attempts this flow has completed. It names the journal position of
+    // the next attempt, so a run recovered from a checkpoint reaches the same position.
+    private long step;
+
+    // Transient: the journal scope of a nested flow, empty for an execution's main flow.
+    // Set by whichever executor starts the nested flow; never persisted with main state.
+    private final String scope;
 
     public HensuState(Builder builder) {
         this.executionId = Objects.requireNonNull(builder.executionId);
@@ -68,19 +72,8 @@ public final class HensuState {
         this.rubricEvaluation = builder.rubricEvaluation;
         this.retryCounters = new HashMap<>(builder.retryCounters);
         this.phase = builder.phase != null ? builder.phase : ExecutionPhase.INITIAL;
-    }
-
-    public HensuState(
-            HashMap<String, Object> context,
-            String workflowId,
-            String currentNode,
-            ExecutionHistory history) {
-        this.executionId = UUID.randomUUID().toString();
-        this.context = context;
-        this.workflowId = workflowId;
-        this.currentNode = currentNode;
-        this.history = history;
-        this.retryCounters = new HashMap<>();
+        this.step = builder.step;
+        this.scope = builder.scope;
     }
 
     // Getters
@@ -213,51 +206,87 @@ public final class HensuState {
         this.reviewVerdict = reviewVerdict;
     }
 
-    /// Returns whether this state was produced by {@link #branch(String)} for concurrent
-    /// sub-flow execution.
+    /// Returns how many node attempts this flow has completed.
     ///
-    /// Transient — never persisted or included in snapshots. Branch states are excluded from
-    /// checkpointing so that a fork recovers as one atomic unit; see
-    /// {@link io.hensu.core.execution.pipeline.CheckpointPreProcessor}.
+    /// Persisted with the main flow's checkpoint and advanced by the executor each time
+    /// a node completes and the flow moves on, so the attempt a checkpoint opens and the
+    /// attempt a recovery re-enters carry the same number. Nested flows count from zero.
     ///
-    /// @return true when this state belongs to a fork branch rather than the main execution
-    public boolean isBranchState() {
-        return branchState;
+    /// @return the completed node attempts, never negative
+    public long getStep() {
+        return step;
     }
 
-    /// Creates an isolated state copy for concurrent branch execution.
+    /// Records that the current node attempt completed and the flow moved on.
+    public void advanceStep() {
+        step++;
+    }
+
+    /// Returns the journal scope of this flow.
+    ///
+    /// Empty for an execution's main flow, whose checkpoints are the execution's own
+    /// state. A nested flow – a fork branch, a parallel branch, a sub-workflow – has a
+    /// scope naming the parent attempt that started it, and records its checkpoints in
+    /// the execution journal under that scope instead; see
+    /// {@link io.hensu.core.execution.pipeline.CheckpointPreProcessor}.
+    ///
+    /// @return the scope, empty for the main flow, never null
+    public String getScope() {
+        return scope;
+    }
+
+    /// Returns whether this state belongs to a nested flow rather than the main flow.
+    ///
+    /// @return true for fork, parallel and sub-workflow flows
+    public boolean isNested() {
+        return !scope.isEmpty();
+    }
+
+    /// Returns the journal position of the node attempt this state is at.
+    ///
+    /// The position is the scope followed by the step, and identifies the attempt for
+    /// as long as the execution lives: tool calls and model turns of the attempt are
+    /// journaled under it, and a recovered run reproduces it.
+    ///
+    /// @return the position, never null
+    public String position() {
+        return scope + step;
+    }
+
+    /// Creates an isolated state copy for a nested flow.
     ///
     /// Returns a new `HensuState` with defensive copies of the context map, the retry counters,
-    /// and the execution history, positioned at `branchNode`. Writes to the branch state do not
-    /// affect the parent or sibling branches, which matters because every branch runs on its own
-    /// virtual thread and {@link ExecutionHistory} is backed by plain `ArrayList`s.
+    /// and the execution history, positioned at `branchNode`, counting steps from zero under
+    /// `scope`. Writes to the branch state do not affect the parent or sibling branches, which
+    /// matters because every branch runs on its own virtual thread and {@link ExecutionHistory}
+    /// is backed by plain `ArrayList`s.
     ///
     /// The caller is responsible for merging each branch's new history entries back into the
     /// parent history in a deterministic order once all branches have joined; see
     /// {@link io.hensu.core.execution.executor.ForkNodeExecutor}.
     ///
     /// Transient fields are not carried over: the returned state has no resume input, no review
-    /// verdict, and no redirect flag, and is marked as a branch state so that
-    /// {@link io.hensu.core.execution.pipeline.CheckpointPreProcessor} suppresses its
-    /// checkpoints.
+    /// verdict, and no redirect flag.
     ///
     /// ### Contracts
     /// - **Postcondition**: returned state shares no mutable references with this state
     ///
     /// @param branchNode the node ID where the branch begins, not null
+    /// @param scope the journal scope of the nested flow, not empty
     /// @return new isolated branch state, never null
-    public HensuState branch(String branchNode) {
-        HensuState branch =
-                new Builder()
-                        .executionId(executionId)
-                        .workflowId(workflowId)
-                        .currentNode(branchNode)
-                        .context(context)
-                        .history(history.copy())
-                        .retryCounters(retryCounters)
-                        .build();
-        branch.branchState = true;
-        return branch;
+    public HensuState branch(String branchNode, String scope) {
+        if (Objects.requireNonNull(scope, "scope must not be null").isEmpty()) {
+            throw new IllegalArgumentException("A nested flow needs a scope");
+        }
+        return new Builder()
+                .executionId(executionId)
+                .workflowId(workflowId)
+                .currentNode(branchNode)
+                .context(context)
+                .history(history.copy())
+                .retryCounters(retryCounters)
+                .scope(scope)
+                .build();
     }
 
     /// Creates a snapshot of current state for checkpointing.
@@ -286,12 +315,14 @@ public final class HensuState {
     public static final class Builder {
         private String executionId;
         private String workflowId;
-        public String currentNode;
+        private String currentNode;
         private Map<String, Object> context = Map.of();
         private ExecutionHistory history = new ExecutionHistory();
         private RubricEvaluation rubricEvaluation;
         private Map<String, Integer> retryCounters = new HashMap<>();
         private ExecutionPhase phase = ExecutionPhase.INITIAL;
+        private long step;
+        private String scope = "";
 
         public Builder() {}
 
@@ -332,6 +363,16 @@ public final class HensuState {
 
         public Builder phase(ExecutionPhase phase) {
             this.phase = phase != null ? phase : ExecutionPhase.INITIAL;
+            return this;
+        }
+
+        public Builder step(long step) {
+            this.step = step;
+            return this;
+        }
+
+        public Builder scope(String scope) {
+            this.scope = Objects.requireNonNull(scope, "scope must not be null");
             return this;
         }
 

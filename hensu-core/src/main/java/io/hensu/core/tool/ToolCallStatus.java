@@ -48,9 +48,16 @@ public enum ToolCallStatus {
     /// command execution when the sandbox refuses the prepared invocation.
     SANDBOX_REFUSED,
 
-    /// The call exceeded its own deadline. Produced by providers that impose a
-    /// wall clock on execution, as {@link ToolProvider#call} requires.
+    /// The call exceeded its own deadline after it started, so whether it took effect
+    /// is unknown: it may have run to completion after the deadline passed. Produced by
+    /// providers that impose a wall clock on execution, as {@link ToolProvider#call}
+    /// requires.
     TIMEOUT,
+
+    /// No executor took the call before its dispatch deadline, so it did not run.
+    /// Produced by the server when a tenant's relay never acknowledged the call; unlike
+    /// {@link #TIMEOUT}, retrying cannot repeat an effect.
+    UNAVAILABLE,
 
     /// The loop rejected the request before invoking it because the agent had
     /// spent its tool call budget. Produced by the tool loop.

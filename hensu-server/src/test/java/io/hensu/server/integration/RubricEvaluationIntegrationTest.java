@@ -15,8 +15,8 @@ import org.junit.jupiter.api.Test;
 ///
 /// Covers rubric pass/fail evaluation and automatic backtracking triggered by
 /// rubric score thresholds. Workflow JSON fixtures carry inline rubric content
-/// on the node, which the deserializer parses into typed [Rubric] objects at
-/// load time — no separate registration step needed.
+/// on the node, which the deserializer parses into typed [io.hensu.core.rubric.model.Rubric]
+/// objects at load time — no separate registration step needed.
 ///
 /// ### Score Normalization
 /// The [ScoreExtractingEvaluator][io.hensu.core.rubric.evaluator.ScoreExtractingEvaluator]
@@ -59,11 +59,7 @@ class RubricEvaluationIntegrationTest extends IntegrationTestBase {
         ExecutionStartResult result =
                 pushAndExecute(workflow, Map.of("topic", "artificial intelligence"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.currentNodeId()).isEqualTo("done");
     }
@@ -98,11 +94,7 @@ class RubricEvaluationIntegrationTest extends IntegrationTestBase {
         ExecutionStartResult result =
                 pushAndExecute(workflow, Map.of("topic", "quantum computing"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
 
         // Minor failure retries the same node, so backtrack events record draft -> draft

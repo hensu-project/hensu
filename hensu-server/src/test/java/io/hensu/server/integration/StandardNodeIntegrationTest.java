@@ -6,7 +6,6 @@ import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.server.workflow.ExecutionStartResult;
 import io.quarkus.test.junit.QuarkusTest;
-import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -32,11 +31,7 @@ class StandardNodeIntegrationTest extends IntegrationTestBase {
         ExecutionStartResult result =
                 pushAndExecute(workflow, Map.of("topic", "artificial intelligence"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.context())
                 .containsEntry("process", "This is a well-written summary about AI.");
@@ -51,11 +46,7 @@ class StandardNodeIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("text", "AI is great"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.context())
                 .containsEntry("sentiment", "positive")
                 .containsEntry("confidence", "0.95");
@@ -68,11 +59,7 @@ class StandardNodeIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("content", "test content"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.currentNodeId()).isEqualTo("high-quality");
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
     }
@@ -84,11 +71,7 @@ class StandardNodeIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("content", "test content"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.currentNodeId()).isEqualTo("medium-quality");
     }
 
@@ -99,11 +82,7 @@ class StandardNodeIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("content", "test content"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.currentNodeId()).isEqualTo("low-quality");
     }
 
@@ -116,11 +95,7 @@ class StandardNodeIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("topic", "technology"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.context())
                 .containsEntry("step-a", "Research findings about topic X")

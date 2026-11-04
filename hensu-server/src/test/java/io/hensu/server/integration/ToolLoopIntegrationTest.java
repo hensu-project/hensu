@@ -47,7 +47,7 @@ class ToolLoopIntegrationTest extends IntegrationTestBase {
 
         // Verify execution completed
         Optional<HensuSnapshot> snapshot =
-                workflowStateRepository.findByExecutionId(TEST_TENANT, result.executionId());
+                stateReader.findByExecutionId(TEST_TENANT, result.executionId());
         assertThat(snapshot).isPresent();
         assertThat(snapshot.get().checkpointReason()).isEqualTo("completed");
 
@@ -69,7 +69,7 @@ class ToolLoopIntegrationTest extends IntegrationTestBase {
         ExecutionStartResult result = pushAndExecute(workflow, context);
 
         Optional<HensuSnapshot> snapshot =
-                workflowStateRepository.findByExecutionId(TEST_TENANT, result.executionId());
+                stateReader.findByExecutionId(TEST_TENANT, result.executionId());
         assertThat(snapshot).isPresent();
         assertThat(snapshot.get().checkpointReason()).isEqualTo("completed");
 

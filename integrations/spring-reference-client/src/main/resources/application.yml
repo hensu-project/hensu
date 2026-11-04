@@ -9,8 +9,7 @@ hensu:
   # profile (auth disabled). For dev/prod profiles, set the HENSU_TOKEN environment variable.
   token: ${HENSU_TOKEN:}
 
-  # Tenant identifier — used both as the JWT claim and as the MCP session key.
-  # McpConnections routes tool calls to the session keyed by sse://<tenant-id>.
+  # Tenant identifier – the JWT claim the server binds this relay's tool calls to.
   tenant-id: dev-tenant
 
   demo:

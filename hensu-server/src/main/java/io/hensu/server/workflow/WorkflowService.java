@@ -40,8 +40,11 @@ public class WorkflowService {
     }
 
     public ExecutionStartResult startExecution(
-            String tenantId, String workflowId, Map<String, Object> context) {
-        return executionService.startExecution(tenantId, workflowId, context);
+            String tenantId,
+            String workflowId,
+            Map<String, Object> context,
+            String idempotencyKey) {
+        return executionService.startExecution(tenantId, workflowId, context, idempotencyKey);
     }
 
     public void resumeExecution(String tenantId, String executionId, ResumeInput resumeInput) {

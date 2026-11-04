@@ -19,10 +19,10 @@ import dev.langchain4j.model.chat.request.json.JsonNumberSchema;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.model.chat.request.json.JsonSchemaElement;
 import dev.langchain4j.model.chat.request.json.JsonStringSchema;
-import dev.langchain4j.model.chat.response.ChatResponse;
 import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.agent.ToolSession;
+import io.hensu.core.agent.TurnJournal;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolDefinition;
 import java.util.*;
@@ -44,7 +44,9 @@ class LangChain4jToolSession implements ToolSession {
     private final AgentConfig config;
     private final List<ChatMessage> sessionMessages;
     private final List<ToolSpecification> toolSpecs;
+    private final TurnJournal turns;
     private final Deque<ToolExecutionRequest> pendingQueue = new ArrayDeque<>();
+    private int nextTurn = 1;
     private ToolExecutionRequest lastDispatchedRequest;
     private UserMessage originalUserMessage;
     private AiMessage lastAiMessage;
@@ -55,25 +57,31 @@ class LangChain4jToolSession implements ToolSession {
             AgentConfig config,
             String prompt,
             Map<String, Object> context,
-            List<ToolDefinition> tools) {
+            List<ToolDefinition> tools,
+            TurnJournal turns) {
         this.agent = agent;
         this.model = model;
         this.config = config;
         this.sessionMessages = new ArrayList<>();
         this.toolSpecs = tools.stream().map(LangChain4jToolSession::toToolSpec).toList();
+        this.turns = turns;
 
-        buildInitialMessages(prompt, context);
+        // Turn 0 is the opening conversation. It depends on the agent's shared history,
+        // which lives in this process only, so a recovered session takes the journaled
+        // one rather than rebuilding a different one.
+        String opening =
+                turns.turn(0, () -> ChatMessageCodec.encode(buildInitialMessages(prompt, context)));
+        sessionMessages.addAll(ChatMessageCodec.decode(opening));
+        for (ChatMessage message : sessionMessages) {
+            if (message instanceof UserMessage user) {
+                originalUserMessage = user;
+            }
+        }
     }
 
     @Override
     public AgentResponse start() {
-        ChatRequest request =
-                ChatRequest.builder()
-                        .messages(sessionMessages)
-                        .toolSpecifications(toolSpecs)
-                        .build();
-        ChatResponse chatResponse = model.chat(request);
-        return processResponse(chatResponse);
+        return processResponse(chat());
     }
 
     @Override
@@ -93,13 +101,23 @@ class LangChain4jToolSession implements ToolSession {
         }
 
         // All tool calls from this round answered — re-call the model
+        return processResponse(chat());
+    }
+
+    /// Asks the model for its next answer, or takes the journaled one.
+    ///
+    /// The live answer is journaled and then decoded like a replayed one, so a first
+    /// run and its recovery continue from identical session state.
+    private AiMessage chat() {
         ChatRequest request =
                 ChatRequest.builder()
                         .messages(sessionMessages)
                         .toolSpecifications(toolSpecs)
                         .build();
-        ChatResponse chatResponse = model.chat(request);
-        return processResponse(chatResponse);
+        String answer =
+                turns.turn(
+                        nextTurn++, () -> ChatMessageCodec.encode(model.chat(request).aiMessage()));
+        return ChatMessageCodec.decodeAi(answer);
     }
 
     @Override
@@ -132,8 +150,7 @@ class LangChain4jToolSession implements ToolSession {
         }
     }
 
-    private AgentResponse processResponse(ChatResponse chatResponse) {
-        AiMessage aiMessage = chatResponse.aiMessage();
+    private AgentResponse processResponse(AiMessage aiMessage) {
         lastAiMessage = aiMessage;
         sessionMessages.add(aiMessage);
 
@@ -167,7 +184,8 @@ class LangChain4jToolSession implements ToolSession {
         }
     }
 
-    private void buildInitialMessages(String prompt, Map<String, Object> context) {
+    private List<ChatMessage> buildInitialMessages(String prompt, Map<String, Object> context) {
+        List<ChatMessage> messages = new ArrayList<>();
         String modelName = config.getModel();
         boolean isGemini = modelName.startsWith("gemini") || modelName.startsWith("gemma");
 
@@ -177,16 +195,16 @@ class LangChain4jToolSession implements ToolSession {
             if (isGemini) {
                 prompt = systemContent + prompt;
             } else {
-                sessionMessages.add(SystemMessage.from(systemContent));
+                messages.add(SystemMessage.from(systemContent));
             }
         }
 
         if (config.isMaintainContext()) {
-            sessionMessages.addAll(agent.getHistorySnapshot());
+            messages.addAll(agent.getHistorySnapshot());
         }
 
-        originalUserMessage = UserMessage.from(prompt);
-        sessionMessages.add(originalUserMessage);
+        messages.add(UserMessage.from(prompt));
+        return messages;
     }
 
     private String buildSystemPrompt(
@@ -340,8 +358,7 @@ class LangChain4jToolSession implements ToolSession {
     }
 
     private static JsonSchemaElement toSchemaElement(String type) {
-        return switch (type.toLowerCase()) {
-            case "string" -> JsonStringSchema.builder().build();
+        return switch (type.toLowerCase(Locale.ROOT)) {
             case "number" -> JsonNumberSchema.builder().build();
             case "integer", "int" -> JsonIntegerSchema.builder().build();
             case "boolean", "bool" -> JsonBooleanSchema.builder().build();

@@ -9,18 +9,19 @@ established: the JSON-RPC message format, the translation between MCP's JSON Sch
 engine's `ToolDefinition`, and the rendering of a `tools/call` response into text an agent can
 read.
 
-Transport stays with whoever owns it. The server reaches tenant MCP servers over an SSE
-split-pipe and pools those connections; the CLI launches stdio servers as child processes through
-`StdioMcpConnection`. Both speak the same protocol above that line, so everything above it lives
-here and neither runtime reimplements it.
+Transport stays with whoever owns it. The server never connects to an MCP server: a tenant's relay
+publishes its tool catalog and pulls tool calls from the server, so the server needs only the schema
+conversion and the result rendering. The CLI connects itself – stdio servers launched as child
+processes through `StdioMcpConnection`, remote ones over Streamable HTTP. Everything both runtimes
+share lives here and neither reimplements it.
 
 The stdio client lives here rather than in the CLI because it is protocol work, but it must not
 drag a sandbox implementation into a module the server also compiles against. It therefore takes
 the containment it applies to a launch as a `UnaryOperator<List<String>>`, and the CLI passes its
 own `SandboxLauncher` in.
 
-The module carries no CDI annotations and no framework types. Its classes are plain objects the
-server publishes through producers and the CLI constructs directly.
+The module carries no CDI annotations and no framework types. Its classes are plain objects each
+runtime constructs or calls directly.
 
 ```mermaid
 flowchart LR
@@ -34,7 +35,7 @@ flowchart LR
 
     subgraph server["hensu-server"]
         direction TB
-        sse(["SSE split-pipe\n(tenant servers)"])
+        relay(["McpCatalogs · McpToolProvider\n(relay pull, Decision 3)"])
     end
 
     subgraph cli["hensu-cli"]
@@ -42,7 +43,7 @@ flowchart LR
         stdio(["StdioMcpConnection\n(child processes)"])
     end
 
-    sse --> shared
+    relay --> shared
     stdio --> shared
 
     style shared fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
@@ -53,7 +54,7 @@ flowchart LR
     style conv  fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style rend  fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style spec  fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style sse   fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style relay fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style stdio fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
 
     linkStyle default stroke:#0A84FF, stroke-width:1px
@@ -210,11 +211,12 @@ era mirrors. The annotation postdates the legacy revision, so a legacy connectio
 
 | Runtime        | Transport                          | Provider                                            | Status |
 |----------------|------------------------------------|-----------------------------------------------------|--------|
-| `hensu-server` | inbound split pipe, per tenant     | `McpToolProvider` — tenant-scoped catalog           | wired  |
+| `hensu-server` | inbound relay pull, per tenant     | `McpToolProvider` — the tenant relay's catalog      | wired  |
 | `hensu-cli`    | outbound stdio and Streamable HTTP | `DeclaredMcpToolProvider` — servers from `mcp.yaml` | wired  |
 
-The server holds no outbound client by design: `McpConnections` accepts an `sse://clientId` handle
-and refuses every other scheme. See Decision 3 in `docs/unified-architecture.md`.
+The server holds no MCP client by design: a tool call is a durable intent that the tenant's relay
+polls for, acknowledges and completes, so no code path in the server opens a connection to a tenant.
+See Decision 3 in `docs/unified-architecture.md`.
 
 Each contributes a `ToolProvider` to the engine's `ToolRouter`, so an agent cannot tell which
 transport produced a result. That is the reason the rendering rules above live in this module
