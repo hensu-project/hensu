@@ -1,0 +1,41 @@
+{
+  "id" : "fault-test-chain",
+  "version" : "1.0.0",
+  "startNode" : "n1",
+  "agents" : {
+    "worker" : {
+      "id" : "worker",
+      "role" : "worker",
+      "model" : "stub",
+      "tools" : [ "record" ]
+    }
+  },
+  "nodes" : {
+    "n1" : {
+      "id" : "n1",
+      "nodeType" : "STANDARD",
+      "agentId" : "worker",
+      "prompt" : "Record step one",
+      "transitionRules" : [ { "type" : "success", "targetNode" : "n2" } ]
+    },
+    "n2" : {
+      "id" : "n2",
+      "nodeType" : "STANDARD",
+      "agentId" : "worker",
+      "prompt" : "Record step two",
+      "transitionRules" : [ { "type" : "success", "targetNode" : "n3" } ]
+    },
+    "n3" : {
+      "id" : "n3",
+      "nodeType" : "STANDARD",
+      "agentId" : "worker",
+      "prompt" : "Record step three",
+      "transitionRules" : [ { "type" : "success", "targetNode" : "done" } ]
+    },
+    "done" : {
+      "id" : "done",
+      "nodeType" : "END",
+      "status" : "SUCCESS"
+    }
+  }
+}

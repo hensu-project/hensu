@@ -37,14 +37,15 @@ public class JdbcToolAuditRepository implements ToolAuditRepository {
             """
             INSERT INTO runtime.tool_audit
                 (tenant_id, execution_id, node_id, agent_id, tool_name, status, exit_code,
-                 duration_ms, occurred_at, resolved_argv, arguments, output)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?)
+                 duration_ms, occurred_at, resolved_argv, arguments, output, call_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?)
+            ON CONFLICT (tenant_id, call_id) WHERE call_id IS NOT NULL DO NOTHING
             """;
 
     private static final String SQL_FIND_BY_EXECUTION =
             """
             SELECT execution_id, node_id, agent_id, tool_name, status, exit_code, duration_ms,
-                   occurred_at, resolved_argv, arguments, output
+                   occurred_at, resolved_argv, arguments, output, call_id
             FROM runtime.tool_audit
             WHERE tenant_id = ? AND execution_id = ?
             ORDER BY occurred_at, id
@@ -92,6 +93,7 @@ public class JdbcToolAuditRepository implements ToolAuditRepository {
                         ps.setString(10, entry.argv().isEmpty() ? null : writeJson(entry.argv()));
                         ps.setString(11, writeJson(entry.arguments()));
                         ps.setString(12, entry.output());
+                        ps.setString(13, entry.callId());
                     },
                     "Failed to record tool audit entry: " + entry.toolName());
         } catch (RuntimeException e) {
@@ -135,7 +137,8 @@ public class JdbcToolAuditRepository implements ToolAuditRepository {
                 rs.getObject("occurred_at", OffsetDateTime.class).toInstant(),
                 readJson(rs.getString("resolved_argv"), ARGV_TYPE, List.of()),
                 readJson(rs.getString("arguments"), ARGUMENTS_TYPE, Map.of()),
-                rs.getString("output"));
+                rs.getString("output"),
+                rs.getString("call_id"));
     }
 
     private String writeJson(Object value) {

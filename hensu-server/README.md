@@ -8,7 +8,7 @@ The `hensu-server` module extends `hensu-core` with:
 
 - **REST API** for workflow definition management and execution
 - **Multi-Tenant Isolation** using Java 25 ScopedValues
-- **MCP Gateway** for external tool integration (server never executes locally)
+- **MCP Relay** for external tool integration: the tenant's relay pulls tool calls (server never executes locally)
 - **Human-in-the-Loop** support with review workflows
 - **SSE Streaming** for real-time execution monitoring
 
@@ -24,16 +24,16 @@ flowchart TD
         direction TB
         subgraph api["Interface Layer"]
             direction LR
-            rest(["REST API\n(Workflows + Executions)"]) ~~~ mcpgw(["MCP Gateway\n(JSON-RPC)"])
+            rest(["REST API\n(Workflows + Executions)"]) ~~~ mcpgw(["MCP Relay\n(pull)"])
         end
         subgraph runtime["Server Runtime"]
             direction LR
-            sae(["ServerAction\nExecutor (MCP)"]) ~~~ tc(["TenantContext\n(ScopedValue)"])
+            sae(["ServerAction\nExecutor (send)"]) ~~~ tc(["TenantContext\n(ScopedValue)"]) ~~~ es(["ExecutionStore\n(claims + journal)"])
         end
         subgraph core["hensu-core (HensuEnvironment)"]
             direction LR
             we(["WorkflowExecutor"]) ~~~ ar(["AgentRegistry"]) ~~~ re(["RubricEngine"])
-            wr(["WorkflowRepository"]) ~~~ sr(["StateRepository"]) ~~~ tr(["ToolRouter"])
+            wr(["WorkflowRepository"]) ~~~ tr(["ToolRouter"])
         end
         api --> runtime --> core
     end
@@ -46,11 +46,11 @@ flowchart TD
     style mcpgw fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style sae fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style tc fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style es fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style we fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style ar fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style re fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style wr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style sr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style tr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
 
     linkStyle default stroke:#0A84FF, stroke-width:1px
@@ -134,7 +134,7 @@ curl -X POST http://localhost:8080/api/v1/executions \
 
 ## REST API
 
-All API and MCP endpoints except the aggregate `/mcp/status` require a valid JWT bearer token
+All API and MCP endpoints require a valid JWT bearer token
 (`Authorization: Bearer <jwt>`).
 Tenant identity is extracted from the `tenant_id` claim. JWT is required in every profile
 except `inmem` (the integration-test profile), where authentication is disabled and a default
@@ -169,51 +169,72 @@ Runtime operations for starting and managing workflow executions (client integra
 | `GET`  | `/api/v1/executions/{executionId}/result`   | Get final output (public context, `_`-keys hidden) |
 | `GET`  | `/api/v1/executions/paused`                 | List paused executions                             |
 
-Start and resume answer **409 Conflict** when the tenant's MCP session or the execution's lease is
-held by another node; route each tenant to one node at the load balancer. See Session Affinity in
-the [Server Developer Guide](../docs/developer-guide-server.md#session-affinity).
+Every node answers every request: start, resume, status, events and the relay protocol all work
+wherever the load balancer sends them, and no tenant affinity is needed. Start writes the execution
+with its claim before answering `202`. A client that may retry a start sends `Idempotency-Key`
+(1–255 characters from `[A-Za-z0-9._:-]`): a retry with the same key and body answers `202` with the
+execution the first request created, and the same key with a different body answers **422**. Resume answers **409 Conflict** when the execution is not
+paused – it is running, or another resume took it first – and **404** for an unknown id. A node
+that cannot reach PostgreSQL answers **503** with `Retry-After` and reports not-ready at
+`/q/health/ready`. See [Multi-Node Execution](../docs/developer-guide-server.md#multi-node-execution)
+in the Server Developer Guide.
 
-### MCP Gateway (SSE Split-Pipe Transport)
+### MCP Relay (Pull)
 
-Implements MCP (Model Context Protocol) over SSE using a "split-pipe" architecture:
+The server opens no connection to a tenant. A tool call becomes a durable intent in PostgreSQL, and
+the tenant's relay pulls it from any node, acknowledges it, runs it against its own MCP servers, and
+posts the outcome back to any node:
 
-- **Downstream (SSE)**: the Hensu server pushes JSON-RPC tool call requests to connected tenant clients
-- **Upstream (HTTP POST)**: tenant clients relay each request to their own MCP servers and post the JSON-RPC response back (requests time out after 60 s if no response is received — see `McpSessionManager.DEFAULT_TIMEOUT` — and fail at once if the client disconnects first)
-- **Tenant binding**: the session is registered under the JWT `tenant_id` claim, and a response completes only a request that tenant owns. A second connection for the same tenant supersedes the first
+- **Poll**: the relay long-polls for its tenant's pending calls and receives each under a single-use offer token
+- **Ack, then execute**: `204` means execute, `409` means do not. Only one token is ever acknowledged per call, so a relay that executes each acknowledged token once executes each call at most once
+- **Complete**: the first outcome wins. A call acknowledged but not completed within `hensu.mcp.call-deadline` settles as `TIMEOUT` (outcome unknown); one no relay acknowledged within `hensu.mcp.dispatch-deadline` settles as `UNAVAILABLE` (did not run)
+- **Tenant binding**: every request is scoped to the JWT `tenant_id` claim; a relay sees, acknowledges and completes only its own tenant's calls
 
 ```mermaid
 flowchart LR
-    subgraph server["Hensu Server"]
+    subgraph client["Tenant Relay"]
         direction TB
-        send(["sendRequest()"])
-        handle(["handleResponse\n(Future.done)"])
+        poll(["poll"])
+        ack(["ack · execute"])
+        done(["complete"])
     end
 
-    subgraph client["Tenant Client"]
+    subgraph server["Hensu Server · any node"]
         direction TB
-        es(["EventSource"])
-        post(["POST /message"])
+        api(["McpRelayResource"])
     end
 
-    send -->|"SSE (tools/call)"| es
-    post -->|"POST (result/error)"| handle
+    subgraph db["PostgreSQL"]
+        direction TB
+        intents["runtime.tool_intents"]
+    end
 
-    style server fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    poll -->|"POST /mcp/v1/poll"| api
+    ack -->|"POST …/ack"| api
+    done -->|"POST …/complete"| api
+    api -->|"offer · start · settle"| intents
+
     style client fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
-    style send fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style handle fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style es fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style post fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style server fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style db fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style poll fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style ack fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style done fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style api fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style intents fill:#2c2c2e, stroke:#48484a, color:#8e8e93, stroke-width:1px
 
-    linkStyle default stroke:#0A84FF, stroke-width:1px
+    linkStyle 0,1,2 stroke:#0A84FF, stroke-width:1px
+    linkStyle 3 stroke:#48484a, stroke-width:1px
 ```
 
-| Method | Path                             | Description                                                                                                         |
-|--------|----------------------------------|---------------------------------------------------------------------------------------------------------------------|
-| `GET`  | `/mcp/connect?clientId=...`      | SSE stream for receiving tool call requests; `clientId` is optional and must match the tenant claim (403 otherwise) |
-| `POST` | `/mcp/message`                   | Submit JSON-RPC responses; 404 for an id the caller's tenant does not own or that no longer awaits an answer        |
-| `GET`  | `/mcp/status`                    | Gateway status (connected clients, pending requests); no token required                                             |
-| `GET`  | `/mcp/clients/{clientId}/status` | Status of the caller's own MCP client connection; 404 for any other client                                          |
+| Method | Path                             | Description                                                                                                                                  |
+|--------|----------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| `PUT`  | `/mcp/v1/catalog`                | Publish the relay's tool catalog: `{"version": "...", "tools": [...]}`                                                                       |
+| `POST` | `/mcp/v1/poll`                   | Wait up to `waitMs` for pending calls: `{"catalogVersion": "...", "max": 8, "waitMs": 25000}`; 409 when the version is not the published one |
+| `POST` | `/mcp/v1/tasks/{token}/ack`      | Acknowledge an offer before executing it; 204 execute, 409 do not                                                                            |
+| `POST` | `/mcp/v1/tasks/{token}/complete` | Record the outcome: `{"result": {...}}` or `{"error": {...}}`; 409 when already settled, 404 for an unknown token                            |
+
+The [Spring reference client](../integrations/spring-reference-client/README.md) implements the relay.
 
 ### Event Streaming (SSE)
 
@@ -224,13 +245,14 @@ flowchart LR
 
 ### Input Validation & Error Responses
 
-All identifiers in path and query parameters (`workflowId`, `executionId`, `clientId`) are
+All identifiers in path and query parameters (`workflowId`, `executionId`) are
 validated with the `@ValidId` constraint: alphanumeric start, followed by alphanumeric characters,
-dots, hyphens, or underscores (1–255 chars). Workflow request bodies are deep-validated by
-`@ValidWorkflow`, which walks the entire object graph to ensure all embedded identifiers are
-well-formed and free-text fields (prompts, instructions, rubric content) are free of dangerous
-control characters. `LogSanitizer` provides defense-in-depth by stripping CR/LF from user-derived
-values at log call sites.
+dots, hyphens, or underscores (1–255 chars). The optional `Idempotency-Key` header of a start is
+validated with `@ValidIdempotencyKey` (1–255 chars from `[A-Za-z0-9._:-]`). Workflow request
+bodies are deep-validated by `@ValidWorkflow`, which walks the entire object graph to ensure all
+embedded identifiers are well-formed and free-text fields (prompts, instructions, rubric content)
+are free of dangerous control characters. `LogSanitizer` provides defense-in-depth by stripping
+CR/LF from user-derived values at log call sites.
 
 Invalid input returns `400 Bad Request` with a JSON error body:
 
@@ -262,7 +284,7 @@ The server initializes core infrastructure via CDI:
 
 1. `HensuEnvironmentProducer` creates `HensuEnvironment` via `HensuFactory.builder()`
 2. `ServerConfiguration` delegates core components for CDI injection
-3. `ServerActionExecutor` routes `Action.Send` to registered handlers (MCP and others) and rejects `Action.Execute` (local command execution). Agent tool calls no longer take this path — they go through the `ToolRouter`
+3. `ServerActionExecutor` routes `Action.Send` to registered handlers and rejects `Action.Execute` (local command execution). Agent tool calls no longer take this path — they go through the `ToolRouter`
 
 See [Server Developer Guide](../docs/developer-guide-server.md) for implementation details.
 
@@ -271,7 +293,7 @@ See [Server Developer Guide](../docs/developer-guide-server.md) for implementati
 Thread-safe tenant isolation using Java 25 ScopedValues:
 
 ```java
-TenantInfo tenant = TenantInfo.withMcp("tenant-123", McpConnections.endpointFor("tenant-123"));
+TenantInfo tenant = TenantInfo.simple("tenant-123");
 TenantContext.runAs(tenant, () -> {
     // All code in this scope has tenant context
     TenantInfo current = TenantContext.current();
@@ -282,21 +304,25 @@ TenantContext.runAs(tenant, () -> {
 ### Persistence
 
 Repository interfaces and in-memory defaults live in `hensu-core`. The server provides PostgreSQL
-implementations via plain JDBC + Flyway. `HensuEnvironmentProducer` conditionally wires JDBC repos
-when a DataSource is available, otherwise falls back to in-memory. Repositories are delegated from
-`HensuEnvironment` via `@Produces @Singleton` — never created directly in CDI producers.
+implementations via plain JDBC + Flyway. `HensuEnvironmentProducer` and `PersistenceProducer`
+conditionally wire the JDBC implementations when a DataSource is available, otherwise in-memory
+ones with the same state machine.
 
 - `WorkflowRepository` (`io.hensu.core.workflow`) — Workflow definition storage
-- `WorkflowStateRepository` (`io.hensu.core.state`) — Execution state snapshots (checkpoint/pause/resume)
-- `JdbcWorkflowRepository` / `JdbcWorkflowStateRepository` — PostgreSQL implementations (JSONB columns)
-- **Checkpoint hook**: `WorkflowExecutor` calls `listener.onCheckpoint(state)` before each node execution,
-  enabling inter-node state persistence for failover recovery
-- **Distributed recovery**: `ExecutionLeaseManager` maintains a `server_node_id` / `last_heartbeat_at`
-  lease per active execution; `ExecutionHeartbeatJob` renews leases every 30 s (configurable);
-  `WorkflowRecoveryJob` sweeps for stale leases and resumes orphaned executions on a surviving node —
-  see [Server Developer Guide — Distributed Recovery](../docs/developer-guide-server.md#distributed-recovery-leasing)
+- `WorkflowStateReader` (`io.hensu.core.state`) — Execution state queries, served by `ExecutionStore`
+- `JdbcWorkflowRepository` / `JdbcExecutionStore` — PostgreSQL implementations (JSONB columns)
+- **Execution store**: `ExecutionStore` is the only writer of execution state. Every write – checkpoint,
+  journal record, tool intent, settlement – is one SQL statement fenced on the run's claim epoch, so a
+  run that lost its claim stops at its next write
+- **Checkpoint hook**: `WorkflowExecutor` calls `listener.onCheckpoint(state)` before each node execution;
+  between checkpoints the model turns of the attempt in progress and nested-flow checkpoints are
+  journaled, so a recovered run replays them instead of redoing the work
+- **Multi-node execution**: claims expire by the database clock; `ClaimRenewalJob` renews live claims,
+  `ExecutionPickupJob` resumes released and expired executions on any node, and a node that shuts down
+  releases its claims at once – see
+  [Server Developer Guide — Multi-Node Execution](../docs/developer-guide-server.md#multi-node-execution)
 - **`inmem` profile**: `quarkus.datasource.active=false` disables PostgreSQL; `quarkus.scheduler.enabled=false`
-  disables all lease jobs for in-memory-only operation
+  disables the claim, pickup and deadline jobs for in-memory-only operation
 
 ### Sub-Workflows
 
@@ -327,8 +353,11 @@ in the Server Developer Guide for the push pipeline.
 # HTTP Server
 quarkus.http.port=8080
 quarkus.http.host=0.0.0.0
-# MCP Configuration
-hensu.mcp.read-timeout=60s
+# MCP relay protocol
+hensu.mcp.ack-deadline=10s
+hensu.mcp.call-deadline=60s
+hensu.mcp.dispatch-deadline=5m
+hensu.mcp.poll-wait=25s
 # PostgreSQL
 # Dev: docker-compose (set HENSU_DB_USER, HENSU_DB_PASSWORD, HENSU_DB_NAME in .env)
 # Prod: set HENSU_DB_URL, HENSU_DB_USER, HENSU_DB_PASSWORD as environment variables
@@ -343,7 +372,7 @@ quarkus.datasource.db-kind=postgresql
 # Flyway — migrates runtime schema on startup
 quarkus.flyway.migrate-at-start=true
 quarkus.flyway.schemas=runtime
-# In-memory profile: for integration tests only (no PostgreSQL, no leasing, auth disabled)
+# In-memory profile: for integration tests only (no PostgreSQL, no claim jobs, auth disabled)
 %inmem.quarkus.datasource.active=false
 %inmem.quarkus.datasource.devservices.enabled=false
 %inmem.quarkus.flyway.migrate-at-start=false
@@ -355,10 +384,11 @@ quarkus.flyway.schemas=runtime
 # hensu.tenant.default=default
 # Verbose execution logging (enables LoggingExecutionListener, including its tool audit lines)
 hensu.verbose.enabled=false
-# Distributed recovery leasing
-hensu.lease.heartbeat-interval=30s
-hensu.lease.recovery-interval=60s
-hensu.lease.stale-threshold=90s
+# Multi-node execution claims
+hensu.claim.ttl=30s
+hensu.claim.renew-interval=10s
+hensu.claim.pickup-interval=5s
+hensu.claim.max-runs=200
 ```
 
 ## Module Structure
@@ -372,18 +402,18 @@ hensu-server/
 │   │   ├── WorkflowResource.java          # Workflow definition management
 │   │   ├── ExecutionResource.java         # Execution runtime operations
 │   │   ├── ExecutionEventResource.java    # SSE endpoint for execution events
-│   │   ├── McpGatewayResource.java        # MCP SSE/POST endpoints
+│   │   ├── McpRelayResource.java          # MCP relay protocol: catalog, poll, ack, complete
 │   │   ├── ExecutionStartRequest.java     # Request DTO for POST /executions
 │   │   ├── ResumeRequest.java             # Request DTO for POST /executions/{id}/resume
 │   │   ├── ResumeResponse.java            # Response DTO for POST /executions/{id}/resume
 │   │   ├── PushWorkflowResponse.java      # Response DTO for POST /workflows
-│   │   ├── WorkflowSummary.java           # Response DTO for GET /workflows list entries
-│   │   ├── GatewayStatusResponse.java     # Response DTO for GET /mcp/status
-│   │   └── ClientStatusResponse.java      # Response DTO for GET /mcp/clients/{id}/status
+│   │   └── WorkflowSummary.java           # Response DTO for GET /workflows list entries
 │   ├── validation/                        # Input validation (Bean Validation)
-│   │   ├── InputValidator                  # Shared validation predicates (safe-ID, dangerous chars, size)
+│   │   ├── InputValidator                  # Shared validation predicates (safe-ID, idempotency key, dangerous chars, size)
 │   │   ├── ValidId.java                    # Custom identifier constraint
 │   │   ├── ValidIdValidator.java           # Regex-based validator
+│   │   ├── ValidIdempotencyKey.java        # Constraint for the optional Idempotency-Key header
+│   │   ├── ValidIdempotencyKeyValidator.java  # Null passes; otherwise [A-Za-z0-9._:-]{1,255}
 │   │   ├── ValidMessage                    # Custom constraint for raw message body strings
 │   │   ├── ValidMessageValidator     # Size-limit + control-character validator
 │   │   ├── ValidWorkflow.java              # Custom constraint for Workflow bodies
@@ -392,60 +422,76 @@ hensu-server/
 │   │   └── ConstraintViolationExceptionMapper.java  # Global 400 error mapper
 │   ├── config/                            # CDI configuration
 │   │   ├── HensuEnvironmentProducer.java          # HensuFactory → HensuEnvironment
+│   │   ├── PersistenceProducer.java               # Execution store, tool intents, catalogs, NOTIFY listener
 │   │   ├── CoreModelNativeConfig.java                 # @RegisterForReflection — Hensu domain model (mixin/builder, treeToValue, records)
 │   │   ├── LangChain4jNativeConfig.java           # @RegisterForReflection — JDK HTTP transport (ServiceLoader)
 │   │   ├── LangChain4jAnthropicNativeConfig.java  # @RegisterForReflection — Anthropic API request/response DTOs
 │   │   ├── LangChain4jGeminiNativeConfig.java     # @RegisterForReflection — Google AI Gemini API request/response DTOs
 │   │   ├── ExecutionEventNativeConfig.java        # @RegisterForReflection — SSE event sealed subtypes
 │   │   └── ServerConfiguration.java               # CDI delegation + server beans
-│   ├── execution/                         # Server-side execution listeners
-│   │   ├── CheckpointingListener.java     # Persists checkpoints; a lost lease stops the run
+│   ├── execution/                         # Claims, runs, and server-side execution listeners
+│   │   ├── Claim.java                     # One claim on an execution: tenant, id, epoch
+│   │   ├── ExecutionStore.java            # Claim transitions and every fenced write a run makes
+│   │   ├── RunRegistry.java               # Runs live on this node: renewal, preemption, drain
+│   │   ├── RunHandle.java                 # A live run: its claim and its preemption flag
+│   │   ├── RunContext.java                # ScopedValue carrying the run for tool calls
+│   │   ├── ClaimJournal.java              # ExecutionJournal backed by the store, under the run's claim
+│   │   ├── CanonicalDigest.java           # SHA-256 of canonical JSON: replay divergence, start keys
+│   │   ├── CheckpointingListener.java     # Persists checkpoints under the claim; a refused write stops the run
 │   │   ├── LoggingExecutionListener.java  # Structured log output for node lifecycle, tool audit, transition warnings
 │   │   ├── ToolStreamingExecutionListener.java # Republishes tool audit events onto the execution's SSE stream
 │   │   └── ToolAuditListener.java         # One durable row per settled tool call; pairs request to outcome by call id
 │   ├── dev/                               # Dev-only handlers (excluded from prod image)
 │   │   └── SleepHandler.java              # Simulates long-running node for crash-recovery tests
-│   ├── mcp/                               # Server-side MCP transport (protocol types live in hensu-mcp)
-│   │   ├── McpConnections.java            # Opens split-pipe connections; refuses every other scheme
-│   │   ├── McpSessionChanged.java         # CDI event: a session began or ended; drops the cached catalog
-│   │   ├── McpSessionManager.java
-│   │   ├── McpToolDiscovery.java          # Runtime tool schema discovery + cache
-│   │   ├── McpToolProvider.java           # Exposes the tenant's MCP tools to the ToolProvider seam
-│   │   └── SseMcpConnection.java
+│   ├── health/
+│   │   └── DrainingReadinessCheck.java    # Not ready while draining or without the database
+│   ├── mcp/                               # Server side of the relay protocol
+│   │   ├── McpToolProvider.java           # Records a call as an intent and awaits its outcome
+│   │   ├── ToolIntents.java               # Intent state machine: submit, offer, ack, complete, expire
+│   │   ├── McpCatalogs.java               # Published relay catalogs, cached by content
+│   │   └── ClusterSignals.java            # Wake-ups for waiting polls and calls
 │   ├── security/                          # JWT + tenant resolution + error mapping
 │   │   ├── GlobalExceptionMapper.java     # Global @Provider — normalizes errors to JSON
 │   │   └── RequestTenantResolver.java     # Extracts tenant_id claim from JWT
 │   ├── persistence/                       # PostgreSQL persistence (plain JDBC)
 │   │   ├── JdbcWorkflowRepository.java        # Workflow definitions (JSONB)
-│   │   ├── JdbcWorkflowStateRepository.java   # Execution state snapshots (JSONB + lease columns)
-│   │   ├── ExecutionLeaseManager.java         # Distributed leases + MCP session ownership (runtime.mcp_sessions)
+│   │   ├── JdbcExecutionStore.java            # Claims, checkpoints, journal (epoch-fenced SQL), state queries
+│   │   ├── JdbcToolIntents.java               # runtime.tool_intents
+│   │   ├── JdbcMcpCatalogs.java               # runtime.mcp_catalogs
+│   │   ├── PgNotificationListener.java        # LISTEN on the wake-up channels
+│   │   ├── PgEventBus.java                    # Execution events between nodes (hensu_events)
+│   │   ├── SnapshotRows.java                  # Snapshot ↔ JSONB columns
+│   │   ├── InMemory*.java                     # Single-process store, intents, catalogs, audit
 │   │   ├── WorkflowPushLock.java              # Cluster-wide push mutex (pg_advisory_xact_lock + JVM fallback)
 │   │   ├── JdbcToolAuditRepository.java       # Tool audit rows (runtime.tool_audit)
 │   │   ├── ToolAuditEntry.java                # One settled tool call: status, argv, arguments, output
 │   │   ├── JdbcSupport.java                   # JDBC helper (queryList, update)
-│   │   ├── LeaseLostException.java            # Snapshot write refused: another node holds the lease
 │   │   └── PersistenceException.java          # Unchecked wrapper for SQLException
 │   ├── workflow/              # Business logic
 │   │   ├── WorkflowService.java                 # Facade over registry + execution + query services
 │   │   ├── WorkflowRegistryService.java         # Push pipeline: WorkflowPushLock + SubWorkflowGraphValidator
 │   │   ├── WorkflowExecutionService.java        # Start/resume orchestration
-│   │   ├── ExecutionQueryService.java           # Read-side: status, plan, output, paused list
-│   │   ├── ExecutionStateService.java           # Snapshot load/save with split-brain guard
-│   │   ├── ExecutionResultHandler.java          # Shared ExecutionResult → snapshot + SSE dispatch
+│   │   ├── ExecutionQueryService.java           # Read-side: status, output, paused list
+│   │   ├── ExecutionStateService.java           # Claims a paused execution, then validates the resume
+│   │   ├── ExecutionRunner.java                 # Runs one execution under its claim
+│   │   ├── ExecutionResultHandler.java          # Shared ExecutionResult → settlement + SSE dispatch
 │   │   ├── WorkflowContextUtil.java             # Filters internal (_-prefixed) keys from context
-│   │   ├── ExecutionHeartbeatJob.java           # Periodic heartbeat emission (@Scheduled)
-│   │   ├── WorkflowRecoveryJob.java             # Orphaned execution sweeper (@Scheduled)
+│   │   ├── ClaimRenewalJob.java                 # Renews this node's claims (@Scheduled)
+│   │   ├── ExecutionPickupJob.java              # Resumes released and expired executions (@Scheduled)
+│   │   ├── IntentDeadlineJob.java               # Offer, call and dispatch deadlines (@Scheduled)
 │   │   ├── ExecutionStartResult.java            # DTO
 │   │   ├── ExecutionOutput.java                 # DTO
 │   │   ├── ExecutionStatus.java                 # DTO for execution status (with correlationId)
 │   │   ├── ExecutionSummary.java                # DTO for paused-list (with correlationId)
 │   │   ├── ExecutionNotFoundException.java
-│   │   ├── ExecutionNotLocalException.java      # Lease or tenant MCP session held by another node (409)
+│   │   ├── ExecutionNotPausedException.java     # Resume of an execution that is not paused (409)
+│   │   ├── IdempotencyKeyReusedException.java   # Start key reused with a different request (422)
 │   │   ├── WorkflowNotFoundException.java
 │   │   └── WorkflowExecutionException.java
 │   ├── review/                # Server-side review handling
 │   │   └── InteractiveReviewHandler.java  # @ApplicationScoped default ReviewHandler for workflow reviews
 │   ├── streaming/             # SSE event streaming
+│   │   ├── ClusterEventBus.java                 # Carries events to subscribers on other nodes
 │   │   ├── ExecutionEvent.java
 │   │   └── ExecutionEventBroadcaster.java
 │   └── tenant/                # Multi-tenancy
@@ -460,6 +506,7 @@ hensu-server/
         ├── streaming/
         ├── validation/
         └── workflow/
+└── src/multiNodeFaultTest/java/           # Fault-injection test: two nodes, relays, faults (not part of check)
 ```
 
 ## Testing
@@ -476,6 +523,9 @@ hensu-server/
 
 # Run JDBC repo tests (requires Docker for Testcontainers PostgreSQL)
 ./gradlew :hensu-server:test --tests "*.persistence.*"
+
+# Run the multi-node fault-injection test (requires Docker; not part of check)
+./gradlew :hensu-server:multiNodeFaultTest
 ```
 
 ## Native Image

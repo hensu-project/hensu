@@ -168,7 +168,12 @@ abstract class BaseWorkflowCommandTest {
 
     /// Creates a final state with the given execution history.
     protected HensuState createFinalState(ExecutionHistory history) {
-        return new HensuState(new HashMap<>(Map.of()), "test-workflow", "exit", history);
+        return new HensuState.Builder()
+                .executionId("exec-1")
+                .workflowId("test-workflow")
+                .currentNode("exit")
+                .history(history)
+                .build();
     }
 
     /// Creates a workflow with an unreachable node for validation tests.

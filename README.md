@@ -264,11 +264,13 @@ For production setup with JWT auth and PostgreSQL, see the
 
 ### Remote execution (server)
 
-- **MCP split-pipe.** Tool calls travel outbound over SSE to the tenant's own client, which runs
-  them against its own MCP servers and posts the result back.
+- **MCP relay pull.** Tool calls wait in the server as durable intents; the tenant's own relay
+  polls for them, runs them against its own MCP servers, and posts the result back. Each call runs
+  at most once.
 - **Live execution stream.** Execution events stream to callers over SSE as the workflow runs.
-- **Resilience.** PostgreSQL-backed checkpoints with atomic lease recovery. If the server restarts
-  mid-execution, it resumes from the last checkpoint.
+- **Resilience.** Several active nodes behind an ordinary load balancer, coordinated only through
+  PostgreSQL. A node that crashes or is deployed mid-execution hands its runs to another node,
+  which replays the journaled model turns and tool outcomes instead of redoing them.
 - **Tenant isolation.** Each execution carries its own scoped boundary, so concurrent tenants never
   observe one another's state.
 - **Single binary.** Ships as a GraalVM native image – no JVM to manage, no classpath to debug.
@@ -306,7 +308,7 @@ flowchart LR
             core(["Core Engine"])
 
             subgraph srv["Server · GraalVM Native"]
-                pipe(["MCP split-pipe<br/>SSE to tenant client"])
+                pipe(["MCP relay pull<br/>tenant relay polls"])
             end
         end
 
@@ -350,8 +352,8 @@ flowchart LR
 3. **Build.** `hensu build` compiles the workflow into a static Workflow Definition (JSON).
 4. **Push.** `hensu push` delivers the definition to the server.
 5. **Execute remotely.** The server hydrates the definition and orchestrates it. When a tool call
-   is needed, the MCP *split-pipe* pushes the request down an SSE stream to the tenant's client,
-   which runs it against its own MCP servers and posts the result back.
+   is needed, it records the call; the tenant's relay pulls it from any server node, runs it
+   against its own MCP servers, and posts the result back.
 
 ### Modules
 
@@ -360,7 +362,7 @@ flowchart LR
 | **[hensu-core](hensu-core/README.md)**                     | Pure Java execution engine. State transitions, rubric evaluation, agent interactions. Zero external dependencies.                                                                                                            |
 | **[hensu-dsl](hensu-dsl/README.md)**                       | Kotlin DSL that compiles `.kt` files into versioned Workflow Definitions (JSON).                                                                                                                                             |
 | **[hensu-cli](hensu-cli/README.md)**                       | Local execution runtime and workflow tooling: `run`, `validate`, `visualize`, `build`, `push`/`pull`/`delete`/`list`, plus `daemon`, `ps`, `attach`, `cancel`, and `credentials`. Runs catalog commands under an OS sandbox. |
-| **[hensu-server](hensu-server/README.md)**                 | Multi-tenant GraalVM native server. SSE split-pipe for MCP tool routing. SSE execution event streaming.                                                                                                                      |
+| **[hensu-server](hensu-server/README.md)**                 | Multi-tenant GraalVM native server. Tenant relays pull MCP tool calls from any node. SSE execution event streaming.                                                                                                          |
 | **[hensu-serialization](hensu-serialization/README.md)**   | Jackson-based JSON serialization shared by the CLI and server.                                                                                                                                                               |
 | **[hensu-mcp](hensu-mcp/README.md)**                       | Runtime-agnostic MCP protocol layer. JSON-RPC messages, schema conversion, result rendering.                                                                                                                                 |
 | **[hensu-langchain4j-adapter](hensu-langchain4j-adapter)** | Bridges the `hensu-core` Agent abstraction with LangChain4j `ChatModel` implementations.                                                                                                                                     |
@@ -377,9 +379,9 @@ It is a pure orchestrator: no shell, no `eval`, no script runner.
 
 | Principle              | Implementation                                                                                                                                                                                                         |
 |:-----------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **MCP split-pipe**     | All tool calls route through SSE to tenant clients. The server never executes side effects locally.                                                                                                                    |
+| **MCP relay pull**     | Every tool call is pulled by the tenant's relay and runs on tenant-owned MCP servers. The server never executes side effects locally and holds no MCP client.                                                          |
 | **Tenant isolation**   | Every execution runs inside a `ScopedValue` boundary established when it starts and discarded when it ends.                                                                                                            |
-| **No inbound ports**   | Tenant clients connect outbound via SSE. No firewall rules required on the client side.                                                                                                                                |
+| **No inbound ports**   | Tenant relays make every request – catalog, poll, acknowledge, complete. No firewall rules required on the client side.                                                                                                |
 | **Externalized state** | Workflow state lives in pluggable repositories. The server can restart at any point without data loss.                                                                                                                 |
 | **Input validation**   | API inputs are validated at the boundary. Identifiers use a restricted character set; free-text fields are sanitized against control character injection.                                                              |
 | **Output validation**  | LLM-generated outputs are checked before entering workflow state. Control characters, Unicode manipulation sequences (RTL overrides, zero-width chars), and oversized payloads are rejected. Applies to both runtimes. |
@@ -437,7 +439,7 @@ Full model: [Architecture § Decision 4](docs/unified-architecture.md). Operator
 
 The [`integrations/spring-reference-client`](integrations/spring-reference-client/README.md)
 directory contains a Spring Boot application demonstrating end-to-end integration with the server:
-MCP split-pipe connectivity, stub tool implementations, SSE event streaming, and a
+an MCP relay that pulls tool calls, stub tool implementations, SSE event streaming, and a
 human-in-the-loop review gate.
 
 **Scenario:** a credit risk analyst agent evaluates a fictional credit-limit increase for

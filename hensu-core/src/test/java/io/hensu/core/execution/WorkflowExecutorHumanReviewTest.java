@@ -225,7 +225,9 @@ class WorkflowExecutorHumanReviewTest extends WorkflowExecutorTestBase {
         assertThat(pausedResult).isInstanceOf(ExecutionResult.Paused.class);
         var pausedState = ((ExecutionResult.Paused) pausedResult).state();
 
-        var resumed = executor.executeFrom(workflow, pausedState);
+        var resumed =
+                executor.executeFrom(
+                        workflow, pausedState, ExecutionListener.NOOP, ExecutionJournal.NONE);
 
         assertThat(resumed).isInstanceOf(ExecutionResult.Completed.class);
         assertThat(((ExecutionResult.Completed) resumed).getExitStatus())

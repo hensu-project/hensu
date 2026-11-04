@@ -143,7 +143,9 @@ class WorkflowExecutorConditionLoopTest extends WorkflowExecutorTestBase {
         HensuState resumed = HensuSnapshot.from(crashed, "checkpoint").toState();
         assertThat(resumed.getRetryCount("condition", "worker")).isEqualTo(2);
 
-        var result = executor.executeFrom(workflow, resumed);
+        var result =
+                executor.executeFrom(
+                        workflow, resumed, ExecutionListener.NOOP, ExecutionJournal.NONE);
 
         assertThat(result).isInstanceOf(ExecutionResult.Completed.class);
         assertThat(((ExecutionResult.Completed) result).getExitStatus())

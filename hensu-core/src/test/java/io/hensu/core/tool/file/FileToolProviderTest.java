@@ -3,6 +3,7 @@ package io.hensu.core.tool.file;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.hensu.core.tool.ToolCall;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolCallStatus;
 import io.hensu.core.tool.ToolDefinition;
@@ -37,7 +38,7 @@ class FileToolProviderTest {
         for (int i = 0; i < pairs.length; i += 2) {
             arguments.put(String.valueOf(pairs[i]), pairs[i + 1]);
         }
-        return provider.call(tool, arguments, new HashMap<>());
+        return provider.call(new ToolCall("test#1", tool, arguments), new HashMap<>());
     }
 
     @Nested

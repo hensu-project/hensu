@@ -25,7 +25,8 @@ class HensuSnapshotTest {
                         new ExecutionHistory(),
                         null,
                         Instant.now(),
-                        "test-checkpoint");
+                        "test-checkpoint",
+                        0);
 
         HensuState restored = snapshot.toState();
 

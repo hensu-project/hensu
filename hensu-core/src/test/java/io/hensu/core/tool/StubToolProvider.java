@@ -50,8 +50,9 @@ public final class StubToolProvider implements ToolProvider {
     }
 
     @Override
-    public ToolCallResult call(
-            String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+    public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+        String toolName = call.toolName();
+        Map<String, Object> arguments = call.arguments();
         synchronized (invocations) {
             invocations.add(
                     new Invocation(

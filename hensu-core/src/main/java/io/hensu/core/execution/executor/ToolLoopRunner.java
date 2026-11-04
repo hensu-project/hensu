@@ -4,9 +4,12 @@ import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.agent.ToolCapable;
 import io.hensu.core.agent.ToolSession;
+import io.hensu.core.execution.ExecutionJournal;
 import io.hensu.core.execution.ExecutionListener;
+import io.hensu.core.execution.RunAbortedException;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.tool.CapabilityGaps;
+import io.hensu.core.tool.ToolCall;
 import io.hensu.core.tool.ToolCallEvent;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolCallStatus;
@@ -19,7 +22,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -39,16 +41,6 @@ final class ToolLoopRunner {
 
     private static final Logger logger = Logger.getLogger(ToolLoopRunner.class.getName());
     private static final int DEFAULT_MAX_TOOL_CALLS = 10;
-
-    /// Source of the call identity that pairs a request record with its outcome.
-    ///
-    /// Sinks used to pair on node and tool name. That is correct only as long as no two
-    /// concurrent calls share both, which is a property of the current graph shapes —
-    /// parallel branches report as `node/branch`, sub-workflows run sequentially — and
-    /// not of the audit layer. A minted id makes the pairing correct by construction, so
-    /// a future branch kind cannot silently start attributing one call's arguments to
-    /// another's outcome. The counter is per process, the widest scope any sink observes.
-    private static final AtomicLong CALL_SEQUENCE = new AtomicLong();
 
     private ToolLoopRunner() {}
 
@@ -85,6 +77,8 @@ final class ToolLoopRunner {
         List<ToolDefinition> catalog;
         try {
             catalog = catalog(ctx);
+        } catch (RunAbortedException e) {
+            throw e;
         } catch (RuntimeException e) {
             // Colliding provider catalogs must fail the node, not escape the loop.
             return new NodeResult(
@@ -116,15 +110,25 @@ final class ToolLoopRunner {
                         ? agent.getConfig().getMaxToolCalls()
                         : DEFAULT_MAX_TOOL_CALLS;
 
+        // Every step of the attempt the run cannot reproduce goes through the journal under
+        // the attempt's position: the session's turns here, each call's outcome under its
+        // key. A recovered run therefore replays the attempt instead of re-deciding it.
+        String position = ctx.getState().position();
+        ExecutionJournal journal = ctx.getJournal();
         ToolSession session =
                 toolCapable.openToolSession(
-                        resolvedPrompt, ctx.getState().getContext(), availableTools);
+                        resolvedPrompt,
+                        ctx.getState().getContext(),
+                        availableTools,
+                        (index, live) -> journal.turn(position, index, live));
 
         try {
             AgentResponse response = session.start();
             int toolCallCount = 0;
+            int sequence = 0;
 
             while (response instanceof AgentResponse.ToolRequest toolRequest) {
+                String key = ToolCall.key(position, ++sequence);
                 // Budget check — count EXECUTED tool calls, not rounds
                 if (toolCallCount >= maxToolCalls) {
                     session.compact();
@@ -139,7 +143,7 @@ final class ToolLoopRunner {
                                             + maxToolCalls
                                             + "). Provide your final answer based on the tool results received so far.",
                                     null);
-                    String callId = nextCallId();
+                    String callId = callId(ctx, key);
                     fireCall(ctx, callId, eventSourceId, agentId, toolRequest, availableTools);
                     fireResult(ctx, callId, eventSourceId, agentId, exhaustion, 0L);
                     response = session.submit(exhaustion);
@@ -158,7 +162,7 @@ final class ToolLoopRunner {
                 }
 
                 ToolCallResult result =
-                        executeTool(toolRequest, availableTools, ctx, eventSourceId, agentId);
+                        executeTool(toolRequest, key, availableTools, ctx, eventSourceId, agentId);
 
                 if (result.status() == ToolCallStatus.CATALOG_ERROR) {
                     // A misconfigured catalog is an operator problem, not something
@@ -214,13 +218,14 @@ final class ToolLoopRunner {
 
     private static ToolCallResult executeTool(
             AgentResponse.ToolRequest toolRequest,
+            String key,
             List<ToolDefinition> availableTools,
             ExecutionContext ctx,
             String eventSourceId,
             String agentId) {
 
         String toolName = toolRequest.toolName();
-        String callId = nextCallId();
+        String callId = callId(ctx, key);
 
         // Unknown tool (hallucination) — feed back, don't hard-fail
         boolean known = availableTools.stream().anyMatch(t -> t.name().equals(toolName));
@@ -247,10 +252,14 @@ final class ToolLoopRunner {
         try {
             ToolCallResult result =
                     ctx.getToolInvoker()
-                            .call(toolName, arguments(toolRequest), ctx.getState().getContext());
+                            .call(
+                                    new ToolCall(key, toolName, arguments(toolRequest)),
+                                    ctx.getState().getContext());
             fireResult(ctx, callId, eventSourceId, agentId, result, elapsedMs(startNanos));
             recordGap(ctx, eventSourceId, toolRequest, result);
             return result;
+        } catch (RunAbortedException e) {
+            throw e;
         } catch (Exception e) {
             logger.warning("Tool execution failed for '" + toolName + "': " + e.getMessage());
             ToolCallResult failure =
@@ -293,8 +302,16 @@ final class ToolLoopRunner {
                 arguments(toolRequest).keySet());
     }
 
-    private static String nextCallId() {
-        return Long.toUnsignedString(CALL_SEQUENCE.incrementAndGet());
+    /// The identity that pairs a call's request record with its outcome in every sink.
+    ///
+    /// Sinks used to pair on node and tool name, which is correct only while no two
+    /// concurrent calls share both. The call key makes the pairing correct by
+    /// construction, and qualifying it with the execution makes it unique across
+    /// every execution a sink observes. Because the key is stable across recovery, a
+    /// replayed call reports the same identity the original did, so a durable sink
+    /// can record each call once.
+    private static String callId(ExecutionContext ctx, String key) {
+        return ToolCall.id(ctx.getState().getExecutionId(), key);
     }
 
     private static void fireCall(

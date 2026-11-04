@@ -1,36 +1,34 @@
 package io.hensu.core.execution.pipeline;
 
-/// Fires the {@link io.hensu.core.execution.ExecutionListener#onCheckpoint} callback
-/// before each node executes.
+import io.hensu.core.state.HensuSnapshot;
+
+/// Records the checkpoint that opens each node attempt.
 ///
-/// This is the first processor in the pre-execution pipeline. It signals to
-/// external observers (e.g., {@code WorkflowService}) that the workflow state is
-/// fully consistent and safe to persist for crash-recovery purposes.
+/// This is the first processor in the pre-execution pipeline. The workflow state is
+/// fully consistent here, and everything the attempt does – model turns, tool calls –
+/// is journaled under the position this checkpoint fixes, so a recovered run re-enters
+/// exactly this attempt.
 ///
-/// ### Fork branches are not checkpointed
-/// A checkpoint records one cursor, and the branches of a fork have several — each sub-flow
-/// walks its own path concurrently. Letting them all write would leave the durable cursor
-/// wherever the last branch happened to be, so recovery would resume inside one sub-flow with
-/// its siblings never having run, and the join would then fail for want of their results.
-///
-/// The fork node is therefore the atomic resume boundary: branch states
-/// ({@link io.hensu.core.state.HensuState#isBranchState()}) checkpoint nothing, and the parent's
-/// last checkpoint before the fork still points at the fork node itself. The merged parent state
-/// is checkpointed normally once the join is reached.
-///
-/// The consequence is at-least-once execution at fork granularity: a crash anywhere inside a
-/// fork re-runs **every** sub-flow on recovery, including branches that had already completed,
-/// and their agent calls are billed again. Sub-flow node work must be safe to repeat.
+/// ### Main flow and nested flows
+/// The main flow's checkpoint is the execution's own state: it goes to the
+/// {@link io.hensu.core.execution.ExecutionListener#onCheckpoint} listener, which on the
+/// server writes the execution row under the run's claim. A nested flow – a fork
+/// branch, a sub-workflow – runs concurrently with its siblings, and one execution row
+/// cannot hold several cursors, so its checkpoint goes to the
+/// {@link io.hensu.core.execution.ExecutionJournal} under the flow's scope instead. A
+/// recovery that re-enters the fork node resumes each branch from its own latest
+/// checkpoint: a branch that had finished is not run again, and a branch that was mid-node
+/// re-enters that node's attempt and replays it from the journal.
 ///
 /// ### Contracts
 /// - **Precondition**: `context.result()` is {@code null} (pre-execution pipeline)
 /// - **Postcondition**: Always returns {@link ProcessorOutcome#CONTINUE}
-/// - **Side effects**: Delegates to the registered
-/// {@link io.hensu.core.execution.ExecutionListener}, except on fork branch states
+/// - **Side effects**: one checkpoint write, to the listener or the journal
 ///
 /// @implNote Stateless. Safe to reuse across loop iterations.
 ///
 /// @see io.hensu.core.execution.ExecutionListener#onCheckpoint
+/// @see io.hensu.core.execution.ExecutionJournal#recordFlowCheckpoint
 /// @see NodeStartPreProcessor for the subsequent pre-execution processor
 public final class CheckpointPreProcessor implements PreNodeExecutionProcessor {
 
@@ -43,10 +41,15 @@ public final class CheckpointPreProcessor implements PreNodeExecutionProcessor {
 
     @Override
     public ProcessorOutcome process(ProcessorContext context) {
-        if (context.state().isBranchState()) {
-            return ProcessorOutcome.CONTINUE;
+        if (context.state().isNested()) {
+            context.executionContext()
+                    .getJournal()
+                    .recordFlowCheckpoint(
+                            context.state().getScope(),
+                            HensuSnapshot.from(context.state(), "checkpoint"));
+        } else {
+            context.executionContext().getListener().onCheckpoint(context.state());
         }
-        context.executionContext().getListener().onCheckpoint(context.state());
         return ProcessorOutcome.CONTINUE;
     }
 }

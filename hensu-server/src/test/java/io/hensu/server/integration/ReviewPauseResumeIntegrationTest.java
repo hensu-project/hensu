@@ -9,6 +9,7 @@ import io.hensu.core.review.ReviewOutcome;
 import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.workflow.Workflow;
+import io.hensu.server.workflow.ExecutionNotPausedException;
 import io.hensu.server.workflow.ExecutionStartResult;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -41,14 +42,12 @@ class ReviewPauseResumeIntegrationTest extends IntegrationTestBase {
         workflowRepository.save(TEST_TENANT, workflow);
         ExecutionStartResult result =
                 workflowService.startExecution(
-                        TEST_TENANT, workflow.getId(), Map.of("topic", "testing"));
+                        TEST_TENANT, workflow.getId(), Map.of("topic", "testing"), null);
 
         awaitCheckpointReason(result.executionId(), "paused");
 
         HensuSnapshot paused =
-                workflowStateRepository
-                        .findByExecutionId(TEST_TENANT, result.executionId())
-                        .orElseThrow();
+                stateReader.findByExecutionId(TEST_TENANT, result.executionId()).orElseThrow();
         assertThat(paused.checkpointReason()).isEqualTo("paused");
         assertThat(paused.phase()).isInstanceOf(ExecutionPhase.Awaiting.class);
 
@@ -64,9 +63,7 @@ class ReviewPauseResumeIntegrationTest extends IntegrationTestBase {
         awaitCheckpointReason(result.executionId(), "completed");
 
         HensuSnapshot completed =
-                workflowStateRepository
-                        .findByExecutionId(TEST_TENANT, result.executionId())
-                        .orElseThrow();
+                stateReader.findByExecutionId(TEST_TENANT, result.executionId()).orElseThrow();
         assertThat(completed.checkpointReason()).isEqualTo("completed");
         assertThat(completed.context()).containsKey("draft");
     }
@@ -81,7 +78,7 @@ class ReviewPauseResumeIntegrationTest extends IntegrationTestBase {
         workflowRepository.save(TEST_TENANT, workflow);
         ExecutionStartResult result =
                 workflowService.startExecution(
-                        TEST_TENANT, workflow.getId(), Map.of("topic", "testing"));
+                        TEST_TENANT, workflow.getId(), Map.of("topic", "testing"), null);
 
         awaitCheckpointReason(result.executionId(), "paused");
 
@@ -93,9 +90,7 @@ class ReviewPauseResumeIntegrationTest extends IntegrationTestBase {
         awaitCheckpointReason(result.executionId(), "rejected");
 
         HensuSnapshot rejected =
-                workflowStateRepository
-                        .findByExecutionId(TEST_TENANT, result.executionId())
-                        .orElseThrow();
+                stateReader.findByExecutionId(TEST_TENANT, result.executionId()).orElseThrow();
         assertThat(rejected.checkpointReason()).isEqualTo("rejected");
     }
 
@@ -115,7 +110,7 @@ class ReviewPauseResumeIntegrationTest extends IntegrationTestBase {
         workflowRepository.save(TEST_TENANT, workflow);
         ExecutionStartResult result =
                 workflowService.startExecution(
-                        TEST_TENANT, workflow.getId(), Map.of("topic", "testing"));
+                        TEST_TENANT, workflow.getId(), Map.of("topic", "testing"), null);
 
         awaitCheckpointReason(result.executionId(), "paused");
 
@@ -126,9 +121,7 @@ class ReviewPauseResumeIntegrationTest extends IntegrationTestBase {
                 .isInstanceOf(IllegalArgumentException.class);
 
         HensuSnapshot afterBadResume =
-                workflowStateRepository
-                        .findByExecutionId(TEST_TENANT, result.executionId())
-                        .orElseThrow();
+                stateReader.findByExecutionId(TEST_TENANT, result.executionId()).orElseThrow();
         assertThat(afterBadResume.checkpointReason()).isEqualTo("paused");
         assertThat(afterBadResume.phase()).isInstanceOf(ExecutionPhase.Awaiting.class);
         assertThat(((ExecutionPhase.Awaiting) afterBadResume.phase()).correlationId())
@@ -159,7 +152,7 @@ class ReviewPauseResumeIntegrationTest extends IntegrationTestBase {
         workflowRepository.save(TEST_TENANT, workflow);
         ExecutionStartResult result =
                 workflowService.startExecution(
-                        TEST_TENANT, workflow.getId(), Map.of("topic", "testing"));
+                        TEST_TENANT, workflow.getId(), Map.of("topic", "testing"), null);
 
         awaitCheckpointReason(result.executionId(), "paused");
 
@@ -168,21 +161,19 @@ class ReviewPauseResumeIntegrationTest extends IntegrationTestBase {
 
         awaitCheckpointReason(result.executionId(), "completed");
         HensuSnapshot completed =
-                workflowStateRepository
-                        .findByExecutionId(TEST_TENANT, result.executionId())
-                        .orElseThrow();
+                stateReader.findByExecutionId(TEST_TENANT, result.executionId()).orElseThrow();
 
         assertThatThrownBy(
                         () ->
                                 workflowService.resumeExecution(
                                         TEST_TENANT, result.executionId(), decision))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("not awaiting review");
+                // A finished execution is not paused: the decision conflicts with its state
+                // on every node, so it is refused as a conflict (409), not a bad request.
+                .isInstanceOf(ExecutionNotPausedException.class)
+                .hasMessageContaining("not paused");
 
         HensuSnapshot afterStaleDecision =
-                workflowStateRepository
-                        .findByExecutionId(TEST_TENANT, result.executionId())
-                        .orElseThrow();
+                stateReader.findByExecutionId(TEST_TENANT, result.executionId()).orElseThrow();
         assertThat(afterStaleDecision.checkpointReason()).isEqualTo("completed");
         assertThat(afterStaleDecision.phase()).isInstanceOf(ExecutionPhase.Terminal.class);
         assertThat(afterStaleDecision.context()).isEqualTo(completed.context());
@@ -192,9 +183,7 @@ class ReviewPauseResumeIntegrationTest extends IntegrationTestBase {
         io.smallrye.mutiny.Uni.createFrom()
                 .deferred(
                         () -> {
-                            var snapshot =
-                                    workflowStateRepository.findByExecutionId(
-                                            TEST_TENANT, executionId);
+                            var snapshot = stateReader.findByExecutionId(TEST_TENANT, executionId);
                             assertThat(snapshot).isPresent();
                             assertThat(snapshot.get().checkpointReason()).isEqualTo(expectedReason);
                             return io.smallrye.mutiny.Uni.createFrom().item(snapshot.get());

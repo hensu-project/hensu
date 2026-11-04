@@ -9,6 +9,7 @@ import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.rubric.RubricEngine;
+import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.template.TemplateResolver;
 import io.hensu.core.tool.ToolRouter;
@@ -145,33 +146,57 @@ public class WorkflowExecutor {
                         .history(new ExecutionHistory())
                         .build();
 
-        return executeLoop(state, workflow, listener, null);
+        return executeLoop(state, workflow, listener, ExecutionJournal.NONE, null);
     }
 
     /// Resumes execution of a workflow from a previously saved state.
     ///
-    /// Used after a workflow was paused (returned {@link ExecutionResult.Paused})
-    /// and needs to continue from the saved checkpoint.
-    ///
-    /// @param workflow   the workflow definition, not null
-    /// @param savedState the state to resume from, not null
-    /// @return execution result indicating completion, pause, or rejection, never null
-    /// @throws Exception if execution fails
-    public ExecutionResult executeFrom(Workflow workflow, HensuState savedState) throws Exception {
-        return executeFrom(workflow, savedState, ExecutionListener.NOOP);
-    }
-
-    /// Resumes execution of a workflow from a previously saved state with a listener.
+    /// Continues a workflow that paused (returned {@link ExecutionResult.Paused}) or a
+    /// run recovered after its predecessor stopped. A recovered run re-enters the attempt
+    /// the checkpoint opened; the journal hands back the turns and outcomes recorded
+    /// there, so the run continues the original attempt rather than starting another.
+    /// {@link ExecutionJournal#NONE} resumes without journaling.
     ///
     /// @param workflow   the workflow definition, not null
     /// @param savedState the state to resume from, not null
     /// @param listener   listener for execution events, not null
+    /// @param journal    durable record of the run's unreproducible steps, not null
     /// @return execution result indicating completion, pause, or rejection, never null
     /// @throws Exception if execution fails
+    /// @throws RunAbortedException if the journal refuses a write or replay diverges
     public ExecutionResult executeFrom(
-            Workflow workflow, HensuState savedState, ExecutionListener listener) throws Exception {
+            Workflow workflow,
+            HensuState savedState,
+            ExecutionListener listener,
+            ExecutionJournal journal)
+            throws Exception {
         registerWorkflowAgents(workflow);
-        return executeLoop(savedState, workflow, listener, null);
+        return executeLoop(savedState, workflow, listener, journal, null);
+    }
+
+    /// Runs a sub-workflow as a nested flow of the calling attempt.
+    ///
+    /// The nested flow shares the parent's journal and records its checkpoints under
+    /// its own scope, so a recovery that re-enters the parent attempt resumes the child
+    /// where it stopped instead of re-running nodes whose effects already happened.
+    ///
+    /// @param workflow   the sub-workflow definition, not null
+    /// @param state      the child's state, nested under the parent attempt's scope, not null
+    /// @param listener   listener for execution events, not null
+    /// @param journal    the parent run's journal, not null
+    /// @return the child's result, never null
+    /// @throws Exception if the child fails
+    public ExecutionResult executeNested(
+            Workflow workflow,
+            HensuState state,
+            ExecutionListener listener,
+            ExecutionJournal journal)
+            throws Exception {
+        if (!state.isNested()) {
+            throw new IllegalArgumentException("A nested flow needs a scope");
+        }
+        registerWorkflowAgents(workflow);
+        return executeLoop(state, workflow, listener, journal, null);
     }
 
     /// Executes a sub-flow that stops at a named boundary node.
@@ -187,13 +212,18 @@ public class WorkflowExecutor {
     /// @param workflow       the workflow definition containing all nodes, not null
     /// @param listener       execution event listener (should be thread-safe for
     ///                       concurrent sub-flows), not null
+    /// @param journal        the parent run's journal, not null
     /// @return {@link ExecutionResult.Completed} when the boundary is reached, with the
     /// branch state containing all variables written by sub-flow nodes via {@code writes()}
     /// @throws Exception if any sub-flow node fails
     public ExecutionResult executeUntil(
-            String boundaryNodeId, HensuState state, Workflow workflow, ExecutionListener listener)
+            String boundaryNodeId,
+            HensuState state,
+            Workflow workflow,
+            ExecutionListener listener,
+            ExecutionJournal journal)
             throws Exception {
-        return executeLoop(state, workflow, listener, boundaryNodeId);
+        return executeLoop(state, workflow, listener, journal, boundaryNodeId);
     }
 
     /// Graph-traversal loop shared by {@link #execute}, {@link #executeFrom},
@@ -210,15 +240,26 @@ public class WorkflowExecutor {
     /// @return execution result, never null
     /// @throws Exception if execution fails
     private ExecutionResult executeLoop(
-            HensuState state, Workflow workflow, ExecutionListener listener, String boundaryNodeId)
+            HensuState state,
+            Workflow workflow,
+            ExecutionListener listener,
+            ExecutionJournal journal,
+            String boundaryNodeId)
             throws Exception {
 
-        ExecutionContext context = createExecutionContext(state, workflow, listener);
+        ExecutionContext context = createExecutionContext(state, workflow, listener, journal);
 
         while (true) {
             String currentNodeId = state.getCurrentNode();
 
             if (currentNodeId.equals(boundaryNodeId)) {
+                // A nested flow that reached its boundary records so: a recovery that
+                // re-enters the fork finds the branch finished instead of re-running its
+                // last node.
+                if (state.isNested()) {
+                    journal.recordFlowCheckpoint(
+                            state.getScope(), HensuSnapshot.from(state, "checkpoint"));
+                }
                 return new ExecutionResult.Completed(state, ExitStatus.SUCCESS);
             }
 
@@ -232,11 +273,17 @@ public class WorkflowExecutor {
                 logTerminalResult(result, currentNodeId);
                 return result;
             }
+            // The attempt completed and the transition moved the pointer: the next
+            // attempt gets the next journal position.
+            state.advanceStep();
         }
     }
 
     private ExecutionContext createExecutionContext(
-            HensuState state, Workflow workflow, ExecutionListener listener) {
+            HensuState state,
+            Workflow workflow,
+            ExecutionListener listener,
+            ExecutionJournal journal) {
         return ExecutionContext.builder()
                 .state(state)
                 .workflow(workflow)
@@ -249,6 +296,7 @@ public class WorkflowExecutor {
                 .workflowRepository(workflowRepository)
                 .rubricEngine(rubricEngine)
                 .toolRouter(toolRouter)
+                .journal(journal)
                 .build();
     }
 

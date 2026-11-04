@@ -11,6 +11,7 @@ import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.agent.ToolCapable;
 import io.hensu.core.agent.ToolSession;
+import io.hensu.core.agent.TurnJournal;
 import io.hensu.core.tool.ToolDefinition;
 import java.time.Duration;
 import java.time.Instant;
@@ -115,8 +116,11 @@ public class LangChain4jAgent implements Agent, ToolCapable {
 
     @Override
     public ToolSession openToolSession(
-            String prompt, Map<String, Object> context, List<ToolDefinition> tools) {
-        return new LangChain4jToolSession(this, model, config, prompt, context, tools);
+            String prompt,
+            Map<String, Object> context,
+            List<ToolDefinition> tools,
+            TurnJournal turns) {
+        return new LangChain4jToolSession(this, model, config, prompt, context, tools, turns);
     }
 
     /// Appends the final prompt/answer pair to shared conversation history.

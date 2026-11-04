@@ -1,7 +1,7 @@
 # Hensu Spring Reference Client
 
 A standalone Spring Boot application demonstrating end-to-end integration with `hensu-server`:
-MCP split-pipe tool execution, SSE event streaming, and a human-in-the-loop review gate.
+tool execution through the relay protocol, SSE event streaming, and a human-in-the-loop review gate.
 
 ## Scenario
 
@@ -15,14 +15,14 @@ flowchart LR
         engine(["Workflow Engine"])
     end
 
-    subgraph client["This Client (MCP Transport)"]
+    subgraph client["This Client (Tool Relay)"]
         direction TB
         tools(["fetch_customer_data\ncalculate_risk_score"])
     end
 
     reviewer(["Human Reviewer\nPOST /demo/review/{id}"])
 
-    engine -->|"tools/list · tools/call (SSE)"| tools
+    tools -->|"poll · ack · complete (any node)"| engine
     engine -.->|"execution.paused"| reviewer
 
     style server fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
@@ -71,7 +71,7 @@ cd integrations/spring-reference-client
 ```
 
 The client starts on port `8081` and immediately:
-1. Connects the MCP split-pipe to `/mcp/connect`
+1. Starts the tool relay: publishes its catalog to `/mcp/v1/catalog` and long-polls `/mcp/v1/poll` on whichever node the load balancer picks
 2. Submits an execution for `risk-assessment` with `customerId=C-42`
 3. Streams SSE events to the console
 
@@ -121,8 +121,8 @@ src/main/java/io/hensu/integrations/springclient/
     HensuEventStream.java     Reactive SSE subscriber
   mcp/
     ToolHandler.java          Tool contract (name / description / schema / execute)
-    ToolDispatcher.java       Routes tools/call and serves tools/list
-    HensuMcpTransport.java    SSE split-pipe with exponential-backoff reconnect
+    ToolDispatcher.java       Routes pulled tool calls and describes the catalog
+    HensuMcpTransport.java    tool relay: poll, ack before execute, complete
   tools/
     FetchCustomerDataTool.java    Mock customer financial profile
     CalculateRiskScoreTool.java   Mock composite risk score (MEDIUM / REVIEW)

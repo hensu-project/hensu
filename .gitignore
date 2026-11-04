@@ -31,6 +31,17 @@ quarkus-app/
 hs_err_pid*
 replay_pid*
 
+# Python (fixture MCP servers under working-dir/)
+__pycache__/
+
+# TLA+ / TLC run artifacts (specs and configurations are committed, run output is not)
+docs/tla/output/
+docs/tla/states/
+docs/tla/*_TTrace_*
+
+# Local ticket backlog (kept per developer, not committed)
+docs/tickets/
+
 # IDEs (IntelliJ IDEA)
 .idea/
 *.iml

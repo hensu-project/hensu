@@ -1,8 +1,10 @@
 package io.hensu.server.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -10,7 +12,9 @@ import static org.mockito.Mockito.when;
 import io.hensu.core.resume.ResumeInput;
 import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.workflow.ExecutionStartResult;
+import io.hensu.server.workflow.IdempotencyKeyReusedException;
 import io.hensu.server.workflow.WorkflowService;
+import jakarta.ws.rs.ClientErrorException;
 import jakarta.ws.rs.core.Response;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,17 +40,34 @@ class ExecutionResourceTest {
 
         @Test
         void shouldStartExecutionAndReturn202() {
-            when(workflowService.startExecution(eq("tenant-1"), eq("wf-1"), any()))
+            when(workflowService.startExecution(eq("tenant-1"), eq("wf-1"), any(), isNull()))
                     .thenReturn(new ExecutionStartResult("exec-123", "wf-1"));
 
             var request = new ExecutionStartRequest("wf-1", Map.of("key", "value"));
-            try (Response response = resource.startExecution(request)) {
+            try (Response response = resource.startExecution(request, null)) {
 
                 assertThat(response.getStatus()).isEqualTo(202);
                 var entity = (ExecutionStartResult) response.getEntity();
                 assertThat(entity.executionId()).isEqualTo("exec-123");
                 assertThat(entity.workflowId()).isEqualTo("wf-1");
             }
+        }
+
+        @Test
+        void aKeyReusedForADifferentRequestIsRefusedAsUnprocessable() {
+            when(workflowService.startExecution(eq("tenant-1"), eq("wf-1"), any(), eq("k-1")))
+                    .thenThrow(new IdempotencyKeyReusedException("k-1 belongs to exec-9"));
+
+            var request = new ExecutionStartRequest("wf-1", Map.of());
+            assertThatThrownBy(
+                            () -> {
+                                try (Response ignored = resource.startExecution(request, "k-1")) {
+                                    // Reaching here means no exception: the assertion fails
+                                }
+                            })
+                    .isInstanceOfSatisfying(
+                            ClientErrorException.class,
+                            e -> assertThat(e.getResponse().getStatus()).isEqualTo(422));
         }
     }
 

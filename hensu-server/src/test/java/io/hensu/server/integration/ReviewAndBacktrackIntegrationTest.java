@@ -45,11 +45,7 @@ class ReviewAndBacktrackIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("topic", "test"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.currentNodeId()).isEqualTo("done");
     }
@@ -66,11 +62,7 @@ class ReviewAndBacktrackIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("topic", "test"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.currentNodeId()).isEqualTo("done");
 
@@ -88,11 +80,7 @@ class ReviewAndBacktrackIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("topic", "test"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("rejected");
     }
 
@@ -104,11 +92,7 @@ class ReviewAndBacktrackIntegrationTest extends IntegrationTestBase {
 
         ExecutionStartResult result = pushAndExecute(workflow, Map.of("topic", "test"));
 
-        List<HensuSnapshot> snapshots =
-                workflowStateRepository.findByWorkflowId(TEST_TENANT, result.workflowId());
-        assertThat(snapshots).isNotEmpty();
-
-        HensuSnapshot snapshot = snapshots.getLast();
+        HensuSnapshot snapshot = snapshotOf(result);
         assertThat(snapshot.checkpointReason()).isEqualTo("completed");
         assertThat(snapshot.currentNodeId()).isEqualTo("done");
     }

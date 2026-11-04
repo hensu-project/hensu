@@ -13,7 +13,6 @@ import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.executor.NodeResult;
 import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuState;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -421,10 +420,10 @@ class ConsensusEvaluatorTest {
     }
 
     private static HensuState emptyState() {
-        return new HensuState(
-                new HashMap<>(),
-                "test-workflow",
-                "test-node",
-                new io.hensu.core.execution.result.ExecutionHistory());
+        return new HensuState.Builder()
+                .executionId("exec-1")
+                .workflowId("test-workflow")
+                .currentNode("test-node")
+                .build();
     }
 }

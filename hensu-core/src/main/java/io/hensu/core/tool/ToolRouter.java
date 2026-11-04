@@ -1,5 +1,6 @@
 package io.hensu.core.tool;
 
+import io.hensu.core.execution.RunAbortedException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -117,15 +118,15 @@ public final class ToolRouter implements ToolRegistry, ToolInvoker {
     /// a configured provider and a built-in routes to the configured one, which
     /// is the same winner {@link #all()} publishes.
     ///
-    /// @param toolName the tool identifier to invoke, not null
-    /// @param arguments arguments supplied by the agent, not null (may be empty)
+    /// @param call the invocation: its key, tool name and arguments, not null
     /// @param context the workflow state context, not null (may be empty)
     /// @return the provider's result, or a routing outcome when no single provider
     ///     claims the name; provider exceptions become failure results
+    /// @throws RunAbortedException if the provider stops the run
     @Override
-    public ToolCallResult call(
-            String toolName, Map<String, Object> arguments, Map<String, Object> context) {
-        Objects.requireNonNull(toolName, "toolName must not be null");
+    public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+        Objects.requireNonNull(call, "call must not be null");
+        String toolName = call.toolName();
 
         ToolProvider owner;
         try {
@@ -148,7 +149,9 @@ public final class ToolRouter implements ToolRegistry, ToolInvoker {
         }
 
         try {
-            return owner.call(toolName, arguments, context);
+            return owner.call(call, context);
+        } catch (RunAbortedException e) {
+            throw e;
         } catch (RuntimeException e) {
             return ToolCallResult.failure(
                     toolName, "Tool provider " + name(owner) + " failed: " + e.getMessage());

@@ -19,7 +19,7 @@ import reactor.core.Disposable;
 ///
 /// ### Scenario: credit risk assessment with human review
 /// ```
-/// 1. MCP transport connects to /mcp/connect (stays open, auto-reconnects)
+/// 1. Tool relay publishes its catalog and starts polling /mcp/v1/poll (any node)
 /// 2. Execution started: POST /api/v1/executions
 /// 3. SSE subscribed: GET /api/v1/executions/{id}/events
 ///
@@ -63,9 +63,9 @@ public class DemoRunner implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
-        // 1. Open MCP split-pipe (non-blocking, persists for the app lifetime)
+        // 1. Start the tool relay (background polling, persists for the app lifetime)
         mcpDisposable.set(mcpTransport.connect());
-        LOG.info("MCP transport connected as tenantId={}", props.tenantId());
+        LOG.info("Tool relay started as tenantId={}", props.tenantId());
 
         // 2. Start workflow execution
         String workflowId = props.demo().workflowId();

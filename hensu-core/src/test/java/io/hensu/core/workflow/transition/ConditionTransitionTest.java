@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.hensu.core.execution.executor.NodeResult;
-import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.tool.CapabilityGaps;
 import io.hensu.core.workflow.transition.Condition.Compare;
@@ -149,14 +148,22 @@ class ConditionTransitionTest {
     // — Helpers ———————————————————————————————————————————————————————————
 
     private HensuState stateWithout() {
-        return new HensuState(
-                new HashMap<>(), "test-workflow", "current-node", new ExecutionHistory());
+        return new HensuState.Builder()
+                .executionId("exec-1")
+                .workflowId("test-workflow")
+                .currentNode("current-node")
+                .build();
     }
 
     private HensuState stateWithGapCount(Object value) {
         var context = new HashMap<String, Object>();
         context.put(CapabilityGaps.COUNT_KEY, value);
-        return new HensuState(context, "test-workflow", "current-node", new ExecutionHistory());
+        return new HensuState.Builder()
+                .executionId("exec-1")
+                .workflowId("test-workflow")
+                .currentNode("current-node")
+                .context(context)
+                .build();
     }
 
     private HensuState stateWith(Object value) {
@@ -164,7 +171,12 @@ class ConditionTransitionTest {
         if (value != null) {
             context.put("status", value);
         }
-        return new HensuState(context, "test-workflow", "current-node", new ExecutionHistory());
+        return new HensuState.Builder()
+                .executionId("exec-1")
+                .workflowId("test-workflow")
+                .currentNode("current-node")
+                .context(context)
+                .build();
     }
 
     @Test

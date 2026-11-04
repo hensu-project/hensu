@@ -12,7 +12,7 @@ import java.lang.annotation.Target;
 /// Validates that a raw message body is safe for processing.
 ///
 /// A valid message:
-/// - Is not null or blank
+/// - Is not null or blank, unless {@link #allowBlank()} is set
 /// - Does not exceed {@link #maxBytes()} in UTF-8 size
 /// - Contains no dangerous control characters
 ///   (U+0000–U+0008, U+000B, U+000C, U+000E–U+001F, U+007F)
@@ -28,6 +28,9 @@ import java.lang.annotation.Target;
 ///
 /// // Custom size limit:
 /// public Uni<Response> receive(@ValidMessage(maxBytes = 65_536) String body) { ... }
+///
+/// // Optional body: absent is fine, present must still be safe
+/// public Response poll(@ValidMessage(maxBytes = 4096, allowBlank = true) String body) { ... }
 /// ```
 ///
 /// @see ValidMessageValidator
@@ -42,6 +45,10 @@ public @interface ValidMessage {
 
     /// Maximum allowed UTF-8 byte size. Defaults to 1 MB.
     int maxBytes() default InputValidator.MAX_JSON_MESSAGE_BYTES;
+
+    /// Whether a null or blank body is valid, for endpoints whose body is optional.
+    /// A body that is present is checked for size and control characters either way.
+    boolean allowBlank() default false;
 
     Class<?>[] groups() default {};
 

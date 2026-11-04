@@ -1,6 +1,8 @@
 package io.hensu.server.persistence;
 
 import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -27,6 +29,8 @@ import java.util.Objects;
 /// @param argv the invocation as it ran, empty when no process was involved
 /// @param arguments the redacted arguments the agent supplied
 /// @param output what the tool produced, already truncated, may be null
+/// @param callId the call's identity, stable across a recovered run's replay so the call
+///     is recorded once; null for entries written before call ids existed
 /// @see ToolAuditRepository for where these are written
 public record ToolAuditEntry(
         String executionId,
@@ -39,9 +43,13 @@ public record ToolAuditEntry(
         Instant occurredAt,
         List<String> argv,
         Map<String, Object> arguments,
-        String output) {
+        String output,
+        String callId) {
 
     /// Compact constructor taking defensive copies and rejecting missing identity.
+    ///
+    /// @implNote The arguments copy tolerates null values – they come from model-produced
+    ///     JSON, where an explicit null is legal – so `Map.copyOf` is not usable here.
     public ToolAuditEntry {
         Objects.requireNonNull(executionId, "executionId must not be null");
         Objects.requireNonNull(nodeId, "nodeId must not be null");
@@ -50,6 +58,9 @@ public record ToolAuditEntry(
         Objects.requireNonNull(status, "status must not be null");
         Objects.requireNonNull(occurredAt, "occurredAt must not be null");
         argv = argv != null ? List.copyOf(argv) : List.of();
-        arguments = arguments != null ? Map.copyOf(arguments) : Map.of();
+        arguments =
+                arguments != null
+                        ? Collections.unmodifiableMap(new LinkedHashMap<>(arguments))
+                        : Map.of();
     }
 }

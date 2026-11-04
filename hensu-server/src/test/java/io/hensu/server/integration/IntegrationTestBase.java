@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.hensu.core.agent.stub.StubResponseRegistry;
 import io.hensu.core.state.HensuSnapshot;
-import io.hensu.core.state.WorkflowStateRepository;
+import io.hensu.core.state.WorkflowStateReader;
 import io.hensu.core.workflow.Workflow;
 import io.hensu.core.workflow.WorkflowRepository;
 import io.hensu.serialization.WorkflowSerializer;
@@ -46,9 +46,10 @@ import org.junit.jupiter.api.BeforeEach;
 ///
 /// ### Contracts
 /// - **Precondition**: Quarkus test context must be active (`@QuarkusTest`)
-/// - **Postcondition**: Each test starts with empty repositories and stub registry
+/// - **Postcondition**: Each test starts with an empty workflow repository and stub registry
 /// - **Invariant**: All executions run under {@link #TEST_TENANT} unless overridden
-/// - **Cleanup**: Per-test `@BeforeEach` deletes tenant data via repository interfaces
+/// - **Isolation**: Executions are not deleted between tests – the server offers no write
+///   outside a claim – so tests read their own execution by id via {@link #snapshotOf}
 /// - **Async**: `startExecution` dispatches asynchronously; helpers block until terminal state
 /// - **Profile**: Uses {@link InMemoryTestProfile} (`inmem`) — no Docker or PostgreSQL required
 ///
@@ -65,19 +66,15 @@ abstract class IntegrationTestBase {
     static final String TEST_TENANT = "test-tenant";
 
     @Inject WorkflowRepository workflowRepository;
-    @Inject WorkflowStateRepository workflowStateRepository;
+    @Inject WorkflowStateReader stateReader;
     @Inject WorkflowService workflowService;
 
     /// Resets all mutable test state before each test method.
     ///
-    /// @apiNote **Side effects**: clears stub responses, workflow repository,
-    /// and workflow state repository
+    /// @apiNote **Side effects**: clears stub responses and the workflow repository
     @BeforeEach
     void resetState() {
         StubResponseRegistry.getInstance().clearResponses();
-
-        // FK: execution_states references workflows — delete states first
-        workflowStateRepository.deleteAllForTenant(TEST_TENANT);
         workflowRepository.deleteAllForTenant(TEST_TENANT);
     }
 
@@ -108,9 +105,18 @@ abstract class IntegrationTestBase {
     ExecutionStartResult pushAndExecute(Workflow workflow, Map<String, Object> context) {
         workflowRepository.save(TEST_TENANT, workflow);
         ExecutionStartResult result =
-                workflowService.startExecution(TEST_TENANT, workflow.getId(), context);
+                workflowService.startExecution(TEST_TENANT, workflow.getId(), context, null);
         awaitTerminalState(result.executionId());
         return result;
+    }
+
+    /// Returns the latest snapshot of a started execution.
+    ///
+    /// @param result the start result naming the execution, not null
+    /// @return the execution's snapshot, never null
+    /// @throws java.util.NoSuchElementException if the execution has no snapshot
+    HensuSnapshot snapshotOf(ExecutionStartResult result) {
+        return stateReader.findByExecutionId(TEST_TENANT, result.executionId()).orElseThrow();
     }
 
     /// Polls until the given execution reaches a terminal checkpoint state.
@@ -125,8 +131,7 @@ abstract class IntegrationTestBase {
                 .deferred(
                         () -> {
                             Optional<HensuSnapshot> snapshot =
-                                    workflowStateRepository.findByExecutionId(
-                                            TEST_TENANT, executionId);
+                                    stateReader.findByExecutionId(TEST_TENANT, executionId);
                             assertThat(snapshot)
                                     .describedAs("snapshot for execution %s", executionId)
                                     .isPresent();

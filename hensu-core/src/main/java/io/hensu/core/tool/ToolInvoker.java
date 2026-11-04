@@ -14,10 +14,9 @@ public interface ToolInvoker {
 
     /// Invokes a tool and returns its result.
     ///
-    /// @param toolName the tool identifier to invoke, not null
-    /// @param arguments arguments supplied by the agent, not null (may be empty)
+    /// @param call the invocation: its key, tool name and arguments, not null
     /// @param context the workflow state context, not null (may be empty)
     /// @return the invocation result, never null; unknown tools yield a failure result
-    ToolCallResult call(
-            String toolName, Map<String, Object> arguments, Map<String, Object> context);
+    /// @throws io.hensu.core.execution.RunAbortedException if the run must stop
+    ToolCallResult call(ToolCall call, Map<String, Object> context);
 }

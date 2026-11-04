@@ -12,8 +12,8 @@ import org.jboss.logging.Logger;
 /// Dev-only handler for crash-recovery manual testing.
 ///
 /// Sleeps for a configurable number of seconds, giving the operator time
-/// to kill the server mid-execution and verify that {@code WorkflowRecoveryJob}
-/// resumes the workflow from the last checkpoint.
+/// to kill the server mid-execution and verify that {@code ExecutionPickupJob}
+/// resumes the workflow from the last checkpoint once the claim expires.
 ///
 /// ### Config Options
 /// | Key               | Type | Default | Description               |
@@ -23,15 +23,15 @@ import org.jboss.logging.Logger;
 /// ### Manual Test Recipe
 ///
 /// ```
-/// 1. Set hensu.lease.stale-threshold=15s, hensu.lease.heartbeat-interval=5s
+/// 1. Set hensu.claim.ttl=15s, hensu.claim.renew-interval=5s
 /// 2. Push crash-recovery.json, start execution
 /// 3. Wait for log: "SleepHandler sleeping for N seconds"
 /// 4. kill -9 <server PID>
-/// 5. Restart server — WorkflowRecoveryJob claims the stale row after 15 s
+/// 5. Restart server — ExecutionPickupJob claims the expired execution after 15 s
 /// 6. Verify execution status reaches COMPLETED
 /// ```
 ///
-/// @see io.hensu.server.workflow.WorkflowRecoveryJob
+/// @see io.hensu.server.workflow.ExecutionPickupJob
 @ApplicationScoped
 public class SleepHandler implements GenericNodeHandler {
 

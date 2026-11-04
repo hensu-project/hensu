@@ -3,6 +3,7 @@ package io.hensu.core.execution.executor;
 import io.hensu.core.agent.AgentRegistry;
 import io.hensu.core.execution.EngineVariables;
 import io.hensu.core.execution.ExecutionListener;
+import io.hensu.core.execution.RunAbortedException;
 import io.hensu.core.execution.SynchronizedListenerDecorator;
 import io.hensu.core.execution.parallel.*;
 import io.hensu.core.execution.result.ExecutionHistory;
@@ -113,6 +114,13 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
 
             scope.join();
 
+            for (Subtask<BranchResult> subtask : subtasks) {
+                if (subtask.state() == Subtask.State.FAILED
+                        && subtask.exception() instanceof RunAbortedException aborted) {
+                    throw aborted;
+                }
+            }
+
             branchResults = subtasks.stream().map(Subtask::get).toList();
         }
 
@@ -155,7 +163,18 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
     private BranchResult executeBranch(Branch branch, ParallelNode node, ExecutionContext context) {
 
         HensuState parentState = context.getState();
-        HashMap<String, Object> branchSnapshot = new HashMap<>(parentState.getContext());
+        // The branch is a nested flow of this attempt: same execution, its own journal scope,
+        // so the tool calls and model turns of each branch are journaled apart.
+        HensuState branchState =
+                new HensuState.Builder()
+                        .executionId(parentState.getExecutionId())
+                        .workflowId(parentState.getWorkflowId())
+                        .currentNode(parentState.getCurrentNode())
+                        .context(parentState.getContext())
+                        .history(new ExecutionHistory())
+                        .scope(parentState.position() + "/p:" + branch.getId() + "/")
+                        .build();
+        Map<String, Object> branchSnapshot = branchState.getContext();
 
         // Branch execution config on ExecutionContext – NOT in the context map.
         // This keeps engine flags invisible to the LLM agent.
@@ -168,12 +187,6 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
             return ScopedValue.where(BRANCH_CONTEXT, branchSnapshot)
                     .call(
                             () -> {
-                                HensuState branchState =
-                                        new HensuState(
-                                                branchSnapshot,
-                                                parentState.getWorkflowId(),
-                                                parentState.getCurrentNode(),
-                                                new ExecutionHistory());
                                 ExecutionContext branchCtx =
                                         context.withState(branchState)
                                                 .withBranchConfig(branchConfig);
@@ -238,6 +251,8 @@ public class ParallelNodeExecutor implements NodeExecutor<ParallelNode> {
                                 return new BranchResult(
                                         branch.getId(), nodeResult, yields, branch.getWeight());
                             });
+        } catch (RunAbortedException e) {
+            throw e;
         } catch (Exception e) {
             logger.warning("Branch [" + branch.getId() + "] execution failed: " + e.getMessage());
             return new BranchResult(

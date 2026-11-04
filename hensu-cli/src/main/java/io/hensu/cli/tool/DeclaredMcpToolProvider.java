@@ -3,6 +3,7 @@ package io.hensu.cli.tool;
 import io.hensu.cli.daemon.CredentialsStore;
 import io.hensu.cli.sandbox.SandboxLauncher;
 import io.hensu.core.tool.PreviewCapable;
+import io.hensu.core.tool.ToolCall;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolCallStatus;
 import io.hensu.core.tool.ToolDefinition;
@@ -214,14 +215,14 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
 
     /// Invokes a tool on the server that published it.
     ///
-    /// @param toolName the tool the agent chose, not null
-    /// @param arguments the agent's arguments, not null (may be empty)
+    /// @param call the tool the agent chose and its arguments, not null
     /// @param context the workflow state context, not null and unused – an MCP
     ///     call carries only the arguments the agent chose
     /// @return the rendered server result, or a typed failure, never null
     @Override
-    public ToolCallResult call(
-            String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+    public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+        String toolName = call.toolName();
+        Map<String, Object> arguments = call.arguments();
         ensureStarted();
         McpRoute route = published.route(toolName);
         if (route == null) {

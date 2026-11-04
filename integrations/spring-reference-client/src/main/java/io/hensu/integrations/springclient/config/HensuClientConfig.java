@@ -10,7 +10,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 ///
 /// Produces two clients sharing the same base URL and auth header:
 /// - `RestClient` for blocking REST calls (workflow trigger, resume, result polling)
-/// - `WebClient` for reactive SSE streams (execution events, MCP split-pipe)
+/// - `WebClient` for execution-event SSE streams and the tool relay's requests
 @Configuration
 @EnableConfigurationProperties(HensuProperties.class)
 public class HensuClientConfig {

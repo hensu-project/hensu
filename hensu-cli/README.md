@@ -152,8 +152,9 @@ the reasons raised while it was in flight. A healthy run prints no such section.
 
 **Tool audit:** every settled tool call appends one JSON line to `~/.hensu/tool-audit.log`
 (or `$XDG_DATA_HOME/hensu/tool-audit.log`), including the refused ones, whatever `--verbose` says.
-Each line carries a `call_id`, which is what pairs a call's arguments to its outcome; ids are minted
-per process, so read them together with `execution_id`.
+Each line carries a `call_id`, which is what pairs a call's arguments to its outcome. The id is
+`<execution_id>/<position>#<sequence>` – the node attempt that made the call and the call's index
+within it – so it is unique across executions.
 
 **Ctrl+C behavior:** pressing Ctrl+C *detaches* the client – execution keeps running in the daemon.
 A JVM shutdown hook sends a `detach` frame, then prints the execution ID and re-attach instructions.
@@ -692,11 +693,11 @@ reports which one lost it. A `prefix:` on either keeps both: `prefix: "acme_"` p
 
 ## Exit Codes
 
-| Code | Meaning                                                                                                                 |
-|------|-------------------------------------------------------------------------------------------------------------------------|
-| `0`  | Command succeeded; for `run`, the workflow ended in `SUCCESS`                                                           |
+| Code | Meaning                                                                                                                                              |
+|------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `0`  | Command succeeded; for `run`, the workflow ended in `SUCCESS`                                                                                        |
 | `1`  | Command reported a failure — a workflow that failed, ended in `FAILURE` status or was rejected, a validation failure, or an unhandled internal error |
-| `2`  | Invalid command-line arguments (picocli usage error)                                                                    |
+| `2`  | Invalid command-line arguments (picocli usage error)                                                                                                 |
 
 Every command exits `1` when it reports a failure on stderr, so a script or CI job can rely on the
 exit code rather than parse the output. `hensu run` prints the stack trace of a failed run only with

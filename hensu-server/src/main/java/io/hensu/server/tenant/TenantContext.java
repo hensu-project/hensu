@@ -10,11 +10,11 @@ import java.util.concurrent.Callable;
 ///
 /// ### Usage
 /// {@snippet :
-/// TenantInfo tenant = TenantInfo.withMcp("tenant-1", "sse://tenant-1");
+/// TenantInfo tenant = TenantInfo.simple("tenant-1");
 /// TenantContext.runAs(tenant, () -> {
 ///     // All code in this scope has access to tenant context
 ///     TenantInfo current = TenantContext.current();
-///     // Use current.tenantId(), current.mcpEndpoint(), etc.
+///     // Use current.tenantId()
 /// });
 /// }
 ///
@@ -49,13 +49,6 @@ public final class TenantContext {
         return CURRENT.isBound() ? CURRENT.get() : null;
     }
 
-    /// Returns whether a tenant context is currently bound.
-    ///
-    /// @return true if tenant context is available
-    public static boolean isBound() {
-        return CURRENT.isBound();
-    }
-
     /// Executes a task with the given tenant context.
     ///
     /// @param tenant the tenant context to bind, not null
@@ -79,46 +72,25 @@ public final class TenantContext {
         ScopedValue.where(CURRENT, tenant).run(task);
     }
 
-    /// Tenant identity and the handle of its MCP session.
+    /// Tenant identity.
     ///
-    /// The server holds no tenant secrets. Every side effect a workflow asks
-    /// for travels outbound over the split pipe to a server the tenant owns and
-    /// authenticates for itself, so there is nothing here for a credential to
-    /// unlock – see Decision 3 of `docs/unified-architecture.md`.
+    /// Only the identity: a tenant's tools are whatever its relay published to the
+    /// shared catalog, reached through the store from any node, so nothing about where
+    /// the relay is connected belongs here.
     ///
     /// @param tenantId unique tenant identifier, not null
-    /// @param mcpEndpoint the tenant's MCP session handle in `sse://clientId`
-    ///     form, derived from the tenant id; may be null when the tenant uses
-    ///     no MCP
-    public record TenantInfo(String tenantId, String mcpEndpoint) {
+    public record TenantInfo(String tenantId) {
 
-        /// Compact constructor with validation.
         public TenantInfo {
             Objects.requireNonNull(tenantId, "tenantId must not be null");
         }
 
-        /// Creates a tenant info with just an ID (no MCP).
+        /// Creates a tenant info.
         ///
-        /// @param tenantId the tenant identifier, not null
-        /// @return new tenant info, never null
+        /// @param tenantId unique tenant identifier, not null
+        /// @return the tenant info, never null
         public static TenantInfo simple(String tenantId) {
-            return new TenantInfo(tenantId, null);
-        }
-
-        /// Creates a tenant info with an MCP session handle.
-        ///
-        /// @param tenantId the tenant identifier, not null
-        /// @param mcpEndpoint the `sse://clientId` session handle, not null
-        /// @return new tenant info, never null
-        public static TenantInfo withMcp(String tenantId, String mcpEndpoint) {
-            return new TenantInfo(tenantId, mcpEndpoint);
-        }
-
-        /// Returns whether this tenant has MCP configured.
-        ///
-        /// @return true if mcpEndpoint is set
-        public boolean hasMcp() {
-            return mcpEndpoint != null && !mcpEndpoint.isBlank();
+            return new TenantInfo(tenantId);
         }
     }
 }

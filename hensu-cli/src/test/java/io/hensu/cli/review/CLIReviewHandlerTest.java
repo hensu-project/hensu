@@ -293,7 +293,11 @@ class CLIReviewHandlerTest {
     }
 
     private HensuState createState() {
-        return new HensuState(new HashMap<>(), "workflow-1", "test-node", new ExecutionHistory());
+        return new HensuState.Builder()
+                .executionId("exec-1")
+                .workflowId("workflow-1")
+                .currentNode("test-node")
+                .build();
     }
 
     private Workflow createWorkflow() {

@@ -1,94 +1,55 @@
 package io.hensu.server.workflow;
 
-import io.hensu.core.execution.CompositeExecutionListener;
-import io.hensu.core.execution.ExecutionListener;
-import io.hensu.core.execution.WorkflowExecutor;
-import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.resume.ResumeInput;
 import io.hensu.core.state.ExecutionPhase;
 import io.hensu.core.state.HensuSnapshot;
 import io.hensu.core.state.HensuState;
-import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.util.LogSanitizer;
 import io.hensu.core.workflow.Workflow;
-import io.hensu.server.execution.CheckpointingListener;
-import io.hensu.server.execution.ToolAuditListener;
-import io.hensu.server.execution.ToolStreamingExecutionListener;
-import io.hensu.server.mcp.McpConnections;
-import io.hensu.server.persistence.ExecutionLeaseManager;
-import io.hensu.server.persistence.ExecutionLeaseManager.ClaimOutcome;
-import io.hensu.server.persistence.LeaseLostException;
-import io.hensu.server.persistence.ToolAuditRepository;
-import io.hensu.server.streaming.ExecutionEvent;
-import io.hensu.server.streaming.ExecutionEventBroadcaster;
-import io.hensu.server.tenant.TenantContext;
-import io.hensu.server.tenant.TenantContext.TenantInfo;
+import io.hensu.server.execution.Claim;
+import io.hensu.server.execution.ExecutionStore;
+import io.hensu.server.workflow.ExecutionRunner.RunOutcome;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.Map;
 import java.util.Objects;
 import org.jboss.logging.Logger;
 
-/// Service for resuming paused workflow executions and managing checkpoint persistence.
+/// Resumes executions paused for review.
 ///
-/// Loads a previously paused execution from the state repository, applies any context
-/// modifications from the resume decision, and hands the state back to the core executor
-/// via {@link WorkflowExecutor#executeFrom}. Handles the same four {@link ExecutionResult}
-/// variants as {@link WorkflowExecutionService} and persists the resulting snapshot.
+/// Any node serves a resume: the claim is taken in the store, which is the same for every
+/// node, and the resumed run reaches the tenant's tools through the store as well.
 @ApplicationScoped
 public class ExecutionStateService {
 
     private static final Logger LOG = Logger.getLogger(ExecutionStateService.class);
 
-    private final WorkflowExecutor workflowExecutor;
-    private final WorkflowStateRepository stateRepository;
+    private final ExecutionStore store;
+    private final ExecutionRunner runner;
     private final WorkflowRegistryService registryService;
-    private final ExecutionLeaseManager leaseManager;
-    private final ExecutionEventBroadcaster eventBroadcaster;
-    private final ToolAuditRepository toolAuditRepository;
 
     @Inject
     public ExecutionStateService(
-            WorkflowExecutor workflowExecutor,
-            WorkflowStateRepository stateRepository,
-            WorkflowRegistryService registryService,
-            ExecutionLeaseManager leaseManager,
-            ExecutionEventBroadcaster eventBroadcaster,
-            ToolAuditRepository toolAuditRepository) {
-        this.workflowExecutor =
-                Objects.requireNonNull(workflowExecutor, "workflowExecutor must not be null");
-        this.stateRepository =
-                Objects.requireNonNull(stateRepository, "stateRepository must not be null");
+            ExecutionStore store, ExecutionRunner runner, WorkflowRegistryService registryService) {
+        this.store = Objects.requireNonNull(store, "store must not be null");
+        this.runner = Objects.requireNonNull(runner, "runner must not be null");
         this.registryService =
                 Objects.requireNonNull(registryService, "registryService must not be null");
-        this.leaseManager = Objects.requireNonNull(leaseManager, "leaseManager must not be null");
-        this.eventBroadcaster =
-                Objects.requireNonNull(eventBroadcaster, "eventBroadcaster must not be null");
-        this.toolAuditRepository =
-                Objects.requireNonNull(toolAuditRepository, "toolAuditRepository must not be null");
     }
 
-    /// Resumes a paused workflow execution.
+    /// Resumes a paused execution and runs it on this thread until it settles or stops.
     ///
-    /// Acquires the execution lease before driving the executor and releases it in a
-    /// `finally` block — closes the split-brain window where an API-edge resume could
-    /// run concurrently with a recovery sweep on another node. The claim is re-entrant
-    /// for this node, so the recovery → resume hand-off works without releasing in
-    /// between.
-    ///
-    /// The claim also refuses when the tenant's MCP session is held by another
-    /// node. A resume that cannot be served here is refused rather than accepted
-    /// and quietly degraded, so a resumed execution is bound to its tenant's MCP
-    /// endpoint exactly as the start path binds it and sees the same tool catalog
-    /// the paused run saw.
+    /// The claim is taken first and the state read under it, so the run resumes from the
+    /// state the claim found rather than one read before a concurrent resume changed it. A
+    /// resume input that does not fit the paused phase is a bad request, not a broken
+    /// execution: the execution goes back to waiting and the caller gets a 400.
     ///
     /// @param tenantId the tenant owning the execution, not null
     /// @param executionId the execution to resume, not null
     /// @param resumeInput the caller-supplied input for the resumed execution, may be null
-    /// @throws ExecutionNotFoundException if execution not found
-    /// @throws ExecutionNotLocalException if another node owns the execution lease or
-    ///     holds the tenant's MCP session, or a run of it is already live here
-    /// @throws WorkflowExecutionException if resume fails
+    /// @throws ExecutionNotFoundException if the execution does not exist
+    /// @throws ExecutionNotPausedException if it exists but is not waiting for a resume
+    /// @throws WorkflowExecutionException if the resumed run fails
     public void resumeExecution(String tenantId, String executionId, ResumeInput resumeInput) {
         Objects.requireNonNull(tenantId, "tenantId must not be null");
         Objects.requireNonNull(executionId, "executionId must not be null");
@@ -97,129 +58,41 @@ public class ExecutionStateService {
                 "Resuming workflow execution: executionId={0}, tenant={1}",
                 LogSanitizer.sanitize(executionId), tenantId);
 
-        switch (leaseManager.tryClaim(tenantId, executionId)) {
-            case ClaimOutcome.Claimed _ -> {}
-            case ClaimOutcome.NotFound _ ->
-                    throw new ExecutionNotFoundException("Execution not found: " + executionId);
-            case ClaimOutcome.AlreadyRunning _ ->
-                    throw new ExecutionNotLocalException(
-                            "Execution already running on this node: " + executionId);
-            case ClaimOutcome.LeasedElsewhere _ ->
-                    throw new ExecutionNotLocalException(
-                            "Execution owned by another node: " + executionId);
-            case ClaimOutcome.SessionElsewhere(String nodeId) ->
-                    throw new ExecutionNotLocalException(
-                            ExecutionLeaseManager.describeSessionElsewhere(tenantId, nodeId)
-                                    + "; execution "
-                                    + executionId
-                                    + " must resume there");
-        }
+        Claim claim =
+                store.resume(tenantId, executionId)
+                        .orElseThrow(
+                                () ->
+                                        store.findByExecutionId(tenantId, executionId).isPresent()
+                                                ? new ExecutionNotPausedException(
+                                                        "Execution "
+                                                                + executionId
+                                                                + " is not paused for review")
+                                                : new ExecutionNotFoundException(
+                                                        "Execution not found: " + executionId));
 
+        HensuSnapshot snapshot =
+                store.findByExecutionId(tenantId, executionId)
+                        .orElseThrow(
+                                () ->
+                                        new ExecutionNotFoundException(
+                                                "Execution not found: " + executionId));
         try {
-            HensuSnapshot snapshot =
-                    stateRepository
-                            .findByExecutionId(tenantId, executionId)
-                            .orElseThrow(
-                                    () ->
-                                            new ExecutionNotFoundException(
-                                                    "Execution not found: " + executionId));
-
-            TenantInfo tenant = TenantInfo.withMcp(tenantId, McpConnections.endpointFor(tenantId));
-            String workflowId = snapshot.workflowId();
-
-            // Validated before the try below, whose catch marks the execution failed. A resume
-            // request that does not fit the persisted phase is a bad request, not a broken
-            // execution: the execution stays paused and resumable, and the caller gets a 400
-            // from IllegalArgumentExceptionMapper. The lease is already held and the finally
-            // block still releases it.
             ExecutionPhase.validateCorrelation(snapshot.phase(), resumeInput);
-
-            try {
-                eventBroadcaster.runAs(
-                        executionId,
-                        () -> {
-                            TenantContext.runAs(
-                                    tenant,
-                                    () -> {
-                                        HensuState state = snapshot.toState();
-                                        state.setResumeInput(resumeInput);
-
-                                        if (resumeInput
-                                                instanceof
-                                                ResumeInput.ApplyContextEdits(
-                                                        Map<String, Object> contextEdits)) {
-                                            state.getContext().putAll(contextEdits);
-                                        }
-
-                                        Workflow workflow =
-                                                registryService.getWorkflow(tenantId, workflowId);
-
-                                        ExecutionResult result =
-                                                workflowExecutor.executeFrom(
-                                                        workflow,
-                                                        state,
-                                                        resumeListener(tenantId, executionId));
-
-                                        ExecutionResultHandler.handle(
-                                                result,
-                                                tenantId,
-                                                executionId,
-                                                workflowId,
-                                                stateRepository,
-                                                eventBroadcaster,
-                                                LOG,
-                                                "executeFrom");
-
-                                        return null;
-                                    });
-                            return null;
-                        });
-            } catch (Exception e) {
-                if (LeaseLostException.isCause(e)) {
-                    // Another node claimed this execution and is running it; a failed
-                    // snapshot written here would be refused, and false if it were not.
-                    LOG.warnv(
-                            "Resumed execution {0} stopped on this node: {1}",
-                            LogSanitizer.sanitize(executionId), e.getMessage());
-                    throw new ExecutionNotLocalException(e.getMessage());
-                }
-                LOG.errorv(
-                        e,
-                        "Resume execution failed: executionId={0}",
-                        LogSanitizer.sanitize(executionId));
-                ExecutionResultHandler.saveFailed(
-                        stateRepository,
-                        tenantId,
-                        HensuSnapshot.from(snapshot.toState(), "failed"),
-                        e,
-                        LOG);
-                eventBroadcaster.publish(
-                        executionId,
-                        ExecutionEvent.ExecutionError.now(
-                                executionId, e.getClass().getSimpleName(), e.getMessage(), null));
-                throw new WorkflowExecutionException("Resume failed: " + e.getMessage(), e);
-            }
-        } finally {
-            eventBroadcaster.complete(executionId);
-            leaseManager.release(tenantId, executionId);
+        } catch (IllegalArgumentException e) {
+            store.pause(claim, snapshot);
+            throw e;
         }
-    }
 
-    /// Composes the listener used while a resumed execution runs.
-    ///
-    /// Checkpointing plus the SSE tool trail, so a client that re-subscribed
-    /// after submitting a review sees the same tool events a fresh execution
-    /// streams.
-    ///
-    /// @param tenantId the tenant owning the execution, not null
-    /// @param executionId the execution being resumed, not null
-    /// @return composed listener, never null
-    private ExecutionListener resumeListener(String tenantId, String executionId) {
-        return new CheckpointingListener(
-                stateRepository,
-                tenantId,
-                new CompositeExecutionListener(
-                        new ToolStreamingExecutionListener(eventBroadcaster, executionId),
-                        new ToolAuditListener(toolAuditRepository, tenantId, executionId)));
+        HensuState state = snapshot.toState();
+        state.setResumeInput(resumeInput);
+        if (resumeInput instanceof ResumeInput.ApplyContextEdits(Map<String, Object> edits)) {
+            state.getContext().putAll(edits);
+        }
+        Workflow workflow = registryService.getWorkflow(tenantId, snapshot.workflowId());
+
+        if (runner.run(claim, state, workflow) == RunOutcome.FAILED) {
+            throw new WorkflowExecutionException(
+                    "Resume failed for execution " + executionId, null);
+        }
     }
 }

@@ -4,12 +4,14 @@ import io.hensu.core.resume.ResumeInput;
 import io.hensu.core.util.LogSanitizer;
 import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.validation.ValidId;
+import io.hensu.server.validation.ValidIdempotencyKey;
 import io.hensu.server.workflow.ExecutionNotFoundException;
-import io.hensu.server.workflow.ExecutionNotLocalException;
+import io.hensu.server.workflow.ExecutionNotPausedException;
 import io.hensu.server.workflow.ExecutionOutput;
 import io.hensu.server.workflow.ExecutionStartResult;
 import io.hensu.server.workflow.ExecutionStatus;
 import io.hensu.server.workflow.ExecutionSummary;
+import io.hensu.server.workflow.IdempotencyKeyReusedException;
 import io.hensu.server.workflow.WorkflowNotFoundException;
 import io.hensu.server.workflow.WorkflowService;
 import jakarta.inject.Inject;
@@ -18,6 +20,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.ClientErrorException;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
@@ -52,6 +55,12 @@ public class ExecutionResource {
 
     private static final Logger LOG = Logger.getLogger(ExecutionResource.class);
 
+    /// The header a client sends to make a start safe to retry.
+    static final String IDEMPOTENCY_KEY = "Idempotency-Key";
+
+    /// RFC 9110 §15.5.21; not among the JAX-RS status constants.
+    private static final int UNPROCESSABLE_CONTENT = 422;
+
     private final WorkflowService workflowService;
     private final RequestTenantResolver tenantResolver;
 
@@ -77,8 +86,17 @@ public class ExecutionResource {
     /// ```json
     /// {"executionId": "exec-abc", "workflowId": "order-processing"}
     /// ```
+    ///
+    /// ### Idempotency
+    /// A client that may retry the request sends `Idempotency-Key: <key>` – 1 to 255
+    /// characters from `[A-Za-z0-9._:-]`, unique per start, typically a UUID. Every
+    /// request with the key and the same body answers `202` with the execution the first
+    /// one created, on any node, and starts nothing more. The same key with a different
+    /// body answers `422`. A malformed key answers `400` before anything starts.
     @POST
-    public Response startExecution(@Valid @NotNull ExecutionStartRequest request) {
+    public Response startExecution(
+            @Valid @NotNull ExecutionStartRequest request,
+            @HeaderParam(IDEMPOTENCY_KEY) @ValidIdempotencyKey String idempotencyKey) {
 
         String tenantId = tenantResolver.tenantId();
 
@@ -91,14 +109,15 @@ public class ExecutionResource {
                     workflowService.startExecution(
                             tenantId,
                             request.workflowId(),
-                            request.context() != null ? request.context() : Map.of());
+                            request.context() != null ? request.context() : Map.of(),
+                            idempotencyKey);
 
             return Response.accepted().entity(result).build();
         } catch (WorkflowNotFoundException e) {
             LOG.warnv("Workflow not found: {0}", request.workflowId());
             throw new NotFoundException(e.getMessage());
-        } catch (ExecutionNotLocalException e) {
-            throw notLocal(e);
+        } catch (IdempotencyKeyReusedException e) {
+            throw new ClientErrorException(e.getMessage(), UNPROCESSABLE_CONTENT);
         }
     }
 
@@ -117,7 +136,7 @@ public class ExecutionResource {
     ///   "workflowId": "order-processing",
     ///   "status": "PAUSED",
     ///   "currentNodeId": "validate-payment",
-    ///   "hasPendingPlan": true
+    ///   "correlationId": "..."
     /// }
     /// ```
     @GET
@@ -185,8 +204,8 @@ public class ExecutionResource {
         } catch (ExecutionNotFoundException e) {
             LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());
-        } catch (ExecutionNotLocalException e) {
-            throw notLocal(e);
+        } catch (ExecutionNotPausedException e) {
+            throw new ClientErrorException(e.getMessage(), Response.Status.CONFLICT, e);
         }
     }
 
@@ -257,13 +276,5 @@ public class ExecutionResource {
             LOG.warnv("Execution not found: {0}", LogSanitizer.sanitize(executionId));
             throw new NotFoundException(e.getMessage());
         }
-    }
-
-    /// Translates a refusal to run here into 409. The body stays generic (see
-    /// `GlobalExceptionMapper`); the node that can serve the request is logged,
-    /// since it is the fact an operator needs to fix routing.
-    private static ClientErrorException notLocal(ExecutionNotLocalException e) {
-        LOG.warnv("Execution refused on this node: {0}", e.getMessage());
-        return new ClientErrorException(e.getMessage(), Response.Status.CONFLICT, e);
     }
 }

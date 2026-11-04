@@ -31,7 +31,14 @@ public class InMemoryToolAuditRepository implements ToolAuditRepository {
         List<ToolAuditEntry> forExecution =
                 entries.computeIfAbsent(key(tenantId, entry.executionId()), _ -> new ArrayList<>());
         synchronized (forExecution) {
-            forExecution.add(entry);
+            // A recovered run replays its predecessor's calls under the same call ids.
+            boolean recorded =
+                    entry.callId() != null
+                            && forExecution.stream()
+                                    .anyMatch(e -> entry.callId().equals(e.callId()));
+            if (!recorded) {
+                forExecution.add(entry);
+            }
         }
     }
 

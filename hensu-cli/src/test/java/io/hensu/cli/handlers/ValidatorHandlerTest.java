@@ -11,7 +11,6 @@ import io.hensu.core.workflow.WorkflowMetadata;
 import io.hensu.core.workflow.node.GenericNode;
 import io.hensu.core.workflow.transition.SuccessTransition;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -443,8 +442,13 @@ class ValidatorHandlerTest {
     }
 
     private ExecutionContext createContext(Map<String, Object> contextData) {
-        HashMap<String, Object> mutableContext = new HashMap<>(contextData);
-        HensuState state = new HensuState(mutableContext, "workflow-1", "validator-node", null);
+        HensuState state =
+                new HensuState.Builder()
+                        .executionId("exec-1")
+                        .workflowId("workflow-1")
+                        .currentNode("validator-node")
+                        .context(contextData)
+                        .build();
 
         GenericNode startNode =
                 GenericNode.builder()

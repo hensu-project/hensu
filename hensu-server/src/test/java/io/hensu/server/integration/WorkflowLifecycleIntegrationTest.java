@@ -31,7 +31,7 @@ class WorkflowLifecycleIntegrationTest extends IntegrationTestBase {
         assertThatThrownBy(
                         () ->
                                 workflowService.startExecution(
-                                        "other-tenant", workflow.getId(), Map.of()))
+                                        "other-tenant", workflow.getId(), Map.of(), null))
                 .isInstanceOf(WorkflowNotFoundException.class);
     }
 
@@ -40,7 +40,7 @@ class WorkflowLifecycleIntegrationTest extends IntegrationTestBase {
         assertThatThrownBy(
                         () ->
                                 workflowService.startExecution(
-                                        TEST_TENANT, "non-existent-id", Map.of()))
+                                        TEST_TENANT, "non-existent-id", Map.of(), null))
                 .isInstanceOf(WorkflowNotFoundException.class);
     }
 }

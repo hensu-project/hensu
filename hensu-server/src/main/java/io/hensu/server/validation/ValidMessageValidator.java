@@ -6,7 +6,7 @@ import jakarta.validation.ConstraintValidatorContext;
 /// Validates that a raw message body is safe for processing.
 ///
 /// Checks three conditions using {@link InputValidator}:
-/// 1. Not null or blank
+/// 1. Not null or blank – unless the annotation allows a blank body, which is then valid
 /// 2. UTF-8 byte size within the configured limit
 /// 3. No dangerous control characters
 ///
@@ -18,15 +18,20 @@ import jakarta.validation.ConstraintValidatorContext;
 public class ValidMessageValidator implements ConstraintValidator<ValidMessage, String> {
 
     private int maxBytes;
+    private boolean allowBlank;
 
     @Override
     public void initialize(ValidMessage annotation) {
         this.maxBytes = annotation.maxBytes();
+        this.allowBlank = annotation.allowBlank();
     }
 
     @Override
     public boolean isValid(String value, ConstraintValidatorContext ctx) {
         if (value == null || value.isBlank()) {
+            if (allowBlank) {
+                return true;
+            }
             replaceMessage(ctx, "Message body is required");
             return false;
         }

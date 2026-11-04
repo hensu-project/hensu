@@ -1,6 +1,7 @@
 package io.hensu.server.integration;
 
 import io.hensu.core.execution.action.ActionExecutor.ActionResult;
+import io.hensu.core.tool.ToolCall;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolDefinition;
 import io.hensu.core.tool.ToolProvider;
@@ -46,8 +47,9 @@ public class TestToolProvider implements ToolProvider {
     }
 
     @Override
-    public ToolCallResult call(
-            String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+    public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+        String toolName = call.toolName();
+        Map<String, Object> arguments = call.arguments();
         ActionResult result = handler.execute(arguments, context);
         return result.success()
                 ? ToolCallResult.success(

@@ -15,6 +15,7 @@ import io.hensu.core.execution.action.CommandDefinition;
 import io.hensu.core.execution.action.CommandRegistry;
 import io.hensu.core.execution.action.SandboxPolicy;
 import io.hensu.core.execution.action.ToolSpec;
+import io.hensu.core.tool.ToolCall;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolCallStatus;
 import io.hensu.core.tool.ToolDefinition;
@@ -205,7 +206,8 @@ class DeclaredMcpToolProviderTest {
             ToolProvider open = provider(launcher, new ToolSourceNotices(), store(Map.of()));
 
             assertThat(open.tools()).extracting(ToolDefinition::name).containsExactly("read_file");
-            ToolCallResult result = open.call("read_file", Map.of("path", "/x"), Map.of());
+            ToolCallResult result =
+                    open.call(new ToolCall("test#1", "read_file", Map.of("path", "/x")), Map.of());
             assertThat(result.status()).isEqualTo(ToolCallStatus.SUCCESS);
             assertThat(result.output()).isEqualTo("file data over http");
         }
@@ -242,7 +244,9 @@ class DeclaredMcpToolProviderTest {
                     capturingLogs(
                             () -> {
                                 open.tools();
-                                open.call("read_file", Map.of("path", "/x"), Map.of());
+                                open.call(
+                                        new ToolCall("test#1", "read_file", Map.of("path", "/x")),
+                                        Map.of());
                             });
 
             assertThat(logs).doesNotContain(secret);
@@ -270,13 +274,19 @@ class DeclaredMcpToolProviderTest {
             assertThat(open.tools()).hasSize(1);
 
             remote.redirectingTo("https://exfiltration.invalid/mcp");
-            ToolCallResult refused = open.call("read_file", Map.of("path", "/x"), Map.of());
+            ToolCallResult refused =
+                    open.call(new ToolCall("test#1", "read_file", Map.of("path", "/x")), Map.of());
 
             assertThat(refused.status()).isEqualTo(ToolCallStatus.DENIED);
             assertThat(refused.error()).contains("exfiltration.invalid");
 
             remote.redirectingTo(null);
-            assertThat(open.call("read_file", Map.of("path", "/x"), Map.of()).status())
+            assertThat(
+                            open.call(
+                                            new ToolCall(
+                                                    "test#1", "read_file", Map.of("path", "/x")),
+                                            Map.of())
+                                    .status())
                     .as("a refused destination costs the call, not the connection")
                     .isEqualTo(ToolCallStatus.SUCCESS);
         }
@@ -322,14 +332,22 @@ class DeclaredMcpToolProviderTest {
             open.tools();
 
             ToolCallResult refused =
-                    open.call("read_file", Map.of("path", List.of("/a", "/b")), Map.of());
+                    open.call(
+                            new ToolCall(
+                                    "test#1", "read_file", Map.of("path", List.of("/a", "/b"))),
+                            Map.of());
 
             assertThat(refused.status()).isEqualTo(ToolCallStatus.VALIDATION_FAILED);
             assertThat(refused.error()).contains("'path'").contains("Mcp-Param-Path");
             assertThat(remote.requests())
                     .as("an argument that cannot be mirrored must not leave the machine")
                     .noneSatisfy(r -> assertThat(r.rpcMethod()).isEqualTo("tools/call"));
-            assertThat(open.call("read_file", Map.of("path", "/a"), Map.of()).status())
+            assertThat(
+                            open.call(
+                                            new ToolCall(
+                                                    "test#1", "read_file", Map.of("path", "/a")),
+                                            Map.of())
+                                    .status())
                     .as("the refusal costs the call, not the connection")
                     .isEqualTo(ToolCallStatus.SUCCESS);
         }
@@ -368,7 +386,10 @@ class DeclaredMcpToolProviderTest {
                 remote.redirectingTo(second.uri().toString());
                 int beforeTheCall = second.requests().size();
 
-                ToolCallResult refused = open.call("read_file", Map.of("path", "/x"), Map.of());
+                ToolCallResult refused =
+                        open.call(
+                                new ToolCall("test#1", "read_file", Map.of("path", "/x")),
+                                Map.of());
 
                 assertThat(refused.status()).isEqualTo(ToolCallStatus.DENIED);
                 assertThat(refused.error()).contains("a different server");
@@ -405,7 +426,8 @@ class DeclaredMcpToolProviderTest {
                     new ApprovalToolProvider(open, new ToolApprovalGate(new DaemonReviewHandler()));
 
             // An empty context is an unattended run: the mode key is absent.
-            ToolCallResult refused = gated.call("read_file", Map.of("path", "/x"), Map.of());
+            ToolCallResult refused =
+                    gated.call(new ToolCall("test#1", "read_file", Map.of("path", "/x")), Map.of());
 
             assertThat(refused.status()).isEqualTo(ToolCallStatus.DENIED);
         }
@@ -433,7 +455,14 @@ class DeclaredMcpToolProviderTest {
                         .extracting(ToolDefinition::name)
                         .containsExactlyInAnyOrder("read_file", "alt_read_file");
                 assertThat(notices.endRun(RUN)).isEmpty();
-                assertThat(open.call("alt_read_file", Map.of("path", "/x"), Map.of()).status())
+                assertThat(
+                                open.call(
+                                                new ToolCall(
+                                                        "test#1",
+                                                        "alt_read_file",
+                                                        Map.of("path", "/x")),
+                                                Map.of())
+                                        .status())
                         .isEqualTo(ToolCallStatus.SUCCESS);
             }
         }
@@ -643,7 +672,7 @@ class DeclaredMcpToolProviderTest {
         void shouldRestartAServerThatDiedInAnEarlierRun() throws IOException {
             declareFakeServer("fixture", "--exit-on", "tools/call");
             DeclaredMcpToolProvider daemon = provider(launcher);
-            daemon.call("echo", Map.of("message", "hi"), Map.of());
+            daemon.call(new ToolCall("test#1", "echo", Map.of("message", "hi")), Map.of());
             assertThat(daemon.tools()).isEmpty();
 
             daemon.beginRun();
@@ -683,7 +712,7 @@ class DeclaredMcpToolProviderTest {
             declareFakeServer("fixture", "--exit-on", "tools/call");
             DeclaredMcpToolProvider daemon = provider(launcher);
             Thread.ofVirtual().start(daemon::tools).join();
-            daemon.call("echo", Map.of("message", "hi"), Map.of());
+            daemon.call(new ToolCall("test#1", "echo", Map.of("message", "hi")), Map.of());
             daemon.beginRun();
             Thread.ofVirtual().start(daemon::tools).join();
 
@@ -743,7 +772,9 @@ class DeclaredMcpToolProviderTest {
             declareFakeServer("fixture");
             DeclaredMcpToolProvider running = provider(launcher);
 
-            ToolCallResult result = running.call("echo", Map.of("message", "hello"), Map.of());
+            ToolCallResult result =
+                    running.call(
+                            new ToolCall("test#1", "echo", Map.of("message", "hello")), Map.of());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.SUCCESS);
             assertThat(result.output()).isEqualTo("echoed hello");
@@ -757,7 +788,8 @@ class DeclaredMcpToolProviderTest {
             DeclaredMcpToolProvider running = provider(launcher);
             assertThat(running.tools()).hasSize(1);
 
-            ToolCallResult result = running.call("echo", Map.of("message", "hi"), Map.of());
+            ToolCallResult result =
+                    running.call(new ToolCall("test#1", "echo", Map.of("message", "hi")), Map.of());
 
             assertThat(result.status()).isEqualTo(ToolCallStatus.FAILURE);
             assertThat(running.tools()).isEmpty();

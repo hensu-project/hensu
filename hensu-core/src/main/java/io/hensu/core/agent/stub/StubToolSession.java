@@ -2,7 +2,9 @@ package io.hensu.core.agent.stub;
 
 import io.hensu.core.agent.AgentResponse;
 import io.hensu.core.agent.ToolSession;
+import io.hensu.core.agent.TurnJournal;
 import io.hensu.core.tool.ToolCallResult;
+import java.io.Serial;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -13,13 +15,19 @@ import java.util.Map;
 /// {@link AgentResponse.ToolRequest}; plain-text turns produce a
 /// {@link AgentResponse.TextResponse}. Script exhaustion on submit
 /// yields an {@link AgentResponse.Error}.
+///
+/// Each turn the session hands out goes through its {@link TurnJournal} as the
+/// model's answers do in a real adapter, so a recovered stub run consumes the
+/// journaled turns exactly as a recovered model-backed run would.
 class StubToolSession implements ToolSession {
 
     private final String[] turns;
+    private final TurnJournal journal;
     private int cursor = 0;
 
-    StubToolSession(String responseScript) {
+    StubToolSession(String responseScript, TurnJournal journal) {
         this.turns = responseScript.split("---TURN---");
+        this.journal = journal;
     }
 
     @Override
@@ -43,17 +51,41 @@ class StubToolSession implements ToolSession {
     }
 
     private AgentResponse nextResponse() {
-        if (cursor >= turns.length) {
+        int index = cursor++;
+        String turn;
+        try {
+            // Index 0 is the opening conversation in a real adapter; the stub has none,
+            // so its scripted answers start at 1. The journal is asked first: a recovered
+            // run replays recorded turns whatever the script now says, and the script is
+            // consulted – and can run out – only for a turn nobody recorded.
+            turn =
+                    journal.turn(
+                            index + 1,
+                            () -> {
+                                if (index >= turns.length) {
+                                    throw new ScriptExhausted();
+                                }
+                                return turns[index].trim();
+                            });
+        } catch (ScriptExhausted e) {
             return AgentResponse.Error.of("Stub tool session script exhausted");
         }
-
-        String turn = turns[cursor++].trim();
 
         if (turn.startsWith("[TOOL_CALL]")) {
             return parseToolCall(turn);
         }
 
         return AgentResponse.TextResponse.of(turn);
+    }
+
+    /// Raised inside the journal's live supplier so that running out of script records
+    /// nothing and surfaces as the session's error response.
+    private static final class ScriptExhausted extends RuntimeException {
+        @Serial private static final long serialVersionUID = -4999742827824239665L;
+
+        ScriptExhausted() {
+            super(null, null, false, false);
+        }
     }
 
     private AgentResponse.ToolRequest parseToolCall(String turn) {

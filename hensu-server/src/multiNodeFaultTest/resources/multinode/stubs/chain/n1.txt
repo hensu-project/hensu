@@ -1,0 +1,3 @@
+[TOOL_CALL] record exec={{_execution_id}} node=n1
+---TURN---
+n1 recorded

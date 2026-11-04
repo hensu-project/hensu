@@ -2,11 +2,9 @@ package io.hensu.cli.daemon;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.hensu.core.execution.result.ExecutionHistory;
 import io.hensu.core.execution.result.ExecutionResult;
 import io.hensu.core.execution.result.ExitStatus;
 import io.hensu.core.state.HensuState;
-import java.util.HashMap;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import org.junit.jupiter.api.Test;
@@ -155,7 +153,11 @@ class StoredExecutionTest {
 
     private static ExecutionResult.Completed completedResult() {
         return new ExecutionResult.Completed(
-                new HensuState(new HashMap<>(), "wf", "end", new ExecutionHistory()),
+                new HensuState.Builder()
+                        .executionId("exec-1")
+                        .workflowId("wf")
+                        .currentNode("end")
+                        .build(),
                 ExitStatus.SUCCESS);
     }
 }

@@ -38,6 +38,8 @@ import java.util.Objects;
 /// @param phase execution phase within the current node's lifecycle, not null after construction
 /// @param createdAt when this snapshot was created, not null
 /// @param checkpointReason why this checkpoint was created, may be null
+/// @param step node attempts the flow had completed, which names the journal position of
+///     the attempt this snapshot resumes into; zero for snapshots that predate journaling
 /// @see HensuState for mutable execution state
 /// @see ExecutionPhase for phase semantics
 public record HensuSnapshot(
@@ -49,7 +51,8 @@ public record HensuSnapshot(
         ExecutionHistory history,
         ExecutionPhase phase,
         Instant createdAt,
-        String checkpointReason)
+        String checkpointReason,
+        long step)
         implements Serializable {
 
     /// Compact constructor with validation and defensive copying.
@@ -68,6 +71,9 @@ public record HensuSnapshot(
         history = history != null ? history.copy() : new ExecutionHistory();
         phase = phase != null ? phase : ExecutionPhase.INITIAL;
         createdAt = createdAt != null ? createdAt : Instant.now();
+        if (step < 0) {
+            throw new IllegalArgumentException("step must not be negative");
+        }
     }
 
     /// Creates a snapshot from the current workflow state.
@@ -97,7 +103,8 @@ public record HensuSnapshot(
                 state.getHistory(),
                 state.getPhase(),
                 Instant.now(),
-                reason);
+                reason,
+                state.getStep());
     }
 
     /// Restores workflow state from this snapshot.
@@ -112,6 +119,28 @@ public record HensuSnapshot(
                 .retryCounters(retryCounters)
                 .history(history)
                 .phase(phase)
+                .step(step)
+                .build();
+    }
+
+    /// Restores the state of a nested flow from a checkpoint it journaled.
+    ///
+    /// @param scope the nested flow's journal scope, not empty
+    /// @return the nested flow's state, positioned where the checkpoint left it, never null
+    public HensuState toNestedState(String scope) {
+        if (Objects.requireNonNull(scope, "scope must not be null").isEmpty()) {
+            throw new IllegalArgumentException("A nested flow needs a scope");
+        }
+        return new HensuState.Builder()
+                .workflowId(workflowId)
+                .executionId(executionId)
+                .currentNode(currentNodeId)
+                .context(context)
+                .retryCounters(retryCounters)
+                .history(history.copy())
+                .phase(phase)
+                .step(step)
+                .scope(scope)
                 .build();
     }
 

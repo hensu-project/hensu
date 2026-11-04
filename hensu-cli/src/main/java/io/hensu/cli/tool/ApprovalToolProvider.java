@@ -3,6 +3,7 @@ package io.hensu.cli.tool;
 import io.hensu.cli.review.ApprovalOutcome;
 import io.hensu.cli.review.ToolApprovalRequest;
 import io.hensu.core.tool.PreviewCapable;
+import io.hensu.core.tool.ToolCall;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolCallStatus;
 import io.hensu.core.tool.ToolDefinition;
@@ -85,24 +86,24 @@ public final class ApprovalToolProvider implements ToolProviderDecorator {
 
     /// Applies the policy, then either delegates the call or refuses it.
     ///
-    /// @param toolName the tool identifier to invoke, not null
-    /// @param arguments arguments the agent supplied, not null (may be empty)
+    /// @param call the tool the agent chose and its arguments, not null
     /// @param context the live execution state context, not null
     /// @return the outcome, never null
     /// @apiNote **Side effects**: may block until a reviewer answers. A refused call
     ///     launches nothing.
     @Override
-    public ToolCallResult call(
-            String toolName, Map<String, Object> arguments, Map<String, Object> context) {
+    public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+        String toolName = call.toolName();
+        Map<String, Object> arguments = call.arguments();
 
         ToolPreview preview = preview(toolName, arguments);
         boolean unattended = gate.unattended(context);
 
         ToolCallResult result =
                 switch (ToolApprovalGate.decide(unattended, preview)) {
-                    case RUN -> delegate.call(toolName, arguments, context);
+                    case RUN -> delegate.call(call, context);
                     case REFUSE -> denied(toolName, refusal(toolName, preview));
-                    case ASK -> reviewed(toolName, arguments, context, preview);
+                    case ASK -> reviewed(call, context, preview);
                 };
 
         // The audit trail has to record the invocation a reviewer was shown, and this is
@@ -115,16 +116,14 @@ public final class ApprovalToolProvider implements ToolProviderDecorator {
     // ------------------------------------------------------------------ approval
 
     private ToolCallResult reviewed(
-            String toolName,
-            Map<String, Object> arguments,
-            Map<String, Object> context,
-            ToolPreview preview) {
+            ToolCall call, Map<String, Object> context, ToolPreview preview) {
+        String toolName = call.toolName();
 
         ToolApprovalRequest request = request(toolName, context, preview);
         ApprovalOutcome outcome = gate.ask(request);
 
         return switch (outcome) {
-            case APPROVED -> approved(toolName, arguments, context, preview);
+            case APPROVED -> approved(call, context, preview);
             case REJECTED -> denied(toolName, "A reviewer refused this call; it did not run.");
             case NO_REVIEWER ->
                     denied(
@@ -137,10 +136,9 @@ public final class ApprovalToolProvider implements ToolProviderDecorator {
     }
 
     private ToolCallResult approved(
-            String toolName,
-            Map<String, Object> arguments,
-            Map<String, Object> context,
-            ToolPreview preview) {
+            ToolCall call, Map<String, Object> context, ToolPreview preview) {
+        String toolName = call.toolName();
+        Map<String, Object> arguments = call.arguments();
 
         boolean waived = preview != null && preview.blocked() == ToolCallStatus.SANDBOX_UNAVAILABLE;
         if (waived && delegate instanceof UncontainedOnApproval uncontained) {
@@ -151,7 +149,7 @@ public final class ApprovalToolProvider implements ToolProviderDecorator {
                             + " invocation.");
             return uncontained.callUncontained(toolName, arguments, context);
         }
-        return delegate.call(toolName, arguments, context);
+        return delegate.call(call, context);
     }
 
     // ------------------------------------------------------------------ description

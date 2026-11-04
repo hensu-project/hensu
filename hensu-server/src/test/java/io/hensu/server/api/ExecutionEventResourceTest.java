@@ -1,15 +1,22 @@
 package io.hensu.server.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import io.hensu.core.state.HensuSnapshot;
+import io.hensu.core.state.WorkflowStateReader;
 import io.hensu.server.security.RequestTenantResolver;
 import io.hensu.server.streaming.ExecutionEvent;
 import io.hensu.server.streaming.ExecutionEventBroadcaster;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.helpers.test.AssertSubscriber;
+import jakarta.ws.rs.NotFoundException;
+import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -24,11 +31,33 @@ class ExecutionEventResourceTest {
         broadcaster = mock(ExecutionEventBroadcaster.class);
         RequestTenantResolver tenantResolver = mock(RequestTenantResolver.class);
         when(tenantResolver.tenantId()).thenReturn("tenant-1");
-        resource = new ExecutionEventResource(broadcaster, tenantResolver);
+        WorkflowStateReader states = mock(WorkflowStateReader.class);
+        when(states.findByExecutionId(any(), any())).thenReturn(Optional.empty());
+        when(states.findByExecutionId("tenant-1", "exec-1"))
+                .thenReturn(
+                        Optional.of(
+                                new HensuSnapshot(
+                                        "wf-1",
+                                        "exec-1",
+                                        "node-1",
+                                        Map.of(),
+                                        Map.of(),
+                                        null,
+                                        null,
+                                        Instant.now(),
+                                        "checkpoint",
+                                        0)));
+        resource = new ExecutionEventResource(broadcaster, tenantResolver, states);
     }
 
     @Nested
     class StreamEvents {
+
+        @Test
+        void shouldAnswerAnotherTenantsExecutionAsNotFound() {
+            assertThatThrownBy(() -> resource.streamEvents("exec-of-someone-else"))
+                    .isInstanceOf(NotFoundException.class);
+        }
 
         @Test
         void shouldStreamEventsFromBroadcaster() {

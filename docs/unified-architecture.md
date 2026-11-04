@@ -8,10 +8,10 @@ degraded mode of the other.
 
 **Two runtimes, one engine:**
 
-| Runtime                     | Executes                                                        | How side effects reach the world                                                                                            | Packaging                                                          |
-|:----------------------------|:----------------------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------|
-| **Server** (`hensu-server`) | Many tenants' workloads, multi-instance, leased and recoverable | Tenant-owned MCP servers over the split-pipe transport. No shell, no `eval`, no user code on the box (Decision 3)           | GraalVM native image (Quarkus)                                     |
-| **CLI** (`hensu-cli`)       | One operator's workloads, on that operator's own host           | A declared command catalog and local MCP servers under an OS sandbox, plus file tools contained by `PathGuard` (Decision 4) | JVM uber-jar plus launcher script – embeds the Kotlin DSL compiler |
+| Runtime                     | Executes                                                         | How side effects reach the world                                                                                            | Packaging                                                          |
+|:----------------------------|:-----------------------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------|
+| **Server** (`hensu-server`) | Many tenants' workloads, multi-instance, claimed and recoverable | Tenant-owned MCP servers, through a relay that pulls tool calls. No shell, no `eval`, no user code on the box (Decision 3)  | GraalVM native image (Quarkus)                                     |
+| **CLI** (`hensu-cli`)       | One operator's workloads, on that operator's own host            | A declared command catalog and local MCP servers under an OS sandbox, plus file tools contained by `PathGuard` (Decision 4) | JVM uber-jar plus launcher script – embeds the Kotlin DSL compiler |
 
 The split is load-bearing rather than a packaging detail. It is the entire subject of Decisions 3 and 4, it is why one
 `HensuFactory.builder()` produces two different wirings (Decision 2), and it is why "Hensu executes a workflow" has two
@@ -100,21 +100,23 @@ agent tool use. The engine ships one of its own, `FileToolProvider`, whose file 
 
 See [Core Developer Guide](developer-guide-core.md) for usage patterns.
 
-### 3. Zero-Trust Execution (Server: MCP Only)
+### 3. Tenant-Initiated Execution (Server: MCP Only)
 
 This decision is about the **server** runtime specifically. The server is a **pure orchestrator** — it
 has no shell, no `eval`, no script runner. All side effects (tool calls, database writes, API requests)
-are routed to tenant-owned MCP servers via the **Split-Pipe** transport. The CLI runtime executes
-locally and answers the same question a different way; see Decision 4.
+are routed to tenant-owned MCP servers through the tenant's **relay**, which pulls them from the
+server. The CLI runtime executes locally and answers the same question a different way; see
+Decision 4.
 
-**The server holds no outbound MCP client, by design.** "This process opens no outbound connections"
-is only provable while no outbound client exists, so there is none to disable: `McpConnections`
-accepts an `sse://clientId` handle and refuses every other scheme, naming it. Two MCP paths exist in
-this codebase and are easy to confuse, so they are stated apart:
+**The server holds no outbound MCP client, by design.** "This process opens no connection to a
+tenant" is only provable while no client for one exists, so there is none to disable:
+`McpToolProvider` records a tool call as a row in `runtime.tool_intents` and waits for its outcome,
+and a call leaves the server only in the response to a request the tenant's relay made. Two MCP
+paths exist in this codebase and are easy to confuse, so they are stated apart:
 
 |            | Direction | Transport                                                            | Who dials              |
 |------------|-----------|----------------------------------------------------------------------|------------------------|
-| **Server** | inbound   | split pipe — SSE down `/mcp/connect`, POST up `/mcp/message`         | the tenant dials Hensu |
+| **Server** | inbound   | relay pull – long-poll `/mcp/v1/poll`, then `ack` and `complete`     | the tenant dials Hensu |
 | **CLI**    | outbound  | stdio to a launched process, or Streamable HTTP to a declared `url:` | Hensu dials the server |
 
 The CLI can dial out because the CLI is where the inverted risk is answerable: a credential store
@@ -122,29 +124,37 @@ holds the operator's secrets, an approval gate asks them before a call, and an a
 what happened. None of those exist on a multi-tenant host, which is the whole of the reason this
 decision reads the way it does.
 
-- **Downstream (SSE):** The Hensu server pushes each JSON-RPC tool request — tagged with a unique request id — over the tenant client's open `/mcp/connect` stream.
-- **Upstream (HTTP POST):** The tenant client relays the request to its own MCP servers, then posts the JSON-RPC result to `/mcp/message`. `McpSessionManager` correlates the response by request id, completing the matching pending future only when the posting tenant owns that request (60 s timeout; a disconnect fails the requests pushed down that stream at once, naming the disconnect). A response that arrives after its request timed out or was failed is answered 404, like an id the tenant never owned; a client should drop it rather than treat it as an error. A message carrying a `method` is a client notification or request, not a response, and is accepted and ignored.
-- **Identity:** the session is registered under the authenticated tenant – the JWT `tenant_id` claim – never under a caller-supplied id. A `clientId` that disagrees with the claim is refused with 403, a response for another tenant's request id is answered 404, and a second connection for the same tenant supersedes the first without letting the displaced stream evict its successor.
+The relay protocol has four requests, each answered by any node:
+
+- **Catalog:** the relay publishes its tools with `PUT /mcp/v1/catalog` under a version it chooses (the reference client uses a digest of the tool list). The catalog is stored in `runtime.mcp_catalogs`, so every node offers a run the same tools. A poll naming a version other than the published one is answered 409, and the relay republishes.
+- **Poll:** `POST /mcp/v1/poll` waits up to `hensu.mcp.poll-wait` (25 s) for pending calls of the caller's tenant and returns up to 32, each under a fresh single-use offer token. A PostgreSQL `NOTIFY` wakes waiting polls on every node when a call is recorded, so the node a poll lands on does not matter.
+- **Ack, then execute:** before running a task the relay posts `POST /mcp/v1/tasks/{token}/ack`. `204` means execute; `409` means do not – the offer lapsed after `hensu.mcp.ack-deadline` (10 s) and the call went back to the queue, or the call was settled or cancelled meanwhile. Only one token is ever acknowledged per call, so a relay that executes each acknowledged token once executes each call at most once, whatever the retries, nodes, or relay instances involved. Repeating an ack for the same token is safe and gets the same answer.
+- **Complete:** the relay posts the MCP result or error to `POST /mcp/v1/tasks/{token}/complete`. The first outcome wins; a later one is answered 409 and is not recorded. A call acknowledged but not completed within `hensu.mcp.call-deadline` (60 s) settles as `TIMEOUT` – it may or may not have run – and a call no relay acknowledged within `hensu.mcp.dispatch-deadline` (5 min) settles as `UNAVAILABLE` – it did not run. The model is told which.
+- **Identity:** every request is scoped to the authenticated tenant – the JWT `tenant_id` claim – never to a caller-supplied id. A relay sees, acknowledges and completes only its own tenant's calls; another tenant's token is answered as unknown.
+
+A call is keyed by its position in the run, and its row is inserted under the run's claim epoch
+(Decision 9), so a run that has lost its claim cannot issue one. A recovered run that replays up to
+a call its predecessor already made finds the existing row and waits on its outcome instead of
+issuing the call a second time.
 
 ```mermaid
 flowchart LR
-    subgraph client["Tenant Client"]
+    subgraph relay["Tenant Relay"]
         direction TB
-        es(["EventSource\nGET /mcp/connect"])
-        post(["POST /mcp/message"])
+        poll(["POST /mcp/v1/poll"])
+        ack(["POST …/ack"])
+        complete(["POST …/complete"])
     end
 
-    subgraph server["Hensu Server"]
+    subgraph server["Hensu Server · any node"]
         direction TB
-        register(["createSession()\n· one per tenant"])
-        send(["sendRequest()\n· new request id\n· pending future"])
-        handle(["handleResponse()\n· match id + tenant"])
-        claim(["claim\n· start · resume · recover"])
+        api(["relay API\n· offer · start · settle"])
+        run(["run\n· record call\n· await outcome"])
     end
 
     subgraph db["PostgreSQL"]
         direction TB
-        sessions["runtime.mcp_sessions\ntenant → node"]
+        intents["runtime.tool_intents\nPENDING → OFFERED → STARTED → DONE"]
     end
 
     subgraph backends["Tenant MCP Servers"]
@@ -152,71 +162,75 @@ flowchart LR
         tools(["Tools · Data · Auth"])
     end
 
-    es -->|"① opens SSE stream — outbound"| register
-    send -->|"② tools/call + id — pushed over open stream"| es
-    post -->|"③ POST result + id — outbound"| handle
-    es -.->|"relay"| tools
-    tools -.->|"result"| post
-    register -->|"publish · refresh"| sessions
-    sessions -->|"gates"| claim
+    poll -->|"① long-poll — outbound"| api
+    ack -->|"② acknowledge — outbound"| api
+    complete -->|"③ outcome — outbound"| api
+    api -->|"offer · start · settle"| intents
+    run -->|"insert under claim epoch"| intents
+    intents -.->|"NOTIFY · outcome"| run
+    ack -.->|"execute once"| tools
+    tools -.->|"result"| complete
 
-    style client fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
+    style relay fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
     style server fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
     style db fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
     style backends fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
-    style es fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
-    style post fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
-    style register fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style send fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style handle fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style claim fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style sessions fill:#2c2c2e, stroke:#48484a, color:#8e8e93, stroke-width:1px
+    style poll fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style ack fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style complete fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style api fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style run fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style intents fill:#2c2c2e, stroke:#48484a, color:#8e8e93, stroke-width:1px
     style tools fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
 
-    linkStyle 0,2 stroke:#0A84FF, stroke-width:1px
-    linkStyle 1,3,4,5,6 stroke:#48484a, stroke-width:1px
+    linkStyle 0,1,2 stroke:#0A84FF, stroke-width:1px
+    linkStyle 3,4,5,6,7 stroke:#48484a, stroke-width:1px
 ```
 
-Both pipes (①, ③) are **opened by the tenant client** — the accent arrows point *into* Hensu.
-The only server→client traffic (②) is tool-call data pushed back over the SSE stream the client
-already opened. Hensu never initiates a connection to the tenant, so tenants expose **no inbound
-ports, no firewall rules, no VPN**.
+All three requests (①, ②, ③) are **opened by the relay** — the accent arrows point *into* Hensu. A
+tool call reaches the tenant only as the body of a poll response. Hensu never initiates a connection
+to the tenant, so tenants expose **no inbound ports, no firewall rules, no VPN**.
 
 Two consequences follow from the direction, and a deployment has to plan for both:
 
-- **A tool call needs a live client connection.** The server cannot reach a tenant whose relay is
-  not connected, so unattended or scheduled server-side runs need the tenant's relay to be
-  continuously available. A run whose relay is away fails its tool calls with "Client not
-  connected" rather than waiting for one.
-- **An execution's lease and its tenant's session must sit on one node.** The stream lives in the
-  memory of the node the relay connected to, and a tool call is answered over it, so the node that
-  leases an execution must be the node holding its tenant's session. `runtime.mcp_sessions` records
-  which node that is and is the coordination point between the two: a node refuses to start (409)
-  or resume (409) an execution whose tenant's fresh session is held elsewhere, and the recovery
-  sweeper leaves such an execution to that node (Decision 9). This makes **tenant affinity at the
-  load balancer** a deployment requirement – route `/mcp/*` and `/api/v1/executions` for one tenant
-  to one node – and a misrouted request is refused rather than started and left to fail. The
-  window that remains, a session moving while an execution already runs, fails that execution's
-  tool calls with a message naming the node that holds the session.
+- **A tool call needs a relay, though not a connection.** A call waits in the table until a relay
+  polls. A relay that is away for a moment – a deploy on either side, a network blip, a load
+  balancer cutting an idle request – takes the call when it returns. A call no relay takes within
+  the dispatch deadline settles as `UNAVAILABLE`, and the model is told the tool did not run.
+  Unattended server-side runs therefore need the tenant's relay running, but not attached to any
+  particular node.
+- **The load balancer needs nothing special.** Runs and relays meet in PostgreSQL, so any node can
+  run any execution and any node can serve any relay: no tenant affinity, no sticky sessions, no
+  long-lived connections – a poll is an ordinary request that returns within the poll wait. The
+  load balancer should honour the readiness check: a node that cannot reach PostgreSQL reports
+  not-ready at `/q/health/ready` and answers its requests 503 with `Retry-After`, so a health-checked
+  load balancer routes around it and a client retries elsewhere.
 
-**The invariant is the direction, not the transport.** SSE is how this decision is implemented
-today; it is not the decision. Every connection being inbound-initiated is the property that makes
-the security claim checkable – you verify it by confirming the server owns no outbound client –
-and that property survives a change of framing. A bidirectional transport such as WebSocket or
-gRPC streaming could replace both pipes without touching Decision 3, and probably should
-eventually: one framed connection collapses ① and ③ into a single endpoint and removes the
-request-id correlation map, which exists only because the response arrives over a different
-connection than the request.
+**The invariant is the direction, not the transport.** The split pipe – SSE down `/mcp/connect`,
+POST up `/mcp/message` – was this decision's first implementation; relay pull replaced it without
+touching the decision, which is the point. Every request being tenant-initiated is the property that
+makes the security claim checkable – you verify it by confirming the server owns no client that can
+reach a tenant – and that property survived a change of framing. A bidirectional stream such as
+WebSocket or gRPC was the other candidate and was rejected: a stream lives in the memory of the node
+holding it, which ties every call to that node and brings back the tenant affinity the split pipe
+needed. Pulling through shared storage removed the affinity and the request-id correlation map
+together. The analysis, model, and fault-injection results are in
+[Multi-Node Execution Protocol](multi-node-execution-protocol.md).
 
 The practical form for a reviewer is this. A proposal that keeps connections inbound-initiated is
 inside Decision 3 whatever its wire format, and should be judged on its own merits. A proposal
 that has the server dial out is outside Decision 3 however carefully its destination hosts are
 allowlisted, because it trades a property you can prove for a policy somebody has to keep
-verifying. Defend the direction; do not defend SSE.
-The server never sees raw credentials or executes user-supplied code. LLM output is treated with
-equal suspicion — `AgentOutputValidator` sanitizes all agent responses for control characters,
-Unicode manipulation, and excessive payload size before the output is written to workflow state.
-That sanitization is runtime-agnostic and applies to the CLI as well.
+verifying. Defend the direction; do not defend a transport.
+
+The server holds no credential for a tenant's MCP servers and never executes user-supplied code.
+The trust runs one way, though: a relay executes any call the server offers for a tool it
+published, with the arguments the model wrote. Limiting what a call may do – which tools a relay
+publishes, which arguments a tool accepts – belongs to the relay and the MCP servers behind it, not
+to this decision. LLM output is not trusted either — `AgentOutputValidator` sanitizes all agent
+responses for control characters, Unicode manipulation, and excessive payload size before the
+output is written to workflow state. That sanitization is runtime-agnostic and applies to the CLI
+as well.
 
 ### 4. Contained Execution (CLI: Catalog and Sandbox)
 
@@ -421,93 +435,145 @@ engine variable; `FeedbackContextInjector` then surfaces it to the next agent au
 Repository interfaces and in-memory defaults live in **hensu-core**:
 
 - `WorkflowRepository` (`io.hensu.core.workflow`) — Tenant-scoped workflow definition storage
-- `WorkflowStateRepository` (`io.hensu.core.state`) — Tenant-scoped execution state snapshots
+- `WorkflowStateReader` / `WorkflowStateRepository` (`io.hensu.core.state`) — Tenant-scoped execution state queries, and the writable repository built on them
 
-`HensuFactory.builder()` wires in-memory implementations by default. The server delegates these from
-`HensuEnvironment` via `@Produces @Singleton` — it never creates instances directly. Production deployments can
-substitute database-backed implementations through the builder.
+`HensuFactory.builder()` wires in-memory implementations by default, and deployments substitute
+database-backed ones through the builder. The server's `WorkflowRepository` is delegated from
+`HensuEnvironment` via `@Produces @Singleton`. The server has no `WorkflowStateRepository`: a run
+writes its state only through `ExecutionStore`, under its claim (Decision 9), and the store serves
+the API's queries as the `WorkflowStateReader`, so no write can bypass the claim.
+
+**What is kept, and for how long.** A run's working state – the journal and its tool intents –
+lives only as long as the run needs it; the durable record of each tool call is the audit row, whose
+arguments are redacted at the source. Nothing is purged by age yet: execution rows and both audit
+sinks grow until an operator deletes them
+([`docs/tickets/execution-retention-policy.md`](tickets/execution-retention-policy.md)).
+
+| Data                                                                                     | Kept until                                                                                                                                               |
+|------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Execution row (`context`, `history`, phase)                                              | Kept indefinitely – no retention policy yet                                                                                                              |
+| Journal (model turns, nested-flow checkpoints)                                           | The main flow checkpoints past it; all of it when the execution pauses or finishes                                                                       |
+| Tool-call arguments (`runtime.tool_intents`)                                             | The call settles. They are unredacted while the call is open, `sensitive` parameters included, so PostgreSQL is inside the trust boundary for open calls |
+| Tool-call results (`runtime.tool_intents`)                                               | The execution pauses or finishes – only a replay of the call's own attempt reads them                                                                    |
+| Intent rows (key, tool, argument digest, status)                                         | Their execution row is deleted (`ON DELETE CASCADE`)                                                                                                     |
+| `runtime.tool_audit` (redacted arguments, output)                                        | Kept indefinitely – the lasting record; no retention policy yet                                                                                          |
+| CLI `~/.hensu/tool-audit.log` (one JSON line per call: redacted arguments, argv, output) | Kept indefinitely – appended to and never rotated                                                                                                        |
+
+The statements that delete and clear each of these are in the step journal section of
+[`docs/multi-node-execution-protocol.md`](multi-node-execution-protocol.md#step-journal).
 
 ### 9. Distributed Execution & Recovery
 
-In a multi-instance deployment, each server node holds a **lease** on the executions it is
-currently running. Leases are tracked via two columns in `hensu.execution_states`:
+Several server nodes run behind an ordinary load balancer, all active, sharing one PostgreSQL. Any
+node accepts any request; which node runs an execution is decided by a **claim** on its row in
+`runtime.execution_states`, never by where a request landed. The fault model, the invariants, the
+TLA+ model checked with TLC, and the fault-injection test are in
+[Multi-Node Execution Protocol](multi-node-execution-protocol.md); this section states what the
+protocol guarantees and how.
 
-- `server_node_id` — the UUID of the server node owning the execution (`NULL` when idle or complete)
-- `last_heartbeat_at` — timestamp last refreshed by the owning node
-
-Three components implement the lease lifecycle, and one table ties it to the MCP sessions:
-
-| Component               | Responsibility                                                                                                                                                                                                                |
-|:------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ExecutionLeaseManager` | Acquires, renews, and atomically claims leases; generates and holds `server_node_id`; publishes, clears, and reads session ownership                                                                                          |
-| `ExecutionHeartbeatJob` | Runs every `hensu.lease.heartbeat-interval` (default `30s`) — bumps `last_heartbeat_at` for all active leases on this node, and queues the refresh of this node's `runtime.mcp_sessions` rows on the session writer           |
-| `WorkflowRecoveryJob`   | Runs every `hensu.lease.recovery-interval` (default `60s`) — claims any execution whose heartbeat is older than `hensu.lease.stale-threshold` (default `90s`) and whose tenant has no fresh session elsewhere, and resumes it |
-| `runtime.mcp_sessions`  | One row per tenant naming the node that holds its MCP session; authoritative only while `last_heartbeat_at` is within the stale threshold                                                                                     |
+| Column             | Meaning                                                                                                                                     |
+|:-------------------|:--------------------------------------------------------------------------------------------------------------------------------------------|
+| `run_state`        | `RUNNING` – a node holds a claim and runs it; `RUNNABLE` – released, waiting for any node; `PAUSED` – waiting for a review decision; `DONE` |
+| `claim_epoch`      | Incremented by every claim; every write a run makes compares it                                                                             |
+| `claim_owner`      | Label of the node holding the claim – for operators; nothing compares it                                                                    |
+| `claim_expires_at` | Written and judged by the database clock alone                                                                                              |
+| `step`             | Node attempts the main flow has completed; names the journal position of the next one                                                       |
 
 ```mermaid
 flowchart LR
-    save(["save(checkpoint)"]) -->|"node_id set"| hb(["updateHeartbeats()"])
-    hb -->|"every 30s"| crash(["node crashes"])
-    crash -->|"stale threshold"| claim(["claimStaleExecutions()"])
-    claim -->|"new node claims"| resume(["resumeExecution()"])
-    resume -->|"node_id = NULL"| done(["lease cleared"])
+    start(["POST /executions"]) -->|"claim · epoch 1"| running(["RUNNING"])
+    running -->|"review needed"| paused(["PAUSED"])
+    paused -->|"POST /resume · epoch + 1"| running
+    running -->|"drain · release"| runnable(["RUNNABLE"])
+    runnable -->|"pickup · epoch + 1"| running
+    running -->|"expired · pickup · epoch + 1"| running
+    running -->|"completed · failed · rejected"| done(["DONE"])
 
-    style save fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style hb fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style crash fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
-    style claim fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style resume fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style start fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style running fill:#2c2c2e, stroke:#0A84FF, color:#ebebf5, stroke-width:1px
+    style paused fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style runnable fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style done fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
 
     linkStyle default stroke:#0A84FF, stroke-width:1px
 ```
 
-**Session-aware claiming**: no node claims an execution whose tenant holds a fresh session on another
-node – not on start, not on resume, not in the sweep – so orphaned work migrates to the node that can
-answer its tool calls. A session row older than the stale threshold counts as no session: it blocks
-nothing, and the node that claims past it deletes it in the same statement, so a node that dies holding
-a session never disables recovery. If the resume's claim of an orphan the sweep just claimed is
-refused – typically because the session moved in between – the sweeping node hands the lease back –
-owner kept, heartbeat pinned to the epoch so its own heartbeat never revives it – and the next sweep,
-on the session-holding node or on this one if the session has returned, takes it. A lease on an
-execution that is running is never handed back: releasing it would let a second node resume the
-execution while it still runs.
+| Component                | Responsibility                                                                                                                                                                              |
+|:-------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ExecutionStore`         | Every claim transition and every write a run makes, each one SQL statement fenced on `claim_epoch` (`JdbcExecutionStore`, or `InMemoryExecutionStore` with the same state machine)          |
+| `RunRegistry`            | The runs live on this node and their claims: renews them, preempts a run whose claim is gone, releases every claim when the node shuts down                                                 |
+| `ClaimRenewalJob`        | Every `hensu.claim.renew-interval` (`10s`) – extends every live claim on this node by `hensu.claim.ttl` (`30s`) in one statement                                                            |
+| `ExecutionPickupJob`     | Every `hensu.claim.pickup-interval` (`5s`) and on a `hensu_runnable` notification – claims released and expired executions, up to `hensu.claim.max-runs` (`200`) per node, and resumes them |
+| `ExecutionRunner`        | Runs one execution under its claim – binds the claim, the tenant, and the journal for the run – and settles its outcome                                                                     |
+| `IntentDeadlineJob`      | Every second – returns lapsed offers to the queue and settles calls as `TIMEOUT` or `UNAVAILABLE` (Decision 3)                                                                              |
+| `PgNotificationListener` | `LISTEN` on the wake-up channels; a notification is a hint to re-read the database, never data, and a missed one costs at most a second                                                     |
 
-**One run per node**: the write fence below is scoped to the node, not to the run, so two runs of one
-execution on the same node would both pass it. Each node therefore tracks the executions with a live
-run on it, and neither its sweeper nor a resume claims one of them – a heartbeat that lapsed while the
-database was unreachable does not hand the still-running execution to the same node's own sweeper. A
-resume of an execution already running here answers 409, and a resume of an id that does not exist
-answers 404.
+**Fencing is per claim, not per node.** Every write a run makes – checkpoint, journal record, tool
+intent, settlement – compares its claim's epoch in the same statement, so a run that has lost its
+claim – frozen past the TTL, partitioned from the database, overtaken by a pickup – has its next
+write refused with `RunPreemptedException` and stops. Two runs of one execution on the same node are
+fenced as surely as two on different nodes. A journal record or intent is inserted under a
+`FOR SHARE` lock on the execution row, so no claim can change between the fence check and the insert.
 
-**Write fencing**: a snapshot write overwrites an existing row only while that row's `server_node_id`
-names the writing node. A node that stalled past the stale threshold – a long GC pause, a frozen VM –
-and lost its execution to a sweeper has its next checkpoint refused with `LeaseLostException`. The
-refusal stops the stale run, which otherwise would keep calling tools beside the node now running
-the execution, and no `failed` snapshot is written over the newer state. Tool calls the stale run
-makes between waking and its next checkpoint are not fenced; the checkpoint is the fence's grain. A
-run that fails after it has already saved its terminal state also finds its `failed` write refused,
-since the terminal write released the row; the recorded state stands and the original error is the
-one reported.
+**No clock but the database's.** A claim's expiry is written as `now() + ttl` and judged against
+`now()`, both in PostgreSQL. A node whose clock is wrong can neither take a live claim nor keep a
+dead one: node clocks decide only when to renew. A node that has failed to renew for longer than the
+TTL preempts its own runs, since another node may already hold them.
 
-**Concurrency safety**: `claimStaleExecutions` uses a single `UPDATE … WHERE last_heartbeat_at < threshold
-RETURNING …`. Under PostgreSQL's default `READ COMMITTED` isolation, two concurrent sweepers racing on the
-same stale row cannot both claim it — the second re-evaluates the `WHERE` clause against the committed row
-(fresh heartbeat) and silently skips it. No application-level locking is required.
+**No tool call without a claim, and none twice.** A run records a tool call as an intent under its
+claim's epoch before any relay can see it, so a run that has lost its claim cannot issue one. Calls
+are keyed by their position in the run, so the run that recovers an execution finds the intents its
+predecessor made and waits on their outcomes instead of issuing them again; the relay's
+acknowledgement makes execution at-most-once (Decision 3).
 
-The lease is **automatically cleared** (set to `NULL`) when an execution reaches a terminal state —
-`"completed"`, `"paused"` (human review), `"failed"`, or `"rejected"`. The `%inmem` test profile
-disables the scheduler entirely (`%inmem.quarkus.scheduler.enabled=false`).
+**Recovery replays what it cannot reproduce.** A checkpoint is written before each node attempt.
+Between checkpoints, the model turns of the attempt in progress and the checkpoints of nested flows
+– fork branches and sub-workflows – are journaled in `runtime.execution_journal` under the claim; a
+parallel branch is one agent call, so it journals its turns under its own scope and takes no
+checkpoint. A recovered run resumes from the last checkpoint and replays the journaled turns
+instead of asking the model again, so it reaches the same tool calls with the same arguments, and a
+nested flow resumes from its own last checkpoint instead of starting over. A replay that reaches a
+recorded call with different arguments has diverged; it fails with `ReplayDivergenceException`
+rather than issue a different call under the same key. Each main-flow checkpoint prunes the journal
+behind it.
 
-**Server vs CLI daemon review semantics:** The server's `"paused"` state is stateless — it drops
-the lease and relies on an external `POST /resume` call. The CLI daemon's `AWAITING_REVIEW` state
+**Pickup is the only recovery path.** A node that shuts down releases each claim to `RUNNABLE` and
+notifies the cluster, so another node resumes the execution within a pickup cycle; the readiness
+check reports the node not-ready from the moment it starts draining. A node that dies leaves its
+claims to expire after the TTL. `FOR UPDATE SKIP LOCKED` spreads a simultaneous sweep across nodes
+instead of making them queue on the same rows.
+
+**Start and resume are durable before they answer.** `POST /executions` inserts the execution with
+its claim before answering `202`, so an accepted execution survives a crash before its first
+checkpoint. A client that may retry a start sends an `Idempotency-Key`: the insert and the key
+check are one statement, so retries create one execution between them, wherever they land, and
+each is answered with it; a different request reusing the key is refused with 422. `POST /resume` claims the `PAUSED` execution before reading it, so two concurrent
+resumes cannot both run it; a decision that does not apply to the snapshot puts it back to `PAUSED`.
+Resuming an execution that is not paused answers 409, and an unknown one 404.
+
+**Events and status are cluster-wide.** Execution events are published on the PostgreSQL channel
+`hensu_events` and delivered to subscribers on every node, so an event stream works wherever the
+load balancer sends it; an event too large for a notification is truncated and marked so, and the
+full state is always readable from the execution resource. Status and results are read from the
+database.
+
+**Concurrency safety**: each transition is a single `UPDATE … WHERE … RETURNING`. Under PostgreSQL's
+default `READ COMMITTED` isolation, the second of two concurrent claimants of a row waits for the
+first, re-evaluates its `WHERE` against the committed row, finds the state or epoch changed, and
+claims nothing. No application-level lock is involved.
+
+The `%inmem` test profile uses the in-memory store and disables the scheduler entirely
+(`%inmem.quarkus.scheduler.enabled=false`).
+
+**Server vs CLI daemon review semantics:** The server's `PAUSED` state is stateless — the run
+gives up its claim and the execution waits for an external `POST /resume` call. The CLI daemon's `AWAITING_REVIEW` state
 is **not terminal** (`isTerminal() == false`): the execution's virtual thread remains alive and
-blocked, holding no lease but retaining in-process state. A client `hensu attach` resumes the
+blocked, holding no claim but retaining in-process state. A client `hensu attach` resumes the
 review inline without replaying from a checkpoint.
 
 ### 10. REST API Separation
 
-All path/query identifiers are validated by `@ValidId`; workflow request bodies by `@ValidWorkflow`
+All path/query identifiers are validated by `@ValidId`; the `Idempotency-Key` header by `@ValidIdempotencyKey`; workflow request bodies by `@ValidWorkflow`
 (deep-validates the entire object graph for safe identifiers and control-character-free text);
 free-text inputs by `@ValidMessage`. `LogSanitizer` strips CR/LF at every log call site.
 Violations return `400 Bad Request`. See [Server Developer Guide — Input Validation](developer-guide-server.md#input-validation).
@@ -528,11 +594,11 @@ Violations return `400 Bad Request`. See [Server Developer Guide — Input Valid
 ├── GET    /paused                    List paused executions
 └── GET    /events                   Subscribe to all tenant execution events (SSE stream)
 
-/mcp                     → McpGatewayResource (MCP split-pipe transport)
-├── GET    /connect?clientId=...          SSE stream for tool call requests (session bound to the tenant claim; clientId optional, 403 on mismatch)
-├── POST   /message                       Submit JSON-RPC responses (404 for an id the caller's tenant does not own)
-├── GET    /status                        Gateway status (connected clients, pending requests; no token required)
-└── GET    /clients/{clientId}/status     Status of the caller's own MCP client connection (404 for any other)
+/mcp/v1                  → McpRelayResource (tenant relay pull, Decision 3; every request scoped to the tenant claim)
+├── PUT    /catalog                       Publish the relay's tool catalog under a version
+├── POST   /poll                          Long-poll for the tenant's pending tool calls (409 when the named catalog version is not the published one)
+├── POST   /tasks/{token}/ack             Acknowledge an offer before executing it (204 execute, 409 do not)
+└── POST   /tasks/{token}/complete        Record the outcome of an acknowledged call (409 when already settled, 404 for an unknown token)
 ```
 
 ---
@@ -552,18 +618,18 @@ flowchart TD
         direction TB
         subgraph iface["Interface Layer"]
             direction LR
-            qapi(["Quarkus API\n(REST/SSE)"]) ~~~ mcpgw(["MCP Gateway\n(JSON-RPC)"])
+            qapi(["Quarkus API\n(REST/SSE)"]) ~~~ mcpgw(["MCP Relay\n(pull)"])
         end
 
         subgraph runtime["Runtime Layer"]
             direction LR
-            sae(["ServerAction\nExecutor"]) ~~~ tc(["TenantContext\n(ScopedValue)"])
+            sae(["ServerAction\nExecutor"]) ~~~ tc(["TenantContext\n(ScopedValue)"]) ~~~ es(["Execution\nStore"])
         end
 
         subgraph core["hensu-core (HensuEnvironment)"]
             direction LR
             we(["Workflow\nExecutor"]) ~~~ ne(["Node\nExecutors"]) ~~~ ae(["Action\nExecutor"]) ~~~ re(["Rubric\nEngine"])
-            tlr(["ToolLoop\nRunner"]) ~~~ tr(["Tool\nRouter"]) ~~~ ar(["Agent\nRegistry"]) ~~~ el(["Execution\nListener"]) ~~~ wr(["Workflow\nRepository"]) ~~~ wsr(["WorkflowState\nRepository"])
+            tlr(["ToolLoop\nRunner"]) ~~~ tr(["Tool\nRouter"]) ~~~ ar(["Agent\nRegistry"]) ~~~ el(["Execution\nListener"]) ~~~ wr(["Workflow\nRepository"])
         end
     end
 
@@ -573,7 +639,7 @@ flowchart TD
     end
 
     iface --> runtime --> core
-    core <-->|"MCP Protocol (JSON-RPC)"| ext
+    core <-->|"tool intents · pulled by the tenant relay"| ext
 
     style server fill:#2c2c2e, stroke:#3a3a3c, color:#ebebf5, stroke-width:1px
     style iface fill:#3a3a3c, stroke:#48484a, color:#ebebf5, stroke-width:1px
@@ -585,6 +651,7 @@ flowchart TD
     style mcpgw fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style sae fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style tc fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style es fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style we fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style ne fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style ae fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
@@ -594,7 +661,6 @@ flowchart TD
     style ar fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style el fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style wr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style wsr fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style tools fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style data fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style auth fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
@@ -702,7 +768,7 @@ main method, no transport, and no opinion about where a side effect lands. Conta
   as a `### Previous Feedback` section.
   Score/Approval/Recommendation injectors fire for both transition-based nodes and consensus branches
   (via `BranchExecutionConfig.needsSelfScoring()`)
-- `WorkflowRepository` / `WorkflowStateRepository` — Tenant-scoped storage interfaces with in-memory defaults
+- `WorkflowRepository` / `WorkflowStateReader` / `WorkflowStateRepository` — Tenant-scoped storage interfaces with in-memory defaults
 - `HensuState` / `HensuSnapshot` / `ExecutionHistory` — Mutable runtime state, immutable checkpoints, execution trace
 - Workflow model, Node types (including `SubWorkflowNode`), Transition rules
 - `WorkflowValidator` (`workflow/validation`) — validates transition targets exist unconditionally; validates `writes` and prompt `{variable}` refs against schema when declared
@@ -732,10 +798,11 @@ that only makes sense when the workflow belongs to somebody who is not at the ke
 - `WorkflowPushLock` — Cluster-wide push mutex (`pg_advisory_xact_lock` with JVM `ReentrantLock` fallback) preventing concurrent pushes on different nodes from introducing cycles
 - `WorkflowResource` — Workflow definition management (push/pull/delete/list)
 - `ExecutionResource` — Execution runtime (start/resume/status)
-- `McpGatewayResource` / `McpSessionManager` / `McpConnections` — Inbound split-pipe MCP: the tenant dials in, the server answers over that stream and opens no outbound connection of its own
+- `McpRelayResource` / `McpToolProvider` / `ToolIntents` / `McpCatalogs` — Inbound relay pull: a tool call is a durable intent the tenant's relay polls for, acknowledges, and completes through any node; the server opens no connection to a tenant
 - `TenantContext` — Java 25 `ScopedValue` carrying tenant identity for the scope of a request; `TenantContext.runAs()` is the safe propagation entry point
-- `ExecutionLeaseManager` / `ExecutionHeartbeatJob` / `WorkflowRecoveryJob` — Distributed recovery: heartbeat emission and orphaned-execution sweeper
-- `JdbcWorkflowRepository` / `JdbcWorkflowStateRepository` — PostgreSQL-backed storage (JSONB workflow definitions, execution state + lease columns)
+- `ExecutionStore` / `RunRegistry` / `ExecutionRunner` / `ExecutionPickupJob` / `ClaimRenewalJob` — Multi-node execution: epoch-fenced claims judged by the database clock, the step journal, renewal, drain, and pickup (Decision 9)
+- `PgNotificationListener` / `PgEventBus` — PostgreSQL `LISTEN`/`NOTIFY` wake-ups between nodes and cluster-wide execution event delivery
+- `JdbcWorkflowRepository` — PostgreSQL-backed workflow definitions (JSONB); execution state lives in `JdbcExecutionStore`
 
 ### hensu-langchain4j-adapter (LLM Provider Bridge)
 
@@ -952,9 +1019,11 @@ requirements to the agent prompt, so the LLM knows exactly what format each writ
 
 ### 5. Execution Observability (SSE)
 
-Workflow visibility is provided via Server-Sent Events separate from the MCP split-pipe transport.
+Workflow visibility is provided via Server-Sent Events, separate from the MCP relay protocol.
 `ExecutionEventBroadcaster` receives engine events (`node.started`, `node.completed`,
 `execution.completed`, etc.) and fans them out to HTTP clients subscribed via `ExecutionEventResource`.
+In a multi-node deployment the events travel between nodes on the PostgreSQL channel `hensu_events`,
+so a subscriber receives them whichever node runs the execution (Decision 9).
 
 To safely route events from background virtual threads back to the correct execution, the broadcaster
 binds the current `executionId` in a Java 25 `ScopedValue` — no `ThreadLocal`, no manual ID passing.
@@ -980,7 +1049,6 @@ flowchart LR
             d2(["AgentRegistry"])
             d3(["NodeExecutorRegistry"])
             d5(["WorkflowRepository"])
-            d6(["WorkflowStateRepository"])
         end
         subgraph server_beans["Server-specific beans"]
             direction LR
@@ -1005,7 +1073,6 @@ flowchart LR
     style d2 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style d3 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style d5 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
-    style d6 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style s1 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style s3 fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
 
@@ -1131,15 +1198,17 @@ run proves containment for that platform and only the profile text for the other
 CDI wiring, `WorkflowExecutor`, `TenantContext` — against in-memory repositories. The `inmem`
 profile disables PostgreSQL, Flyway, and the scheduler (no Docker required).
 
-All integration tests extend `IntegrationTestBase`, which provides CDI injection, per-test
-state cleanup, and helpers (`registerStub`, `pushAndExecute`).
+All integration tests extend `IntegrationTestBase`, which provides CDI injection, a per-test reset
+of stubs and workflows, and helpers (`registerStub`, `pushAndExecute`, `snapshotOf`). Executions are
+not deleted between tests, since the server has no write outside a claim; each test reads its own
+by id.
 
 ### Server Repository Tests (Testcontainers PostgreSQL)
 
 Tests in `io.hensu.server.persistence` extend `JdbcRepositoryTestBase`, which starts a real
 PostgreSQL container and runs Flyway migrations — no Quarkus context involved. These tests
-cover CRUD, UPSERT semantics, FK constraints, tenant isolation, lease column behavior, and
-distributed recovery operations.
+cover CRUD, UPSERT semantics, FK constraints, tenant isolation, claim fencing, the step journal,
+tool-intent state transitions, and pickup.
 
 ### Test Coverage Map
 
@@ -1163,8 +1232,8 @@ The unified architecture provides:
 5. **Non-Linear Graphs** — Condition-routed loops with bounded revise budgets, conditional branches, fork/join, parallel fan-out with consensus, backtracking
 6. **Structured Concurrency** — `StructuredTaskScope` (preview) for all parallel execution; no `ExecutorService`, no thread pool lifecycle
 7. **Rubric Evaluation** — Quality gates that score outputs and route on thresholds for self-correcting loops
-8. **Pause / Resume** — Workflows checkpoint at any node and resume via `executeFrom()`. The lease protocol protects against data races when the owning node crashes
-9. **Distributed Recovery** — Heartbeat/sweeper lease protocol for crashed-node detection; atomic PostgreSQL `UPDATE…RETURNING` claim
+8. **Pause / Resume** — Workflows checkpoint at any node and resume via `executeFrom()`. Claim fencing keeps a stale run from writing over the run that replaced it
+9. **Distributed Recovery** — Epoch-fenced claims expired by the database clock, a step journal that recovered runs replay, and tool calls as durable intents executed at most once
 10. **Sub-Workflows** — Hierarchical composition via `SubWorkflowNode` with input/output mapping; `SubWorkflowGraphValidator` rejects cycles and dangling refs at push (under `WorkflowPushLock`); recursion bounded by `MAX_DEPTH = 16`; tenant isolation preserved across the boundary via `_tenant_id` propagation
 11. **Agent-Native Tool Loop** — `ToolLoopRunner` via `ToolCapable` / `ToolSession` for direct tool driving with budget enforcement, fed by runtime-supplied `ToolProvider` instances and audited through the `ExecutionListener`
 12. **Human Review** — Checkpoints for manual approval at node execution level

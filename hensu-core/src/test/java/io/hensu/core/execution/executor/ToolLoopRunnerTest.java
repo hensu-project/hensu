@@ -14,6 +14,7 @@ import io.hensu.core.execution.result.ResultStatus;
 import io.hensu.core.state.HensuState;
 import io.hensu.core.tool.CapabilityGaps;
 import io.hensu.core.tool.StubToolProvider;
+import io.hensu.core.tool.ToolCall;
 import io.hensu.core.tool.ToolCallEvent;
 import io.hensu.core.tool.ToolCallResult;
 import io.hensu.core.tool.ToolCallStatus;
@@ -572,9 +573,8 @@ class ToolLoopRunnerTest {
         }
 
         @Override
-        public ToolCallResult call(
-                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
-            return ToolCallResult.success(toolName, "claimed");
+        public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+            return ToolCallResult.success(call.toolName(), "claimed");
         }
     }
 
@@ -601,9 +601,8 @@ class ToolLoopRunnerTest {
         }
 
         @Override
-        public ToolCallResult call(
-                String toolName, Map<String, Object> arguments, Map<String, Object> context) {
-            return delegate.call(toolName, arguments, context);
+        public ToolCallResult call(ToolCall call, Map<String, Object> context) {
+            return delegate.call(call, context);
         }
     }
 

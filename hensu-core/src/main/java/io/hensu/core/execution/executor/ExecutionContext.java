@@ -1,6 +1,7 @@
 package io.hensu.core.execution.executor;
 
 import io.hensu.core.agent.AgentRegistry;
+import io.hensu.core.execution.ExecutionJournal;
 import io.hensu.core.execution.ExecutionListener;
 import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.action.ActionExecutor;
@@ -34,6 +35,8 @@ import io.hensu.core.workflow.WorkflowRepository;
 /// - `rubricEngine` - For rubric-based quality evaluation
 /// - `workflowRepository` - For loading sub-workflow definitions
 /// - `toolRouter` - For discovering and invoking the tools an agent requested
+/// - `journal` - For recording the steps a recovered run must replay (defaults to
+///   {@link ExecutionJournal#NONE})
 ///
 /// @implNote Immutable after construction. Thread-safe for read access.
 /// Modified copies can be created via {@link #withState}, {@link #withListener},
@@ -62,6 +65,9 @@ public final class ExecutionContext {
     private final ToolRegistry toolRegistry;
     private final ToolInvoker toolInvoker;
 
+    // Durable record of this run's unreproducible steps; NONE when the runtime keeps none
+    private final ExecutionJournal journal;
+
     private ExecutionContext(Builder builder) {
         this.state = builder.state;
         this.workflow = builder.workflow;
@@ -76,6 +82,7 @@ public final class ExecutionContext {
         this.workflowRepository = builder.workflowRepository;
         this.toolRegistry = builder.toolRegistry;
         this.toolInvoker = builder.toolInvoker;
+        this.journal = builder.journal;
     }
 
     /// Returns the current workflow execution state.
@@ -183,6 +190,14 @@ public final class ExecutionContext {
         return branchConfig;
     }
 
+    /// Returns the journal recording this run's unreproducible steps.
+    ///
+    /// @return the journal, {@link ExecutionJournal#NONE} when the runtime keeps none,
+    ///     never null
+    public ExecutionJournal getJournal() {
+        return journal;
+    }
+
     /// Creates a new context builder.
     ///
     /// @return new builder instance, never null
@@ -211,6 +226,7 @@ public final class ExecutionContext {
                 .rubricEngine(this.rubricEngine)
                 .workflowRepository(this.workflowRepository)
                 .tools(this.toolRegistry, this.toolInvoker)
+                .journal(this.journal)
                 .build();
     }
 
@@ -235,6 +251,7 @@ public final class ExecutionContext {
                 .rubricEngine(this.rubricEngine)
                 .workflowRepository(this.workflowRepository)
                 .tools(this.toolRegistry, this.toolInvoker)
+                .journal(this.journal)
                 .build();
     }
 
@@ -259,6 +276,7 @@ public final class ExecutionContext {
                 .rubricEngine(this.rubricEngine)
                 .workflowRepository(this.workflowRepository)
                 .tools(this.toolRegistry, this.toolInvoker)
+                .journal(this.journal)
                 .build();
     }
 
@@ -281,6 +299,7 @@ public final class ExecutionContext {
         private WorkflowRepository workflowRepository;
         private ToolRegistry toolRegistry;
         private ToolInvoker toolInvoker;
+        private ExecutionJournal journal = ExecutionJournal.NONE;
 
         private Builder() {}
 
@@ -351,6 +370,21 @@ public final class ExecutionContext {
         public Builder toolRouter(ToolRouter toolRouter) {
             this.toolRegistry = toolRouter;
             this.toolInvoker = toolRouter;
+            return this;
+        }
+
+        /// Sets the journal that records this run's unreproducible steps.
+        ///
+        /// A runtime that recovers executions passes a journal fenced on the run's
+        /// claim, so a recovered run replays the model turns and nested-flow
+        /// checkpoints the original recorded. A runtime that does not recover
+        /// executions (the CLI) leaves the default.
+        ///
+        /// @param journal the run's journal, may be null to fall back to
+        ///     {@link ExecutionJournal#NONE}
+        /// @return this builder, never null
+        public Builder journal(ExecutionJournal journal) {
+            this.journal = journal != null ? journal : ExecutionJournal.NONE;
             return this;
         }
 
