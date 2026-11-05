@@ -213,7 +213,7 @@ hensu-core/src/main/java/io/hensu/core/
 │   ├── ToolSession.java           # Call-scoped tool loop session (start/submit/compact/close)
 │   ├── TurnJournal.java           # A session's view of the journal: records or replays model turns
 │   └── stub/
-│       ├── StubAgentProvider.java # Testing provider (priority 1000 when enabled)
+│       ├── StubAgentProvider.java # Testing provider (model "stub"; priority 1000 in stub mode)
 │       ├── StubAgent.java         # Mock agent returning stub responses
 │       ├── StubToolSession.java   # Scripted tool session for testing (---TURN--- syntax)
 │       └── StubResponseRegistry.java
@@ -415,6 +415,7 @@ Implement `AgentProvider` to add support for new AI backends:
 public class MyProvider implements AgentProvider {
     public String getName() { return "my-provider"; }
     public boolean supportsModel(String model) { return model.startsWith("my-"); }
+    public String supportedModels() { return "my-*"; }
     public Agent createAgent(String id, AgentConfig config, Map<String, String> credentials) {
         return new MyAgent(id, config, credentials.get("MY_API_KEY"));
     }
@@ -426,15 +427,19 @@ included automatically for testing support.
 
 ## Stub Mode
 
-Enable stub mode for testing without API calls:
+An agent declaring the model `stub` (`Models.STUB` in the DSL) always resolves to `StubAgentProvider`, which returns
+mock responses without an API call. No switch is needed, and other agents in the same workflow keep their real
+providers.
+
+To stub every agent regardless of its declared model, enable stub mode:
 
 ```bash
 export HENSU_STUB_ENABLED=true
 ```
 
-Or via properties: `hensu.stub.enabled=true`
+Or via properties: `hensu.stub.enabled=true`, or per environment with `HensuFactory.builder().stubMode(true)`.
 
-When enabled, `StubAgentProvider` (priority 1000) intercepts all model requests, returning mock responses.
+In stub mode, `StubAgentProvider` (priority 1000) intercepts all model requests.
 
 ## Documentation
 

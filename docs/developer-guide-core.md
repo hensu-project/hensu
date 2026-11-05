@@ -436,6 +436,11 @@ public class MyAiProvider implements AgentProvider {
     }
 
     @Override
+    public String supportedModels() {
+        return "myai-*"; // shown when no provider supports a declared model
+    }
+
+    @Override
     public Agent createAgent(String agentId, AgentConfig config,
                             Map<String, String> credentials) {
         String apiKey = credentials.get("MYAI_API_KEY");
@@ -524,7 +529,7 @@ public class MyAiProvider implements AgentProvider {
     public int getPriority() { return 50; }   // Fallback
 }
 
-// StubAgentProvider has priority 1000 when stub mode is enabled
+// StubAgentProvider has priority 1000 in stub mode; otherwise it claims only the model "stub"
 ```
 
 ## Generic Nodes
@@ -1286,43 +1291,53 @@ Review modes per node:
 
 ### Stub Agent System
 
-The stub agent system lets you run full workflow executions without consuming API tokens. It intercepts all agent calls and returns configurable mock responses, making it the foundation for both unit and integration testing.
+The stub agent system lets you run full workflow executions without consuming API tokens. It returns configurable mock responses in place of model calls, making it the foundation for both unit and integration testing.
 
 #### Architecture
 
 Three classes collaborate to provide the stub infrastructure:
 
 ```
-StubAgentProvider (priority 1000, intercepts all models when enabled)
+StubAgentProvider (claims model "stub"; all models at priority 1000 in stub mode)
   └── creates StubAgent per agent ID
         └── resolves response via StubResponseRegistry (singleton)
 ```
 
 | Class                  | Role                                                       |
 |------------------------|------------------------------------------------------------|
-| `StubAgentProvider`    | Intercepts all model requests when enabled (priority 1000) |
+| `StubAgentProvider`    | Claims `stub` by name; intercepts all models in stub mode  |
 | `StubAgent`            | Executes by resolving responses from the registry          |
 | `StubResponseRegistry` | Singleton that stores and resolves stub responses          |
 
+#### Selecting the Stub
+
+There are two ways an agent reaches `StubAgentProvider`:
+
+- **By model name.** An agent declaring `model = "stub"` (`Models.STUB` in the DSL) is always stubbed – no switch, no
+  API key. Agents declaring other models keep their real providers, so a stubbed writer and a live reviewer can run in
+  one execution.
+- **Stub mode.** With the switch on, `StubAgentProvider` claims every model at priority 1000, outranking all real
+  providers.
+
 #### Enabling Stub Mode
 
-Stub mode can be enabled through any of these (checked in order):
+The switch is resolved once per `HensuEnvironment`, when it is built, in this order:
 
 ```java
-// 1. Credentials map (per-execution override)
-credentials.put("HENSU_STUB_ENABLED", "true");
+// 1. Credentials map (per environment; an explicit "true" or "false" wins over 2 and 3)
+HensuFactory.builder().stubMode(true);                 // or
+HensuFactory.builder().credential("hensu.stub.enabled", "true"); // HENSU_STUB_ENABLED also accepted
 
 // 2. System property
 // -Dhensu.stub.enabled=true
 
 // 3. Environment variable
 // export HENSU_STUB_ENABLED=true
-
-// 4. Application property (Quarkus)
-// hensu.stub.enabled=true
 ```
 
-When enabled, `StubAgentProvider` returns priority 1000, outranking all real providers. When disabled, it returns priority -1 and is never selected.
+The CLI and server forward the application property `hensu.stub.enabled` into the credentials map, so it takes
+route 1. The switch never writes a system property, so one environment's stub mode does not leak into another built
+later in the same JVM.
 
 #### Response Resolution Order
 
@@ -1450,6 +1465,7 @@ void testWorkflowLogic() {
     AgentProvider mockProvider = new AgentProvider() {
         public String getName() { return "mock"; }
         public boolean supportsModel(String model) { return true; }
+        public String supportedModels() { return "any model"; }
         public Agent createAgent(String id, AgentConfig config, Map<String, String> creds) {
             return new MockAgent(id, config);
         }
@@ -1615,7 +1631,7 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `agent/ToolCapable.java`                                | Narrow interface for agents that support tool sessions                                            |
 | `agent/ToolSession.java`                                | Call-scoped tool loop session (start/submit/compact/close)                                        |
 | `agent/TurnJournal.java`                                | A session's view of the journal: records or replays model turns                                   |
-| `agent/stub/StubAgentProvider.java`                     | Testing provider (priority 1000 when enabled)                                                     |
+| `agent/stub/StubAgentProvider.java`                     | Testing provider (model `stub`; all models at priority 1000 in stub mode)                         |
 | `agent/stub/StubToolSession.java`                       | Scripted tool session for testing (`---TURN---` syntax)                                           |
 | `execution/WorkflowExecutor.java`                       | Main execution engine                                                                             |
 | `execution/ExecutionJournal.java`                       | Records model turns and nested-flow checkpoints so a recovered run replays them                   |

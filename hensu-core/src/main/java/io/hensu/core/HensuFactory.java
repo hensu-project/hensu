@@ -83,22 +83,20 @@ public final class HensuFactory {
 
     /// Creates a Hensu environment with custom configuration and explicit credentials.
     ///
-    /// This is the primary factory method that other overloads delegate to.
-    ///
-    /// @apiNote **Side effects**:
-    /// - Sets `hensu.stub.enabled` system property if stub mode is enabled in credentials
+    /// This is the primary factory method that other overloads delegate to. Stub mode
+    /// is resolved from `credentials` for this environment only; see
+    /// {@link StubAgentProvider#fromCredentials(Map)}.
     ///
     /// @param config configuration options for threading and storage, not null
     /// @param credentials map of API keys and settings, not null (may be empty)
     /// @return a fully-configured environment, never null
     public static HensuEnvironment createEnvironment(
             HensuConfig config, Map<String, String> credentials) {
-        // Apply stub mode setting as system property if present in credentials
-        applyStubModeSetting(credentials);
-
         // Create AgentFactory with StubAgentProvider (the only provider in hensu-core).
         // For real model providers, use HensuFactory.builder().agentProviders(...).
-        AgentFactory agentFactory = new AgentFactory(credentials, List.of(new StubAgentProvider()));
+        AgentFactory agentFactory =
+                new AgentFactory(
+                        credentials, List.of(StubAgentProvider.fromCredentials(credentials)));
 
         // Create AgentRegistry using the factory
         AgentRegistry agentRegistry = new DefaultAgentRegistry(agentFactory);
@@ -107,18 +105,6 @@ public final class HensuFactory {
         NodeExecutorRegistry nodeExecutorRegistry = new DefaultNodeExecutorRegistry();
 
         return createEnvironment(config, nodeExecutorRegistry, agentRegistry);
-    }
-
-    /// Sets the `hensu.stub.enabled` system property if enabled in credentials.
-    ///
-    /// @apiNote **Side effects**: Modifies JVM system properties when stub mode is enabled.
-    ///
-    /// @param credentials map potentially containing `hensu.stub.enabled` key, not null
-    private static void applyStubModeSetting(Map<String, String> credentials) {
-        String stubEnabled = credentials.get("hensu.stub.enabled");
-        if ("true".equalsIgnoreCase(stubEnabled)) {
-            System.setProperty("hensu.stub.enabled", "true");
-        }
     }
 
     /// Creates a Hensu environment with pre-configured registries.
@@ -464,10 +450,14 @@ public final class HensuFactory {
 
         /// Enables or disables stub mode for testing without API calls.
         ///
-        /// When enabled, stub agents return mock responses, allowing workflow
-        /// testing without consuming API tokens.
+        /// When enabled, every agent resolves to a stub agent that returns mock responses,
+        /// allowing workflow testing without consuming API tokens. The setting applies to
+        /// this environment only and overrides the `hensu.stub.enabled` system property and
+        /// `HENSU_STUB_ENABLED` environment variable. Agents declaring the model `stub` are
+        /// stubbed either way.
         ///
-        /// @param enabled `true` to enable stub mode
+        /// @param enabled `true` to enable stub mode, `false` to disable it even when the
+        ///     system property or environment variable is set
         /// @return this builder for chaining, never null
         public Builder stubMode(boolean enabled) {
             this.credentials.put("hensu.stub.enabled", String.valueOf(enabled));
@@ -590,7 +580,6 @@ public final class HensuFactory {
         ///
         /// @apiNote **Side effects**:
         /// - Auto-loads environment credentials if none were explicitly provided
-        /// - Sets `hensu.stub.enabled` system property if stub mode is enabled
         ///
         /// @return the configured environment, never null
         public HensuEnvironment build() {
@@ -598,13 +587,10 @@ public final class HensuFactory {
             if (credentials.isEmpty()) {
                 credentials = HensuFactory.loadCredentialsFromEnvironment();
             }
-            // Apply stub mode setting
-            applyStubModeSetting(credentials);
-
             if (agentRegistry == null) {
                 // Always include StubAgentProvider alongside explicit providers
                 List<AgentProvider> allProviders = new ArrayList<>(agentProviders);
-                allProviders.add(new StubAgentProvider());
+                allProviders.add(StubAgentProvider.fromCredentials(credentials));
                 AgentFactory agentFactory = new AgentFactory(credentials, allProviders);
                 agentRegistry = new DefaultAgentRegistry(agentFactory);
             }

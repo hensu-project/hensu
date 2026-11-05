@@ -1,5 +1,7 @@
 package io.hensu.dsl.builders
 
+import io.hensu.core.agent.stub.StubAgentProvider
+
 /**
  * Predefined model shortcuts for use in agent definitions.
  *
@@ -33,4 +35,7 @@ object Models {
     // DeepSeek models
     const val DEEPSEEK_V4_FLASH = "deepseek-v4-flash"
     const val DEEPSEEK_V4_PRO = "deepseek-v4-pro"
+
+    // Stub model: scripted responses, no API call, no stub mode switch required
+    const val STUB = StubAgentProvider.MODEL
 }

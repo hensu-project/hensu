@@ -75,7 +75,7 @@ Provider credentials loaded via `HensuFactory.loadCredentialsFromEnvironment()`:
 
 ## Testing
 
-- JUnit 5 + AssertJ + Mockito. Stub mode: `HENSU_STUB_ENABLED=true`. Core testable in isolation (no AI deps).
+- JUnit 5 + AssertJ + Mockito. Stub one agent with `model = "stub"` (`Models.STUB`); stub every agent with `HENSU_STUB_ENABLED=true`. Core testable in isolation (no AI deps).
 - **Integration tests** (`hensu-server`): extend `IntegrationTestBase`, run under `@QuarkusTest` with `@TestProfile(InMemoryTestProfile.class)`. The `inmem` profile disables PostgreSQL (no Docker). Base class provides `loadWorkflow`, `registerStub`, `pushAndExecute`, `snapshotOf`. Per-test cleanup clears `StubResponseRegistry` and the workflow repository; executions are not deleted (the server has no write outside a claim), so a test reads its own execution by id.
 - **Test handlers** (auto-discovered `@ApplicationScoped`): `TestActionHandler`, `TestReviewHandler`, `TestPauseHandler`, `TestValidatorHandler`.
 - **Stub resolution order**: programmatic → `/stubs/{scenario}/{nodeId}.txt` → `/stubs/default/{nodeId}.txt` → echo fallback.

@@ -22,7 +22,7 @@ import java.util.Map;
 /// When multiple providers support the same model, the one with the highest
 /// {@link #getPriority()} value is selected. Use this to:
 /// - Override default implementations with custom ones
-/// - Provide testing stubs that intercept all models
+/// - Let the stub provider intercept every model when stub mode is on
 ///
 /// @implNote Implementations should be stateless and thread-safe.
 /// The same provider instance may create agents for multiple workflows concurrently.
@@ -46,6 +46,15 @@ public interface AgentProvider {
     /// @throws NullPointerException if modelName is null
     boolean supportsModel(String modelName);
 
+    /// Describes the models this provider claims, for diagnostics.
+    ///
+    /// Shown when no provider supports a declared model, so the reader can tell whether a
+    /// provider declined the model or was never loaded. Must agree with
+    /// {@link #supportsModel(String)}.
+    ///
+    /// @return human-readable description (e.g. `"claude*, gpt*"`), never null
+    String supportedModels();
+
     /// Creates an agent instance for the specified configuration.
     ///
     /// Called after {@link #supportsModel(String)} returns `true`. The implementation
@@ -64,8 +73,7 @@ public interface AgentProvider {
     ///
     /// When multiple providers support the same model, the one with the highest
     /// priority is selected. Default implementations should use priority 0.
-    /// Testing providers (like stub) typically use high priorities (e.g., 1000)
-    /// to intercept all requests when enabled.
+    /// The stub provider uses 1000 in stub mode to intercept all requests.
     ///
     /// @return priority value; higher values are preferred (default: 0)
     default int getPriority() {

@@ -1161,9 +1161,9 @@ is tested by running commands against real sandbox backends.
 
 ### Unit Tests (Pure JVM)
 
-Isolated class tests using Mockito. `StubAgentProvider` (priority 1000) intercepts all agent
-creation and returns a `StubAgent` backed by `StubResponseRegistry`. No AI API calls, no network,
-no containers.
+Isolated class tests using Mockito. `StubAgentProvider` returns a `StubAgent` backed by
+`StubResponseRegistry` for agents declaring the model `stub`, and in stub mode (priority 1000) for
+every agent. No AI API calls, no network, no containers.
 
 ### CLI Runtime Tests (Pure JVM)
 

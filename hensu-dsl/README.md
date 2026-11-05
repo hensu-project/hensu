@@ -188,6 +188,7 @@ The `Models` object provides constants for supported AI models:
 | `Models.GEMINI_2_5_PRO`        | `gemini-2.5-pro`         |
 | `Models.DEEPSEEK_V4_FLASH`     | `deepseek-v4-flash`      |
 | `Models.DEEPSEEK_V4_PRO`       | `deepseek-v4-pro`        |
+| `Models.STUB`                  | `stub`                   |
 
 ## Documentation
 
