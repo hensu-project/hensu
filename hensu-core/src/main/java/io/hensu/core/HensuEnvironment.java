@@ -5,7 +5,6 @@ import io.hensu.core.execution.WorkflowExecutor;
 import io.hensu.core.execution.action.ActionExecutor;
 import io.hensu.core.execution.executor.NodeExecutorRegistry;
 import io.hensu.core.rubric.RubricRepository;
-import io.hensu.core.state.WorkflowStateRepository;
 import io.hensu.core.workflow.WorkflowRepository;
 
 /// Container holding all core Hensu components required for workflow execution.
@@ -26,10 +25,9 @@ import io.hensu.core.workflow.WorkflowRepository;
 /// {@link io.hensu.core.agent.DefaultAgentRegistry} uses
 /// {@link java.util.concurrent.ConcurrentHashMap} and is explicitly thread-safe.
 ///
-/// @apiNote Create instances via {@link HensuFactory#createEnvironment()} or
-/// {@link HensuFactory.Builder} rather than direct construction.
+/// @apiNote Create instances via {@link HensuFactory#builder()} rather than direct
+/// construction.
 ///
-/// @see HensuFactory#createEnvironment()
 /// @see HensuFactory.Builder
 public final class HensuEnvironment {
 
@@ -39,7 +37,6 @@ public final class HensuEnvironment {
     private final RubricRepository rubricRepository;
     private final ActionExecutor actionExecutor;
     private final WorkflowRepository workflowRepository;
-    private final WorkflowStateRepository workflowStateRepository;
 
     /// Creates a new Hensu environment with the specified components.
     ///
@@ -49,22 +46,19 @@ public final class HensuEnvironment {
     /// @param rubricRepository storage for rubric definitions, not null
     /// @param actionExecutor executor for executable actions, may be null for logging-only mode
     /// @param workflowRepository tenant-scoped storage for workflow definitions, not null
-    /// @param workflowStateRepository tenant-scoped storage for execution state snapshots, not null
     public HensuEnvironment(
             WorkflowExecutor workflowExecutor,
             NodeExecutorRegistry nodeExecutorRegistry,
             AgentRegistry agentRegistry,
             RubricRepository rubricRepository,
             ActionExecutor actionExecutor,
-            WorkflowRepository workflowRepository,
-            WorkflowStateRepository workflowStateRepository) {
+            WorkflowRepository workflowRepository) {
         this.workflowExecutor = workflowExecutor;
         this.nodeExecutorRegistry = nodeExecutorRegistry;
         this.agentRegistry = agentRegistry;
         this.rubricRepository = rubricRepository;
         this.actionExecutor = actionExecutor;
         this.workflowRepository = workflowRepository;
-        this.workflowStateRepository = workflowStateRepository;
     }
 
     /// Returns the workflow executor for running workflow definitions.
@@ -110,15 +104,5 @@ public final class HensuEnvironment {
     /// @return the workflow repository, never null
     public WorkflowRepository getWorkflowRepository() {
         return workflowRepository;
-    }
-
-    /// Returns the repository for persisting workflow execution state snapshots.
-    ///
-    /// Defaults to {@link io.hensu.core.state.InMemoryWorkflowStateRepository} when
-    /// no custom implementation is registered via {@link HensuFactory.Builder}.
-    ///
-    /// @return the workflow state repository, never null
-    public WorkflowStateRepository getWorkflowStateRepository() {
-        return workflowStateRepository;
     }
 }

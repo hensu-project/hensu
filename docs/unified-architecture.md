@@ -89,7 +89,7 @@ compiler is a client-side thing; execution is a separate question, answered twic
 
 All core components are assembled through a single builder — `HensuFactory.builder()` — that produces an immutable
 `HensuEnvironment` container. This enforces a consistent wiring strategy across both runtimes:
-agent providers, action executors, repositories, and configuration are resolved once at startup.
+agent providers, action executors, repositories, and credentials are resolved once at startup.
 
 The builder is the only place where runtime-specific behavior diverges: both CLI and server wire the LangChain4j
 provider for LLM access. The CLI additionally wires a local bash executor (`CLIActionExecutor`); the server wires
@@ -437,8 +437,8 @@ Repository interfaces and in-memory defaults live in **hensu-core**:
 - `WorkflowRepository` (`io.hensu.core.workflow`) — Tenant-scoped workflow definition storage
 - `WorkflowStateReader` / `WorkflowStateRepository` (`io.hensu.core.state`) — Tenant-scoped execution state queries, and the writable repository built on them
 
-`HensuFactory.builder()` wires in-memory implementations by default, and deployments substitute
-database-backed ones through the builder. The server's `WorkflowRepository` is delegated from
+`HensuFactory.builder()` wires an in-memory `WorkflowRepository` by default, and deployments substitute
+a database-backed one through the builder. The server's `WorkflowRepository` is delegated from
 `HensuEnvironment` via `@Produces @Singleton`. The server has no `WorkflowStateRepository`: a run
 writes its state only through `ExecutionStore`, under its claim (Decision 9), and the store serves
 the API's queries as the `WorkflowStateReader`, so no write can bypass the claim.
