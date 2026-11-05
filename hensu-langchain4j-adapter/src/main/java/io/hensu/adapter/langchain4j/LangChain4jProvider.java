@@ -8,8 +8,10 @@ import io.hensu.core.agent.Agent;
 import io.hensu.core.agent.AgentConfig;
 import io.hensu.core.agent.AgentProvider;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 /// LangChain4j implementation of {@link AgentProvider}.
 ///
@@ -32,6 +34,10 @@ public class LangChain4jProvider implements AgentProvider {
     private static final long DEFAULT_TIMEOUT_SECONDS = 120;
     private static final double DEFAULT_TEMPERATURE = 0.7;
 
+    /// Model-name prefixes this provider claims; {@link #createModel} maps each to a vendor.
+    private static final List<String> MODEL_PREFIXES =
+            List.of("claude", "gpt", "o1", "gemini", "gemma", "deepseek");
+
     @Override
     public String getName() {
         return "langchain4j";
@@ -40,12 +46,14 @@ public class LangChain4jProvider implements AgentProvider {
     @Override
     public boolean supportsModel(String modelName) {
         if (modelName == null) return false;
-        return modelName.startsWith("claude")
-                || modelName.startsWith("gpt")
-                || modelName.startsWith("o1")
-                || modelName.startsWith("gemini")
-                || modelName.startsWith("gemma")
-                || modelName.startsWith("deepseek");
+        return MODEL_PREFIXES.stream().anyMatch(modelName::startsWith);
+    }
+
+    @Override
+    public String supportedModels() {
+        return MODEL_PREFIXES.stream()
+                .map(prefix -> prefix + "*")
+                .collect(Collectors.joining(", "));
     }
 
     @Override

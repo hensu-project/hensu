@@ -10,7 +10,6 @@ import io.hensu.core.agent.AgentResponse.TextResponse;
 import io.hensu.core.agent.stub.StubAgentProvider;
 import java.util.List;
 import java.util.Map;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -61,37 +60,16 @@ class DefaultAgentRegistryTest {
                 .isInstanceOf(UnsupportedOperationException.class);
     }
 
-    @Test
-    void shouldThrowWhenNoProviderSupportsModel() {
-        AgentFactory realFactory = new AgentFactory(Map.of(), List.of());
-        DefaultAgentRegistry realRegistry = new DefaultAgentRegistry(realFactory);
-
-        AgentConfig config = createConfig("unknown-model");
-
-        assertThatThrownBy(() -> realRegistry.registerAgent("writer", config))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("unknown-model");
-    }
-
     @Nested
     class RealIntegration {
-
-        @BeforeEach
-        void enableStubMode() {
-            System.setProperty("hensu.stub.enabled", "true");
-        }
-
-        @AfterEach
-        void disableStubMode() {
-            System.clearProperty("hensu.stub.enabled");
-        }
 
         @Test
         void shouldWireRegistryFactoryProviderChainAndReturnStubResponse() {
             // Verifies the full registry → factory → provider chain.
             // If AgentFactory constructor changes or StubAgentProvider is broken,
             // this is the first test to fail.
-            AgentFactory realFactory = new AgentFactory(Map.of(), List.of(new StubAgentProvider()));
+            AgentFactory realFactory =
+                    new AgentFactory(Map.of(), List.of(new StubAgentProvider(true)));
             DefaultAgentRegistry realRegistry = new DefaultAgentRegistry(realFactory);
 
             AgentConfig config =

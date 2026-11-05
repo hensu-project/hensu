@@ -29,15 +29,15 @@ import reactor.core.Disposable;
 /// ordinary requests – each one may reach any server node behind the load balancer:
 ///
 /// ```
-/// +——————————————————+  PUT  /mcp/v1/catalog            +——————————————————————+
+/// +——————————————————+  PUT  /mcp/v1/catalog               +——————————————————————+
 /// │                  │ <—————————————————————————————————  │                      │
-/// │   hensu-server   │  POST /mcp/v1/poll  (long poll)    │  HensuMcpTransport   │
+/// │   hensu-server   │  POST /mcp/v1/poll  (long poll)     │  HensuMcpTransport   │
 /// │   (any node)     │ <—————————————————————————————————  │  (this component)    │
-/// │                  │  POST /tasks/{token}/ack           │          │           │
+/// │                  │  POST /tasks/{token}/ack            │          │           │
 /// │                  │ <—————————————————————————————————  │          V           │
-/// │                  │  POST /tasks/{token}/complete      │   ToolDispatcher     │
+/// │                  │  POST /tasks/{token}/complete       │   ToolDispatcher     │
 /// │                  │ <—————————————————————————————————  │  (local execution)   │
-/// +——————————————————+                                    +——————————————————————+
+/// +——————————————————+                                     +——————————————————————+
 /// ```
 ///
 /// ### Contract

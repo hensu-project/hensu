@@ -2,12 +2,14 @@ package io.hensu.core.agent;
 
 import java.util.*;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 /// Factory for creating agents from explicitly provided {@link AgentProvider} instances.
 ///
 /// Selects the highest-priority provider that supports the requested model.
-/// {@link io.hensu.core.agent.stub.StubAgentProvider} uses priority 1000 when
-/// enabled, intercepting all model requests for testing.
+/// {@link io.hensu.core.agent.stub.StubAgentProvider} claims the model `stub`
+/// regardless of the stub mode switch, and in stub mode claims every model at
+/// priority 1000.
 ///
 /// Providers are wired explicitly via constructor. This ensures reliable behavior
 /// in GraalVM native image contexts.
@@ -57,33 +59,17 @@ public class AgentFactory {
                 providers.stream()
                         .filter(p -> p.supportsModel(modelName))
                         .max(Comparator.comparingInt(AgentProvider::getPriority))
-                        .orElseThrow(
-                                () ->
-                                        new IllegalStateException(
-                                                "No provider found for model: "
-                                                        + modelName
-                                                        + ". Available providers: "
-                                                        + providers.stream()
-                                                                .map(AgentProvider::getName)
-                                                                .toList()));
+                        .orElseThrow(() -> new IllegalStateException(noProviderMessage(modelName)));
 
         logger.info("Creating agent '" + agentId + "' with provider: " + provider.getName());
         return provider.createAgent(agentId, config, credentials);
     }
 
-    /// Returns an unmodifiable view of all loaded providers.
-    ///
-    /// @return list of available providers, never null
-    public List<AgentProvider> getProviders() {
-        return Collections.unmodifiableList(providers);
-    }
-
-    /// Checks if any loaded provider supports the given model.
-    ///
-    /// @param modelName the model identifier to check (e.g., `claude-sonnet-4`), not null
-    /// @return `true` if at least one provider supports this model, `false` otherwise
-    /// @throws NullPointerException if modelName is null
-    public boolean isModelSupported(String modelName) {
-        return providers.stream().anyMatch(p -> p.supportsModel(modelName));
+    private String noProviderMessage(String modelName) {
+        String loaded =
+                providers.stream()
+                        .map(p -> p.getName() + " accepts [" + p.supportedModels() + "]")
+                        .collect(Collectors.joining("; "));
+        return "No provider supports model '" + modelName + "'. Loaded providers: " + loaded;
     }
 }

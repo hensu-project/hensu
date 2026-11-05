@@ -1170,7 +1170,9 @@ void shouldDispatchActions() {
 
 #### Workflow JSON Fixtures
 
-Place workflow definitions in `src/test/resources/workflows/`. Use `model: "stub"` for all agents:
+Place workflow definitions in `src/test/resources/workflows/`. Use `model: "stub"` for all agents – it resolves to
+`StubAgentProvider` by name, with no switch and no API key. The `inmem` test profile also sets
+`hensu.stub.enabled=true`, so under it an agent declaring any other model is stubbed as well:
 
 ```json
 {

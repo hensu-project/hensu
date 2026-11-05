@@ -591,12 +591,22 @@ All properties can be overridden at runtime with the corresponding CLI option.
 
 ## Testing — Stub Agent System
 
-The stub agent system runs full workflow executions without consuming API tokens. When enabled,
-`StubAgentProvider` (priority 1000) intercepts all agent calls and returns responses from
-`StubResponseRegistry`. Place `.txt` files under `stubs/default/{nodeId}.txt` in your working
-directory to supply per-node mock responses.
+The stub agent system runs full workflow executions without consuming API tokens. Stubbed agents
+return responses from `StubResponseRegistry`. Place `.txt` files under `stubs/default/{nodeId}.txt`
+in your working directory to supply per-node mock responses.
 
-**Enable stub mode** (four equivalent ways):
+**Stub one agent** by declaring the stub model – no switch and no API key needed; the other agents
+keep their real providers:
+
+```kotlin
+agent("writer") {
+    role = "content writer"
+    model = Models.STUB
+}
+```
+
+**Stub every agent** regardless of its declared model by enabling stub mode, where
+`StubAgentProvider` (priority 1000) intercepts all agent calls (four equivalent ways):
 
 ```bash
 # 1. Environment variable (recommended for CLI use)
@@ -609,8 +619,8 @@ java -Dhensu.stub.enabled=true -jar ~/.hensu/lib/hensu.jar run my-workflow
 # 3. Application property (src/main/resources/application.properties)
 # hensu.stub.enabled=true
 
-# 4. Credentials map (per-execution override in Java code)
-# credentials.put("HENSU_STUB_ENABLED", "true");
+# 4. Credentials map (per environment, in Java code; an explicit value wins over 1 and 2)
+# HensuFactory.builder().stubMode(true)
 ```
 
 > See [Stub Agent System](../docs/developer-guide-core.md#stub-agent-system) in the Core

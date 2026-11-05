@@ -1142,6 +1142,9 @@ Models.GEMINI_2_5_PRO           // gemini-2.5-pro
 // DeepSeek
 Models.DEEPSEEK_V4_FLASH        // deepseek-v4-flash
 Models.DEEPSEEK_V4_PRO          // deepseek-v4-pro
+
+// Stub (scripted responses, no API call)
+Models.STUB                     // stub
 ```
 
 ## External Prompt Files
