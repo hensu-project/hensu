@@ -39,12 +39,6 @@ This guide covers API usage, adapter development, extension points, and testing 
 
 ### Quick Start
 
-**Standalone with environment variables (stub provider only):**
-```java
-var env = HensuFactory.createEnvironment();
-```
-
-**With explicit providers (recommended):**
 ```java
 var env = HensuFactory.builder()
     .loadCredentials(properties)
@@ -61,27 +55,21 @@ HensuEnvironment env = HensuFactory.builder()
     // Credentials (multiple loading strategies)
     .loadCredentials(properties)              // From Properties + env vars
     .loadCredentialsFromEnvironment()         // From env vars only
-    .anthropicApiKey("sk-ant-...")            // Individual key
-    .credential("CUSTOM_KEY", "value")        // Custom key
+    .credential("ANTHROPIC_API_KEY", "sk-ant-...")  // Individual key
 
     // Agent providers (explicit wiring, GraalVM-safe)
     .agentProviders(List.of(new LangChain4jProvider()))
 
     // Optional components
     .stubMode(false)                          // Enable for testing
-    .evaluatorAgent("evaluator")              // LLM-based rubric evaluation
     .reviewHandler(myReviewHandler)           // Human review support
     .actionExecutor(myActionExecutor)         // Action execution
 
-    // Repositories (defaults to in-memory implementations)
-    .workflowRepository(myWorkflowRepo)      // Custom workflow storage
-    .workflowStateRepository(myStateRepo)    // Custom state persistence
+    .workflowRepository(myWorkflowRepo)       // Defaults to InMemoryWorkflowRepository
+    .toolRouter(myToolRouter)                 // Defaults to ToolRouter.empty()
 
     .build();
 ```
-
-> **Note**: When `workflowRepository` or `workflowStateRepository` are not set, `HensuFactory` defaults to
-> `InMemoryWorkflowRepository` and `InMemoryWorkflowStateRepository` respectively.
 
 > **Note**: `StubAgentProvider` is always included automatically by `build()`. Do not add it explicitly.
 
@@ -504,15 +492,6 @@ var env = HensuFactory.builder()
         new MyAiProvider()
     ))
     .loadCredentialsFromEnvironment()
-    .build();
-```
-
-Or add a single provider:
-
-```java
-var env = HensuFactory.builder()
-    .agentProvider(new LangChain4jProvider())
-    .agentProvider(new MyAiProvider())
     .build();
 ```
 
@@ -1601,8 +1580,8 @@ HensuFactory.builder()
 **Individual keys:**
 ```java
 HensuFactory.builder()
-    .anthropicApiKey("sk-ant-...")
-    .openAiApiKey("sk-...")
+    .credential("ANTHROPIC_API_KEY", "sk-ant-...")
+    .credential("OPENAI_API_KEY", "sk-...")
     .build();
 ```
 
@@ -1623,7 +1602,6 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 |---------------------------------------------------------|---------------------------------------------------------------------------------------------------|
 | `HensuFactory.java`                                     | Bootstrap and environment creation                                                                |
 | `HensuEnvironment.java`                                 | Container for all core components                                                                 |
-| `HensuConfig.java`                                      | Configuration (storage backend)                                                                   |
 | `agent/AgentFactory.java`                               | Creates agents from explicit providers                                                            |
 | `agent/AgentProvider.java`                              | Provider interface for pluggable AI backends                                                      |
 | `agent/AgentRegistry.java`                              | Agent lookup interface                                                                            |
@@ -1649,7 +1627,7 @@ Environment variables matching `*_API_KEY`, `*_KEY`, `*_SECRET`, or `*_TOKEN` pa
 | `state/ExecutionPhase.java`                             | Sealed: `Initial`, `Awaiting`, `Terminal` — tracks position within a node's lifecycle             |
 | `state/WorkflowStateReader.java`                        | Execution state queries (read side); the server's claim store implements only this                |
 | `state/WorkflowStateRepository.java`                    | Writable execution state persistence, extends `WorkflowStateReader`                               |
-| `state/InMemoryWorkflowStateRepository.java`            | In-memory state repository (default)                                                              |
+| `state/InMemoryWorkflowStateRepository.java`            | In-memory state repository                                                                        |
 | `workflow/state/WorkflowStateSchema.java`               | Typed state variable schema (optional per-workflow declaration)                                   |
 | `workflow/state/StateVariableDeclaration.java`          | Single variable declaration record (name, type, isInput)                                          |
 | `workflow/state/VarType.java`                           | Variable type enum: STRING, NUMBER, BOOLEAN, LIST_STRING                                          |

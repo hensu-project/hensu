@@ -48,7 +48,7 @@ flowchart TD
         end
         subgraph storage["Storage"]
             direction LR
-            wr(["WorkflowRepository"]) ~~~ wsr(["WorkflowStateRepository\n(snapshots, pause/resume)"])
+            wr(["WorkflowRepository"])
         end
         top --> nodes --> mid --> support --> storage
     end
@@ -93,10 +93,6 @@ flowchart TD
 ## Quick Start
 
 ```java
-// Standalone (env vars for credentials, stub provider only)
-var env = HensuFactory.createEnvironment();
-
-// With explicit providers (recommended)
 var env = HensuFactory.builder()
     .loadCredentials(properties)
     .agentProviders(List.of(new LangChain4jProvider()))
@@ -201,7 +197,6 @@ When a call is refused rather than merely unsuccessful, the loop appends a recor
 hensu-core/src/main/java/io/hensu/core/
 ├── HensuFactory.java              # Entry point — builder for HensuEnvironment
 ├── HensuEnvironment.java          # Component container (executor, registry, etc.)
-├── HensuConfig.java               # Configuration (storage backend)
 ├── agent/
 │   ├── Agent.java                 # Core agent interface
 │   ├── AgentConfig.java           # Agent configuration (model, temperature, etc.)

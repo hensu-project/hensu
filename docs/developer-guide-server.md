@@ -196,7 +196,7 @@ public HensuEnvironment hensuEnvironment() {
             .actionExecutor(actionExecutor)   // ServerActionExecutor (send-action dispatcher)
             .toolRouter(new ToolRouter(toolProviders.stream().toList())); // every ToolProvider bean
 
-    // No workflowStateRepository: execution state is written only through ExecutionStore
+    // No state repository: execution state is written only through ExecutionStore
 
     // Conditional persistence: JDBC when DataSource available, in-memory otherwise
     boolean dsActive = config.getOptionalValue("quarkus.datasource.active", Boolean.class)

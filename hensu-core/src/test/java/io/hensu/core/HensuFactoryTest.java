@@ -92,31 +92,6 @@ class HensuFactoryTest {
     }
 
     @Nested
-    @DisplayName("createEnvironment overloads")
-    class CreateEnvironment {
-
-        @Test
-        @DisplayName("wires custom NodeExecutorRegistry")
-        void shouldWireCustomNodeExecutorRegistry() {
-            environment =
-                    HensuFactory.createEnvironment(
-                            new HensuConfig(), mockNodeExecutorRegistry, mockAgentRegistry);
-
-            assertThat(environment.getNodeExecutorRegistry()).isSameAs(mockNodeExecutorRegistry);
-        }
-
-        @Test
-        @DisplayName("wires custom AgentRegistry")
-        void shouldWireCustomAgentRegistry() {
-            environment =
-                    HensuFactory.createEnvironment(
-                            new HensuConfig(), mockNodeExecutorRegistry, mockAgentRegistry);
-
-            assertThat(environment.getAgentRegistry()).isSameAs(mockAgentRegistry);
-        }
-    }
-
-    @Nested
     @DisplayName("stub mode")
     class StubMode {
 

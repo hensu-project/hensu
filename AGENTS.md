@@ -71,7 +71,7 @@ Example workflows: `working-dir/workflows/*.kt`.
 
 ## Environment Variables
 
-Provider credentials loaded via `HensuFactory.loadCredentialsFromEnvironment()`: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `AZURE_OPENAI_KEY`.
+Provider credentials loaded via `HensuFactory.builder().loadCredentialsFromEnvironment()` (or `loadCredentials(properties)`, which adds properties on top): `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `AZURE_OPENAI_KEY`.
 
 ## Testing
 
