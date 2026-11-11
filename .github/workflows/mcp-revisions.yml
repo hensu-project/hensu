@@ -1,0 +1,57 @@
+name: MCP Revisions
+
+# Lists, calls and cancels against real MCP servers pinned to each protocol revision.
+# The servers and every package below them are pinned, so only a change to the client
+# can turn this red: it runs when hensu-mcp or the build that compiles it changes, and
+# weekly to catch drift in the base images, which float on their tags. It builds the
+# servers' images, so it needs Docker and the network, and runs apart from the pure-JVM
+# suite in ci.yml. Being path-filtered, it must not be a required check: a pull request
+# it skips would never report it.
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - 'hensu-mcp/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle/**'
+      - '.github/workflows/mcp-revisions.yml'
+  pull_request:
+    branches: [main]
+    paths: *paths
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-revisions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mcp-revisions:
+    name: MCP Revision Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: graalvm/setup-graalvm@54b4f5a65c1a84b2fdfdc2078fe43df32819e4b1 # v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.4.3
+
+      - name: Run the revision suite
+        run: ./gradlew :hensu-mcp:mcpRevisionTest
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-revision-reports
+          path: 'hensu-mcp/build/reports/tests/'
+          retention-days: 7
