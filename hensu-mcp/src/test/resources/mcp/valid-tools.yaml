@@ -1,0 +1,11 @@
+# Each list names tools the way the server lists them, before prefix:.
+servers:
+  filesystem:
+    command: ["/usr/local/bin/mcp-server-filesystem"]
+    prefix: "fs_"
+    tools:
+      allow: [read_file, list_directory]
+  github:
+    url: "https://mcp.github.example/mcp"
+    tools:
+      deny: [delete_repository]

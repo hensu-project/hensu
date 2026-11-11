@@ -1,0 +1,5 @@
+servers:
+  everything:
+    command: ["npx", "-y", "@modelcontextprotocol/server-everything"]
+    sandbox:
+      network: true

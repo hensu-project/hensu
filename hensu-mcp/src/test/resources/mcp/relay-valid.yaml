@@ -1,0 +1,13 @@
+# What a relay declares: a local server and a remote one, no attended-run keys.
+servers:
+  everything:
+    command: ["npx", "-y", "@modelcontextprotocol/server-everything"]
+    prefix: "everything_"
+    env:
+      LOG_LEVEL: warn
+    tools:
+      deny: [longRunningOperation]
+  crm:
+    url: "https://crm.internal.example/mcp"
+    auth: {bearer: CRM_MCP_TOKEN}
+    timeout: 20000

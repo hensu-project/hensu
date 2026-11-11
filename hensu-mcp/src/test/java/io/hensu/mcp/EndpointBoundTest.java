@@ -62,8 +62,26 @@ class EndpointBoundTest {
                 .hasMessageContaining("with no Location header");
     }
 
+    @Test
+    void shouldClassifyARefusedEgressByWhatTheRedirectSaysOfTheRequest() {
+        assertThatThrownBy(() -> bound.follow(redirect("https://other.example/mcp", 307)))
+                .isInstanceOf(McpEgressDeniedException.class)
+                .extracting(failure -> ((McpException) failure).delivery())
+                .as("a 307 means the endpoint did not handle the request")
+                .isEqualTo(McpException.Delivery.NOT_SENT);
+        assertThatThrownBy(() -> bound.follow(redirect("https://other.example/mcp", 302)))
+                .isInstanceOf(McpEgressDeniedException.class)
+                .extracting(failure -> ((McpException) failure).delivery())
+                .as("a 302 may come after the endpoint handled it")
+                .isEqualTo(McpException.Delivery.MAYBE_DELIVERED);
+    }
+
     private static HttpReply redirect(String location) {
+        return redirect(location, 307);
+    }
+
+    private static HttpReply redirect(String location, int status) {
         return new HttpReply(
-                302, HttpHeaders.of(Map.of("location", List.of(location)), (_, _) -> true), "");
+                status, HttpHeaders.of(Map.of("location", List.of(location)), (_, _) -> true), "");
     }
 }

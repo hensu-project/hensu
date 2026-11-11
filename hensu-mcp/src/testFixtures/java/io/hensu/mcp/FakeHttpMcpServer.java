@@ -51,6 +51,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 ///
 /// @implNote **Mutable and thread-safe.** Handlers run on virtual threads and
 ///     read volatile configuration; recordings are on concurrent collections.
+// Behaviour setters return this for chaining; a test configuring one need not use it.
+@SuppressWarnings("UnusedReturnValue")
 public final class FakeHttpMcpServer implements AutoCloseable {
 
     /// One request the fixture saw.
@@ -91,6 +93,8 @@ public final class FakeHttpMcpServer implements AutoCloseable {
     private final List<Recorded> requests = new CopyOnWriteArrayList<>();
     private final List<String> sessions = new CopyOnWriteArrayList<>();
     private final CountDownLatch cancellationArrived = new CountDownLatch(1);
+    private final CountDownLatch callArrived = new CountDownLatch(1);
+    private final CountDownLatch heldCallClosed = new CountDownLatch(1);
     private final AtomicInteger initializes = new AtomicInteger();
     private final AtomicInteger sessionSeq = new AtomicInteger();
     private final AtomicInteger staleThrough = new AtomicInteger();
@@ -112,6 +116,11 @@ public final class FakeHttpMcpServer implements AutoCloseable {
     private volatile String callFailureBody;
     private volatile String callFailureType;
     private volatile String requiredBearer;
+    private volatile boolean forbidding;
+    private volatile boolean holdingCalls;
+    private volatile boolean droppingCalls;
+    private volatile String callRedirectLocation;
+    private volatile int callRedirectStatus;
     private volatile Map<String, Object> toolSchema =
             Map.of(
                     "type",
@@ -187,6 +196,29 @@ public final class FakeHttpMcpServer implements AutoCloseable {
     /// @throws InterruptedException if the waiting thread is interrupted
     public boolean awaitCancellation(long timeout, TimeUnit unit) throws InterruptedException {
         return cancellationArrived.await(timeout, unit);
+    }
+
+    /// Blocks until the first `tools/call` arrives.
+    ///
+    /// @param timeout how long to wait
+    /// @param unit the unit of `timeout`, not null
+    /// @return true if a call arrived within the timeout
+    /// @throws InterruptedException if the waiting thread is interrupted
+    public boolean awaitCall(long timeout, TimeUnit unit) throws InterruptedException {
+        return callArrived.await(timeout, unit);
+    }
+
+    /// Blocks until the client closes a call held open by [#holdingCallsOpen()].
+    ///
+    /// The fixture notices when a keep-alive write to the stream fails, which
+    /// is what a server reading closure as cancellation would notice too.
+    ///
+    /// @param timeout how long to wait
+    /// @param unit the unit of `timeout`, not null
+    /// @return true if the held stream was closed within the timeout
+    /// @throws InterruptedException if the waiting thread is interrupted
+    public boolean awaitHeldCallClosed(long timeout, TimeUnit unit) throws InterruptedException {
+        return heldCallClosed.await(timeout, unit);
     }
 
     // ------------------------------------------------------------- behaviours
@@ -349,6 +381,46 @@ public final class FakeHttpMcpServer implements AutoCloseable {
         return this;
     }
 
+    /// Answers `403` to every POST, whatever it carries.
+    ///
+    /// @return this fixture, never null
+    public FakeHttpMcpServer forbidding() {
+        this.forbidding = true;
+        return this;
+    }
+
+    /// Answers every `tools/call` with an SSE stream that never completes,
+    /// writing a keep-alive comment until the client closes it.
+    ///
+    /// @return this fixture, never null
+    public FakeHttpMcpServer holdingCallsOpen() {
+        this.holdingCalls = true;
+        return this;
+    }
+
+    /// Redirects the next `tools/call` with this status, then answers normally.
+    ///
+    /// Only calls are redirected, so a connection opens first; only one is, so a
+    /// followed redirect reaches a server that answers it.
+    ///
+    /// @param location the `Location` header value, not null
+    /// @param status the 3xx status to answer with
+    /// @return this fixture, never null
+    public FakeHttpMcpServer redirectingNextCall(String location, int status) {
+        this.callRedirectStatus = status;
+        this.callRedirectLocation = location;
+        return this;
+    }
+
+    /// Reads every `tools/call` and drops the connection without answering, as
+    /// a server that crashed mid-call would.
+    ///
+    /// @return this fixture, never null
+    public FakeHttpMcpServer droppingCalls() {
+        this.droppingCalls = true;
+        return this;
+    }
+
     /// Publishes one more tool beside `read_file`.
     ///
     /// @param name the tool name, not null
@@ -378,6 +450,11 @@ public final class FakeHttpMcpServer implements AutoCloseable {
         String httpMethod = exchange.getRequestMethod();
         if ("DELETE".equals(httpMethod) || "GET".equals(httpMethod)) {
             respond(exchange, 405, "Method Not Allowed", "text/plain");
+            return;
+        }
+
+        if (forbidding) {
+            respond(exchange, 403, "", "text/plain");
             return;
         }
 
@@ -453,6 +530,23 @@ public final class FakeHttpMcpServer implements AutoCloseable {
             return;
         }
         if ("tools/call".equals(rpcMethod)) {
+            callArrived.countDown();
+            String redirect = callRedirectLocation;
+            if (redirect != null) {
+                callRedirectLocation = null;
+                exchange.getResponseHeaders().add("Location", redirect);
+                respond(exchange, callRedirectStatus, "", "text/plain");
+                return;
+            }
+            if (droppingCalls) {
+                // Closing the exchange before any response header closes the
+                // connection itself: the client sees the socket drop, not an answer.
+                return;
+            }
+            if (holdingCalls) {
+                hold(exchange);
+                return;
+            }
             sleep(answerDelayMs);
             if (callFailureStatus != 0) {
                 respond(exchange, callFailureStatus, callFailureBody, callFailureType);
@@ -480,6 +574,22 @@ public final class FakeHttpMcpServer implements AutoCloseable {
             return;
         }
         respond(exchange, 400, methodNotFound(id), "application/json");
+    }
+
+    /// Keeps a call's SSE stream open until a keep-alive write fails.
+    private void hold(HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+        exchange.sendResponseHeaders(200, 0);
+        OutputStream out = exchange.getResponseBody();
+        try {
+            for (int beat = 0; beat < 1_500; beat++) {
+                out.write(": keep-alive\n\n".getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                sleep(20);
+            }
+        } catch (IOException closed) {
+            heldCallClosed.countDown();
+        }
     }
 
     /// A session is stale once {@link #invalidateSessions()} has passed it.

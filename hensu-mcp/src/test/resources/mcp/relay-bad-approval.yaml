@@ -1,0 +1,4 @@
+servers:
+  crm:
+    url: "https://crm.internal.example/mcp"
+    approval: required

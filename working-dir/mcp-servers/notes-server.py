@@ -69,6 +69,7 @@ def respond(request):
     if method == "initialize":
         result = {
             "protocolVersion": "2024-11-05",
+            "capabilities": {"tools": {}},
             "serverInfo": {"name": "notes", "version": "1"},
         }
     elif method == "tools/list":

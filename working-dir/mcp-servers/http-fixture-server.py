@@ -8,7 +8,9 @@ exercise can assert on what actually left the client rather than on what the cli
 Standard library only — nothing is installed to run it.
 
     python3 http-fixture-server.py --port 8931 [--era modern|legacy] [--log FILE]
-        [--require-bearer VALUE] [--redirect-to URL] [--publish-invalid] [--publish-nullable]
+        [--require-bearer VALUE] [--redirect-to URL] [--redirect-status N] [--publish-invalid]
+        [--publish-nullable] [--slow-ms N] [--call-error CODE] [--call-error-status N]
+        [--forbid-call] [--non-object-result list|call]
 
 --era modern   Revision 2026-07-28. No handshake, no session. Every POST must carry
                MCP-Protocol-Version and Mcp-Method; a tools/call must carry Mcp-Name and one
@@ -21,8 +23,11 @@ Standard library only — nothing is installed to run it.
                Answer 401 to any request whose Authorization header is not exactly
                "Bearer VALUE". The log records only whether it matched — never the value.
 --redirect-to URL
-               Answer every tools/call with 302 and this Location. A relative URL stays on this
-               endpoint; the /moved path is served exactly like /mcp.
+               Answer every tools/call with a redirect to this Location. A relative URL stays on
+               this endpoint; the /moved path is served exactly like /mcp.
+--redirect-status N
+               The status of that redirect, 302 unless given. 307 and 308 ask the client to repeat
+               the POST; 301, 302 and 303 may follow a call the server already ran.
 --publish-invalid
                Also publish `measure`, whose only parameter is a `number` annotated with
                x-mcp-header. A modern client must leave that tool out of its catalog.
@@ -31,18 +36,33 @@ Standard library only — nothing is installed to run it.
                `times` is neither an integer nor null is answered as a tool error, so a client
                that offered the model a string instead of a nullable integer shows up as a
                failed call rather than a quietly coerced one.
+--slow-ms N    Hold every tools/call for N ms before answering. If the client closes the
+               connection meanwhile, the call is logged with "client-gone" and the ms it waited,
+               and is never answered: that closure is how a modern client cancels.
+--call-error CODE
+               Answer every tools/call with a JSON-RPC error of this code, carrying a message and
+               a `data` object, under HTTP --call-error-status (200 unless given).
+--forbid-call  Answer every tools/call with 403, as a server that accepted the credential but does
+               not permit the call.
+--non-object-result list|call
+               Answer tools/list, or tools/call, with a JSON-RPC result that is an array rather
+               than the object every revision defines.
 
 The log is JSON lines, one per request: path, HTTP method, JSON-RPC method, whether the bearer
 matched, Mcp-Name, every Mcp-Param-* header as received, the JSON type of every argument of a
-tools/call, and the status answered.
+tools/call, and the status answered. A request carries its JSON-RPC id, and a
+notifications/cancelled the requestId it cancels.
 """
 
 import argparse
 import base64
 import itertools
 import json
+import select
+import socket
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODERN = "2026-07-28"
@@ -185,6 +205,7 @@ class Handler(BaseHTTPRequestHandler):
             "path": self.path,
             "http": "POST",
             "rpc": rpc,
+            "id": rpc_id,
             "auth": "none" if auth is None else (
                 "match" if options.require_bearer and auth == "Bearer " + options.require_bearer
                 else "present"),
@@ -209,6 +230,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if rpc.startswith("notifications/"):
+            if rpc == "notifications/cancelled":
+                self.entry["requestId"] = params.get("requestId")
+                self.entry["reason"] = params.get("reason")
             self.answer(202)
             return
 
@@ -236,6 +260,9 @@ class Handler(BaseHTTPRequestHandler):
             }, headers={"Mcp-Session-Id": session})
             return
         if rpc == "tools/list":
+            if options.non_object_result == "list":
+                self.answer(200, {"jsonrpc": "2.0", "id": rpc_id, "result": self.fixture.tools})
+                return
             self.result(rpc_id, {"tools": self.fixture.tools})
             return
         if rpc == "tools/call":
@@ -250,7 +277,20 @@ class Handler(BaseHTTPRequestHandler):
         self.entry["argument-types"] = {k: json_type(v) for k, v in arguments.items()}
 
         if options.redirect_to and self.path == "/mcp":
-            self.answer(302, b"", "text/plain", {"Location": options.redirect_to})
+            self.answer(options.redirect_status, b"", "text/plain",
+                        {"Location": options.redirect_to})
+            return
+        if options.forbid_call:
+            self.answer(403, b"Forbidden", "text/plain")
+            return
+        if options.slow_ms and not self.hold(options.slow_ms):
+            return
+        if options.call_error is not None:
+            self.error(options.call_error_status, rpc_id, options.call_error,
+                       "fixture refused the call", {"hint": "witness --call-error"})
+            return
+        if options.non_object_result == "call":
+            self.answer(200, {"jsonrpc": "2.0", "id": rpc_id, "result": ["not", "an", "object"]})
             return
 
         tool = next((t for t in self.fixture.tools if t["name"] == name), None)
@@ -297,6 +337,27 @@ class Handler(BaseHTTPRequestHandler):
         self.result(rpc_id, {"content": [{"type": "text", "text": text}]})
 
 
+    def hold(self, ms):
+        """Waits ms, watching for the client to close; False when it did."""
+        started = time.monotonic()
+        deadline = started + ms / 1000.0
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return True
+            readable, _, _ = select.select([self.connection], [], [], min(left, 0.05))
+            if readable:
+                try:
+                    gone = self.connection.recv(1, socket.MSG_PEEK) == b""
+                except OSError:
+                    gone = True
+                if gone:
+                    self.entry["client-gone"] = True
+                    self.entry["gone-after-ms"] = int((time.monotonic() - started) * 1000)
+                    self.close_connection = True
+                    return False
+
+
 def json_type(value):
     if value is None:
         return "null"
@@ -320,6 +381,13 @@ def main():
     parser.add_argument("--redirect-to")
     parser.add_argument("--publish-invalid", action="store_true")
     parser.add_argument("--publish-nullable", action="store_true")
+    parser.add_argument("--redirect-status", type=int, default=302,
+                        choices=(301, 302, 303, 307, 308))
+    parser.add_argument("--slow-ms", type=int, default=0)
+    parser.add_argument("--call-error", type=int)
+    parser.add_argument("--call-error-status", type=int, default=200)
+    parser.add_argument("--forbid-call", action="store_true")
+    parser.add_argument("--non-object-result", choices=("list", "call"))
     options = parser.parse_args()
 
     Handler.fixture = Fixture(options)

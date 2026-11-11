@@ -1,10 +1,11 @@
-package io.hensu.cli.tool;
+package io.hensu.mcp.config;
 
 import io.hensu.core.execution.action.ParamSpec;
 import io.hensu.core.execution.action.SandboxPolicy;
 import io.hensu.core.util.MiniYaml;
 import io.hensu.core.util.MiniYamlException;
 import io.hensu.mcp.McpServerSpec;
+import io.hensu.mcp.McpToolCatalog;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -13,6 +14,7 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -21,7 +23,8 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/// Reads `mcp.yaml`: which MCP servers a deployment wants started locally.
+/// Reads the `mcp.yaml` grammar: which MCP servers a deployment wants started
+/// or dialled.
 ///
 /// The grammar is deliberately smaller than the command catalog's, because a
 /// server is one decision rather than a family of parameterised invocations:
@@ -35,6 +38,9 @@ import java.util.regex.Pattern;
 ///     unattended: true      # optional, default false
 ///     approval: required    # optional, default none
 ///     prefix: "fs_"         # optional, prepended to every published tool name
+///     tools:                # optional; the server's own names, before prefix:
+///       allow: [read_file, list_directory]
+///       deny: [write_file]
 ///     env:
 ///       LOG_LEVEL: warn
 ///     sandbox:
@@ -48,6 +54,25 @@ import java.util.regex.Pattern;
 ///     prefix: "acme_"
 ///     timeout: 20000
 /// ```
+///
+/// ### Two runtimes read it, each in its own dialect
+/// The CLI reads `mcp.yaml` in {@link Dialect#CLI}. The relay reads its
+/// `relay.yaml` in {@link Dialect#RELAY}, which is the same grammar minus the
+/// three keys that describe a human-attended local run: `sandbox:`,
+/// `unattended:` and `approval:`. A relay has no reviewer to ask and runs its
+/// servers inside its own container, so each of the three is refused rather
+/// than accepted and ignored, for the same reason a remote entry refuses
+/// `sandbox:`. Everything else – `tools:` included – means the same in both, so
+/// the two runtimes cannot disagree about what a declaration publishes.
+///
+/// ### `tools:` names what a server may publish
+/// `allow:` lists the only tools published, `deny:` the tools never published;
+/// both name tools the way the server lists them, before `prefix:` is applied.
+/// Omitting `allow:` publishes everything not denied. An empty `allow:` and a
+/// name in both lists are load errors, because each would make one of the two
+/// lists mean nothing. {@link McpToolCatalog} applies the filter, and an entry
+/// written with the prefix is reported with the spelling it should have; a
+/// `deny:` entry written that way still withholds the tool it names.
 ///
 /// ### A remote entry refuses `sandbox:` and `env:` rather than ignoring them
 /// There is no local process to contain and none to give an environment to.
@@ -106,12 +131,40 @@ import java.util.regex.Pattern;
 ///
 /// @implNote **Immutable after construction.** Pure functions over a parsed
 /// document; safe to call from any thread.
-/// @see DeclaredMcpToolProvider for what starts from these declarations
 /// @see McpServerSpec for the parsed shape
+/// @see McpToolCatalog for where `prefix:` and `tools:` are applied
 public final class McpConfig {
 
-    /// Name of the file a deployment declares its MCP servers in.
+    /// Name of the file a CLI deployment declares its MCP servers in.
     public static final String FILE_NAME = "mcp.yaml";
+
+    /// Which runtime a document is read for.
+    ///
+    /// ### Permitted Values
+    /// - {@link #CLI} – `mcp.yaml`, read by the CLI for a run it may attend
+    /// - {@link #RELAY} – `relay.yaml`, read by the tenant's relay, which no
+    ///   reviewer attends and which contains its servers by its own container
+    public enum Dialect {
+
+        /// The CLI's `mcp.yaml`: every key of the grammar.
+        CLI(FILE_NAME),
+
+        /// The relay's `relay.yaml`: refuses `sandbox:`, `unattended:` and `approval:`.
+        RELAY("relay.yaml");
+
+        private final String document;
+
+        Dialect(String document) {
+            this.document = document;
+        }
+
+        /// Returns the file name a document of this dialect is read from.
+        ///
+        /// @return the file name, never null
+        public String document() {
+            return document;
+        }
+    }
 
     /// The only placeholder a launch argv may contain.
     public static final String WORKDIR_PLACEHOLDER = "{workdir}";
@@ -120,9 +173,8 @@ public final class McpConfig {
 
     private static final Pattern SERVER_ID = Pattern.compile("[A-Za-z0-9_.\\-]+");
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{([A-Za-z0-9_.\\-]+)}");
-
-    /// Shape a tool name, and therefore a prefix, has to keep.
-    public static final Pattern TOOL_NAME = Pattern.compile("[A-Za-z0-9_.\\-]+");
+    private static final Pattern LOOPBACK_V4 =
+            Pattern.compile("127(\\.(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}");
 
     /// Shape a credential key has to take: screaming snake case.
     ///
@@ -139,11 +191,14 @@ public final class McpConfig {
                     "unattended",
                     "approval",
                     "prefix",
+                    "tools",
                     "auth",
                     "headers",
                     "env",
                     "sandbox");
     private static final Set<String> AUTH_KEYS = Set.of("bearer");
+    private static final Set<String> TOOLS_KEYS = Set.of("allow", "deny");
+    private static final List<String> ATTENDED_KEYS = List.of("sandbox", "unattended", "approval");
     private static final Set<String> SANDBOX_KEYS = Set.of("network", "write", "cache");
     private static final Set<String> PACKAGE_RUNNERS = Set.of("npx", "uvx", "pnpx", "bunx");
 
@@ -153,13 +208,14 @@ public final class McpConfig {
 
     /// Loads the declarations from a working directory, tolerating absence.
     ///
-    /// @param workingDirectory the directory holding `mcp.yaml`, not null
+    /// @param workingDirectory the directory holding the dialect's document, not null
+    /// @param dialect which runtime the document is read for, not null
     /// @return the declared servers in document order, never null (may be empty)
     /// @throws MiniYamlException if the file exists but does not parse or does
     ///     not conform, carrying the offending line
     /// @throws java.io.UncheckedIOException if the file exists but cannot be read
-    public static List<McpServerSpec> load(Path workingDirectory) {
-        Path file = workingDirectory.resolve(FILE_NAME);
+    public static List<McpServerSpec> load(Path workingDirectory, Dialect dialect) {
+        Path file = workingDirectory.resolve(dialect.document());
         if (!Files.exists(file)) {
             return List.of();
         }
@@ -169,20 +225,24 @@ public final class McpConfig {
         } catch (IOException e) {
             throw new java.io.UncheckedIOException(e);
         }
-        return parse(content, workingDirectory);
+        return parse(content, workingDirectory, dialect);
     }
 
     /// Parses a declaration document.
     ///
-    /// @param content the complete `mcp.yaml` text, not null
+    /// @param content the complete document text, not null
     /// @param workingDirectory the directory `{workdir}` expands to, not null
+    /// @param dialect which runtime the document is read for, not null
     /// @return the declared servers in document order, never null (may be empty)
     /// @throws MiniYamlException if the document does not parse or does not conform
-    public static List<McpServerSpec> parse(String content, Path workingDirectory) {
+    public static List<McpServerSpec> parse(
+            String content, Path workingDirectory, Dialect dialect) {
         Path workingDir = workingDirectory.toAbsolutePath().normalize();
         MiniYaml.Mapping root = MiniYaml.parse(content);
         if (!root.has("servers")) {
-            logger.warning(FILE_NAME + " declares no 'servers:' block; no MCP tools are available");
+            logger.warning(
+                    dialect.document()
+                            + " declares no 'servers:' block; no MCP tools are available");
             return List.of();
         }
 
@@ -194,19 +254,26 @@ public final class McpConfig {
                 throw new MiniYamlException(
                         "server id '" + id + "' must match " + SERVER_ID.pattern(), entry.line());
             }
-            servers.add(compile(id, entry.asMapping(), workingDir));
+            servers.add(compile(id, entry.asMapping(), workingDir, dialect));
         }
         return List.copyOf(servers);
     }
 
     // --------------------------------------------------------------- compiling
 
-    private static McpServerSpec compile(String id, MiniYaml.Mapping entry, Path workingDir) {
-        rejectUnknownKeys(id, entry);
-        return entry.has("url") ? compileHttp(id, entry) : compileStdio(id, entry, workingDir);
+    private static McpServerSpec compile(
+            String id, MiniYaml.Mapping entry, Path workingDir, Dialect dialect) {
+        rejectUnknownKeys("server '" + id + "'", entry, SERVER_KEYS);
+        if (dialect == Dialect.RELAY) {
+            rejectAttendedKeys(id, entry);
+        }
+        return entry.has("url")
+                ? compileHttp(id, entry, dialect)
+                : compileStdio(id, entry, workingDir, dialect);
     }
 
-    private static McpServerSpec compileStdio(String id, MiniYaml.Mapping entry, Path workingDir) {
+    private static McpServerSpec compileStdio(
+            String id, MiniYaml.Mapping entry, Path workingDir, Dialect dialect) {
         rejectRemoteOnlyKeys(id, entry);
 
         List<String> command = command(id, entry, workingDir);
@@ -214,21 +281,20 @@ public final class McpConfig {
                 entry.has("sandbox")
                         ? sandboxPolicy(id, entry.require("sandbox").asMapping(), workingDir)
                         : SandboxPolicy.restrictive();
-        warnAboutOfflinePackageRunner(id, command, sandbox, entry.line());
+        if (dialect == Dialect.CLI) {
+            warnAboutOfflinePackageRunner(id, command, sandbox, entry.line());
+        }
 
         return new McpServerSpec.Stdio(
                 id,
                 prefix(id, entry),
+                toolFilter(id, entry),
                 command,
                 environment(id, entry),
                 sandbox,
-                entry.has("startup")
-                        ? entry.require("startup").asLong()
-                        : McpServerSpec.DEFAULT_STARTUP_TIMEOUT_MS,
-                entry.has("timeout")
-                        ? entry.require("timeout").asLong()
-                        : McpServerSpec.DEFAULT_REQUEST_TIMEOUT_MS,
-                entry.has("unattended") && entry.require("unattended").asBoolean(),
+                startupTimeout(entry),
+                requestTimeout(entry),
+                unattended(entry),
                 approvalRequired(id, entry));
     }
 
@@ -266,7 +332,7 @@ public final class McpConfig {
         return workingDir.toString();
     }
 
-    private static McpServerSpec compileHttp(String id, MiniYaml.Mapping entry) {
+    private static McpServerSpec compileHttp(String id, MiniYaml.Mapping entry, Dialect dialect) {
         MiniYaml.Value declared = entry.require("url");
         rejectLocalOnlyKeys(id, entry, declared.line());
 
@@ -274,16 +340,13 @@ public final class McpConfig {
         return new McpServerSpec.Http(
                 id,
                 prefix(id, entry),
+                toolFilter(id, entry),
                 url,
-                bearerKey(id, entry),
+                bearerKey(id, entry, dialect),
                 headers(id, entry),
-                entry.has("startup")
-                        ? entry.require("startup").asLong()
-                        : McpServerSpec.DEFAULT_STARTUP_TIMEOUT_MS,
-                entry.has("timeout")
-                        ? entry.require("timeout").asLong()
-                        : McpServerSpec.DEFAULT_REQUEST_TIMEOUT_MS,
-                entry.has("unattended") && entry.require("unattended").asBoolean(),
+                startupTimeout(entry),
+                requestTimeout(entry),
+                unattended(entry),
                 approvalRequired(id, entry));
     }
 
@@ -318,6 +381,29 @@ public final class McpConfig {
                             + " environment to. Use headers: for values the endpoint should"
                             + " receive, and auth: for a credential key",
                     entry.require("env").line());
+        }
+    }
+
+    /// Refuses, in the relay's dialect, the keys that describe an attended local run.
+    ///
+    /// A relay asks no reviewer and launches its servers inside the container it
+    /// already runs in, so a `sandbox:`, `unattended:` or `approval:` would promise
+    /// a containment or a consent nobody provides.
+    private static void rejectAttendedKeys(String id, MiniYaml.Mapping entry) {
+        for (String key : ATTENDED_KEYS) {
+            if (entry.has(key)) {
+                throw new MiniYamlException(
+                        "server '"
+                                + id
+                                + "' declares "
+                                + key
+                                + ": in "
+                                + Dialect.RELAY.document()
+                                + "; the relay asks no reviewer and contains its servers by"
+                                + " its own container, so the key would promise something"
+                                + " nobody provides",
+                        entry.require(key).line());
+            }
         }
     }
 
@@ -384,29 +470,25 @@ public final class McpConfig {
         return url;
     }
 
+    /// Whether a host is the loopback interface, judged from its spelling alone.
+    ///
+    /// An address in `127.0.0.0/8` must be a literal: a DNS name such as
+    /// `127.example.com` resolves wherever its owner points it, so matching on
+    /// the prefix would send plaintext credentials across the network.
     private static boolean isLoopback(String host) {
         String bare = host.toLowerCase(Locale.ROOT).replace("[", "").replace("]", "");
-        return bare.equals("localhost") || bare.equals("::1") || bare.startsWith("127.");
+        return bare.equals("localhost")
+                || bare.equals("::1")
+                || LOOPBACK_V4.matcher(bare).matches();
     }
 
-    private static String bearerKey(String id, MiniYaml.Mapping entry) {
+    private static String bearerKey(String id, MiniYaml.Mapping entry, Dialect dialect) {
         if (!entry.has("auth")) {
             return null;
         }
         MiniYaml.Value block = entry.require("auth");
         MiniYaml.Mapping auth = block.asMapping();
-        for (String key : auth.keys()) {
-            if (!AUTH_KEYS.contains(key)) {
-                throw new MiniYamlException(
-                        "auth block of server '"
-                                + id
-                                + "' declares unknown key '"
-                                + key
-                                + "', expected one of "
-                                + AUTH_KEYS,
-                        auth.get(key).line());
-            }
-        }
+        rejectUnknownKeys("auth block of server '" + id + "'", auth, AUTH_KEYS);
         if (!auth.has("bearer")) {
             return null;
         }
@@ -423,7 +505,11 @@ public final class McpConfig {
                             + " may be a token; it is not repeated here. Name a key in the"
                             + " credential store instead, matching "
                             + CREDENTIAL_KEY.pattern()
-                            + ", and store the value with 'hensu credentials set'",
+                            + (dialect == Dialect.CLI
+                                    ? ", and store the value with 'hensu credentials set'"
+                                    : ", and supply the value as an environment variable or a"
+                                            + " file of that name in the relay's secrets"
+                                            + " directory"),
                     bearer.line());
         }
         return key;
@@ -467,18 +553,73 @@ public final class McpConfig {
         }
         MiniYaml.Value value = entry.require("prefix");
         String prefix = value.asString();
-        if (!TOOL_NAME.matcher(prefix).matches()) {
+        if (!McpToolCatalog.TOOL_NAME.matcher(prefix).matches()) {
             throw new MiniYamlException(
                     "server '"
                             + id
                             + "' declares prefix: '"
                             + prefix
                             + "', which must match "
-                            + TOOL_NAME.pattern()
+                            + McpToolCatalog.TOOL_NAME.pattern()
                             + " so a prefixed tool name stays a legal tool name",
                     value.line());
         }
         return prefix;
+    }
+
+    private static McpServerSpec.ToolFilter toolFilter(String id, MiniYaml.Mapping entry) {
+        if (!entry.has("tools")) {
+            return McpServerSpec.ToolFilter.ALL;
+        }
+        MiniYaml.Mapping block = entry.require("tools").asMapping();
+        rejectUnknownKeys("tools block of server '" + id + "'", block, TOOLS_KEYS);
+        Set<String> allow = toolNames(id, block, "allow");
+        Set<String> deny = toolNames(id, block, "deny");
+        if (block.has("allow") && allow.isEmpty()) {
+            throw new MiniYamlException(
+                    "server '"
+                            + id
+                            + "' declares an empty tools.allow, which would publish nothing;"
+                            + " omit allow: to publish every tool not denied",
+                    block.require("allow").line());
+        }
+        for (String name : allow) {
+            if (deny.contains(name)) {
+                throw new MiniYamlException(
+                        "server '"
+                                + id
+                                + "' both allows and denies tool '"
+                                + name
+                                + "'; name it in one list",
+                        block.require("deny").line());
+            }
+        }
+        return new McpServerSpec.ToolFilter(allow, deny);
+    }
+
+    private static Set<String> toolNames(String id, MiniYaml.Mapping block, String key) {
+        if (!block.has(key)) {
+            return Set.of();
+        }
+        MiniYaml.Value value = block.require(key);
+        Set<String> names = new LinkedHashSet<>();
+        for (String name : value.asStringList()) {
+            if (!McpToolCatalog.TOOL_NAME.matcher(name).matches()) {
+                throw new MiniYamlException(
+                        "server '"
+                                + id
+                                + "' declares tools."
+                                + key
+                                + " entry '"
+                                + name
+                                + "', which is not a legal tool name ("
+                                + McpToolCatalog.TOOL_NAME.pattern()
+                                + ")",
+                        value.line());
+            }
+            names.add(name);
+        }
+        return names;
     }
 
     private static Map<String, String> environment(String id, MiniYaml.Mapping entry) {
@@ -504,6 +645,22 @@ public final class McpConfig {
         return variables;
     }
 
+    private static long startupTimeout(MiniYaml.Mapping entry) {
+        return entry.has("startup")
+                ? entry.require("startup").asLong()
+                : McpServerSpec.DEFAULT_STARTUP_TIMEOUT_MS;
+    }
+
+    private static long requestTimeout(MiniYaml.Mapping entry) {
+        return entry.has("timeout")
+                ? entry.require("timeout").asLong()
+                : McpServerSpec.DEFAULT_REQUEST_TIMEOUT_MS;
+    }
+
+    private static boolean unattended(MiniYaml.Mapping entry) {
+        return entry.has("unattended") && entry.require("unattended").asBoolean();
+    }
+
     private static boolean approvalRequired(String id, MiniYaml.Mapping entry) {
         if (!entry.has("approval")) {
             return false;
@@ -525,18 +682,7 @@ public final class McpConfig {
 
     private static SandboxPolicy sandboxPolicy(
             String id, MiniYaml.Mapping sandbox, Path workingDir) {
-        for (String key : sandbox.keys()) {
-            if (!SANDBOX_KEYS.contains(key)) {
-                throw new MiniYamlException(
-                        "sandbox block of server '"
-                                + id
-                                + "' declares unknown key '"
-                                + key
-                                + "', expected one of "
-                                + SANDBOX_KEYS,
-                        sandbox.get(key).line());
-            }
-        }
+        rejectUnknownKeys("sandbox block of server '" + id + "'", sandbox, SANDBOX_KEYS);
         boolean network = sandbox.has("network") && sandbox.require("network").asBoolean();
         List<String> writePaths = new ArrayList<>();
         if (sandbox.has("write")) {
@@ -625,17 +771,17 @@ public final class McpConfig {
         }
     }
 
-    private static void rejectUnknownKeys(String id, MiniYaml.Mapping entry) {
-        for (String key : entry.keys()) {
-            if (!SERVER_KEYS.contains(key)) {
+    /// Refuses any key of a mapping outside the set its block accepts.
+    ///
+    /// @param subject what declares the mapping, as the message names it, e.g.
+    ///     `server 'acme'` or `auth block of server 'acme'`
+    private static void rejectUnknownKeys(
+            String subject, MiniYaml.Mapping mapping, Set<String> known) {
+        for (String key : mapping.keys()) {
+            if (!known.contains(key)) {
                 throw new MiniYamlException(
-                        "server '"
-                                + id
-                                + "' declares unknown key '"
-                                + key
-                                + "', expected one of "
-                                + SERVER_KEYS,
-                        entry.get(key).line());
+                        subject + " declares unknown key '" + key + "', expected one of " + known,
+                        mapping.get(key).line());
             }
         }
     }

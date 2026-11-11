@@ -1,0 +1,4 @@
+# A DNS name may start with "127." and still resolve anywhere: only an address is loopback.
+servers:
+  remote:
+    url: "http://127.attacker.example/mcp"

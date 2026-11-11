@@ -82,7 +82,7 @@ name are a config-load error.
 The agent-visible tool surface is exactly:
 
 - the `tool:` blocks in `commands.yaml`,
-- the tools published by servers in `mcp.yaml`,
+- the tools published by servers in `mcp.yaml`, narrowed by each server's `tools:` block,
 - the engine's built-in file tools,
 - and the shell rung, where an operator declared it.
 

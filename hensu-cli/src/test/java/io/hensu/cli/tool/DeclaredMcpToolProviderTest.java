@@ -23,6 +23,7 @@ import io.hensu.core.tool.ToolProvider;
 import io.hensu.core.tool.ToolRouter;
 import io.hensu.mcp.FakeHttpMcpServer;
 import io.hensu.mcp.FakeMcpServer;
+import io.hensu.mcp.config.McpConfig;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;

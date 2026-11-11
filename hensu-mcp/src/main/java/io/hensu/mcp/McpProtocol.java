@@ -1,6 +1,7 @@
 package io.hensu.mcp;
 
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -17,7 +18,9 @@ import java.util.Optional;
 /// session identifiers, and moved client identity into each request's `_meta`.
 /// Everything before it did the opposite. Those are the two eras a client has to
 /// be able to speak, and {@link McpEra} owns the differences. This class owns
-/// only the names and numbers.
+/// the names and numbers, and the messages both transports send and read the
+/// same way: the `initialize` request and its answer, a `tools/call`, and a
+/// cancellation.
 ///
 /// @implNote **Immutable.** Constants and pure functions; safe to use from any thread.
 /// @see McpEra for what actually differs between the two revisions
@@ -103,7 +106,7 @@ public final class McpProtocol {
     ///
     /// @param initializeResult the parsed `result` object, not null
     /// @return what the handshake announced, never null
-    public static Handshake read(Map<String, Object> initializeResult) {
+    private static Handshake read(Map<String, Object> initializeResult) {
         String revision =
                 initializeResult.get("protocolVersion") instanceof String named ? named : null;
         String serverName =
@@ -117,19 +120,90 @@ public final class McpProtocol {
         return new Handshake(revision, serverName, declaresTools);
     }
 
+    /// Reads an `initialize` result and refuses a revision Hensu does not implement.
+    ///
+    /// A result that names no revision is refused too: the field is required, and
+    /// a server that omits it gives no basis for reading anything it says next.
+    /// The refusal is {@link McpException.Delivery#NOT_SENT}, because no tool call
+    /// has gone out under the handshake.
+    ///
+    /// @param serverName the declared name of the server, not null
+    /// @param initializeResult the parsed `result` object, not null
+    /// @return what the handshake announced, never null; its revision is supported
+    /// @throws McpException if the revision is missing or not one of {@link #SUPPORTED}
+    static Handshake acceptHandshake(String serverName, Map<String, Object> initializeResult) {
+        Handshake announced = read(initializeResult);
+        if (!isSupported(announced.revision())) {
+            throw new McpException(
+                    unsupportedRevision(serverName, announced.revision()),
+                    McpException.Delivery.NOT_SENT);
+        }
+        return announced;
+    }
+
+    /// Returns the params of an `initialize` request.
+    ///
+    /// @return a fresh mutable map announcing {@link #LEGACY_REVISION}, never null
+    static Map<String, Object> initializeParams() {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("protocolVersion", LEGACY_REVISION);
+        params.put("capabilities", Map.of());
+        params.put("clientInfo", CLIENT_INFO);
+        return params;
+    }
+
+    /// Returns the params of a `tools/call` request.
+    ///
+    /// @param toolName the tool's name as the server publishes it, not null
+    /// @param arguments the agent's arguments, may be null (sent as empty)
+    /// @param control carries the caller's `_meta`, sent only when non-empty, not null
+    /// @return a fresh mutable map, never null
+    static Map<String, Object> callParams(
+            String toolName, Map<String, Object> arguments, CallControl control) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("name", toolName);
+        params.put("arguments", arguments == null ? Map.of() : arguments);
+        if (!control.meta().isEmpty()) {
+            params.put("_meta", control.meta());
+        }
+        return params;
+    }
+
+    /// Returns the params of a `notifications/cancelled` notification.
+    ///
+    /// @param requestId the id of the request the server should drop, not null
+    /// @param reason why it was dropped, sent as written, not null
+    /// @return a fresh mutable map, never null
+    static Map<String, Object> cancellationParams(String requestId, String reason) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("requestId", requestId);
+        params.put("reason", reason);
+        return params;
+    }
+
+    /// Builds the notice for a server whose handshake declared no `tools` capability.
+    ///
+    /// @param serverName the declared name of the server, not null
+    /// @return a message saying why the server's catalog is empty, never null
+    static String noToolsCapability(String serverName) {
+        return "MCP server '"
+                + serverName
+                + "' advertises no tools capability, so none were requested";
+    }
+
     /// What a server announced when it answered `initialize`.
     ///
     /// @param revision the protocol revision it named, may be null
     /// @param serverName the name it gave itself, may be null
     /// @param declaresTools whether its capabilities include a `tools` entry
-    public record Handshake(String revision, String serverName, boolean declaresTools) {}
+    record Handshake(String revision, String serverName, boolean declaresTools) {}
 
     /// Builds the message for a server whose revision Hensu does not implement.
     ///
     /// @param serverName the declared name of the server, not null
     /// @param serverRevision the revision the server named, may be null
     /// @return a message naming both sides' revisions, never null
-    public static String unsupportedRevision(String serverName, String serverRevision) {
+    private static String unsupportedRevision(String serverName, String serverRevision) {
         return "MCP server '"
                 + serverName
                 + "' speaks protocol revision "

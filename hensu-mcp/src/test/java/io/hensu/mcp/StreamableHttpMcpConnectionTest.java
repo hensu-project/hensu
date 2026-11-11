@@ -49,6 +49,7 @@ class StreamableHttpMcpConnectionTest {
         return new McpServerSpec.Http(
                 "acme",
                 "",
+                McpServerSpec.ToolFilter.ALL,
                 server.uri(),
                 null,
                 Map.of(),
@@ -63,7 +64,9 @@ class StreamableHttpMcpConnectionTest {
     }
 
     private StreamableHttpMcpConnection open(McpServerSpec.Http spec) {
-        connection = StreamableHttpMcpConnection.open(spec, null, Set.of(server.host()), client);
+        connection =
+                StreamableHttpMcpConnection.open(
+                        spec, BearerCredential.NONE, Set.of(server.host()), client);
         return connection;
     }
 
@@ -74,7 +77,10 @@ class StreamableHttpMcpConnectionTest {
         void shouldRoundTripACallAnsweredAsPlainJson() {
             String rendered =
                     McpResultRenderer.render(
-                            open().callTool("read_file", Map.of("path", "/etc/hosts")));
+                            open().callTool(
+                                            "read_file",
+                                            Map.of("path", "/etc/hosts"),
+                                            CallControl.none()));
 
             assertThat(rendered).isEqualTo("file data over http");
         }
@@ -85,7 +91,10 @@ class StreamableHttpMcpConnectionTest {
 
             String rendered =
                     McpResultRenderer.render(
-                            open().callTool("read_file", Map.of("path", "/etc/hosts")));
+                            open().callTool(
+                                            "read_file",
+                                            Map.of("path", "/etc/hosts"),
+                                            CallControl.none()));
 
             assertThat(rendered).isEqualTo("file data over http");
         }
@@ -95,7 +104,7 @@ class StreamableHttpMcpConnectionTest {
             // SSE is a response mode of this transport, not a separate transport:
             // a server may upgrade any answer, so every request must say it can
             // read one.
-            open().callTool("read_file", Map.of("path", "/etc/hosts"));
+            open().callTool("read_file", Map.of("path", "/etc/hosts"), CallControl.none());
 
             assertThat(server.requests())
                     .isNotEmpty()
@@ -112,7 +121,7 @@ class StreamableHttpMcpConnectionTest {
 
         @Test
         void shouldCarryTheHeadersTheRevisionRequires() {
-            open().callTool("read_file", Map.of("path", "/etc/hosts"));
+            open().callTool("read_file", Map.of("path", "/etc/hosts"), CallControl.none());
 
             FakeHttpMcpServer.Recorded call =
                     server.requests().stream()
@@ -262,7 +271,7 @@ class StreamableHttpMcpConnectionTest {
         void shouldEchoTheSessionIdentifierOnEveryLaterRequest() {
             server.legacy().mintingSessions();
 
-            open().callTool("read_file", Map.of("path", "/etc/hosts"));
+            open().callTool("read_file", Map.of("path", "/etc/hosts"), CallControl.none());
 
             String minted = server.mintedSessions().getFirst();
             assertThat(server.requests())
@@ -281,11 +290,40 @@ class StreamableHttpMcpConnectionTest {
 
             String rendered =
                     McpResultRenderer.render(
-                            connection.callTool("read_file", Map.of("path", "/etc/hosts")));
+                            connection.callTool(
+                                    "read_file", Map.of("path", "/etc/hosts"), CallControl.none()));
 
             assertThat(rendered).isEqualTo("file data over http");
             assertThat(server.initializeCount()).isEqualTo(2);
             assertThat(server.mintedSessions()).hasSize(2);
+        }
+
+        @Test
+        void shouldHoldARefreshedSessionToTheRevisionTheFirstWasHeldTo() {
+            // A server redeployed mid-run answers the refresh, not the open: a refresh
+            // that skipped the revision check would carry on in a protocol nobody agreed.
+            server.legacy().mintingSessions();
+            open();
+            server.invalidateSessions();
+            server.announcing("2099-01-01");
+
+            assertThatThrownBy(
+                            () ->
+                                    connection.callTool(
+                                            "read_file",
+                                            Map.of("path", "/etc/hosts"),
+                                            CallControl.none()))
+                    .isInstanceOf(McpException.class)
+                    .hasMessageContaining("2099-01-01")
+                    .satisfies(
+                            failure ->
+                                    assertThat(((McpException) failure).delivery())
+                                            .as("the call's first attempt drew a 404 unacted on")
+                                            .isEqualTo(McpException.Delivery.NOT_SENT));
+            assertThat(server.requests())
+                    .filteredOn(request -> "tools/call".equals(request.rpcMethod()))
+                    .as("no second attempt goes out under the unagreed revision")
+                    .hasSize(1);
         }
 
         @Test
@@ -294,7 +332,12 @@ class StreamableHttpMcpConnectionTest {
             open();
             server.rejectingEverySession();
 
-            assertThatThrownBy(() -> connection.callTool("read_file", Map.of("path", "/etc/hosts")))
+            assertThatThrownBy(
+                            () ->
+                                    connection.callTool(
+                                            "read_file",
+                                            Map.of("path", "/etc/hosts"),
+                                            CallControl.none()))
                     .isInstanceOf(McpException.class);
             assertThat(server.initializeCount())
                     .as("one handshake at open and one refresh, never a loop")
@@ -341,7 +384,9 @@ class StreamableHttpMcpConnectionTest {
                                     try {
                                         go.await();
                                         connection.callTool(
-                                                "read_file", Map.of("path", "/etc/hosts"));
+                                                "read_file",
+                                                Map.of("path", "/etc/hosts"),
+                                                CallControl.none());
                                         succeeded.incrementAndGet();
                                     } catch (Exception e) {
                                         // counted by omission
@@ -371,9 +416,17 @@ class StreamableHttpMcpConnectionTest {
             server.answeringAfter(1_500);
             open(spec(300));
 
-            assertThatThrownBy(() -> connection.callTool("read_file", Map.of("path", "/etc/hosts")))
+            assertThatThrownBy(
+                            () ->
+                                    connection.callTool(
+                                            "read_file",
+                                            Map.of("path", "/etc/hosts"),
+                                            CallControl.none()))
                     .isInstanceOf(McpException.class)
-                    .hasMessageContaining("timed out after 300ms");
+                    .hasMessageContaining("timed out after 300ms")
+                    .extracting(failure -> ((McpException) failure).delivery())
+                    .as("the request left, so the server may have acted on it")
+                    .isEqualTo(McpException.Delivery.MAYBE_DELIVERED);
 
             assertThat(server.requests())
                     .as("closing the response stream is the cancellation in this era")
@@ -397,7 +450,12 @@ class StreamableHttpMcpConnectionTest {
             open(spec(300));
 
             long start = System.nanoTime();
-            assertThatThrownBy(() -> connection.callTool("read_file", Map.of("path", "/etc/hosts")))
+            assertThatThrownBy(
+                            () ->
+                                    connection.callTool(
+                                            "read_file",
+                                            Map.of("path", "/etc/hosts"),
+                                            CallControl.none()))
                     .isInstanceOf(McpException.class)
                     .hasMessageContaining("timed out");
             long elapsedMs = (System.nanoTime() - start) / 1_000_000;
@@ -416,7 +474,12 @@ class StreamableHttpMcpConnectionTest {
             server.legacy().answeringAfter(700).readingCancellationsAfter(3_000);
             open(spec(200));
 
-            assertThatThrownBy(() -> connection.callTool("read_file", Map.of("path", "/etc/hosts")))
+            assertThatThrownBy(
+                            () ->
+                                    connection.callTool(
+                                            "read_file",
+                                            Map.of("path", "/etc/hosts"),
+                                            CallControl.none()))
                     .isInstanceOf(McpException.class);
 
             // A tool-call timeout is a failed call, not a failed connection: one
@@ -425,7 +488,10 @@ class StreamableHttpMcpConnectionTest {
             server.answeringAfter(0);
             assertThat(
                             McpResultRenderer.render(
-                                    connection.callTool("read_file", Map.of("path", "/etc/hosts"))))
+                                    connection.callTool(
+                                            "read_file",
+                                            Map.of("path", "/etc/hosts"),
+                                            CallControl.none())))
                     .isEqualTo("file data over http");
         }
     }
@@ -438,7 +504,12 @@ class StreamableHttpMcpConnectionTest {
             open();
             server.redirectingTo("https://exfiltration.invalid/mcp");
 
-            assertThatThrownBy(() -> connection.callTool("read_file", Map.of("path", "/etc/hosts")))
+            assertThatThrownBy(
+                            () ->
+                                    connection.callTool(
+                                            "read_file",
+                                            Map.of("path", "/etc/hosts"),
+                                            CallControl.none()))
                     .isInstanceOf(McpEgressDeniedException.class)
                     .hasMessageContaining("exfiltration.invalid")
                     .hasMessageContaining(server.host());
@@ -458,6 +529,7 @@ class StreamableHttpMcpConnectionTest {
                             new McpServerSpec.Http(
                                     "acme",
                                     "",
+                                    McpServerSpec.ToolFilter.ALL,
                                     server.uri(),
                                     null,
                                     Map.of(),
@@ -465,14 +537,19 @@ class StreamableHttpMcpConnectionTest {
                                     5_000,
                                     true,
                                     false),
-                            "sk-live-do-not-leak",
+                            BearerCredential.fixed("sk-live-do-not-leak"),
                             Set.of(server.host(), "other.declared.example"),
                             client);
 
             server.redirectingTo("https://other.declared.example/mcp");
             int beforeTheCall = server.requests().size();
 
-            assertThatThrownBy(() -> connection.callTool("read_file", Map.of("path", "/etc/hosts")))
+            assertThatThrownBy(
+                            () ->
+                                    connection.callTool(
+                                            "read_file",
+                                            Map.of("path", "/etc/hosts"),
+                                            CallControl.none()))
                     .isInstanceOf(McpEgressDeniedException.class)
                     .hasMessageContaining("other.declared.example")
                     .hasMessageContaining("a different server");
@@ -493,7 +570,12 @@ class StreamableHttpMcpConnectionTest {
             server.truncatingAfterPartial();
             open();
 
-            assertThatThrownBy(() -> connection.callTool("read_file", Map.of("path", "/etc/hosts")))
+            assertThatThrownBy(
+                            () ->
+                                    connection.callTool(
+                                            "read_file",
+                                            Map.of("path", "/etc/hosts"),
+                                            CallControl.none()))
                     .isInstanceOf(McpException.class)
                     .hasMessageContaining("before the result was complete");
         }
@@ -507,7 +589,12 @@ class StreamableHttpMcpConnectionTest {
             server.failingCallsWith(502, page, "text/html; charset=utf-8");
             open();
 
-            assertThatThrownBy(() -> connection.callTool("read_file", Map.of("path", "/etc/hosts")))
+            assertThatThrownBy(
+                            () ->
+                                    connection.callTool(
+                                            "read_file",
+                                            Map.of("path", "/etc/hosts"),
+                                            CallControl.none()))
                     .isInstanceOf(McpException.class)
                     .hasMessageContaining("answered HTTP 502")
                     .hasMessageNotContaining("upstream unavailable");
@@ -538,7 +625,7 @@ class StreamableHttpMcpConnectionTest {
                             () ->
                                     StreamableHttpMcpConnection.open(
                                             spec(5_000),
-                                            "wrong-token-value",
+                                            BearerCredential.fixed("wrong-token-value"),
                                             Set.of(server.host()),
                                             client))
                     .isInstanceOf(McpException.class)
@@ -556,6 +643,37 @@ class StreamableHttpMcpConnectionTest {
                     .isInstanceOf(McpException.class)
                     .hasMessageContaining("HTTP 401")
                     .hasMessageNotContaining("neither revision");
+        }
+
+        @Test
+        void shouldSayTheTokenWasRejectedWhenASessionRefreshIsRefused() {
+            // A token revoked mid-session first surfaces on the re-initialisation a
+            // stale session forces, which is a request like any other: reporting it as
+            // a bare status sends the operator somewhere other than the credential store.
+            server.legacy().mintingSessions();
+            connection =
+                    StreamableHttpMcpConnection.open(
+                            spec(5_000),
+                            BearerCredential.fixed("revoked-token"),
+                            Set.of(server.host()),
+                            client);
+            server.invalidateSessions();
+            server.initializeStatus(401);
+
+            assertThatThrownBy(
+                            () ->
+                                    connection.callTool(
+                                            "read_file",
+                                            Map.of("path", "/etc/hosts"),
+                                            CallControl.none()))
+                    .isInstanceOf(McpException.class)
+                    .hasMessageContaining("HTTP 401 to initialize")
+                    .hasMessageContaining("rejected the bearer token")
+                    .hasMessageNotContaining("revoked-token")
+                    .satisfies(
+                            failure ->
+                                    assertThat(((McpException) failure).delivery())
+                                            .isEqualTo(McpException.Delivery.NOT_SENT));
         }
     }
 
@@ -587,7 +705,10 @@ class StreamableHttpMcpConnectionTest {
 
             String rendered =
                     McpResultRenderer.render(
-                            open().callTool("read_file", Map.of("path", "/x", "region", "Zürich")));
+                            open().callTool(
+                                            "read_file",
+                                            Map.of("path", "/x", "region", "Zürich"),
+                                            CallControl.none()));
 
             assertThat(rendered).isEqualTo("file data over http");
             assertThat(calls().getFirst().header("mcp-param-region"))
@@ -600,7 +721,7 @@ class StreamableHttpMcpConnectionTest {
             // a server publishing a non-ASCII tool name had tools nobody could call.
             server.publishingTool("grüße", Map.of("type", "object"));
 
-            open().callTool("grüße", Map.of());
+            open().callTool("grüße", Map.of(), CallControl.none());
 
             assertThat(calls().getFirst().header("mcp-name")).isEqualTo("=?base64?Z3LDvMOfZQ==?=");
         }
@@ -634,7 +755,10 @@ class StreamableHttpMcpConnectionTest {
 
             String rendered =
                     McpResultRenderer.render(
-                            open.callTool("read_file", Map.of("path", "/x", "region", "eu")));
+                            open.callTool(
+                                    "read_file",
+                                    Map.of("path", "/x", "region", "eu"),
+                                    CallControl.none()));
 
             assertThat(rendered).isEqualTo("file data over http");
             assertThat(calls()).hasSize(2);
@@ -651,7 +775,8 @@ class StreamableHttpMcpConnectionTest {
                             () ->
                                     open.callTool(
                                             "read_file",
-                                            Map.of("path", "/x", "region", List.of("eu"))))
+                                            Map.of("path", "/x", "region", List.of("eu")),
+                                            CallControl.none()))
                     .isInstanceOf(McpInvalidArgumentException.class);
             assertThat(calls()).isEmpty();
         }
@@ -672,7 +797,7 @@ class StreamableHttpMcpConnectionTest {
                                             Map.of("type", "number", "x-mcp-header", "Path"))));
 
             StreamableHttpMcpConnection open = open();
-            open.callTool("read_file", Map.of("path", 1.5));
+            open.callTool("read_file", Map.of("path", 1.5), CallControl.none());
 
             assertThat(open.listTools()).hasSize(1);
             assertThat(calls().getFirst().headers()).doesNotContainKey("mcp-param-path");

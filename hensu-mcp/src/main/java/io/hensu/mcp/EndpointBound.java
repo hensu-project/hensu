@@ -15,6 +15,14 @@ import java.util.stream.Collectors;
 /// receive *this* server's credential. The allowlist is kept only to tell the
 /// operator which of the two refusals they are reading.
 ///
+/// ### Only A Redirect That Repeats The Request Is Followed
+/// A `307` or `308` tells the client to send the same request elsewhere: the
+/// endpoint that answered did not handle it. A `301`, `302` or `303` after a
+/// POST is the post-then-redirect pattern, where the endpoint may well have
+/// handled the request and is pointing at its result. Following one would send
+/// the call a second time, so only the first two are followed, and a refusal
+/// says which of the two kinds it was.
+///
 /// @implNote **Immutable.** Safe to share across threads.
 final class EndpointBound {
 
@@ -37,13 +45,22 @@ final class EndpointBound {
                         .collect(Collectors.toUnmodifiableSet());
     }
 
-    /// Resolves a redirect and refuses one that would leave this endpoint.
+    /// Resolves a redirect and refuses one that would leave this endpoint or
+    /// would repeat a request the endpoint may already have handled.
+    ///
+    /// The endpoint bound is checked first, so a redirect off this endpoint is
+    /// always reported as refused egress, whatever its status.
     ///
     /// @param reply a 3xx answer, not null
     /// @return the absolute target, which is this same endpoint, never null
-    /// @throws McpException if the answer names no usable `Location`
+    /// @throws McpException if the answer names no usable `Location`, or is a
+    ///     redirect other than `307` or `308`
     /// @throws McpEgressDeniedException if the target is any other endpoint
     URI follow(HttpReply reply) {
+        McpException.Delivery delivery =
+                repeatsTheRequest(reply.status())
+                        ? McpException.Delivery.NOT_SENT
+                        : McpException.Delivery.MAYBE_DELIVERED;
         String location = reply.header("location");
         if (location == null || location.isBlank()) {
             throw new McpException(
@@ -51,7 +68,8 @@ final class EndpointBound {
                             + serverName
                             + "' answered HTTP "
                             + reply.status()
-                            + " with no Location header");
+                            + " with no Location header",
+                    delivery);
         }
         URI moved;
         try {
@@ -63,7 +81,8 @@ final class EndpointBound {
                             + "' redirected to an unusable location '"
                             + location
                             + "'",
-                    e);
+                    e,
+                    delivery);
         }
         if (!authority(moved).equals(authority(endpoint))) {
             String host = moved.getHost() == null ? "" : moved.getHost().toLowerCase(Locale.ROOT);
@@ -82,9 +101,26 @@ final class EndpointBound {
                                     : "That host is declared in mcp.yaml for no server at all;"
                                             + " declared hosts are "
                                             + String.join(", ", allowedHosts)
-                                            + "."));
+                                            + "."),
+                    delivery);
+        }
+        if (!repeatsTheRequest(reply.status())) {
+            throw new McpException(
+                    "MCP server '"
+                            + serverName
+                            + "' answered HTTP "
+                            + reply.status()
+                            + " to a POST; only 307 and 308 are followed, because any other"
+                            + " redirect may come after the server handled the request, and"
+                            + " following it would send the call twice",
+                    delivery);
         }
         return moved;
+    }
+
+    /// Whether a redirect status tells the client to repeat the request unchanged.
+    private static boolean repeatsTheRequest(int status) {
+        return status == 307 || status == 308;
     }
 
     /// Renders scheme, host and effective port, so a default port compares equal

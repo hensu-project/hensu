@@ -245,6 +245,7 @@ final class StdioServerLauncher implements AutoCloseable {
         return new McpServerSpec.Stdio(
                 spec.name(),
                 spec.prefix(),
+                spec.tools(),
                 spec.command(),
                 environment,
                 spec.sandbox(),

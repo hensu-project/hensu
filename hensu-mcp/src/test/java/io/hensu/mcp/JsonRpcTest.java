@@ -10,6 +10,8 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class JsonRpcTest {
 
@@ -130,6 +132,19 @@ class JsonRpcTest {
 
             Map<String, Object> result = jsonRpc.parseResult(json);
             assertThat(result).isEmpty();
+        }
+
+        /// A malformed result must surface as an MCP failure: anything unchecked
+        /// escapes the callers' `catch (McpException)` and takes every other
+        /// server's tools down with the one that answered badly.
+        @ParameterizedTest
+        @ValueSource(strings = {"[]", "\"text\"", "42", "true"})
+        void shouldRefuseAResultThatIsNotAnObject(String result) {
+            String json = "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":" + result + "}";
+
+            assertThatThrownBy(() -> jsonRpc.parseResult(json))
+                    .isExactlyInstanceOf(McpException.class)
+                    .hasMessageContaining("not an object");
         }
 
         @Test

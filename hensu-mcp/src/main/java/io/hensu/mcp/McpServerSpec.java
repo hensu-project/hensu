@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /// One MCP server, as a deployment declared it.
 ///
@@ -21,9 +22,11 @@ import java.util.Objects;
 /// - {@link Http} – a remote endpoint this run dials out to over Streamable HTTP
 ///
 /// ### What Is Shared And Why
-/// `name`, `prefix`, the two timeouts and the two policy flags sit on the
-/// interface because none of them is a property of the transport. A tool-name
-/// collision happens between catalogs, not between transports. A budget is what
+/// `name`, `prefix`, the `tools` filter, the two timeouts and the two policy
+/// flags sit on the interface because none of them is a property of the
+/// transport. A tool-name collision happens between catalogs, not between
+/// transports, and which of a server's tools an operator publishes is a choice
+/// about the catalog too. A budget is what
 /// an operator is willing to wait, wherever the answer comes from. And
 /// `unattended` × `approvalRequired` is one trust decision about one server, as
 /// it is for a command entry.
@@ -76,6 +79,12 @@ public sealed interface McpServerSpec permits McpServerSpec.Stdio, McpServerSpec
     /// @return the prefix, never null; empty when the declaration names none
     String prefix();
 
+    /// Returns which of this server's tools the deployment publishes.
+    ///
+    /// @return the filter, never null; {@link ToolFilter#ALL} when the
+    ///     declaration names none
+    ToolFilter tools();
+
     /// Returns the wall clock allowed for reaching the server and agreeing how
     /// to talk to it – a launch and handshake for stdio, a connect and era probe
     /// for HTTP.
@@ -106,6 +115,7 @@ public sealed interface McpServerSpec permits McpServerSpec.Stdio, McpServerSpec
     ///
     /// @param name the identifier the deployment gave this server, not null or blank
     /// @param prefix prepended to every published tool name, not null (may be empty)
+    /// @param tools which of the server's tools are published, may be null for all
     /// @param command the argv to launch, not null and not empty, already resolved
     /// @param env variables added to the hermetic base, not null (may be empty)
     /// @param sandbox the containment the launch runs under, not null
@@ -119,6 +129,7 @@ public sealed interface McpServerSpec permits McpServerSpec.Stdio, McpServerSpec
     record Stdio(
             String name,
             String prefix,
+            ToolFilter tools,
             List<String> command,
             Map<String, String> env,
             SandboxPolicy sandbox,
@@ -132,6 +143,7 @@ public sealed interface McpServerSpec permits McpServerSpec.Stdio, McpServerSpec
         public Stdio {
             name = requireName(name);
             prefix = prefix != null ? prefix : "";
+            tools = tools != null ? tools : ToolFilter.ALL;
             if (command == null || command.isEmpty()) {
                 throw new IllegalArgumentException("server '" + name + "' declares no command");
             }
@@ -150,6 +162,7 @@ public sealed interface McpServerSpec permits McpServerSpec.Stdio, McpServerSpec
             return new Stdio(
                     name,
                     "",
+                    ToolFilter.ALL,
                     command,
                     Map.of(),
                     SandboxPolicy.restrictive(),
@@ -176,6 +189,7 @@ public sealed interface McpServerSpec permits McpServerSpec.Stdio, McpServerSpec
     ///
     /// @param name the identifier the deployment gave this server, not null or blank
     /// @param prefix prepended to every published tool name, not null (may be empty)
+    /// @param tools which of the server's tools are published, may be null for all
     /// @param url the absolute endpoint every request is posted to, not null
     /// @param bearerKey the credential store key holding the bearer token, may be
     ///     null when the endpoint needs no authentication
@@ -189,6 +203,7 @@ public sealed interface McpServerSpec permits McpServerSpec.Stdio, McpServerSpec
     record Http(
             String name,
             String prefix,
+            ToolFilter tools,
             URI url,
             String bearerKey,
             Map<String, String> headers,
@@ -202,6 +217,7 @@ public sealed interface McpServerSpec permits McpServerSpec.Stdio, McpServerSpec
         public Http {
             name = requireName(name);
             prefix = prefix != null ? prefix : "";
+            tools = tools != null ? tools : ToolFilter.ALL;
             Objects.requireNonNull(url, "url must not be null");
             if (!url.isAbsolute() || url.getHost() == null) {
                 throw new IllegalArgumentException(
@@ -225,6 +241,7 @@ public sealed interface McpServerSpec permits McpServerSpec.Stdio, McpServerSpec
             return new Http(
                     name,
                     "",
+                    ToolFilter.ALL,
                     url,
                     null,
                     Map.of(),
@@ -239,6 +256,45 @@ public sealed interface McpServerSpec permits McpServerSpec.Stdio, McpServerSpec
         /// @return the lower-cased host, never null
         public String host() {
             return url.getHost().toLowerCase(java.util.Locale.ROOT);
+        }
+    }
+
+    /// Which of a server's tools a deployment publishes, by the server's own names.
+    ///
+    /// Names are the ones the server lists, before any `prefix:` is applied, so
+    /// renaming a prefix never silently changes what is allowed. An empty
+    /// `allow` set admits every name; `deny` removes names from what `allow`
+    /// admits. A name in both is refused at construction, because one of the
+    /// two lists would have to be ignored.
+    ///
+    /// @param allow the only names published, or empty to publish every name, not null
+    /// @param deny the names never published, not null (may be empty)
+    record ToolFilter(Set<String> allow, Set<String> deny) {
+
+        /// The filter that publishes every tool.
+        public static final ToolFilter ALL = new ToolFilter(Set.of(), Set.of());
+
+        /// Compact constructor taking defensive copies and refusing contradictions.
+        ///
+        /// @throws IllegalArgumentException if a name is both allowed and denied
+        /// @throws NullPointerException if either set is null
+        public ToolFilter {
+            allow = Set.copyOf(Objects.requireNonNull(allow, "allow must not be null"));
+            deny = Set.copyOf(Objects.requireNonNull(deny, "deny must not be null"));
+            for (String name : allow) {
+                if (deny.contains(name)) {
+                    throw new IllegalArgumentException(
+                            "tool '" + name + "' is both allowed and denied");
+                }
+            }
+        }
+
+        /// Returns whether a tool the server lists is published.
+        ///
+        /// @param serverName the name as the server lists it, not null
+        /// @return true when the tool passes both lists
+        public boolean admits(String serverName) {
+            return (allow.isEmpty() || allow.contains(serverName)) && !deny.contains(serverName);
         }
     }
 

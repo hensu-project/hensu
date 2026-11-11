@@ -9,14 +9,17 @@ import io.hensu.core.tool.ToolCallStatus;
 import io.hensu.core.tool.ToolDefinition;
 import io.hensu.core.tool.ToolPreview;
 import io.hensu.core.tool.ToolProvider;
+import io.hensu.mcp.CallControl;
 import io.hensu.mcp.McpConnection;
 import io.hensu.mcp.McpEgressDeniedException;
 import io.hensu.mcp.McpException;
 import io.hensu.mcp.McpInvalidArgumentException;
 import io.hensu.mcp.McpResultRenderer;
 import io.hensu.mcp.McpServerSpec;
+import io.hensu.mcp.McpToolCatalog;
 import io.hensu.mcp.StdioMcpConnection;
 import io.hensu.mcp.StreamableHttpMcpConnection;
+import io.hensu.mcp.config.McpConfig;
 import jakarta.annotation.PreDestroy;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -89,7 +92,7 @@ import java.util.stream.Collectors;
 ///
 /// Launching a local server, dialling a remote one and assembling their tools
 /// into one catalog each live in their own package-private type
-/// (`StdioServerLauncher`, `HttpServerDialer`, `McpToolCatalog`); this class
+/// (`StdioServerLauncher`, `HttpServerDialer`, and `hensu-mcp`'s `McpToolCatalog`); this class
 /// owns only the lifetime they share.
 ///
 /// @implNote **Mutable.** Holds the running connections. All mutation happens
@@ -113,7 +116,7 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
     private final Map<String, Running> running = new LinkedHashMap<>();
 
     private volatile boolean started;
-    private volatile McpToolCatalog published = McpToolCatalog.EMPTY;
+    private volatile McpToolCatalog<McpRoute> published = McpToolCatalog.empty();
     private Path launchedFrom;
     private boolean shutdownHookRegistered;
 
@@ -241,7 +244,9 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
         }
         try {
             return McpResultRenderer.toResult(
-                    toolName, connection.callTool(route.serverSideName(toolName), arguments));
+                    toolName,
+                    connection.callTool(
+                            route.serverSideName(toolName), arguments, CallControl.none()));
         } catch (McpEgressDeniedException e) {
             // A refused destination is a policy decision, not a transport fault:
             // the connection is fine and the next call to this server may work.
@@ -274,19 +279,6 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
             throw new IllegalArgumentException("Not an MCP tool of this run: " + toolName);
         }
         return route.preview(toolName, arguments);
-    }
-
-    /// Returns the declaration behind a published tool.
-    ///
-    /// @param toolName the tool identifier to look up, not null
-    /// @return the owning server's declaration, or null when no server offers the name
-    /// @apiNote The approval gate reads a server's `unattended` and `approval`
-    ///     flags through this, because policy for an MCP tool is the server's,
-    ///     not the tool's.
-    public McpServerSpec serverOf(String toolName) {
-        ensureStarted();
-        McpRoute route = published.route(toolName);
-        return route == null ? null : route.spec();
     }
 
     /// Marks the start of a run, so its first tool resolution reconciles the servers.
@@ -356,7 +348,7 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
 
         List<McpServerSpec> declared;
         try {
-            declared = McpConfig.load(directory);
+            declared = McpConfig.load(directory, McpConfig.Dialect.CLI);
         } catch (RuntimeException e) {
             stopAll();
             notifyOperator(
@@ -383,7 +375,7 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
             }
         }
 
-        McpToolCatalog assembled = McpToolCatalog.EMPTY;
+        McpToolCatalog<McpRoute> assembled = McpToolCatalog.empty();
         for (McpServerSpec spec : declared) {
             Running kept = running.get(spec.name());
             Optional<McpRoute> route =
@@ -404,7 +396,7 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
         }
     }
 
-    private McpToolCatalog adopt(Running server, McpToolCatalog assembled) {
+    private McpToolCatalog<McpRoute> adopt(Running server, McpToolCatalog<McpRoute> assembled) {
         McpRoute route = server.route();
         McpConnection connection = route.connection();
         List<McpConnection.McpToolDescriptor> descriptors;
@@ -469,7 +461,7 @@ public class DeclaredMcpToolProvider implements ToolProvider, PreviewCapable {
     /// Stops every running server. Caller holds the lock.
     private void stopAll() {
         List.copyOf(running.values()).forEach(server -> stop(server.route()));
-        published = McpToolCatalog.EMPTY;
+        published = McpToolCatalog.empty();
     }
 
     /// A running server with the declaration and host allowlist it was started under.

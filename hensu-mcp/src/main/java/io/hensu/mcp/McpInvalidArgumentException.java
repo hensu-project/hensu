@@ -26,8 +26,10 @@ public class McpInvalidArgumentException extends McpException {
 
     /// Creates an exception for an argument with no header form.
     ///
+    /// Nothing is sent, so the failure is {@link McpException.Delivery#NOT_SENT}.
+    ///
     /// @param message the reason, naming the argument and its expected type, not null
     public McpInvalidArgumentException(String message) {
-        super(message);
+        super(message, Delivery.NOT_SENT);
     }
 }

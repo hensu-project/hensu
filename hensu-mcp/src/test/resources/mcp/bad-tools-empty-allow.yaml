@@ -1,0 +1,6 @@
+# An empty allow list would publish nothing.
+servers:
+  filesystem:
+    command: ["/usr/local/bin/mcp-server-filesystem"]
+    tools:
+      allow: []

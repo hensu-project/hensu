@@ -10,15 +10,16 @@ import java.util.Map;
 /// - Calling tools with arguments
 /// - Managing connection lifecycle
 ///
-/// Two transports implement this interface, both in the CLI, and which ones exist
-/// is a property of the runtime rather than of the protocol:
+/// Two transports implement this interface, and which ones a runtime uses is a
+/// property of the runtime rather than of the protocol:
 ///
-/// - **stdio** – a server process Hensu launched and contains
-/// - **Streamable HTTP** – a remote endpoint Hensu dials out to
+/// - **stdio** – a server process the runtime launched
+/// - **Streamable HTTP** – a remote endpoint the runtime dials out to
 ///
-/// The server implements none: it holds no MCP client, and the tenant's relay
-/// pulls its tool calls instead (Decision 3). It shares only the descriptor types
-/// declared here.
+/// Every runtime that is an MCP client uses these transports. The server
+/// implements none: it holds no MCP client, and the tenant's relay pulls its
+/// tool calls instead (Decision 3). It shares only the descriptor types declared
+/// here.
 ///
 /// Each runtime owns its own lifetime policy; this interface only describes
 /// what a live connection can do.
@@ -34,13 +35,24 @@ public interface McpConnection {
 
     /// Calls a tool with the given arguments.
     ///
+    /// ### Contracts
+    /// - **Precondition**: a control already cancelled sends nothing and fails
+    ///   with {@link McpException.Delivery#NOT_SENT}
+    /// - **Postcondition**: a control cancelled while the call runs ends it
+    ///   promptly with an {@link McpException} classified
+    ///   {@link McpException.Delivery#MAYBE_DELIVERED}
+    ///
     /// @param toolName the name of the tool to call, not null
     /// @param arguments the tool arguments, not null (may be empty) – the agent
     ///     loop and the action handler both normalize an absent argument object to
     ///     an empty map before a connection is reached
+    /// @param control the caller's cancellation handle and `_meta`, not null;
+    ///     {@link CallControl#none()} for a caller with neither
     /// @return the tool result as a map
-    /// @throws McpException if the tool call fails
-    Map<String, Object> callTool(String toolName, Map<String, Object> arguments)
+    /// @throws McpException if the tool call fails or is cancelled; its
+    ///     {@link McpException#delivery()} says whether the server can have acted
+    Map<String, Object> callTool(
+            String toolName, Map<String, Object> arguments, CallControl control)
             throws McpException;
 
     /// Returns the endpoint handle this connection is bound to.

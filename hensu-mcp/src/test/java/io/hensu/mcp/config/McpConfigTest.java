@@ -1,4 +1,4 @@
-package io.hensu.cli.tool;
+package io.hensu.mcp.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,7 +32,7 @@ class McpConfigTest {
     }
 
     private List<McpServerSpec> parse(String name) {
-        return McpConfig.parse(golden(name), workingDirectory);
+        return McpConfig.parse(golden(name), workingDirectory, McpConfig.Dialect.CLI);
     }
 
     private static McpServerSpec.Http http(McpServerSpec spec) {
@@ -158,7 +158,7 @@ class McpConfigTest {
 
         @Test
         void shouldTreatAMissingFileAsNoServersRatherThanAnError() {
-            assertThat(McpConfig.load(workingDirectory)).isEmpty();
+            assertThat(McpConfig.load(workingDirectory, McpConfig.Dialect.CLI)).isEmpty();
         }
     }
 
@@ -190,6 +190,11 @@ class McpConfigTest {
         @Test
         void shouldRejectPlaintextToAHostThatIsNotLoopback() {
             assertRejects("bad-url-plaintext-remote", 4, "accepted only on loopback");
+        }
+
+        @Test
+        void shouldRejectPlaintextToAHostNameThatMerelyLooksLikeLoopback() {
+            assertRejects("bad-url-plaintext-loopback-lookalike", 4, "accepted only on loopback");
         }
 
         @Test
@@ -267,6 +272,102 @@ class McpConfigTest {
         @Test
         void shouldRejectAnEmptyCommand() {
             assertRejects("bad-empty-command", 3, "empty command");
+        }
+    }
+
+    @Nested
+    class ToolsBlock {
+
+        @Test
+        void shouldReadAllowAndDenyAsTheServersOwnNames() {
+            List<McpServerSpec> servers = parse("valid-tools");
+
+            McpServerSpec.ToolFilter filesystem = servers.getFirst().tools();
+            assertThat(filesystem.allow())
+                    .as("the prefix is not applied to the declared names")
+                    .containsExactlyInAnyOrder("read_file", "list_directory");
+            assertThat(filesystem.deny()).isEmpty();
+
+            McpServerSpec.ToolFilter github = servers.get(1).tools();
+            assertThat(github.allow()).isEmpty();
+            assertThat(github.deny()).containsExactly("delete_repository");
+        }
+
+        @Test
+        void shouldPublishEveryToolWhenNoBlockIsDeclared() {
+            assertThat(parse("valid-minimal").getFirst().tools())
+                    .isEqualTo(McpServerSpec.ToolFilter.ALL);
+        }
+
+        @Test
+        void shouldRejectAnEmptyAllowList() {
+            assertRejects("bad-tools-empty-allow", 6, "empty tools.allow");
+        }
+
+        @Test
+        void shouldRejectANameInBothLists() {
+            assertRejects("bad-tools-both-lists", 7, "both allows and denies tool 'write_file'");
+        }
+
+        @Test
+        void shouldRejectAnUnknownKeyInTheBlock() {
+            assertRejects("bad-tools-unknown-key", 5, "unknown key 'only'");
+        }
+    }
+
+    @Nested
+    class RelayDialect {
+
+        private List<McpServerSpec> parseRelay(String name) {
+            return McpConfig.parse(golden(name), workingDirectory, McpConfig.Dialect.RELAY);
+        }
+
+        private void assertRelayRejects(String name, int line, String fragment) {
+            assertThatThrownBy(() -> parseRelay(name))
+                    .isInstanceOf(MiniYamlException.class)
+                    .hasMessageContaining(fragment)
+                    .extracting(failure -> ((MiniYamlException) failure).line())
+                    .isEqualTo(line);
+        }
+
+        @Test
+        void shouldReadTheSameGrammarWithoutTheAttendedRunKeys() {
+            List<McpServerSpec> servers = parseRelay("relay-valid");
+
+            McpServerSpec.Stdio everything = stdio(servers.getFirst());
+            assertThat(everything.prefix()).isEqualTo("everything_");
+            assertThat(everything.tools().admits("longRunningOperation")).isFalse();
+            assertThat(everything.unattended()).isFalse();
+            assertThat(everything.approvalRequired()).isFalse();
+
+            McpServerSpec.Http crm = http(servers.get(1));
+            assertThat(crm.bearerKey()).isEqualTo("CRM_MCP_TOKEN");
+            assertThat(crm.requestTimeoutMs()).isEqualTo(20_000);
+        }
+
+        @Test
+        void shouldRefuseSandboxBecauseTheContainerIsTheBoundary() {
+            assertRelayRejects("relay-bad-sandbox", 5, "declares sandbox: in relay.yaml");
+        }
+
+        @Test
+        void shouldRefuseUnattendedBecauseNoRelayRunIsAttended() {
+            assertRelayRejects("relay-bad-unattended", 4, "declares unattended: in relay.yaml");
+        }
+
+        @Test
+        void shouldRefuseApprovalBecauseARelayHasNoReviewer() {
+            assertRelayRejects("relay-bad-approval", 4, "declares approval: in relay.yaml");
+        }
+
+        @Test
+        void shouldPointALiteralTokenAtTheRelaysSecretsRatherThanTheCliStore() {
+            assertThatThrownBy(() -> parseRelay("relay-bad-auth-literal-token"))
+                    .isInstanceOf(MiniYamlException.class)
+                    .hasMessageContaining("secrets directory")
+                    .message()
+                    .doesNotContain("hensu credentials set")
+                    .doesNotContain("sk-live-not-a-key");
         }
     }
 }
