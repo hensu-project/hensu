@@ -1,0 +1,10 @@
+{
+  "name": "revision-2025-06-18",
+  "private": true,
+  "dependencies": {
+    "@modelcontextprotocol/server-everything": "2025.7.29"
+  },
+  "overrides": {
+    "@modelcontextprotocol/sdk": "1.17.5"
+  }
+}

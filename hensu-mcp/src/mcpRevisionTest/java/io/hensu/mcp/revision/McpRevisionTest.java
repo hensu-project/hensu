@@ -26,7 +26,6 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.UnaryOperator;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -52,8 +51,9 @@ import org.testcontainers.images.builder.ImageFromDockerfile;
 ///
 /// ### What Is Pinned
 /// Each `everything` image installs one release of the server and forces the
-/// SDK that decides its revision through npm `overrides`. Transitive packages
-/// below the SDK float, which cannot change the revision a server speaks.
+/// SDK that decides its revision through npm `overrides`, and `npm ci` installs
+/// the whole tree from a checked-in lockfile, so a rebuild installs the same
+/// packages. Only the base images float, on their tags.
 ///
 /// @implNote Needs Docker and network access to build the images; run through
 ///     `./gradlew :hensu-mcp:mcpRevisionTest`, never as part of `check`.
@@ -61,80 +61,37 @@ import org.testcontainers.images.builder.ImageFromDockerfile;
 class McpRevisionTest {
 
     /// The `everything` server at the release that speaks each revision.
+    ///
+    /// The versions live in `docker/everything/<revision>/package.json`, beside
+    /// the lockfile that pins the tree below them; the constant names only what
+    /// the test needs to know about the server it gets.
     enum Everything {
-        /// SDK 1.0.1 – stdio only: Streamable HTTP postdates this revision.
-        R2024_11_05(
-                "2024-11-05",
-                Map.of("@modelcontextprotocol/server-everything", "0.6.2"),
-                Map.of("@modelcontextprotocol/sdk", "1.0.1"),
-                false,
-                "longRunningOperation"),
-        /// SDK 1.17.5, whose newest revision is 2025-06-18.
-        R2025_06_18(
-                "2025-06-18",
-                Map.of("@modelcontextprotocol/server-everything", "2025.7.29"),
-                Map.of("@modelcontextprotocol/sdk", "1.17.5"),
-                true,
-                "longRunningOperation"),
-        /// SDK 1.25.2, whose newest revision is 2025-11-25.
-        R2025_11_25(
-                "2025-11-25",
-                Map.of("@modelcontextprotocol/server-everything", "2026.1.26"),
-                Map.of("@modelcontextprotocol/sdk", "1.25.2"),
-                true,
-                "trigger-long-running-operation"),
-        /// SDK 2.3.1, which serves 2026-07-28 beside the 2025 era on one endpoint.
-        R2026_07_28(
-                "2026-07-28",
-                Map.of("@modelcontextprotocol/server-everything", "2.2.1"),
-                Map.of(
-                        "@modelcontextprotocol/server", "2.3.1",
-                        "@modelcontextprotocol/server-legacy", "2.3.1",
-                        "@modelcontextprotocol/core", "2.3.1",
-                        "@modelcontextprotocol/node", "2.1.1"),
-                true,
-                "trigger-long-running-operation");
+        /// Server 0.6.2 on SDK 1.0.1 – stdio only: Streamable HTTP postdates this revision.
+        R2024_11_05("2024-11-05", false, "longRunningOperation"),
+        /// Server 2025.7.29 on SDK 1.17.5, whose newest revision is 2025-06-18.
+        R2025_06_18("2025-06-18", true, "longRunningOperation"),
+        /// Server 2026.1.26 on SDK 1.25.2, whose newest revision is 2025-11-25.
+        R2025_11_25("2025-11-25", true, "trigger-long-running-operation"),
+        /// Server 2.2.1 on SDK 2.3.1, which serves 2026-07-28 beside the 2025 era on one endpoint.
+        R2026_07_28("2026-07-28", true, "trigger-long-running-operation");
 
         final String revision;
-        final Map<String, String> dependencies;
-        final Map<String, String> overrides;
         final boolean servesHttp;
         final String slowTool;
 
-        Everything(
-                String revision,
-                Map<String, String> dependencies,
-                Map<String, String> overrides,
-                boolean servesHttp,
-                String slowTool) {
+        Everything(String revision, boolean servesHttp, String slowTool) {
             this.revision = revision;
-            this.dependencies = dependencies;
-            this.overrides = overrides;
             this.servesHttp = servesHttp;
             this.slowTool = slowTool;
         }
 
         String image() {
+            Path versions = context("everything").resolve(revision);
             return new ImageFromDockerfile("hensu-mcp-revision/everything:" + revision, false)
                     .withFileFromPath("Dockerfile", dockerfile("everything"))
-                    .withFileFromString("package.json", packageJson())
+                    .withFileFromPath("package.json", versions.resolve("package.json"))
+                    .withFileFromPath("package-lock.json", versions.resolve("package-lock.json"))
                     .get();
-        }
-
-        private String packageJson() {
-            return "{\"name\":\"revision-"
-                    + revision
-                    + "\",\"private\":true,\"dependencies\":"
-                    + json(dependencies)
-                    + ",\"overrides\":"
-                    + json(overrides)
-                    + "}";
-        }
-
-        private static String json(Map<String, String> entries) {
-            return entries.entrySet().stream()
-                    .map(entry -> "\"" + entry.getKey() + "\":\"" + entry.getValue() + "\"")
-                    .collect(Collectors.joining(",", "{", "}"));
         }
     }
 
@@ -330,13 +287,18 @@ class McpRevisionTest {
 
     /// The Dockerfile of one server, whose directory is the image's build context.
     private static Path dockerfile(String server) {
+        return context(server).resolve("Dockerfile");
+    }
+
+    /// The directory holding one server's Docker build files.
+    private static Path context(String server) {
         String contexts = System.getProperty("hensu.revision.contexts");
         if (contexts == null) {
             throw new IllegalStateException(
                     "hensu.revision.contexts is not set; run through"
                             + " ./gradlew :hensu-mcp:mcpRevisionTest");
         }
-        return Path.of(contexts, server, "Dockerfile");
+        return Path.of(contexts, server);
     }
 
     private static String docker() {
