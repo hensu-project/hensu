@@ -2,6 +2,7 @@ package io.hensu.mcp;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.ConnectException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpConnectTimeoutException;
@@ -11,9 +12,9 @@ import java.net.http.HttpResponse.BodyHandlers;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -22,6 +23,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -29,11 +31,21 @@ import java.util.logging.Logger;
 /// Sends bounded JSON-RPC exchanges to one Streamable HTTP endpoint.
 ///
 /// Owns everything that touches the wire for one declared server: the bearer
-/// token and declared headers every request carries, the per-exchange deadline,
-/// the single redirect {@link EndpointBound} permits, reading the answer out of a
-/// JSON or SSE body, and the out-of-band messages – cancellation and session
-/// release – that nobody waits for. It holds no protocol state: the era and the
-/// session identifier are passed in by the connection that owns them.
+/// credential and declared headers every request carries, the per-exchange
+/// deadline, the single redirect {@link EndpointBound} permits, the single resend
+/// a refused token's successor permits, reading the answer out of a JSON or SSE
+/// body, a caller's {@link CallControl}, and the out-of-band messages –
+/// cancellation and session release – that nobody waits for. It holds no
+/// protocol state: the era and the session identifier are passed in by the
+/// connection that owns them.
+///
+/// ### Delivery Classification
+/// Every failure says whether the request can have reached the server (see
+/// {@link McpException.Delivery}). A refused or timed-out connect, a refused
+/// `307` or `308` redirect, a `401` or `403`, and a cancel or an expired budget
+/// that stops an exchange before it began are `NOT_SENT`; anything that fails after the
+/// request was handed to the client is `MAYBE_DELIVERED`, because the JDK client
+/// cannot say how many bytes left.
 ///
 /// @implNote **Thread-safe.** Holds only immutable configuration and an executor;
 ///     each exchange runs on its own Virtual Thread.
@@ -52,7 +64,7 @@ final class HttpExchanger {
     private static final String ACCEPT = "application/json, text/event-stream";
 
     private final McpServerSpec.Http spec;
-    private final String bearerToken;
+    private final BearerCredential credential;
     private final EndpointBound bound;
     private final HttpClient client;
     private final JsonRpc jsonRpc;
@@ -61,18 +73,19 @@ final class HttpExchanger {
     /// Creates the exchanger for one declared server.
     ///
     /// @param spec the server declaration, not null
-    /// @param bearerToken the resolved bearer token, or null when none is sent
+    /// @param credential the bearer token source, not null; {@link BearerCredential#NONE}
+    ///     when no `Authorization` header is sent
     /// @param allowedHosts every host declared across the deployment, not null
     /// @param client the HTTP client to send on, not null; must not follow redirects
     /// @param jsonRpc the codec requests are built with, not null
     HttpExchanger(
             McpServerSpec.Http spec,
-            String bearerToken,
+            BearerCredential credential,
             Set<String> allowedHosts,
             HttpClient client,
             JsonRpc jsonRpc) {
         this.spec = spec;
-        this.bearerToken = bearerToken;
+        this.credential = credential;
         this.bound = new EndpointBound(spec.name(), spec.url(), allowedHosts);
         this.client = client;
         this.jsonRpc = jsonRpc;
@@ -81,7 +94,15 @@ final class HttpExchanger {
                         Thread.ofVirtual().name("mcp-http-" + spec.name() + "-", 0).factory());
     }
 
-    /// Performs one bounded request, following at most one redirect to the same endpoint.
+    /// Performs one bounded request, following at most one redirect to the same
+    /// endpoint and resending at most once after a `401`.
+    ///
+    /// The resend happens only when the credential names a token different from
+    /// the one refused. A request refused at authorization never reached the
+    /// tool, so it cannot run twice; a `403` is a decision about who is asking,
+    /// not about the token's age, and is never retried. A `401` or `403` that
+    /// stands after that fails here, so no caller can read one as an ordinary
+    /// status.
     ///
     /// @param using the era whose headers and params shape the request, not null
     /// @param requestId the JSON-RPC id, not null
@@ -91,9 +112,11 @@ final class HttpExchanger {
     /// @param mirrored the `Mcp-Param-*` headers to send, not null (may be empty)
     /// @param session the session identifier to carry, or null
     /// @param budgetMs what remains of the caller's budget, in milliseconds
-    /// @return the answer, never null
+    /// @param control the caller's cancellation handle, not null
+    /// @return the answer, never null; its status is neither 401 nor 403
     /// @throws McpException if the budget is spent, the server cannot be reached,
-    ///     or the answer stream is truncated
+    ///     the answer stream is truncated, the caller cancelled, or the server
+    ///     refused the credential
     /// @throws McpEgressDeniedException if the server redirects off its endpoint
     HttpReply request(
             McpEra using,
@@ -103,34 +126,39 @@ final class HttpExchanger {
             Map<String, Object> params,
             Map<String, String> mirrored,
             String session,
-            long budgetMs) {
+            long budgetMs,
+            CallControl control) {
         if (budgetMs <= 0) {
-            throw timeout(method, budgetMs);
+            throw McpException.timedOut(
+                    spec.name(), method, budgetMs, McpException.Delivery.NOT_SENT);
         }
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
         String body = jsonRpc.createRequest(requestId, method, using.params(params));
-        HttpReply reply =
-                post(
-                        using,
-                        requestId,
-                        method,
-                        targetName,
-                        mirrored,
-                        body,
-                        session,
-                        budgetMs,
-                        spec.url());
+        Outgoing outgoing =
+                new Outgoing(using, requestId, method, targetName, mirrored, body, session);
+
+        String token = credential.current().orElse(null);
+        HttpReply reply = send(outgoing, token, budgetMs, control);
+        if (reply.status() == 401) {
+            Optional<String> successor = credential.afterRejection(token);
+            if (successor.isPresent() && !successor.get().equals(token)) {
+                long left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+                if (left <= 0) {
+                    throw McpException.timedOut(
+                            spec.name(), method, budgetMs, McpException.Delivery.NOT_SENT);
+                }
+                reply = send(outgoing, successor.get(), left, control);
+            }
+        }
+        refuseOnAccessDenied(reply, method);
+        return reply;
+    }
+
+    /// Posts one request, following at most one redirect to the same endpoint.
+    private HttpReply send(Outgoing outgoing, String token, long budgetMs, CallControl control) {
+        HttpReply reply = post(outgoing, token, budgetMs, spec.url(), control);
         if (reply.status() / 100 == 3) {
-            reply =
-                    post(
-                            using,
-                            requestId,
-                            method,
-                            targetName,
-                            mirrored,
-                            body,
-                            session,
-                            budgetMs,
-                            bound.follow(reply));
+            reply = post(outgoing, token, budgetMs, bound.follow(reply), control);
         }
         return reply;
     }
@@ -152,7 +180,12 @@ final class HttpExchanger {
             long budgetMs) {
         String body = jsonRpc.createNotification(method, using.params(params));
         try {
-            post(using, null, method, null, Map.of(), body, session, budgetMs, spec.url());
+            post(
+                    new Outgoing(using, null, method, null, Map.of(), body, session),
+                    credential.current().orElse(null),
+                    budgetMs,
+                    spec.url(),
+                    CallControl.none());
         } catch (McpException e) {
             logger.log(
                     Level.FINE,
@@ -175,7 +208,7 @@ final class HttpExchanger {
                         .header(McpProtocol.HEADER_SESSION_ID, session)
                         .timeout(Duration.ofMillis(CANCELLATION_TIMEOUT_MS))
                         .DELETE();
-        applyCommonHeaders(request);
+        applyCommonHeaders(request, credential.current().orElse(null));
         try {
             client.send(request.build(), BodyHandlers.ofString());
         } catch (IOException e) {
@@ -199,15 +232,18 @@ final class HttpExchanger {
     /// `401` to a request that carried none is also how a server that requires an
     /// authorization flow answers – which this client does not run.
     ///
+    /// Both are {@link McpException.Delivery#NOT_SENT}: the server declined the
+    /// request before acting on it.
+    ///
     /// @param reply the answer, not null
     /// @param method the JSON-RPC method it answered, not null
     /// @throws McpException when the status is 401 or 403
-    void refuseOnAccessDenied(HttpReply reply, String method) {
+    private void refuseOnAccessDenied(HttpReply reply, String method) {
         int status = reply.status();
         if (status != 401 && status != 403) {
             return;
         }
-        boolean sent = bearerToken != null && !bearerToken.isBlank();
+        boolean sent = credential.current().isPresent();
         String prefix =
                 "MCP server '"
                         + spec.name()
@@ -224,7 +260,8 @@ final class HttpExchanger {
                             + (sent
                                     ? "the bearer token was accepted as a credential but is not"
                                             + " permitted to do this"
-                                    : "the server refuses unauthenticated access"));
+                                    : "the server refuses unauthenticated access"),
+                    McpException.Delivery.NOT_SENT);
         }
         throw new McpException(
                 prefix
@@ -234,79 +271,105 @@ final class HttpExchanger {
                                 : "the server requires authorization and none was sent. Hensu"
                                         + " sends a static bearer token from the credential store"
                                         + " and runs no OAuth flow; if this server issues static"
-                                        + " tokens, declare one with auth:"));
-    }
-
-    /// Builds the failure a spent budget reports.
-    ///
-    /// @param method what was being waited for, not null
-    /// @param budgetMs the budget that ran out, in milliseconds
-    /// @return the failure, never null
-    McpException timeout(String method, long budgetMs) {
-        return new McpException(
-                "MCP request '"
-                        + method
-                        + "' to server '"
-                        + spec.name()
-                        + "' timed out after "
-                        + budgetMs
-                        + "ms");
+                                        + " tokens, declare one with auth:"),
+                McpException.Delivery.NOT_SENT);
     }
 
     private HttpReply post(
-            McpEra using,
-            String requestId,
-            String method,
-            String targetName,
-            Map<String, String> mirrored,
-            String body,
-            String session,
-            long budgetMs,
-            URI target) {
+            Outgoing outgoing, String token, long budgetMs, URI target, CallControl control) {
+        if (control.isCancelled()) {
+            throw McpException.cancelled(
+                    spec.name(), outgoing.method(), McpException.Delivery.NOT_SENT);
+        }
         HttpRequest.Builder request =
                 HttpRequest.newBuilder(target)
                         .header("Content-Type", "application/json")
                         .header("Accept", ACCEPT)
                         .timeout(Duration.ofMillis(budgetMs))
-                        .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
-        applyCommonHeaders(request);
-        using.applyHeaders(request, method, targetName, session, mirrored);
+                        .POST(
+                                HttpRequest.BodyPublishers.ofString(
+                                        outgoing.body(), StandardCharsets.UTF_8));
+        applyCommonHeaders(request, token);
+        outgoing.era()
+                .applyHeaders(
+                        request,
+                        outgoing.method(),
+                        outgoing.targetName(),
+                        outgoing.session(),
+                        outgoing.mirrored());
 
         BodyHandoff live = new BodyHandoff();
+        Sender sender = new Sender();
         CompletableFuture<HttpReply> pending =
                 CompletableFuture.supplyAsync(
-                                () -> read(request.build(), requestId, live), exchanges)
+                                () -> {
+                                    if (!sender.begin()) {
+                                        throw new CancelledByCaller();
+                                    }
+                                    return read(request.build(), outgoing.requestId(), live);
+                                },
+                                exchanges)
                         .orTimeout(budgetMs, TimeUnit.MILLISECONDS);
+        // Completing the future wakes the caller now; stopping the sender keeps a queued
+        // exchange from starting and aborts one still waiting for its response headers.
+        Runnable abort =
+                () -> {
+                    pending.completeExceptionally(new CancelledByCaller());
+                    sender.stop();
+                };
+        control.bind(abort);
         try {
             return pending.join();
         } catch (CompletionException e) {
-            if (e.getCause() instanceof TimeoutException || isRequestTimeout(e.getCause())) {
-                // Closing the response stream is itself the cancellation in the
-                // modern era; the legacy era says so out of band instead.
-                live.abandon();
-                if (requestId != null) {
-                    using.cancel(requestId, id -> announceCancellation(using, id, session));
+            // Stopping here as well as in the abort settles the race with a send that
+            // has not begun yet: either it never starts, or it already has.
+            if (e.getCause() instanceof CancelledByCaller) {
+                if (sender.stop()) {
+                    throw McpException.cancelled(
+                            spec.name(), outgoing.method(), McpException.Delivery.NOT_SENT);
                 }
-                throw timeout(method, budgetMs);
+                abandon(outgoing, live, "the caller cancelled the request");
+                throw McpException.cancelled(
+                        spec.name(), outgoing.method(), McpException.Delivery.MAYBE_DELIVERED);
+            }
+            if (e.getCause() instanceof TimeoutException || isRequestTimeout(e.getCause())) {
+                if (sender.stop()) {
+                    throw McpException.timedOut(
+                            spec.name(),
+                            outgoing.method(),
+                            budgetMs,
+                            McpException.Delivery.NOT_SENT);
+                }
+                abandon(outgoing, live, "the caller's request budget expired");
+                throw McpException.timedOut(
+                        spec.name(),
+                        outgoing.method(),
+                        budgetMs,
+                        McpException.Delivery.MAYBE_DELIVERED);
             }
             throw e.getCause() instanceof McpException mcp
                     ? mcp
-                    : new McpException(
-                            "MCP request '"
-                                    + method
-                                    + "' to server '"
-                                    + spec.name()
-                                    + "' failed: "
-                                    + e.getCause().getMessage(),
-                            e.getCause());
+                    : McpException.failed(spec.name(), outgoing.method(), e.getCause());
         } finally {
+            control.unbind(abort);
             live.abandon();
         }
     }
 
-    private void applyCommonHeaders(HttpRequest.Builder request) {
-        if (bearerToken != null && !bearerToken.isBlank()) {
-            request.header("Authorization", "Bearer " + bearerToken);
+    /// Stops waiting for an answer and tells the server so, the way the era does.
+    ///
+    /// Closing the response stream is itself the cancellation in the modern era;
+    /// the legacy era says so out of band instead.
+    private void abandon(Outgoing outgoing, BodyHandoff live, String reason) {
+        live.abandon();
+        if (outgoing.requestId() != null && outgoing.era().announcesCancellation()) {
+            announceCancellation(outgoing.era(), outgoing.requestId(), outgoing.session(), reason);
+        }
+    }
+
+    private void applyCommonHeaders(HttpRequest.Builder request, String token) {
+        if (token != null) {
+            request.header("Authorization", "Bearer " + token);
         }
         spec.headers().forEach(request::header);
     }
@@ -318,8 +381,16 @@ final class HttpExchanger {
         try {
             response = client.send(request, BodyHandlers.ofInputStream());
         } catch (IOException e) {
+            // A connect that was refused or timed out wrote nothing; anything later
+            // may have delivered the request in whole or in part.
+            boolean unsent =
+                    e instanceof ConnectException || e instanceof HttpConnectTimeoutException;
             throw new McpException(
-                    "Could not reach MCP server '" + spec.name() + "' at " + request.uri(), e);
+                    "Could not reach MCP server '" + spec.name() + "' at " + request.uri(),
+                    e,
+                    unsent
+                            ? McpException.Delivery.NOT_SENT
+                            : McpException.Delivery.MAYBE_DELIVERED);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new McpException("Interrupted while calling MCP server '" + spec.name() + "'", e);
@@ -345,10 +416,9 @@ final class HttpExchanger {
     /// operator who set a one-second timeout would be told three seconds later.
     /// The budget still bounds the detached request, so a server that never
     /// reads it costs one short-lived Virtual Thread rather than a leak.
-    private void announceCancellation(McpEra using, String requestId, String session) {
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("requestId", requestId);
-        params.put("reason", "the caller's request budget expired");
+    private void announceCancellation(
+            McpEra using, String requestId, String session, String reason) {
+        Map<String, Object> params = McpProtocol.cancellationParams(requestId, reason);
         try {
             exchanges.execute(
                     () ->
@@ -394,6 +464,74 @@ final class HttpExchanger {
             stream.close();
         } catch (IOException e) {
             logger.log(Level.FINE, "Could not close MCP response stream", e);
+        }
+    }
+
+    /// One request as built once and sent up to three times: to the endpoint, to
+    /// the one redirect it may follow, and once more with a refused token's
+    /// successor.
+    ///
+    /// @param era the era whose headers and params shape the request, not null
+    /// @param requestId the JSON-RPC id, or null for a notification
+    /// @param method the JSON-RPC method, not null
+    /// @param targetName the tool a `tools/call` names, or null
+    /// @param mirrored the `Mcp-Param-*` headers to send, not null
+    /// @param body the serialised JSON-RPC message, not null
+    /// @param session the session identifier to carry, or null
+    private record Outgoing(
+            McpEra era,
+            String requestId,
+            String method,
+            String targetName,
+            Map<String, String> mirrored,
+            String body,
+            String session) {}
+
+    /// The thread one exchange is sent from, and whether it was ever sent.
+    ///
+    /// The caller can give up before the exchange's Virtual Thread has even
+    /// started, and a send that starts after that is a request nobody waits for.
+    /// {@link #begin()} and {@link #stop()} race for one transition out of
+    /// `IDLE`, so exactly one of them wins: a stop that wins keeps the send from
+    /// ever starting, which is what lets the caller report the request as
+    /// `NOT_SENT`; a stop that loses interrupts the send, which aborts a request
+    /// still waiting for its response headers. Each exchange has a Virtual Thread
+    /// of its own, so the thread interrupted never serves anybody else.
+    ///
+    /// @implNote **Thread-safe.** The phase is an atomic and the thread is
+    ///     published before the transition that makes it readable; no lock is
+    ///     held.
+    static final class Sender {
+
+        private static final int IDLE = 0;
+        private static final int SENDING = 1;
+        private static final int PREVENTED = 2;
+
+        private final AtomicInteger phase = new AtomicInteger(IDLE);
+        private volatile Thread thread;
+
+        /// Registers the calling thread as the sender.
+        ///
+        /// @return false when the exchange was stopped before it began, in which
+        ///     case it must not be sent
+        boolean begin() {
+            thread = Thread.currentThread();
+            return phase.compareAndSet(IDLE, SENDING);
+        }
+
+        /// Keeps the send from starting, or interrupts it when it already has.
+        ///
+        /// Safe to call more than once and from any thread; every call after the
+        /// first returns the same answer.
+        ///
+        /// @return true when the request was never handed to the client and never
+        ///     will be
+        boolean stop() {
+            if (phase.compareAndExchange(IDLE, PREVENTED) != SENDING) {
+                return true;
+            }
+            thread.interrupt();
+            return false;
         }
     }
 

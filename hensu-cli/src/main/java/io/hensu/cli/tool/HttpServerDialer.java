@@ -1,6 +1,7 @@
 package io.hensu.cli.tool;
 
 import io.hensu.cli.daemon.CredentialsStore;
+import io.hensu.mcp.BearerCredential;
 import io.hensu.mcp.McpException;
 import io.hensu.mcp.McpServerSpec;
 import io.hensu.mcp.StreamableHttpMcpConnection;
@@ -81,7 +82,8 @@ final class HttpServerDialer implements AutoCloseable {
             return Optional.of(
                     new McpRoute(
                             spec,
-                            StreamableHttpMcpConnection.open(spec, token, allowedHosts, client())));
+                            StreamableHttpMcpConnection.open(
+                                    spec, BearerCredential.fixed(token), allowedHosts, client())));
         } catch (McpException e) {
             String message =
                     "MCP server '"

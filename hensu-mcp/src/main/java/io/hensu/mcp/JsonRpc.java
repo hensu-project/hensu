@@ -122,8 +122,10 @@ public class JsonRpc {
     /// Parses a JSON-RPC response and extracts the result.
     ///
     /// @param json the JSON-RPC response
-    /// @return the result as a Map, or error information
-    /// @throws McpException if parsing fails or response contains error
+    /// @return the result as a Map, never null
+    /// @throws McpErrorResponseException if the response carries an `error`
+    ///     object, which the exception keeps whole
+    /// @throws McpException if parsing fails
     public Map<String, Object> parseResult(String json) throws McpException {
         try {
             JsonNode node = mapper.readTree(json);
@@ -136,7 +138,8 @@ public class JsonRpc {
                                 ? errorNode.get("message").asText()
                                 : "Unknown error";
                 int code = errorNode.has("code") ? errorNode.get("code").asInt() : -1;
-                throw new McpException("JSON-RPC error " + code + ": " + message);
+                throw new McpErrorResponseException(
+                        "JSON-RPC error " + code + ": " + message, errorObject(errorNode));
             }
 
             // Extract result
@@ -144,11 +147,31 @@ public class JsonRpc {
             if (resultNode == null || resultNode.isNull()) {
                 return Map.of();
             }
+            // Every result the protocol defines is an object; anything else is a
+            // broken server, reported like any other unreadable answer.
+            if (!resultNode.isObject()) {
+                throw new McpException(
+                        "JSON-RPC result is not an object: " + resultNode.getNodeType());
+            }
 
             return mapper.convertValue(resultNode, Map.class);
         } catch (JsonProcessingException e) {
             throw new McpException("Failed to parse JSON-RPC response: " + e.getMessage(), e);
         }
+    }
+
+    /// Converts an `error` member into the map an error answer carries.
+    ///
+    /// A member that is not an object breaks the spec; it is kept as the message
+    /// of an object with no code, so the caller still has something to forward.
+    ///
+    /// @param errorNode the `error` member of a response, not null
+    /// @return the error object, never null
+    Map<String, Object> errorObject(JsonNode errorNode) {
+        if (errorNode.isObject()) {
+            return mapper.convertValue(errorNode, Map.class);
+        }
+        return Map.of("code", -1, "message", errorNode.asText());
     }
 
     /// Parses JSON-RPC params from a message.

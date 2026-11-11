@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.http.HttpClient;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -37,8 +36,9 @@ import java.util.logging.Logger;
 ///   declared headers, so following a redirect to a host declared for a
 ///   *different* server, or to a different port on the same host, would hand one
 ///   server's credential to another. Both refusals are
-///   {@link McpEgressDeniedException}; only a redirect that stays on the same
-///   endpoint is followed, once.
+///   {@link McpEgressDeniedException}; only a `307` or `308` that stays on the
+///   same endpoint is followed, once. Any other redirect after a POST may come
+///   after the server handled the call, so it fails rather than sends it twice.
 /// - **The era is probed, not assumed.** Revision 2026-07-28 removed
 ///   `initialize`, `notifications/initialized` and session identifiers. A hosted
 ///   endpoint deployed today is overwhelmingly on the revision before it, and
@@ -49,7 +49,11 @@ import java.util.logging.Logger;
 ///   client answers a missed write deadline by closing, because its framing
 ///   cannot survive a half-written line. Here the exchange is self-contained: the
 ///   response stream is closed, the correlation entry dropped, and the next call
-///   to this server proceeds normally.
+///   to this server proceeds normally. A call its caller cancels through
+///   {@link CallControl} ends the same way, at once.
+/// - **A refused token gets one successor.** A `401` is answered by asking the
+///   {@link BearerCredential} for a newer token and resending once, so a rotated
+///   secret applies without reopening the connection. A `403` is never retried.
 /// - **The catalog is whatever was listed at launch.** Revision 2026-07-28
 ///   replaced the standalone `GET` stream with a long-lived `subscriptions/listen`
 ///   response stream, which this client never opens. A server that adds a tool
@@ -109,27 +113,29 @@ public final class StreamableHttpMcpConnection implements McpConnection {
 
     private StreamableHttpMcpConnection(
             McpServerSpec.Http spec,
-            String bearerToken,
+            BearerCredential credential,
             Set<String> allowedHosts,
             HttpClient client) {
         this.spec = spec;
         this.mapper = new ObjectMapper();
         this.jsonRpc = new JsonRpc(mapper);
-        this.exchanger = new HttpExchanger(spec, bearerToken, allowedHosts, client, jsonRpc);
+        this.exchanger = new HttpExchanger(spec, credential, allowedHosts, client, jsonRpc);
         this.serverInfo = spec.host();
     }
 
     /// Dials a remote server and settles which protocol revision it speaks.
     ///
     /// ### Contracts
-    /// - **Precondition**: `bearerToken` is already resolved by the caller; this
-    ///   module never learns where credentials are kept
+    /// - **Precondition**: the credential is supplied by the caller; this module
+    ///   never learns where credentials are kept
     /// - **Postcondition**: the era is known and, on a modern server, the
     ///   catalog is already in hand
     ///
     /// @param spec the server declaration, not null
-    /// @param bearerToken the resolved bearer token, or null when the endpoint
-    ///     needs no authentication
+    /// @param credential the bearer token source, not null;
+    ///     {@link BearerCredential#NONE} when the endpoint needs no authentication.
+    ///     A `401` is answered by resending once with
+    ///     {@link BearerCredential#afterRejection}'s token, when it names one
     /// @param allowedHosts every host declared across the deployment's MCP
     ///     document, not null. This is the run's outer bound and is used to tell
     ///     an operator *which kind* of refusal they are reading; the bound that
@@ -141,18 +147,19 @@ public final class StreamableHttpMcpConnection implements McpConnection {
     /// @throws McpException if the endpoint speaks neither era, announces a
     ///     revision Hensu does not implement, or cannot be reached within
     ///     {@link McpServerSpec#startupTimeoutMs()}
-    /// @throws NullPointerException if spec, allowedHosts or client is null
+    /// @throws NullPointerException if spec, credential, allowedHosts or client is null
     public static StreamableHttpMcpConnection open(
             McpServerSpec.Http spec,
-            String bearerToken,
+            BearerCredential credential,
             Set<String> allowedHosts,
             HttpClient client) {
         Objects.requireNonNull(spec, "spec must not be null");
+        Objects.requireNonNull(credential, "credential must not be null");
         Objects.requireNonNull(allowedHosts, "allowedHosts must not be null");
         Objects.requireNonNull(client, "client must not be null");
 
         StreamableHttpMcpConnection connection =
-                new StreamableHttpMcpConnection(spec, bearerToken, allowedHosts, client);
+                new StreamableHttpMcpConnection(spec, credential, allowedHosts, client);
         try {
             connection.settleEra();
         } catch (RuntimeException e) {
@@ -194,31 +201,43 @@ public final class StreamableHttpMcpConnection implements McpConnection {
         if (fromProbe != null) {
             return fromProbe;
         }
-        return toDescriptors(call("tools/list", Map.of(), null, spec.requestTimeoutMs()));
+        return toDescriptors(
+                call("tools/list", Map.of(), null, spec.requestTimeoutMs(), CallControl.none()));
     }
 
     /// Invokes a tool on the server.
     ///
+    /// A cancelled control ends the call the way a spent budget does: the
+    /// response stream is closed, which is the cancellation in the 2026-07-28
+    /// era, and the 2024-11-05 era is also sent `notifications/cancelled`.
+    ///
     /// @param toolName the tool the agent chose, not null
     /// @param arguments the agent's arguments, not null (may be empty)
+    /// @param control the caller's cancellation handle and `_meta`, not null
     /// @return the raw MCP result, for {@link McpResultRenderer} to render, never null
     /// @throws McpException if the server does not answer within its request
-    ///     timeout, or the tool's header annotations are invalid
+    ///     timeout, the tool's header annotations are invalid, or the caller cancelled
     /// @throws McpEgressDeniedException if the server redirects the call off the allowlist
     /// @throws McpInvalidArgumentException if an argument the server mirrors into
     ///     a header has no header form; nothing is sent
     @Override
-    public Map<String, Object> callTool(String toolName, Map<String, Object> arguments) {
+    public Map<String, Object> callTool(
+            String toolName, Map<String, Object> arguments, CallControl control) {
         Objects.requireNonNull(toolName, "toolName must not be null");
+        Objects.requireNonNull(control, "control must not be null");
         if (listed.designations().get(toolName) instanceof McpParameterHeaders.Rejected rejected) {
             // Reachable only when a re-listing found the schema broken after the
             // tool was already offered: a tool rejected at launch is never offered.
-            throw new McpException(ListedTools.rejectionNotice(spec.name(), toolName, rejected));
+            throw new McpException(
+                    ListedTools.rejectionNotice(spec.name(), toolName, rejected),
+                    McpException.Delivery.NOT_SENT);
         }
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("name", toolName);
-        params.put("arguments", arguments == null ? Map.of() : arguments);
-        return call("tools/call", params, toolName, spec.requestTimeoutMs());
+        return call(
+                "tools/call",
+                McpProtocol.callParams(toolName, arguments, control),
+                toolName,
+                spec.requestTimeoutMs(),
+                control);
     }
 
     /// Returns the endpoint every request is posted to.
@@ -303,7 +322,6 @@ public final class StreamableHttpMcpConnection implements McpConnection {
             adoptModern(reply);
             return;
         }
-        exchanger.refuseOnAccessDenied(reply, "tools/list");
 
         JsonNode error = reply.jsonRpcError();
         if (error != null) {
@@ -344,7 +362,14 @@ public final class StreamableHttpMcpConnection implements McpConnection {
     private HttpReply probeModern() {
         McpEra probe = new McpEra.Modern();
         HttpReply reply =
-                exchange(probe, "tools/list", null, Map.of(), null, spec.startupTimeoutMs());
+                exchange(
+                        probe,
+                        "tools/list",
+                        null,
+                        Map.of(),
+                        null,
+                        spec.startupTimeoutMs(),
+                        CallControl.none());
         if (reply.status() == 200) {
             era = probe;
         }
@@ -386,8 +411,8 @@ public final class StreamableHttpMcpConnection implements McpConnection {
                         + " after listing it as supported");
     }
 
+    /// Takes the answer to a probe that succeeded, whose era the probe already set.
     private void adoptModern(HttpReply reply) {
-        era = new McpEra.Modern();
         Map<String, Object> result = jsonRpc.parseResult(reply.body());
         readModernServerInfo(reply.body());
         primed.set(toDescriptors(result));
@@ -403,9 +428,10 @@ public final class StreamableHttpMcpConnection implements McpConnection {
                         legacy,
                         "initialize",
                         null,
-                        initializeParams(),
+                        McpProtocol.initializeParams(),
                         null,
-                        spec.startupTimeoutMs());
+                        spec.startupTimeoutMs(),
+                        CallControl.none());
 
         if (reply.status() == 404 || reply.status() == 405) {
             // No GET is ever issued: the ladder that would follow one leads to the
@@ -422,7 +448,6 @@ public final class StreamableHttpMcpConnection implements McpConnection {
                             + " the deprecated two-endpoint HTTP+SSE transport, which Hensu does"
                             + " not implement.");
         }
-        exchanger.refuseOnAccessDenied(reply, "initialize");
         if (reply.status() != 200) {
             throw new McpException(
                     "MCP server '"
@@ -434,30 +459,9 @@ public final class StreamableHttpMcpConnection implements McpConnection {
                             + " to initialize");
         }
 
-        sessionId.set(reply.header(McpProtocol.HEADER_SESSION_ID));
-
-        Map<String, Object> result = jsonRpc.parseResult(reply.body());
-        McpProtocol.Handshake announced = McpProtocol.read(result);
-        if (!McpProtocol.isSupported(announced.revision())) {
-            throw new McpException(
-                    McpProtocol.unsupportedRevision(spec.name(), announced.revision()));
-        }
-        if (announced.serverName() != null) {
-            serverInfo = announced.serverName();
-        }
-
-        exchanger.notify(
-                legacy,
-                "notifications/initialized",
-                Map.of(),
-                sessionId.get(),
-                spec.startupTimeoutMs());
-
+        McpProtocol.Handshake announced = adoptSession(reply, spec.startupTimeoutMs());
         if (!announced.declaresTools()) {
-            notice(
-                    "MCP server '"
-                            + spec.name()
-                            + "' advertises no tools capability, so none were requested");
+            notice(McpProtocol.noToolsCapability(spec.name()));
             primed.set(List.of());
             return;
         }
@@ -469,29 +473,56 @@ public final class StreamableHttpMcpConnection implements McpConnection {
                         null,
                         Map.of(),
                         sessionId.get(),
-                        spec.startupTimeoutMs());
+                        spec.startupTimeoutMs(),
+                        CallControl.none());
         primed.set(toDescriptors(readResult(tools, "tools/list")));
     }
 
     // -------------------------------------------------------------- requesting
 
     /// Sends one request, re-initialising once if a held session was rejected.
+    ///
+    /// Only the request itself is sent under the caller's control. A session
+    /// refresh or a re-listing between two attempts is housekeeping the next
+    /// attempt needs, and that attempt checks the control before it is sent.
     private Map<String, Object> call(
-            String method, Map<String, Object> params, String targetName, long budgetMs) {
+            String method,
+            Map<String, Object> params,
+            String targetName,
+            long budgetMs,
+            CallControl control) {
         if (closed) {
-            throw new McpException("MCP server '" + spec.name() + "' connection is closed");
+            throw new McpException(
+                    "MCP server '" + spec.name() + "' connection is closed",
+                    McpException.Delivery.NOT_SENT);
         }
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
         String carried = sessionId.get();
-        HttpReply reply = exchange(era, method, targetName, params, carried, budgetMs);
+        HttpReply reply = exchange(era, method, targetName, params, carried, budgetMs, control);
 
         if (reply.status() == 404 && era.sessionScoped() && carried != null) {
             refreshSession(carried, remaining(deadline));
-            reply = exchange(era, method, targetName, params, sessionId.get(), remaining(deadline));
+            reply =
+                    exchange(
+                            era,
+                            method,
+                            targetName,
+                            params,
+                            sessionId.get(),
+                            remaining(deadline),
+                            control);
         }
 
         if (targetName != null && isHeaderMismatch(reply) && relistChanged(targetName, deadline)) {
-            reply = exchange(era, method, targetName, params, sessionId.get(), remaining(deadline));
+            reply =
+                    exchange(
+                            era,
+                            method,
+                            targetName,
+                            params,
+                            sessionId.get(),
+                            remaining(deadline),
+                            control);
         }
         return readResult(reply, method);
     }
@@ -504,13 +535,22 @@ public final class StreamableHttpMcpConnection implements McpConnection {
             String targetName,
             Map<String, Object> params,
             String session,
-            long budgetMs) {
+            long budgetMs,
+            CallControl control) {
         Map<String, String> mirrored =
                 targetName != null && using.mirrorsParameters()
                         ? listed.mirroredHeaders(targetName, params)
                         : Map.of();
         return exchanger.request(
-                using, nextRequestId(), method, targetName, params, mirrored, session, budgetMs);
+                using,
+                nextRequestId(),
+                method,
+                targetName,
+                params,
+                mirrored,
+                session,
+                budgetMs,
+                control);
     }
 
     private boolean isHeaderMismatch(HttpReply reply) {
@@ -522,6 +562,9 @@ public final class StreamableHttpMcpConnection implements McpConnection {
     }
 
     /// Reads the catalog again after a `-32020`, and says whether a retry could differ.
+    ///
+    /// A failure here is {@link McpException.Delivery#NOT_SENT}: the server
+    /// refused the call's first attempt before acting on it.
     ///
     /// The spec's prescribed answer to a header mismatch is to re-list and retry
     /// with the headers the current schema asks for. Retrying with the same
@@ -540,7 +583,8 @@ public final class StreamableHttpMcpConnection implements McpConnection {
                                 null,
                                 Map.of(),
                                 sessionId.get(),
-                                remaining(deadline)),
+                                remaining(deadline),
+                                CallControl.none()),
                         "tools/list"));
         McpParameterHeaders.Designation after = listed.designations().get(toolName);
         return switch (after) {
@@ -550,15 +594,20 @@ public final class StreamableHttpMcpConnection implements McpConnection {
                                     + spec.name()
                                     + "' rejected the headers of '"
                                     + toolName
-                                    + "' and no longer publishes it");
+                                    + "' and no longer publishes it",
+                            McpException.Delivery.NOT_SENT);
             case McpParameterHeaders.Rejected rejected ->
                     throw new McpException(
-                            ListedTools.rejectionNotice(spec.name(), toolName, rejected));
+                            ListedTools.rejectionNotice(spec.name(), toolName, rejected),
+                            McpException.Delivery.NOT_SENT);
             case McpParameterHeaders.Accepted accepted -> !accepted.equals(before);
         };
     }
 
     /// Re-initialises a rejected session once, for whichever caller gets there first.
+    ///
+    /// A failure here is {@link McpException.Delivery#NOT_SENT}: the server
+    /// answered the call's first attempt `404` without acting on it.
     ///
     /// Left unguarded this is a read-modify-write across two round trips: every
     /// concurrent caller that saw `404` would post its own `initialize`, the
@@ -570,7 +619,8 @@ public final class StreamableHttpMcpConnection implements McpConnection {
     /// what remains of the caller's budget.
     private void refreshSession(String carried, long budgetMs) {
         if (budgetMs <= 0) {
-            throw exchanger.timeout("session refresh", budgetMs);
+            throw McpException.timedOut(
+                    spec.name(), "session refresh", budgetMs, McpException.Delivery.NOT_SENT);
         }
         boolean held;
         try {
@@ -578,10 +628,13 @@ public final class StreamableHttpMcpConnection implements McpConnection {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new McpException(
-                    "Interrupted while re-initialising MCP server '" + spec.name() + "'", e);
+                    "Interrupted while re-initialising MCP server '" + spec.name() + "'",
+                    e,
+                    McpException.Delivery.NOT_SENT);
         }
         if (!held) {
-            throw exchanger.timeout("session refresh", budgetMs);
+            throw McpException.timedOut(
+                    spec.name(), "session refresh", budgetMs, McpException.Delivery.NOT_SENT);
         }
         try {
             if (!carried.equals(sessionId.get())) {
@@ -591,41 +644,76 @@ public final class StreamableHttpMcpConnection implements McpConnection {
                 return;
             }
             sessionId.set(null);
-            HttpReply reply = exchange(era, "initialize", null, initializeParams(), null, budgetMs);
+            HttpReply reply =
+                    exchange(
+                            era,
+                            "initialize",
+                            null,
+                            McpProtocol.initializeParams(),
+                            null,
+                            budgetMs,
+                            CallControl.none());
             if (reply.status() != 200) {
                 throw new McpException(
                         "MCP server '"
                                 + spec.name()
                                 + "' rejected re-initialisation with HTTP "
-                                + reply.status());
+                                + reply.status(),
+                        McpException.Delivery.NOT_SENT);
             }
-            sessionId.set(reply.header(McpProtocol.HEADER_SESSION_ID));
-            exchanger.notify(era, "notifications/initialized", Map.of(), sessionId.get(), budgetMs);
+            adoptSession(reply, budgetMs);
         } finally {
             reinitialization.unlock();
         }
     }
 
-    private Map<String, Object> initializeParams() {
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("protocolVersion", McpProtocol.LEGACY_REVISION);
-        params.put("capabilities", Map.of());
-        params.put("clientInfo", McpProtocol.CLIENT_INFO);
-        return params;
+    /// Adopts the session an answered `initialize` minted, and confirms it.
+    ///
+    /// The one place a legacy handshake completes, at open and on every refresh,
+    /// so a refreshed session is held to the same revision as the first. A
+    /// redeployed server is met here rather than at open, and carrying on with
+    /// it in a revision nobody agreed would misread every answer it gives.
+    ///
+    /// The session is adopted before the revision is checked, so a refused one
+    /// is still released when the connection closes.
+    ///
+    /// @param reply the `200` answer to `initialize`, not null
+    /// @param budgetMs the deadline `notifications/initialized` is sent under
+    /// @return what the server announced, never null
+    /// @throws McpException if the server announces no revision, or one Hensu does
+    ///     not implement
+    private McpProtocol.Handshake adoptSession(HttpReply reply, long budgetMs) {
+        sessionId.set(reply.header(McpProtocol.HEADER_SESSION_ID));
+        McpProtocol.Handshake announced =
+                McpProtocol.acceptHandshake(spec.name(), jsonRpc.parseResult(reply.body()));
+        if (announced.serverName() != null) {
+            serverInfo = announced.serverName();
+        }
+        exchanger.notify(era, "notifications/initialized", Map.of(), sessionId.get(), budgetMs);
+        return announced;
     }
 
     private Map<String, Object> readResult(HttpReply reply, String method) {
-        exchanger.refuseOnAccessDenied(reply, method);
         if (reply.status() != 200) {
+            // A JSON-RPC error under an error status is still the server's own answer,
+            // and is kept whole for a caller that forwards it. Its code is named as it
+            // would be under a 200, so the status does not change what an agent reads.
+            JsonNode error = reply.jsonRpcError();
             String excerpt = reply.excerpt();
-            throw new McpException(
+            String message =
                     "MCP request '"
                             + method
                             + "' to server '"
                             + spec.name()
                             + "' answered HTTP "
                             + reply.status()
-                            + (excerpt.isEmpty() ? "" : ": " + excerpt));
+                            + (error != null && error.path("code").isNumber()
+                                    ? " with JSON-RPC error " + error.path("code").asInt()
+                                    : "")
+                            + (excerpt.isEmpty() ? "" : ": " + excerpt);
+            throw error != null
+                    ? new McpErrorResponseException(message, jsonRpc.errorObject(error))
+                    : new McpException(message);
         }
         readModernServerInfo(reply.body());
         return jsonRpc.parseResult(reply.body());

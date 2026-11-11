@@ -341,7 +341,8 @@ one. Its bound is the set of hosts named across `mcp.yaml`: the remote analogue 
 the allowlist". Within that set each connection is bound to the endpoint its own entry names —
 scheme, host and port — because every request carries that server's bearer token: a redirect
 anywhere else, including into another declared server, is refused as `DENIED` and the run continues.
-Only a redirect that stays on the same endpoint is followed, once. Its credential is a **key** into the operator's credential store,
+Only a redirect that stays on the same endpoint is followed, once, and only a `307` or `308`: any
+other status may come after the server ran the call, and following it could run the call twice. Its credential is a **key** into the operator's credential store,
 resolved at launch and injected into the connection, so the transport module never learns that a
 credential store exists and no token reaches a log line, an audit row or an approval frame.
 

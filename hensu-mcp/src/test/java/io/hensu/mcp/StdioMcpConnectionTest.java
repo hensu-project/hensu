@@ -49,6 +49,7 @@ class StdioMcpConnectionTest {
         return new McpServerSpec.Stdio(
                 "fixture",
                 "",
+                McpServerSpec.ToolFilter.ALL,
                 argv,
                 Map.of("FIXTURE_MARKER", "set"),
                 SandboxPolicy.restrictive(),
@@ -81,9 +82,35 @@ class StdioMcpConnectionTest {
     }
 
     @Test
+    void shouldRefuseAServerThatAnnouncesNoRevision() {
+        // The field is required; a server that omits it gives no basis for reading
+        // anything it says next, over either transport.
+        assertThatThrownBy(() -> open(spec(10_000, "--no-revision")))
+                .isInstanceOf(McpException.class)
+                .hasMessageContaining("<none announced>")
+                .satisfies(
+                        failure ->
+                                assertThat(((McpException) failure).delivery())
+                                        .isEqualTo(McpException.Delivery.NOT_SENT));
+    }
+
+    @Test
+    void shouldNotListToolsOfAServerThatDeclaresNoToolsCapability() {
+        // The fixture still answers tools/list with its catalog, so an empty list
+        // proves the request was never sent rather than answered with nothing.
+        StdioMcpConnection open = open(spec(10_000, "--no-tools-capability"));
+
+        assertThat(open.listTools()).isEmpty();
+        assertThat(open.catalogNotices())
+                .singleElement()
+                .asString()
+                .contains("'fixture' advertises no tools capability");
+    }
+
+    @Test
     void shouldCallAToolAndReturnARenderableResult() {
         Map<String, Object> result =
-                open(spec(10_000)).callTool("echo", Map.of("message", "hello"));
+                open(spec(10_000)).callTool("echo", Map.of("message", "hello"), CallControl.none());
 
         assertThat(McpResultRenderer.render(result)).isEqualTo("echoed hello");
     }
@@ -94,9 +121,13 @@ class StdioMcpConnectionTest {
         // that made it – the engine runs no watchdog around a provider.
         StdioMcpConnection open = open(spec(300, "--swallow", "tools/call"));
 
-        assertThatThrownBy(() -> open.callTool("echo", Map.of("message", "hello")))
+        assertThatThrownBy(
+                        () -> open.callTool("echo", Map.of("message", "hello"), CallControl.none()))
                 .isInstanceOf(McpException.class)
-                .hasMessageContaining("timed out after 300ms");
+                .hasMessageContaining("timed out after 300ms")
+                .extracting(failure -> ((McpException) failure).delivery())
+                .as("the server read the call, so it may have acted on it")
+                .isEqualTo(McpException.Delivery.MAYBE_DELIVERED);
 
         // The correlation entry is gone, so the next call gets a fresh id and works.
         assertThat(open.listTools()).hasSize(1);
@@ -132,7 +163,10 @@ class StdioMcpConnectionTest {
         StdioMcpConnection open = open(spec(300, "--deaf-after", "initialize"));
         String oversized = "x".repeat(512 * 1024);
 
-        assertThatThrownBy(() -> open.callTool("echo", Map.of("message", oversized)))
+        assertThatThrownBy(
+                        () ->
+                                open.callTool(
+                                        "echo", Map.of("message", oversized), CallControl.none()))
                 .isInstanceOf(McpException.class)
                 .hasMessageContaining("stopped reading its standard input");
 
@@ -148,7 +182,10 @@ class StdioMcpConnectionTest {
         StdioMcpConnection open = open(spec(10_000, "--noisy"));
 
         assertThat(open.listTools()).hasSize(1);
-        assertThat(McpResultRenderer.render(open.callTool("echo", Map.of("message", "again"))))
+        assertThat(
+                        McpResultRenderer.render(
+                                open.callTool(
+                                        "echo", Map.of("message", "again"), CallControl.none())))
                 .isEqualTo("echoed again");
     }
 
@@ -201,7 +238,8 @@ class StdioMcpConnectionTest {
     }
 
     private static String render(StdioMcpConnection open, String variable) {
-        return McpResultRenderer.render(open.callTool("env", Map.of("message", variable)));
+        return McpResultRenderer.render(
+                open.callTool("env", Map.of("message", variable), CallControl.none()));
     }
 
     @Test
@@ -236,8 +274,12 @@ class StdioMcpConnectionTest {
             Thread.sleep(10);
         }
 
-        assertThatThrownBy(() -> open.callTool("echo", Map.of("message", "hello")))
+        assertThatThrownBy(
+                        () -> open.callTool("echo", Map.of("message", "hello"), CallControl.none()))
                 .isInstanceOf(McpException.class)
-                .hasMessageContaining("is not running");
+                .hasMessageContaining("is not running")
+                .extracting(failure -> ((McpException) failure).delivery())
+                .as("a server found dead before the write never saw the call")
+                .isEqualTo(McpException.Delivery.NOT_SENT);
     }
 }

@@ -4,10 +4,11 @@ Runtime-agnostic Model Context Protocol surface shared by the CLI and the server
 
 ## Overview
 
-The `hensu-mcp` module holds the parts of MCP that do not depend on how a connection is
-established: the JSON-RPC message format, the translation between MCP's JSON Schema and the
-engine's `ToolDefinition`, and the rendering of a `tools/call` response into text an agent can
-read.
+The `hensu-mcp` module holds the parts of MCP that do not depend on which runtime opens a
+connection: the JSON-RPC message format, the translation between MCP's JSON Schema and the
+engine's `ToolDefinition`, the rendering of a `tools/call` response into text an agent can read,
+the `mcp.yaml` grammar, and the catalog that turns the servers' tool lists into one set of
+published names.
 
 Transport stays with whoever owns it. The server never connects to an MCP server: a tenant's relay
 publishes its tool catalog and pulls tool calls from the server, so the server needs only the schema
@@ -31,6 +32,8 @@ flowchart LR
         conv(["McpSchemaConverter\n(schema to ToolDefinition)"])
         rend(["McpResultRenderer\n(response to text)"])
         spec(["McpServerSpec\n(declared server)"])
+        conf(["McpConfig\n(mcp.yaml grammar)"])
+        cat(["McpToolCatalog\n(published names)"])
     end
 
     subgraph server["hensu-server"]
@@ -54,6 +57,8 @@ flowchart LR
     style conv  fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style rend  fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style spec  fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style conf  fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
+    style cat   fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style relay fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
     style stdio fill:#2c2c2e, stroke:#48484a, color:#ebebf5, stroke-width:1px
 
@@ -70,6 +75,11 @@ JsonRpc jsonRpc = new JsonRpc(mapper);
 String request = jsonRpc.createRequest(id, "tools/call", params);
 Map<String, Object> result = jsonRpc.parseResult(responseJson);   // throws McpException on error
 ```
+
+A JSON-RPC `error` answer raises `McpErrorResponseException`, which keeps the server's `error`
+object whole (`code`, `message`, `data`) so a relay can forward it as received. A `result` that is
+not a JSON object is refused as an ordinary `McpException`, so one broken server costs only its own
+tools.
 
 Parsing stays on Jackson's tree model (`readTree`), never data binding, so no reflective
 deserialization enters the native image. The class is deliberately not a CDI bean: the server
@@ -111,6 +121,68 @@ Non-text blocks carry bytes a text completion cannot consume, so only the block 
 locates it survive. A response setting `isError: true` becomes `ToolCallStatus.FAILURE` carrying
 the rendered text as its error message, so the agent sees what went wrong.
 
+### `McpConfig` — the `mcp.yaml` grammar, in two dialects
+
+```java
+List<McpServerSpec> servers = McpConfig.load(workingDirectory, McpConfig.Dialect.CLI);
+```
+
+Both runtimes that read `mcp.yaml` parse it here, so they cannot disagree about what a declaration
+means. `Dialect.CLI` accepts the whole grammar. `Dialect.RELAY` refuses `sandbox:`, `unattended:`
+and `approval:`, because a relay launches no sandboxed process and has no operator to ask; it does
+not reinterpret them. A malformed document is a `MiniYamlException` naming the line.
+
+A `tools: {allow: [...], deny: [...]}` block narrows what a server publishes. Both lists name tools
+the way the server lists them, before `prefix:`. An empty `allow:` and a name in both lists are load
+errors.
+
+### `McpToolCatalog` — one set of published names
+
+```java
+McpToolCatalog<R> catalog = McpToolCatalog.<R>empty()
+        .with(route, connection.listTools(), notices::add);
+```
+
+Applies each server's `tools:` filter and `prefix:`, then the first-declared-wins rule for names
+two servers share, in that order, so a filtered tool claims no name. Every tool left out against the
+declaration's intent produces one operator-facing notice: an illegal name, a collision, an
+`allow:` entry the server does not list, or a filter entry written with the prefix. A `deny:` entry
+written that way still withholds the tool it names. The catalog is generic over the runtime's
+`Route`, and keeps the server's own descriptors beside the engine's definitions, because a relay
+publishes descriptors.
+
+### `StreamableHttpMcpConnection` — a remote endpoint
+
+```java
+McpConnection connection = StreamableHttpMcpConnection.open(
+        spec, BearerCredential.fixed(token), allowedHosts, client);
+```
+
+A `BearerCredential` supplies the token for each request. On a `401`, a credential that yields a
+different token through `afterRejection` gets one resend, since a request refused at authorization
+never reached the tool; a `403` is never resent. `BearerCredential.NONE` sends no `Authorization`
+header. Only a `307` or `308` redirect on the connection's own endpoint is followed: any other
+status may come after the server ran the call, and any other endpoint would receive this server's
+credential.
+
+### `CallControl` — cancellation and caller `_meta`
+
+```java
+CallControl control = CallControl.withMeta(Map.of("com.example/trace", traceId));
+connection.callTool(name, arguments, control);   // control.cancel() from any thread
+```
+
+`callTool` takes a `CallControl`; `CallControl.none()` is for callers that never cancel. A cancel
+stops the call the way the transport defines: closing the response stream in the modern era,
+`notifications/cancelled` in the legacy era and over stdio. Caller `_meta` merges under the era's
+own keys, and a key in the protocol's `io.modelcontextprotocol/` namespace is an
+`IllegalArgumentException`.
+
+Every `McpException` carries a `delivery()`: `NOT_SENT` when the request certainly never reached
+the server – a refused connection, a `401` or `403`, a refused redirect that asked for a resend, a
+cancel or expired budget that stopped the send before it began, a stdio server found dead before
+the write – and `MAYBE_DELIVERED` otherwise.
+
 ### `StdioMcpConnection` — a server process this run owns
 
 ```java
@@ -129,8 +201,8 @@ any single call:
   `HermeticEnvironment.PASSTHROUGH` plus the server's own `env:`. Nothing that authenticates the
   operator reaches an MCP server.
 - **Each request carries its own deadline.** `McpServerSpec.requestTimeoutMs` bounds every
-  `tools/list` and `tools/call`; a lapsed request drops its correlation entry and raises
-  `McpException` instead of pinning the workflow thread.
+  `tools/list` and `tools/call`; a lapsed request drops its correlation entry, tells the server
+  with `notifications/cancelled`, and raises `McpException` instead of pinning the workflow thread.
 - **Coming up is budgeted apart from answering.** The `initialize` handshake is bounded by
   `McpServerSpec.startupTimeoutMs`, measured from the fork, because a server's first reply costs
   whatever its runtime costs to boot — `npx` resolving a package, an interpreter starting. Sharing
@@ -143,6 +215,8 @@ any single call:
 
 ```
 hensu-mcp/src/main/java/io/hensu/mcp/
+├── BearerCredential.java            # The token a request carries, and its successor after a 401
+├── CallControl.java                 # A caller's cancel and _meta for one tools/call
 ├── EndpointBound.java               # Whether a redirect stays on the connection's own endpoint
 ├── HttpExchanger.java               # Bounded JSON-RPC exchanges with one Streamable HTTP endpoint
 ├── HttpReply.java                   # One HTTP answer, reduced to the JSON-RPC message it carried
@@ -151,21 +225,34 @@ hensu-mcp/src/main/java/io/hensu/mcp/
 ├── McpConnection.java               # Connection contract + McpToolDescriptor record
 ├── McpEgressDeniedException.java    # A redirect off its own endpoint or outside the host allowlist
 ├── McpEra.java                      # Sealed: what differs between protocol revisions
-├── McpException.java                # Protocol, connection, and tool-invocation failures
+├── McpErrorResponseException.java   # A JSON-RPC error answer, its error object kept whole
+├── McpException.java                # Protocol, connection, and tool-invocation failures, with delivery()
 ├── McpInvalidArgumentException.java # An argument with no form its mirrored header can carry
 ├── McpParameterHeaders.java         # x-mcp-header: validate annotations, build Mcp-Param-* headers
 ├── McpProtocol.java                 # Revisions Hensu speaks, headers, _meta keys, error codes
 ├── McpResultRenderer.java           # tools/call response to ToolCallResult
 ├── McpSchemaConverter.java          # MCP JSON Schema to ToolDefinition, raw schema carried through
-├── McpServerSpec.java               # Sealed: Stdio | Http, as a deployment declared it
+├── McpServerSpec.java               # Sealed: Stdio | Http, as a deployment declared it, + ToolFilter
+├── McpToolCatalog.java              # Servers' tool lists to published names: filter, prefix, collisions
 ├── SseFrames.java                   # Reads the awaited JSON-RPC message out of an SSE body
 ├── StdioMcpConnection.java          # stdio: launch, speak JSON-RPC, kill the tree
-└── StreamableHttpMcpConnection.java # Streamable HTTP: POST one endpoint, JSON or SSE back
+├── StreamableHttpMcpConnection.java # Streamable HTTP: POST one endpoint, JSON or SSE back
+└── config/
+    └── McpConfig.java               # mcp.yaml grammar, CLI and RELAY dialects
 ```
 
 Test fixtures live in `src/testFixtures`: `FakeMcpServer` is a real process the stdio tests launch,
 and `FakeHttpMcpServer` is a loopback endpoint on the JDK's own `HttpServer` that the HTTP tests
 drive. The CLI reuses both rather than growing a second copy of either.
+
+`src/mcpRevisionTest` lists, calls and cancels against real servers pinned to each revision Hensu
+has to reach: the reference `everything` server on 2024-11-05, 2025-06-18, 2025-11-25 and
+2026-07-28, and a Spring AI MCP server, each built into a container image. It needs Docker and the
+network, so it is not part of `check`; CI runs it as the `mcp-revisions` job.
+
+```bash
+./gradlew :hensu-mcp:mcpRevisionTest
+```
 
 ## Two eras of one transport
 
@@ -179,7 +266,7 @@ implement and says so when an endpoint speaks neither era.
 
 `McpEra` is a sealed interface rather than a boolean so the compiler checks that every difference is
 handled: which headers a POST carries, whether `_meta` is injected, whether a session identifier is
-echoed, and how a timed-out request is cancelled. In the modern era, closing the response stream
+echoed, and how a cancelled or timed-out request is cancelled. In the modern era, closing the response stream
 *is* the cancellation; in the legacy era, a `notifications/cancelled` goes out under a short fixed
 budget of its own.
 
@@ -226,7 +313,7 @@ rather than beside either transport.
 
 - `hensu-core` (API dependency) — for `ToolDefinition`, `ToolCallResult`, `ToolCallStatus`
 - Jackson BOM 2.20.1 (`jackson-databind`) — resolved by the Quarkus BOM inside `hensu-server`
-- Test: JUnit 5, AssertJ
+- Test: JUnit 5, AssertJ; the revision suite adds Testcontainers, versioned by the Quarkus BOM
 
 ## See Also
 

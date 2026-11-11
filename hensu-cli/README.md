@@ -665,12 +665,12 @@ A node's `tools = listOf(...)` is the grant: an agent sees the tools its own nod
 nothing else. Three sources contribute names, composed into one surface the agent cannot tell
 apart:
 
-| Source              | Declared in     | Visible when                                                                |
-|---------------------|-----------------|-----------------------------------------------------------------------------|
-| Catalog commands    | `commands.yaml` | the entry carries a `tool:` block                                           |
-| Local MCP servers   | `mcp.yaml`      | the `command:` server launched and answered `tools/list`                    |
-| Remote MCP servers  | `mcp.yaml`      | the `url:` endpoint was reachable, authenticated and answered `tools/list`  |
-| Built-in file tools | nothing         | always – `read_file`, `list_dir`, `glob`, `grep`, `write_file`, `edit_file` |
+| Source              | Declared in     | Visible when                                                                              |
+|---------------------|-----------------|-------------------------------------------------------------------------------------------|
+| Catalog commands    | `commands.yaml` | the entry carries a `tool:` block                                                         |
+| Local MCP servers   | `mcp.yaml`      | the `command:` server launched, listed the tool, and `tools:` admits it                   |
+| Remote MCP servers  | `mcp.yaml`      | the `url:` endpoint was reachable, authenticated, listed the tool, and `tools:` admits it |
+| Built-in file tools | nothing         | always – `read_file`, `list_dir`, `glob`, `grep`, `write_file`, `edit_file`               |
 
 A command with no `tool:` block stays usable from a workflow's `execute(...)` and invisible to
 every agent. The built-ins are confined to the working directory and refuse to write
@@ -692,12 +692,16 @@ A `url:` server has no process to contain and no sandbox of ours reaches another
 it instead is the set of hosts named across `mcp.yaml`, and within that, the endpoint each entry
 names: a redirect is followed only when it stays on the same scheme, host and port, because every
 request carries that server's bearer token. A redirect anywhere else — including to another declared
-server — is refused as `DENIED`, and the run continues. Approving a remote call is
+server — is refused as `DENIED`, and the run continues. Even on the same endpoint only a `307` or
+`308` is followed; any other redirect may come after the server ran the call, so the call fails
+instead of running twice. Approving a remote call is
 approving disclosure, so its approval frame names the endpoint and says the call leaves the machine.
 
 Two servers that publish the same tool name collide, and the first declared wins while the run
 reports which one lost it. A `prefix:` on either keeps both: `prefix: "acme_"` publishes
-`acme_search`, and that is the name an agent calls.
+`acme_search`, and that is the name an agent calls. A server's `tools: {allow: [...], deny: [...]}`
+block narrows what it publishes, naming tools before the prefix, and a tool it filters out claims no
+name. See [`tools:`](../docs/command-catalog.md#tools-decides-which-of-a-servers-tools-are-published).
 
 ---
 

@@ -29,8 +29,14 @@ public class McpEgressDeniedException extends McpException {
 
     /// Creates an exception for a refused destination.
     ///
+    /// Nothing reaches the refused destination, but the endpoint that answered
+    /// with the redirect did receive the request. Whether it acted on it depends
+    /// on the redirect, which is why the caller classifies the failure.
+    ///
     /// @param message the reason, naming the destination and the allowlist, not null
-    public McpEgressDeniedException(String message) {
-        super(message);
+    /// @param delivery whether the redirecting endpoint can have acted on the
+    ///     request, not null
+    public McpEgressDeniedException(String message, Delivery delivery) {
+        super(message, delivery);
     }
 }

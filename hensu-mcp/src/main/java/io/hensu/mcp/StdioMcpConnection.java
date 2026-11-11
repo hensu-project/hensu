@@ -9,14 +9,13 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -50,9 +49,20 @@ import java.util.logging.Logger;
 ///   when that expires. The same deadline covers the send: a server that stops
 ///   reading its standard input fills the pipe, and a caller waiting on a full
 ///   pipe would otherwise wait forever.
+/// - **A cancelled call is announced.** A `tools/call` whose {@link CallControl}
+///   is cancelled stops waiting at once and sends `notifications/cancelled` for
+///   its id, queued behind whatever is already being written, so the framing
+///   holds. A cancel that lands while the call's own line is still being written
+///   takes effect when the write ends or its deadline expires: half a line
+///   cannot be taken back without closing the connection.
+/// - **A failure says whether the line left.** A server found dead before the
+///   write is {@link McpException.Delivery#NOT_SENT}; a failed write, or a
+///   failure after it, is {@link McpException.Delivery#MAYBE_DELIVERED}.
 /// - **The handshake is read, not merely completed.** A server announcing a
-///   revision Hensu does not implement fails the connection at launch naming both
-///   versions, rather than producing a confusing method error on the first call.
+///   revision Hensu does not implement, or none, fails the connection at launch
+///   naming both versions, rather than producing a confusing method error on the
+///   first call. A server that declares no `tools` capability is never sent
+///   `tools/list`, and the reason is kept for the operator.
 /// - **Coming up is not answering.** The handshake is charged to
 ///   {@link McpServerSpec#startupTimeoutMs()}, which runs from the fork and so
 ///   has to cover whatever the server's runtime costs to boot. Every call after
@@ -90,6 +100,8 @@ public final class StdioMcpConnection implements McpConnection {
     private volatile boolean closed;
     private volatile boolean transportClosed;
     private volatile String serverInfo;
+    private volatile boolean declaresTools;
+    private final List<String> notices = new CopyOnWriteArrayList<>();
 
     private StdioMcpConnection(McpServerSpec.Stdio spec, Process process) {
         this.spec = spec;
@@ -154,44 +166,39 @@ public final class StdioMcpConnection implements McpConnection {
 
     /// Lists the tools the server currently exposes.
     ///
+    /// A server whose handshake declared no `tools` capability is not asked: it
+    /// has said it has none, and {@link #catalogNotices()} says so.
+    ///
     /// @return the server's catalog, never null (may be empty)
     /// @throws McpException if the server does not answer within its request timeout
     @Override
     public List<McpToolDescriptor> listTools() {
-        Map<String, Object> result = request("tools/list", Map.of(), spec.requestTimeoutMs());
-        if (!(result.get("tools") instanceof List<?> published)) {
+        if (!declaresTools) {
             return List.of();
         }
-        List<McpToolDescriptor> descriptors = new ArrayList<>();
-        for (Object entry : published) {
-            if (entry instanceof Map<?, ?> tool && tool.get("name") instanceof String name) {
-                descriptors.add(
-                        new McpToolDescriptor(
-                                name,
-                                tool.get("description") instanceof String description
-                                        ? description
-                                        : "",
-                                tool.get("inputSchema") instanceof Map<?, ?> schema
-                                        ? castSchema(schema)
-                                        : Map.of()));
-            }
-        }
-        return List.copyOf(descriptors);
+        Map<String, Object> result =
+                request("tools/list", Map.of(), spec.requestTimeoutMs(), CallControl.none());
+        return ListedTools.read(spec.name(), result, false).descriptors();
     }
 
     /// Invokes a tool on the server.
     ///
     /// @param toolName the tool the agent chose, not null
     /// @param arguments the agent's arguments, not null (may be empty)
+    /// @param control the caller's cancellation handle and `_meta`, not null
     /// @return the raw MCP result, for {@link McpResultRenderer} to render, never null
-    /// @throws McpException if the server does not answer within its request timeout
+    /// @throws McpException if the server does not answer within its request
+    ///     timeout, or the caller cancelled
     @Override
-    public Map<String, Object> callTool(String toolName, Map<String, Object> arguments) {
+    public Map<String, Object> callTool(
+            String toolName, Map<String, Object> arguments, CallControl control) {
         Objects.requireNonNull(toolName, "toolName must not be null");
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("name", toolName);
-        params.put("arguments", arguments);
-        return request("tools/call", params, spec.requestTimeoutMs());
+        Objects.requireNonNull(control, "control must not be null");
+        return request(
+                "tools/call",
+                McpProtocol.callParams(toolName, arguments, control),
+                spec.requestTimeoutMs(),
+                control);
     }
 
     /// Returns a stable identifier for this connection.
@@ -257,18 +264,19 @@ public final class StdioMcpConnection implements McpConnection {
     /// interpreter start, a class load. Charging that to the per-request budget
     /// is what made a deployment asking for fast failures unable to start.
     private void handshake() {
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("protocolVersion", McpProtocol.LEGACY_REVISION);
-        params.put("capabilities", Map.of());
-        params.put("clientInfo", McpProtocol.CLIENT_INFO);
-        Map<String, Object> result = request("initialize", params, spec.startupTimeoutMs());
-        McpProtocol.Handshake announced = McpProtocol.read(result);
-        if (announced.revision() != null && !McpProtocol.isSupported(announced.revision())) {
-            throw new McpException(
-                    McpProtocol.unsupportedRevision(spec.name(), announced.revision()));
-        }
+        Map<String, Object> result =
+                request(
+                        "initialize",
+                        McpProtocol.initializeParams(),
+                        spec.startupTimeoutMs(),
+                        CallControl.none());
+        McpProtocol.Handshake announced = McpProtocol.acceptHandshake(spec.name(), result);
         if (announced.serverName() != null) {
             serverInfo = announced.serverName();
+        }
+        declaresTools = announced.declaresTools();
+        if (!declaresTools) {
+            notices.add(McpProtocol.noToolsCapability(spec.name()));
         }
         write(
                 jsonRpc.createNotification("notifications/initialized", Map.of()),
@@ -284,9 +292,21 @@ public final class StdioMcpConnection implements McpConnection {
         return serverInfo;
     }
 
-    private Map<String, Object> request(String method, Map<String, Object> params, long timeoutMs) {
+    /// Returns why tools this server may know of are not in its catalog.
+    ///
+    /// @return the reasons, in the order they were found, never null (may be empty)
+    @Override
+    public List<String> catalogNotices() {
+        return List.copyOf(notices);
+    }
+
+    private Map<String, Object> request(
+            String method, Map<String, Object> params, long timeoutMs, CallControl control) {
         if (closed || transportClosed || !process.isAlive()) {
-            throw new McpException("MCP server '" + spec.name() + "' is not running");
+            throw notRunning();
+        }
+        if (control.isCancelled()) {
+            throw McpException.cancelled(spec.name(), method, McpException.Delivery.NOT_SENT);
         }
         String id = String.valueOf(nextId.incrementAndGet());
         CompletableFuture<String> answer = new CompletableFuture<>();
@@ -296,25 +316,71 @@ public final class StdioMcpConnection implements McpConnection {
         // its whole timeout for a reply nothing will read.
         if (transportClosed) {
             pending.remove(id);
-            throw new McpException("MCP server '" + spec.name() + "' is not running");
+            throw notRunning();
         }
+        Runnable abort =
+                () -> {
+                    answer.completeExceptionally(new CancelledByCaller());
+                    announceCancellation(id, "the caller cancelled the request");
+                };
         try {
             write(jsonRpc.createRequest(id, method, params), timeoutMs);
+            control.bind(abort);
             String response = answer.orTimeout(timeoutMs, TimeUnit.MILLISECONDS).join();
             return jsonRpc.parseResult(response);
         } catch (CompletionException e) {
-            throw e.getCause() instanceof TimeoutException
-                    ? new McpException(
-                            "MCP request '"
-                                    + method
-                                    + "' to server '"
-                                    + spec.name()
-                                    + "' timed out after "
-                                    + timeoutMs
-                                    + "ms")
-                    : asMcpException(method, e.getCause());
+            if (e.getCause() instanceof CancelledByCaller) {
+                throw McpException.cancelled(
+                        spec.name(), method, McpException.Delivery.MAYBE_DELIVERED);
+            }
+            if (e.getCause() instanceof TimeoutException) {
+                // The line was written, so the server may be working on it. Waiting
+                // no longer is half of the timeout; telling the server is the other.
+                announceCancellation(id, "the caller's request budget expired");
+                throw McpException.timedOut(
+                        spec.name(), method, timeoutMs, McpException.Delivery.MAYBE_DELIVERED);
+            }
+            throw e.getCause() instanceof McpException mcp
+                    ? mcp
+                    : McpException.failed(spec.name(), method, e.getCause());
         } finally {
+            control.unbind(abort);
             pending.remove(id);
+        }
+    }
+
+    private McpException notRunning() {
+        return new McpException(
+                "MCP server '" + spec.name() + "' is not running", McpException.Delivery.NOT_SENT);
+    }
+
+    /// Queues `notifications/cancelled` behind whatever is being written, without waiting.
+    ///
+    /// The caller cancelling may be any thread, and it must not wait on a pipe
+    /// the server may have stopped reading. A server that has already gone has
+    /// nothing left to tell.
+    ///
+    /// @param requestId the id of the request the server should drop, not null
+    /// @param reason why it was dropped, sent to the server as written, not null
+    private void announceCancellation(String requestId, String reason) {
+        String line =
+                jsonRpc.createNotification(
+                        "notifications/cancelled",
+                        McpProtocol.cancellationParams(requestId, reason));
+        try {
+            stdin.execute(
+                    () -> {
+                        try {
+                            writeLine(line);
+                        } catch (McpException e) {
+                            logger.log(
+                                    Level.FINE,
+                                    "Cancellation for MCP server " + spec.name() + " not written",
+                                    e);
+                        }
+                    });
+        } catch (RejectedExecutionException e) {
+            logger.log(Level.FINE, "MCP server " + spec.name() + " closed before cancellation", e);
         }
     }
 
@@ -332,7 +398,10 @@ public final class StdioMcpConnection implements McpConnection {
         try {
             written = stdin.submit(() -> writeLine(json));
         } catch (RejectedExecutionException e) {
-            throw new McpException("MCP server '" + spec.name() + "' is not running", e);
+            throw new McpException(
+                    "MCP server '" + spec.name() + "' is not running",
+                    e,
+                    McpException.Delivery.NOT_SENT);
         }
         try {
             written.get(timeoutMs, TimeUnit.MILLISECONDS);
@@ -367,20 +436,6 @@ public final class StdioMcpConnection implements McpConnection {
             throw new McpException(
                     "Could not write to MCP server '" + spec.name() + "': " + e.getMessage(), e);
         }
-    }
-
-    private McpException asMcpException(String method, Throwable cause) {
-        if (cause instanceof McpException mcp) {
-            return mcp;
-        }
-        return new McpException(
-                "MCP request '"
-                        + method
-                        + "' to server '"
-                        + spec.name()
-                        + "' failed: "
-                        + (cause != null ? cause.getMessage() : "unknown cause"),
-                cause);
     }
 
     // ----------------------------------------------------------------- readers
@@ -443,9 +498,5 @@ public final class StdioMcpConnection implements McpConnection {
         pending.values()
                 .forEach(waiting -> waiting.completeExceptionally(new McpException(reason)));
         pending.clear();
-    }
-
-    private static Map<String, Object> castSchema(Map<?, ?> schema) {
-        return (Map<String, Object>) schema;
     }
 }

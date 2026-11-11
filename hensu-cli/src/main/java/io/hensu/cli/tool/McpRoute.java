@@ -3,6 +3,7 @@ package io.hensu.cli.tool;
 import io.hensu.core.tool.ToolPreview;
 import io.hensu.mcp.McpConnection;
 import io.hensu.mcp.McpServerSpec;
+import io.hensu.mcp.McpToolCatalog;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -19,7 +20,8 @@ import java.util.Objects;
 /// @param uncontained whether this is a local process a reviewer let start with no
 ///     containment available. Such an approval was given by one run's reviewer and
 ///     covers that run only.
-record McpRoute(McpServerSpec spec, McpConnection connection, boolean uncontained) {
+record McpRoute(McpServerSpec spec, McpConnection connection, boolean uncontained)
+        implements McpToolCatalog.Route {
 
     McpRoute {
         Objects.requireNonNull(spec, "spec must not be null");
@@ -32,24 +34,6 @@ record McpRoute(McpServerSpec spec, McpConnection connection, boolean uncontaine
     /// @param connection the open connection to it, not null
     McpRoute(McpServerSpec spec, McpConnection connection) {
         this(spec, connection, false);
-    }
-
-    /// Returns the declared server name.
-    ///
-    /// @return the name, never null
-    String name() {
-        return spec.name();
-    }
-
-    /// Maps a name the agent used back to the name its server knows.
-    ///
-    /// @param published the name as published to agents, not null
-    /// @return the name without this server's prefix, never null
-    String serverSideName(String published) {
-        String prefix = spec.prefix();
-        return prefix.isEmpty() || !published.startsWith(prefix)
-                ? published
-                : published.substring(prefix.length());
     }
 
     /// Describes a call to this server for an operator about to approve it.

@@ -652,6 +652,8 @@ servers:
     unattended: true      # default false
     approval: required    # default none
     prefix: "fs_"         # default none
+    tools:                # default: every tool the server lists
+      allow: [read_file, list_directory]   # the server's own names, before prefix
     env:
       LOG_LEVEL: warn
     sandbox:
@@ -672,13 +674,14 @@ servers:
 |--------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `command`    | The launch argv, required. A server runs with the working directory as its cwd, so a relative path to a script beside `mcp.yaml` is enough and stays portable. `{workdir}` is the only placeholder, expanding to the absolute working directory as one whole token — it cannot be embedded in a longer string |
 | `startup`    | Milliseconds the launch and `initialize` handshake may take together, default 30000. The clock starts at the fork, so this is the number that has to cover whatever the server's runtime costs to boot                                                                                                        |
-| `timeout`    | Milliseconds one request may take once the server is answering, default 30000. It covers both legs: a server that stops reading its standard input fails the call as surely as one that stops answering                                                                                                       |
+| `timeout`    | Milliseconds one request may take once the server is answering, default 30000. It covers both legs: a server that stops reading its standard input fails the call as surely as one that stops answering. A call that runs past it fails, and the server is told to drop it                                    |
 | `unattended` | Whether an automated run may use this server, **default false**                                                                                                                                                                                                                                               |
 | `approval`   | `required` or `none`, default `none`                                                                                                                                                                                                                                                                          |
 | `env`        | Variables added to the hermetic base. The `HENSU_PARAM_` namespace is reserved                                                                                                                                                                                                                                |
 | `sandbox`    | `network`, `write` and `cache`, read exactly as [above](#sandbox-policy)                                                                                                                                                                                                                                      |
 | `prefix`     | Prepended verbatim to every tool this server publishes, so `prefix: "acme_"` turns `search` into `acme_search`. Optional, and valid on either shape — a name collision is a property of the catalog, not of the transport                                                                                     |
-| `url`        | The absolute endpoint of a remote server, mutually exclusive with `command`. `https:` anywhere; `http:` only on loopback                                                                                                                                                                                      |
+| `tools`      | `{allow: [...], deny: [...]}`, naming the server's tools as it lists them, before `prefix:`. `allow:` publishes only the tools it names, `deny:` withholds the tools it names, and either may be omitted. An empty `allow:` and a name in both lists are load errors. Valid on either shape                   |
+| `url`        | The absolute endpoint of a remote server, mutually exclusive with `command`. `https:` anywhere; `http:` only on `localhost`, `::1` or a `127.x.x.x` address                                                                                                                                                   |
 | `auth`       | `{bearer: KEY}`, where `KEY` names an entry in the credential store. Remote servers only                                                                                                                                                                                                                      |
 | `headers`    | Extra headers sent on every request to a remote server. `Authorization` and the `Mcp-*` namespace are refused                                                                                                                                                                                                 |
 
@@ -696,6 +699,11 @@ redirect is followed only when it stays on the very endpoint that entry names �
 host, same port. A redirect to a host nobody declared, to a host declared for a *different* server,
 or to another port on the same host is refused: following it would hand one server's credential to
 another. The call comes back as `DENIED` and the run continues.
+
+Even on the same endpoint, only `307` and `308` are followed, because they are the two statuses that
+ask for the same request to be sent again. A `301`, `302` or `303` answering a POST may come after
+the server already ran the call, so following it could run the call twice. Such a call fails with a
+message saying so, and is not resent.
 
 ### `auth:` names a key, never a token
 
@@ -719,6 +727,21 @@ run reports which one lost it. A `prefix:` on either keeps both: it is prepended
 `prefix: "acme_"` publishes `acme_search`, and the agent calls that name. Adding one later means
 renaming tools that committed workflow `.kt` files already reference, so it is cheaper to declare
 it when the second server arrives than after.
+
+### `tools:` decides which of a server's tools are published
+
+A server publishes every tool it lists unless its declaration says otherwise. `allow:` narrows that
+to the names it lists, and `deny:` withholds the names it lists; a tool left out this way is not
+offered to any agent and cannot be called. A filtered tool does not claim its name either, so two
+servers that both list `search` do not collide when one of them filters it out.
+
+Both lists use the names the server itself lists, before `prefix:` is applied: with
+`prefix: "fs_"`, deny `write_file`, not `fs_write_file`. An entry written with the prefix is reported
+in **Tool sources** with the spelling it should have. In `deny:` it still withholds the tool it
+names, so a misspelling never publishes a tool the operator meant to fence off; in `allow:` it
+publishes nothing. An `allow:` entry the server does not list at all is reported the same way.
+
+Changing `tools:` restarts that server on the next run, as any change to its declaration does.
 
 ### An approval frame for a remote call says where the call is going
 

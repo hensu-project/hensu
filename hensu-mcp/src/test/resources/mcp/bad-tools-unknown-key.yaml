@@ -1,0 +1,5 @@
+servers:
+  filesystem:
+    command: ["/usr/local/bin/mcp-server-filesystem"]
+    tools:
+      only: [read_file]

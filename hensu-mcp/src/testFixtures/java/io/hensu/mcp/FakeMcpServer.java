@@ -6,6 +6,10 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 
 /// A minimal MCP server, launched as a real process by the stdio client tests.
@@ -19,6 +23,10 @@ import java.util.concurrent.CountDownLatch;
 /// - no arguments – answer everything
 /// - `--swallow <method>` – read that method's request and never answer it, so
 ///   the client's per-request deadline is the only thing that can end the call
+/// - `--swallow-tool <name>` – the same for `tools/call` of one tool only, so a
+///   test can still call another tool afterwards
+/// - `--swallow-receipt <path>` – create that file when a swallowed tool call has
+///   been read, so a test knows the request crossed the pipe before it acts on it
 /// - `--noisy` – write a line to standard error before answering, proving the
 ///   client drains it instead of deadlocking on a full pipe
 /// - `--exit-on <method>` – exit without answering that method, so a caller can
@@ -29,6 +37,11 @@ import java.util.concurrent.CountDownLatch;
 /// - `--mute-after <method>` – answer that method, then close standard output
 ///   while staying alive and reading, so the client's reader ends but the process
 ///   does not
+/// - `--no-revision` – answer `initialize` without a `protocolVersion`, as a
+///   server that does not conform would
+/// - `--no-tools-capability` – answer `initialize` without a `tools` capability,
+///   and answer a `tools/list` sent anyway with the usual catalog, so a client
+///   that lists tools regardless is caught publishing them
 /// - `--slow-start <ms>` – sleep that long before answering `initialize`, standing
 ///   in for a runtime that is expensive to boot. Real startup cost is whatever
 ///   the host's JVM happens to charge, which is not a number a test can assert
@@ -37,6 +50,11 @@ import java.util.concurrent.CountDownLatch;
 ///
 /// Calling the tool named `env` reports whether one variable reached the child,
 /// which is how the environment-isolation test reads the launched process.
+/// Calling the tool named `fail` is answered with a JSON-RPC error carrying
+/// `data`, as a server rejecting the call's arguments would.
+/// Calling the tool named `cancelled` reports the request ids every
+/// `notifications/cancelled` so far named, which is how the cancellation test
+/// reads what crossed the pipe.
 ///
 /// @implNote **Not part of the published module.** Test fixture only.
 public final class FakeMcpServer {
@@ -51,14 +69,22 @@ public final class FakeMcpServer {
     /// @throws IOException if the pipes fail, which fails the test that owns it
     static void main(String[] args) throws IOException {
         String swallow = null;
+        String swallowTool = null;
+        Path swallowReceipt = null;
         String exitOn = null;
         String deafAfter = null;
         String muteAfter = null;
         long slowStartMs = 0;
         boolean noisy = false;
+        boolean announcesRevision = true;
+        boolean declaresTools = true;
         for (int i = 0; i < args.length; i++) {
             if ("--swallow".equals(args[i]) && i + 1 < args.length) {
                 swallow = args[++i];
+            } else if ("--swallow-tool".equals(args[i]) && i + 1 < args.length) {
+                swallowTool = args[++i];
+            } else if ("--swallow-receipt".equals(args[i]) && i + 1 < args.length) {
+                swallowReceipt = Path.of(args[++i]);
             } else if ("--exit-on".equals(args[i]) && i + 1 < args.length) {
                 exitOn = args[++i];
             } else if ("--deaf-after".equals(args[i]) && i + 1 < args.length) {
@@ -69,6 +95,10 @@ public final class FakeMcpServer {
                 slowStartMs = Long.parseLong(args[++i]);
             } else if ("--noisy".equals(args[i])) {
                 noisy = true;
+            } else if ("--no-revision".equals(args[i])) {
+                announcesRevision = false;
+            } else if ("--no-tools-capability".equals(args[i])) {
+                declaresTools = false;
             }
         }
 
@@ -77,11 +107,24 @@ public final class FakeMcpServer {
         PrintWriter out = new PrintWriter(System.out, true, StandardCharsets.UTF_8);
         PrintWriter err = new PrintWriter(System.err, true, StandardCharsets.UTF_8);
 
+        List<String> cancelled = new ArrayList<>();
         String line;
         while ((line = in.readLine()) != null) {
             String id = field(line, "id");
             String method = field(line, "method");
+            if ("notifications/cancelled".equals(method)) {
+                cancelled.add(field(line, "requestId"));
+                continue;
+            }
             if (method == null || id == null) {
+                continue;
+            }
+            if ("tools/call".equals(method)
+                    && swallowTool != null
+                    && swallowTool.equals(field(line, "name"))) {
+                if (swallowReceipt != null) {
+                    Files.writeString(swallowReceipt, id);
+                }
                 continue;
             }
             if (method.equals(exitOn)) {
@@ -96,7 +139,7 @@ public final class FakeMcpServer {
             if (slowStartMs > 0 && "initialize".equals(method)) {
                 sleep(slowStartMs);
             }
-            out.println(respond(id, method, line));
+            out.println(respond(id, method, line, cancelled, announcesRevision, declaresTools));
             if (method.equals(deafAfter)) {
                 goDeaf();
             }
@@ -134,13 +177,22 @@ public final class FakeMcpServer {
         }
     }
 
-    private static String respond(String id, String method, String request) {
+    private static String respond(
+            String id,
+            String method,
+            String request,
+            List<String> cancelled,
+            boolean announcesRevision,
+            boolean declaresTools) {
         return switch (method) {
             case "initialize" ->
                     """
-                    {"jsonrpc":"2.0","id":"%s","result":{"protocolVersion":"2024-11-05",\
+                    {"jsonrpc":"2.0","id":"%s","result":{%s%s\
                     "serverInfo":{"name":"fake","version":"1"}}}"""
-                            .formatted(id);
+                            .formatted(
+                                    id,
+                                    announcesRevision ? "\"protocolVersion\":\"2024-11-05\"," : "",
+                                    declaresTools ? "\"capabilities\":{\"tools\":{}}," : "");
             case "tools/list" ->
                     """
                     {"jsonrpc":"2.0","id":"%s","result":{"tools":[{"name":"echo",\
@@ -148,7 +200,7 @@ public final class FakeMcpServer {
                     "properties":{"message":{"type":"string","description":"Text"}},\
                     "required":["message"]}}]}}"""
                             .formatted(id);
-            case "tools/call" -> call(id, request);
+            case "tools/call" -> call(id, request, cancelled);
             default ->
                     """
                     {"jsonrpc":"2.0","id":"%s","error":{"code":-32601,\
@@ -157,11 +209,21 @@ public final class FakeMcpServer {
         };
     }
 
-    /// Answers a tool call, including the `env` tool the isolation test reads.
-    private static String call(String id, String request) {
+    /// Answers a tool call, including the `env` and `cancelled` tools tests read.
+    private static String call(String id, String request, List<String> cancelled) {
+        if ("fail".equals(field(request, "name"))) {
+            return """
+                   {"jsonrpc":"2.0","id":"%s","error":{"code":-32602,"message":"Invalid params",\
+                   "data":{"tool":"fail"}}}"""
+                    .formatted(id);
+        }
         String message = field(request, "message");
         String text =
-                "env".equals(field(request, "name")) ? envValue(message) : "echoed " + message;
+                switch (String.valueOf(field(request, "name"))) {
+                    case "env" -> envValue(message);
+                    case "cancelled" -> "cancelled " + String.join(",", cancelled);
+                    default -> "echoed " + message;
+                };
         return """
                {"jsonrpc":"2.0","id":"%s","result":{"content":[{"type":"text","text":"%s"}]}}"""
                 .formatted(id, text);

@@ -57,6 +57,9 @@ sealed interface McpEra permits McpEra.Modern, McpEra.Legacy {
 
     /// Returns the params object the request body should carry.
     ///
+    /// A `_meta` map already in `declared` is the caller's; an era that writes
+    /// its own `_meta` keys merges them into it rather than replacing it.
+    ///
     /// @param declared the params the caller asked for, not null
     /// @return the params to serialise, never null
     Map<String, Object> params(Map<String, Object> declared);
@@ -66,24 +69,15 @@ sealed interface McpEra permits McpEra.Modern, McpEra.Legacy {
     /// @return true when a `Mcp-Session-Id` is part of the contract
     boolean sessionScoped();
 
-    /// Cancels a request whose budget expired.
+    /// Returns whether an abandoned request must be announced as cancelled.
     ///
-    /// The response stream is closed by the caller either way. What differs is
-    /// whether that closure is itself the cancellation signal.
+    /// A request is abandoned when its budget expires or its caller cancels it,
+    /// and its response stream is closed either way. What differs is whether
+    /// that closure is itself the cancellation signal, or the server has to be
+    /// told with `notifications/cancelled`.
     ///
-    /// @param requestId the identifier of the request that timed out, not null
-    /// @param cancellation the best-effort notifier the connection supplies, not null
-    void cancel(String requestId, Cancellation cancellation);
-
-    /// How a connection announces that nobody wants an answer any more.
-    @FunctionalInterface
-    interface Cancellation {
-
-        /// Sends `notifications/cancelled` for one request, best effort.
-        ///
-        /// @param requestId the request being abandoned, not null
-        void notifyCancelled(String requestId);
-    }
+    /// @return true when the closed stream alone does not cancel the request
+    boolean announcesCancellation();
 
     /// Revision 2026-07-28: stateless requests carrying their own identity.
     record Modern() implements McpEra {
@@ -123,11 +117,18 @@ sealed interface McpEra permits McpEra.Modern, McpEra.Legacy {
 
         /// Injects the client identity this revision moved out of the handshake.
         ///
+        /// The caller's own `_meta` entries come first and are kept; the three
+        /// identity keys are added beside them. A caller key in the protocol's
+        /// namespace is refused before it gets here, by {@link CallControl}.
+        ///
         /// @param declared the params the caller asked for, not null
         /// @return the params plus `_meta`, never null
         @Override
         public Map<String, Object> params(Map<String, Object> declared) {
             Map<String, Object> meta = new LinkedHashMap<>();
+            if (declared.get("_meta") instanceof Map<?, ?> caller) {
+                caller.forEach((key, value) -> meta.put(String.valueOf(key), value));
+            }
             meta.put(McpProtocol.META_PROTOCOL_VERSION, McpProtocol.MODERN_REVISION);
             meta.put(McpProtocol.META_CLIENT_INFO, McpProtocol.CLIENT_INFO);
             meta.put(McpProtocol.META_CLIENT_CAPABILITIES, Map.of());
@@ -141,17 +142,16 @@ sealed interface McpEra permits McpEra.Modern, McpEra.Legacy {
             return false;
         }
 
-        /// Does nothing: closing the response stream is the cancellation.
+        /// Returns false: closing the response stream is the cancellation.
         ///
         /// The spec is explicit that a server must read a closed SSE response
         /// stream as cancellation of that request, so a second request would
         /// spend a second budget to say what the first already said.
         ///
-        /// @param requestId the request being abandoned, not null and unused
-        /// @param cancellation the notifier, not null and unused
+        /// @return false
         @Override
-        public void cancel(String requestId, Cancellation cancellation) {
-            // Intentionally empty – see the method contract.
+        public boolean announcesCancellation() {
+            return false;
         }
     }
 
@@ -195,8 +195,8 @@ sealed interface McpEra permits McpEra.Modern, McpEra.Legacy {
         }
 
         @Override
-        public void cancel(String requestId, Cancellation cancellation) {
-            cancellation.notifyCancelled(requestId);
+        public boolean announcesCancellation() {
+            return true;
         }
     }
 }

@@ -1,0 +1,7 @@
+# One name in both lists would make one of them mean nothing.
+servers:
+  filesystem:
+    command: ["/usr/local/bin/mcp-server-filesystem"]
+    tools:
+      allow: [read_file, write_file]
+      deny: [write_file]
